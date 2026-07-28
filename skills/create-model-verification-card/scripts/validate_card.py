@@ -142,6 +142,7 @@ ITEM_KEYS = frozenset(
         "enabled_features",
         "metrics",
         "resume_comparison",
+        "variants",
     }
 )
 RESUME_KEYS = frozenset(
@@ -326,7 +327,24 @@ def _iter_item_leaves(
         if item_name in HARDWARE_SCOPED_ITEMS and "status" not in value:
             for hardware, leaf in value.items():
                 if isinstance(leaf, Mapping):
-                    yield item_name, hardware, leaf, ("items", item_name, hardware)
+                    variants = leaf.get("variants") if item_name == "pretrain_fsdp" else None
+                    if isinstance(variants, Mapping):
+                        for variant_name, variant in variants.items():
+                            if isinstance(variant, Mapping):
+                                yield (
+                                    item_name,
+                                    hardware,
+                                    variant,
+                                    (
+                                        "items",
+                                        item_name,
+                                        hardware,
+                                        "variants",
+                                        str(variant_name),
+                                    ),
+                                )
+                    else:
+                        yield item_name, hardware, leaf, ("items", item_name, hardware)
         else:
             yield item_name, None, value, ("items", item_name)
 
@@ -1357,6 +1375,8 @@ def _validate_item(
     item = _as_mapping(value, path=path, errors=errors)
     if item is None:
         return
+    if "variants" in item:
+        errors.append(f"{_pointer(*path, 'variants')}: allowed only on a pretrain_fsdp hardware container")
     required = frozenset({"status", "precision", "last_verified", "expected_result"})
     if item_name == "sft_export_inference":
         required |= frozenset({"commands"})
@@ -1519,6 +1539,65 @@ def _validate_item(
         _validate_inference(item, item_name=item_name, item_path=path, status=status, errors=errors)
 
 
+def _validate_fsdp_variant_group(
+    value: Any,
+    *,
+    path: tuple[str, ...],
+    model_revision: str | None,
+    errors: list[str],
+) -> None:
+    """Validate multiple precision variants under one FSDP hardware target."""
+    group = _as_mapping(value, path=path, errors=errors)
+    if group is None:
+        return
+    _check_keys(
+        group,
+        allowed=frozenset({"status", "variants"}),
+        required=frozenset({"status", "variants"}),
+        path=path,
+        errors=errors,
+    )
+
+    status = group.get("status")
+    if not isinstance(status, str) or status not in {"verified", "unverified"}:
+        errors.append(f"{_pointer(*path, 'status')}: FSDP variant groups must be verified or unverified")
+
+    variants = _as_mapping(group.get("variants"), path=(*path, "variants"), errors=errors)
+    if variants is None:
+        return
+    if not variants:
+        errors.append(f"{_pointer(*path, 'variants')}: expected at least one precision variant")
+        return
+
+    variant_statuses: list[str] = []
+    for precision_name, variant in variants.items():
+        variant_path = (*path, "variants", precision_name)
+        if precision_name not in PRECISIONS:
+            errors.append(f"{_pointer(*variant_path)}: expected one of {sorted(PRECISIONS)}")
+            continue
+        _validate_item(
+            "pretrain_fsdp",
+            variant,
+            errors,
+            path=variant_path,
+            model_revision=model_revision,
+        )
+        if isinstance(variant, Mapping):
+            if variant.get("precision") != precision_name:
+                errors.append(f"{_pointer(*variant_path, 'precision')}: must match the variant key")
+            variant_status = variant.get("status")
+            if isinstance(variant_status, str) and variant_status in {"verified", "unverified"}:
+                variant_statuses.append(variant_status)
+
+    expected_status = (
+        "verified"
+        if len(variant_statuses) == len(variants) and all(value == "verified" for value in variant_statuses)
+        else "unverified"
+    )
+    if status in {"verified", "unverified"} and status != expected_status:
+        errors.append(f"{_pointer(*path, 'status')}: must be {expected_status} to summarize the precision variants")
+
+
 def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[str, ...], str]]:
     if isinstance(value, Mapping):
         for key, child in value.items():
@@ -1668,13 +1747,22 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
                 variants = _hardware_variants(items[name], item_name=name, errors=errors)
                 hardware_groups[name] = variants
                 for hardware, item in variants.items():
-                    _validate_item(
-                        name,
-                        item,
-                        errors,
-                        path=("items", name, hardware),
-                        model_revision=model_revision,
-                    )
+                    item_path = ("items", name, hardware)
+                    if name == "pretrain_fsdp" and "variants" in item:
+                        _validate_fsdp_variant_group(
+                            item,
+                            path=item_path,
+                            model_revision=model_revision,
+                            errors=errors,
+                        )
+                    else:
+                        _validate_item(
+                            name,
+                            item,
+                            errors,
+                            path=item_path,
+                            model_revision=model_revision,
+                        )
             else:
                 _validate_item(
                     name,

@@ -26,12 +26,13 @@ verification_index:
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     GB200:
-      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [sft, sft_export_inference, sft_long_context, peft]
+      unverified: [pretrain, checkpoint_resume]
   performance:
     H100: verified
     GB200: verified
   fsdp:
-    GB200: verified
+    GB200: unverified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
   hf_revision: PUBLIC_HF_REVISION_PENDING
@@ -39,7 +40,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidian/nemo:26.08.rc2
-  bridge_commit: 63d62ddd4566fefc732b32ef1a6843f6fe07519b  # pragma: allowlist secret
+  bridge_commit: 8e1ad8a52217dac1e05681c6492a6d6029136cb2  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -149,13 +150,14 @@ items:
       precision: bf16
       enabled_features:
         moe_dispatcher: hybridep
+        context_parallel_size: 2
         cuda_graph:
           implementation: transformer_engine
-          scopes: [attn, mamba]
+          scopes: [mamba]
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe nemotron_3_5_nano_pretrain_config
-        --mode pretrain --dataset megatron-indexed --max_steps 20
+        --mode pretrain --dataset megatron-indexed --seq_length 8192 --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3.5-nano-h100/rp2
@@ -165,24 +167,24 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-h100/pretrain-reference
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-25
+      last_verified: 2026-07-27
       metrics:
-        initial_loss: 12.18979
-        final_loss: 7.258390
-        last_10_steps_step_time_ms_avg: 32742.980
-        last_10_steps_model_tflops_per_gpu_avg: 219.110
-        peak_allocated_memory_gib: 68.29
-        peak_reserved_memory_gib: 73.874
+        initial_loss: 12.18940
+        final_loss: 7.243980
+        last_10_steps_step_time_ms_avg: 27779.190
+        last_10_steps_model_tflops_per_gpu_avg: 199.310
+        peak_allocated_memory_gib: 68.547
+        peak_reserved_memory_gib: 73.908
       expected_result: >
-        On two complete eight-H100 nodes, the real-data RP2 run completes
-        exactly 20 finite-loss optimizer steps with natural routing and finite
-        LM/MTP-1/MTP-2 losses. LM loss is 12.18979 -> 7.258390, steps 11-20
-        average 32,742.980 ms / 219.110 TFLOP/s/GPU, no iteration is skipped or
-        NaN, and complete 20-file, 430-GiB checkpoints are written at steps 10
-        and 20.
+        On two complete eight-H100 nodes, the real-data RP2 CP2/p2p run
+        completes exactly 20 sequence-length-8,192, GBS/MBS 384/1 optimizer
+        steps with natural routing and finite LM/MTP-1/MTP-2 losses. LM loss is
+        12.18940 -> 7.243980, steps 11-20 average 27,779.190 ms / 199.310
+        TFLOP/s/GPU, no iteration is skipped or NaN, and complete 20-file,
+        430-GiB checkpoints are written at steps 10 and 20.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         moe_dispatcher: hybridep
@@ -192,8 +194,8 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --additional-slurm-params segment=2
-        --recipe nemotron_3_5_nano_pretrain_4k_config
-        --mode pretrain --dataset megatron-indexed --max_steps 20
+        --recipe nemotron_3_5_nano_pretrain_8k_config
+        --mode pretrain --dataset megatron-indexed --seq_length 8192 --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
@@ -203,58 +205,88 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/pretrain-reference
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-25
+      last_verified: null
       metrics:
-        initial_loss: 12.17388
-        final_loss: 7.125405
-        last_10_steps_step_time_ms_avg: 13362.640
-        last_10_steps_model_tflops_per_gpu_avg: 536.450
-        peak_allocated_memory_gib: 130.12
-        peak_reserved_memory_gib: 137.39
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
-        the sequence-length-4,096, GBS/MBS 512/2 real-data RP2 run completes
-        exactly 20 finite-loss optimizer steps with natural routing and finite
-        LM/MTP-1/MTP-2 losses. LM loss is 12.17388 -> 7.125405, steps 11-20
-        average 13,362.640 ms / 536.450 TFLOP/s/GPU, no iteration is skipped or
-        NaN, and complete checkpoints are written at steps 10 and 20. This
-        result should not be compared with pretrain.H100, which uses sequence
-        length 8,192 and GBS/MBS 1024/1.
+        the sequence-length-8,192, GBS/MBS 384/2 real-data RP2 run must complete
+        exactly 20 finite-loss optimizer steps with natural routing, finite
+        LM/MTP-1/MTP-2 losses, no skipped or NaN iterations, and complete
+        checkpoints at steps 10 and 20. Metrics remain pending.
 
   pretrain_fsdp:
     GB200:
-      status: verified
-      precision: fp8_mx
-      bridge_commit: 968ab25dd0e8b76801e757ee9976d9806af9c11a  # pragma: allowlist secret
-      enabled_features:
-        moe_dispatcher: hybridep
-        megatron_fsdp: optim_grads_params
-      command: >
-        ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
-        --additional-slurm-params segment=2
-        --recipe nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config
-        --mode pretrain --max_steps 20
-      last_verified: 2026-07-24
-      metrics:
-        initial_loss: 12.19034
-        final_loss: 3.913218
-        last_10_steps_step_time_ms_avg: 13917.000
-        last_10_steps_model_tflops_per_gpu_avg: 795.390
-        peak_allocated_memory_gib: 169.54
-        peak_reserved_memory_gib: 173.86
-      expected_result: >
-        On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
-        the sequence-length-8,192 MXFP8 FSDP recipe completes exactly 20
-        finite-loss optimizer steps with GBS/MBS 384/3, active MTP-1 and MTP-2
-        losses, and no skipped or NaN iterations. LM loss is 12.19034 ->
-        3.913218, and steps 11-20 average 13,917.000 ms / 795.390
-        TFLOP/s/GPU with 169.54 GiB peak allocated and 173.86 GiB peak reserved
-        memory. This result should not be compared with pretrain.GB200 or
-        pretrain_performance.GB200. Functional pretrain uses BF16 real RP2 at
-        4,096 tokens with GBS/MBS 512/2, natural routing, and CUDA graphs; the
-        performance leaf uses BF16 mock data with GBS/MBS 512/2 and CUDA
-        graphs. This FSDP leaf uses MXFP8 mock data at 8,192 tokens with GBS/MBS
-        384/3, forced routing, and no CUDA graphs.
+      status: unverified
+      variants:
+        bf16:
+          status: unverified
+          precision: bf16
+          enabled_features:
+            moe_dispatcher: hybridep
+            megatron_fsdp: optim_grads_params
+          command: >
+            ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+            --additional-slurm-params segment=2
+            --recipe nemotron_3_5_nano_pretrain_8k_fsdp_config
+            --mode pretrain --dataset megatron-indexed --seq_length 8192
+            --max_steps 20 --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
+            'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
+            dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
+            rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=20
+            validation.eval_iters=0 validation.eval_interval=0
+            model.moe_router_force_load_balancing=false
+            checkpoint.load=null checkpoint.save=null
+            logger.log_interval=1 logger.log_throughput=true
+            logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
+          last_verified: null
+          metrics:
+            initial_loss: null
+            final_loss: null
+            last_10_steps_step_time_ms_avg: null
+            last_10_steps_model_tflops_per_gpu_avg: null
+            peak_allocated_memory_gib: null
+            peak_reserved_memory_gib: null
+          expected_result: >
+            On two complete four-GPU GB200 nodes in one segment-2 NVLink
+            domain, the sequence-length-8,192, GBS/MBS 384/2 BF16 real-data
+            RP2 FSDP run must complete exactly 20 finite-loss optimizer steps
+            with natural routing, active MTP-1/MTP-2 losses, and no skipped or
+            NaN iterations. Metrics remain pending.
+
+        fp8_mx:
+          status: verified
+          precision: fp8_mx
+          bridge_commit: 968ab25dd0e8b76801e757ee9976d9806af9c11a  # pragma: allowlist secret
+          enabled_features:
+            moe_dispatcher: hybridep
+            megatron_fsdp: optim_grads_params
+          command: >
+            ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
+            --additional-slurm-params segment=2
+            --recipe nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config
+            --mode pretrain --max_steps 20
+          last_verified: 2026-07-24
+          metrics:
+            initial_loss: 12.19034
+            final_loss: 3.913218
+            last_10_steps_step_time_ms_avg: 13917.000
+            last_10_steps_model_tflops_per_gpu_avg: 795.390
+            peak_allocated_memory_gib: 169.54
+            peak_reserved_memory_gib: 173.86
+          expected_result: >
+            On two complete four-GPU GB200 nodes in one segment-2 NVLink
+            domain, the sequence-length-8,192 MXFP8 FSDP recipe completes
+            exactly 20 finite-loss optimizer steps with GBS/MBS 384/3, active
+            MTP-1 and MTP-2 losses, and no skipped or NaN iterations. LM loss
+            is 12.19034 -> 3.913218, and steps 11-20 average 13,917.000 ms /
+            795.390 TFLOP/s/GPU with 169.54 GiB peak allocated and 173.86 GiB
+            peak reserved memory. This run must not be compared with the BF16
+            real-data pretrain or BF16 FSDP runs: it uses MXFP8, mock data,
+            forced routing, GBS/MBS 384/3, and no CUDA graphs.
 
   sft:
     H100:
@@ -538,7 +570,7 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe nemotron_3_5_nano_pretrain_config
-        --mode pretrain --dataset megatron-indexed --max_steps 20
+        --mode pretrain --dataset megatron-indexed --seq_length 8192 --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3.5-nano-h100/rp2
@@ -549,12 +581,12 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-h100/pretrain-resumed
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-25
+      last_verified: 2026-07-27
       metrics:
-        initial_loss: 8.010843
-        final_loss: 7.257906
-        last_10_steps_step_time_ms_avg: 51295.300
-        last_10_steps_model_tflops_per_gpu_avg: 195.730
+        initial_loss: 7.947398
+        final_loss: 7.245443
+        last_10_steps_step_time_ms_avg: 47748.830
+        last_10_steps_model_tflops_per_gpu_avg: 174.790
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
@@ -565,19 +597,20 @@ items:
         The continuation restores optimizer, scheduler, data-order, and RNG
         state from step 10, begins at step 11, finishes at step 20 in a distinct
         output root, and writes a complete step-20 checkpoint. Resumed losses
-        8.010843 and 7.257906 match uninterrupted losses 8.010843 and 7.258390
-        at steps 11 and 20 within the declared tolerance, with finite LM/MTP-1/
-        MTP-2 losses and no skipped or NaN iterations.
+        7.947398 and 7.245443 match uninterrupted losses 7.947401 and 7.243980
+        at steps 11 and 20 within the declared tolerance. All 30 shared
+        LM/MTP-1/MTP-2 values pass with a maximum relative difference of
+        0.0516%, with no skipped or NaN iterations.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --additional-slurm-params segment=2
-        --recipe nemotron_3_5_nano_pretrain_4k_config
-        --mode pretrain --dataset megatron-indexed --max_steps 20
+        --recipe nemotron_3_5_nano_pretrain_8k_config
+        --mode pretrain --dataset megatron-indexed --seq_length 8192 --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
@@ -588,25 +621,24 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/pretrain-resumed
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-25
+      last_verified: null
       metrics:
-        initial_loss: 7.619547
-        final_loss: 7.124759
-        last_10_steps_step_time_ms_avg: 26490.740
-        last_10_steps_model_tflops_per_gpu_avg: 451.130
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: true
+        sentinels_match: null
       expected_result: >
-        The continuation restores optimizer, scheduler, data-order, and RNG
-        state from step 10, begins at step 11, finishes at step 20 in a distinct
-        output root, and writes a complete step-20 checkpoint. Resumed losses
-        7.619547 and 7.124759 match uninterrupted losses 7.619558 and 7.125405
-        at steps 11 and 20 within the declared tolerance, with finite LM/MTP-1/
-        MTP-2 losses and no skipped or NaN iterations.
+        The continuation must restore optimizer, scheduler, data-order, and RNG
+        state from the matched 8K step-10 reference, begin at step 11, finish at
+        step 20 in a distinct output root, and write a complete step-20
+        checkpoint. Every shared LM/MTP-1/MTP-2 value must pass the declared
+        tolerance with no skipped or NaN iterations. Metrics remain pending.
 
   pretrain_performance:
     H100:

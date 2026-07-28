@@ -140,6 +140,87 @@ def test_verified_fsdp_metrics_are_valid():
     assert errors == []
 
 
+def test_fsdp_hardware_leaf_accepts_multiple_precision_variants():
+    module = _load_validator()
+    errors = []
+    variant = {
+        "status": "verified",
+        "precision": "bf16",
+        "command": "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --max_steps 20",
+        "last_verified": "2026-07-27",
+        "expected_result": "The run completes with finite losses.",
+        "enabled_features": {"megatron_fsdp": "optim_grads_params"},
+        "metrics": _fsdp_metrics(),
+    }
+
+    module._validate_fsdp_variant_group(
+        {
+            "status": "verified",
+            "variants": {
+                "bf16": variant,
+                "fp8_mx": {**variant, "precision": "fp8_mx"},
+            },
+        },
+        path=("items", "pretrain_fsdp", "GB200"),
+        model_revision=None,
+        errors=errors,
+    )
+
+    assert errors == []
+
+
+def test_fsdp_variant_group_status_summarizes_all_variants():
+    module = _load_validator()
+    errors = []
+    variant = {
+        "status": "unverified",
+        "precision": "bf16",
+        "command": None,
+        "last_verified": None,
+        "expected_result": None,
+        "enabled_features": {"megatron_fsdp": "optim_grads_params"},
+        "metrics": {},
+    }
+
+    module._validate_fsdp_variant_group(
+        {
+            "status": "verified",
+            "variants": {"bf16": variant},
+        },
+        path=("items", "pretrain_fsdp", "GB200"),
+        model_revision=None,
+        errors=errors,
+    )
+
+    assert "/items/pretrain_fsdp/GB200/status: must be unverified to summarize the precision variants" in errors
+
+
+def test_fsdp_variant_precision_matches_mapping_key():
+    module = _load_validator()
+    errors = []
+    variant = {
+        "status": "verified",
+        "precision": "fp8_mx",
+        "command": "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --max_steps 20",
+        "last_verified": "2026-07-27",
+        "expected_result": "The run completes with finite losses.",
+        "enabled_features": {"megatron_fsdp": "optim_grads_params"},
+        "metrics": _fsdp_metrics(),
+    }
+
+    module._validate_fsdp_variant_group(
+        {
+            "status": "verified",
+            "variants": {"bf16": variant},
+        },
+        path=("items", "pretrain_fsdp", "GB200"),
+        model_revision=None,
+        errors=errors,
+    )
+
+    assert "/items/pretrain_fsdp/GB200/variants/bf16/precision: must match the variant key" in errors
+
+
 def test_performance_comparison_payload_is_not_an_item_key():
     module = _load_validator()
     errors = []

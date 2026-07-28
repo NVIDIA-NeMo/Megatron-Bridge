@@ -78,6 +78,31 @@ item; agents can derive valid comparisons from the standalone commands,
 resolved recipes, and raw metrics. The FSDP item does not claim checkpoint
 save/load unless a separate functional item records that evidence.
 
+When the same hardware has multiple first-class FSDP runs with different
+precisions or convergence contracts, use one aggregate hardware container and
+key its standalone leaves by precision:
+
+```yaml
+pretrain_fsdp:
+  GB200:
+    status: verified
+    variants:
+      bf16:
+        status: verified
+        precision: bf16
+        # complete standalone leaf
+      fp8_mx:
+        status: verified
+        precision: fp8_mx
+        # complete standalone leaf
+```
+
+The container status is `verified` only when every precision variant is
+verified; otherwise it is `unverified`. Keep the ordinary direct hardware-leaf
+shape when there is only one FSDP run. A precision variant repeats its
+precision as a scalar so agents do not have to infer workload facts from a
+mapping key.
+
 A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
 performance recipe exists for that hardware. Its item status states whether
 the card's benchmark run has been verified; an `unverified` leaf still records
@@ -192,6 +217,9 @@ When an FSDP recipe exists, mirror only its concrete leaves:
     GB200: verified
 ```
 
+For a multi-variant FSDP hardware container, this scalar mirrors the aggregate
+container status rather than duplicating the per-precision inventory.
+
 Do not add prose comparisons, control payloads, computed deltas, or relative
 speedups to performance leaves. Agents can compare standalone runs
 automatically after resolving their recipes. The only exception is a concise
@@ -219,6 +247,10 @@ support:
 Use `bf16` for BF16. Training items may instead use `fp8_mx` for MXFP8 or
 `nvfp4` for NVFP4. Keep MXFP8 and NVFP4 training-only, and do not list either
 until that exact item has completed in that mode.
+
+The outer hardware container of a multi-variant `pretrain_fsdp` item is the
+only exception: each variant owns the scalar precision and the container owns
+only aggregate `status` plus `variants`.
 
 ### 3. Use the public Slurm launchers
 
@@ -619,7 +651,7 @@ For every verified training item, record:
 
 Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
-leaves.
+leaves, including every verified precision variant.
 
 Record raw metrics for each run only. Do not store comparison payloads,
 throughput or memory deltas, speedups, or prose ranking one performance run
@@ -686,12 +718,15 @@ an item verified merely to make validation pass.
 - Keep all twelve core inventory items and use only the four statuses. Include
   `pretrain_performance` only when the exact variant has a canonical public
   performance recipe, and `pretrain_fsdp` only when an exact FSDP performance
-  recipe has a completed standalone verification run.
+  recipe has a completed standalone verification run. Use precision-keyed
+  variants under one hardware container when multiple FSDP runs exist for the
+  same hardware, and make the container status summarize every variant.
 - Start the summary with the exact untuned performance disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
 - Put the verified workload precision on every direct item or hardware leaf;
   use `fp8_mx` and `nvfp4` only for training leaves that ran in those modes.
+  For a multi-variant FSDP container, put precision on each variant.
 - Pin a public immutable HF revision, minimum Transformers version, public base
   container, and exact Bridge verification commit; use an item override only
   for a verified workload run from a different clean commit.
