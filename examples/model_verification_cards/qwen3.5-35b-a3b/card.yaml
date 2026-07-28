@@ -210,68 +210,17 @@ items:
         last_10_steps_step_time_ms_avg: 31751.010
         last_10_steps_model_tflops_per_gpu_avg: 185.560
       expected_result: >
-        On two nodes with 16x H100, the exact mock-data performance recipe must
-        complete exactly 50 steps with finite losses, no skipped or NaN
-        iterations, and all four metrics recorded. Over steps 41-50, the run
-        must average at least 287.305 model TFLOP/s/GPU. A clean 50-step
-        attempt on 2026-07-27 completed with finite losses and gradients and
-        zero skipped or NaN iterations, but steps 41-50 averaged 31.751010
-        seconds and 185.560 model TFLOP/s/GPU, 35.41% below the gate. The
-        completion and stability requirements passed, but the throughput
-        requirement did not. A later exact two-node, eight-step compatibility
-        probe used the public command with no model overrides. The pinned
-        MCore path averaged 23.340825 seconds / 252.375 model TFLOP/s/GPU over
-        steps 5-8; candidate MCore aed727d4f14202dd8dc780044f2ab046a21f82c6
-        averaged 22.606775 seconds / 260.575 model TFLOP/s/GPU. Both completed
-        with finite losses, zero skipped or NaN iterations, and successful
-        process exits. A same-allocation comparison then measured the
-        reviewable Bridge runtime at 22.4990 seconds and the development
-        runtime at 22.4832 seconds over steps 5-8, a 0.070% difference. This
-        closes the Bridge implementation gap to measurement noise; the
-        remaining deficit is an optimization gap. A subsequent exact
-        same-allocation short A/B retained one attributable improvement:
-        fusing the GDN output RMSNorm with its SiLU gate reduced the steps 5-8
-        mean from 23.4425 seconds / 251.30 model TFLOP/s/GPU to 23.1225 seconds
-        / 254.75 model TFLOP/s/GPU, a 1.365% step-time and 1.373% throughput
-        gain. Both sides exited 0:0 without OOM, NCCL, or CUDA errors, and a
-        real-shape BF16 primitive probe preserved outputs and gradients at
-        cosine >=0.999994576. A second same-allocation short run on a
-        normal-speed node pair put the retained fusion at 22.152850 seconds /
-        265.925 model TFLOP/s/GPU over steps 5-8, with finite losses, zero
-        skipped or NaN iterations, and exit 0:0. Enabling global TE
-        fused_residual_rmsnorm did not stack: it regressed to 22.190525 seconds
-        / 265.450 model TFLOP/s/GPU and was rejected. The retained short-run
-        configuration also retained forward/backward LayerNorm SM margins of
-        20. A bracketed 8-step A/B/A changed only the backward margin to 16:
-        steps 5-8 averaged 22.199950, 22.180425, and 22.178600 seconds for
-        control, candidate, and repeated control. The candidate was 0.040%
-        faster than the two-control mean, smaller than the 0.096% control
-        drift, so it was rejected as noise. All three runs had finite losses,
-        zero skipped or NaN iterations, and exit 0:0. A three-step feasibility
-        variant then combined microbatch size 2 with FP8 activation-function
-        input storage. It reached about 80.7-81.0 GiB on every GPU, completed
-        no training iteration, and timed out after 15 minutes with no loss or
-        throughput sample, so that larger-microbatch path was rejected. The
-        retained short-run result remains 7.442% below the gate and needs
-        another 8.040% throughput improvement. The exact 50-step gate has not
-        been rerun on the current PR runtime, and no result at or above
-        287.305 exists, so this item remains unverified. The historical
-        287.305-TFLOP/s/GPU success belongs to the separate Qwen3-30B-A3B
-        model card; it is a cross-model target here, not a previously
-        reproduced Qwen3.5 result. The FLOPs implementation was audited and
-        already includes Qwen3.5 routed/shared experts, GDN, MTP layer work,
-        MTP projection/norm work, and both logits, so the remaining gap is not
-        a missing FLOPs-accounting correction. An exact two-node follow-up made
-        shared-expert and combined EP overlap finite and reduced the matched
-        EP-overlap control from 45.48935 to 23.3590 seconds, but remained
-        slower than the retained no-EP-overlap winner. A bracketed DDP overlap
-        follow-up used 22.25945/22.23195-second controls: gradient-only averaged
-        22.25170 seconds and gradient-plus-parameter overlap averaged 22.31050
-        seconds, both noise-level or negative. Its microbatch-two plus
-        selective-GDN-recompute plus FP8-activation-store case completed finite
-        steps but averaged 39.89815 seconds / 147.65 model TFLOP/s/GPU. A final
-        follow-up measured a 23.02380-second shared-plus-EP control; selective
-        GDN recompute regressed to 25.29230 seconds, delayed wgrad OOMed, and
-        delayed wgrad plus GDN recompute still OOMed on all 16 ranks. None of
-        these candidates changes the unverified status or justifies another
-        50-step acceptance run.
+        A successful 2026-07-27 run completed all 50 steps on 16 H100 GPUs
+        with finite losses and gradients, skipped=0, NaN=0, and exit 0:0. It
+        recorded loss 12.82963 to 0.008182429 and averaged 31.751010 seconds /
+        185.560 model TFLOP/s/GPU over steps 41-50. A later exact, no-override
+        eight-step run also completed successfully: MCore
+        aed727d4f14202dd8dc780044f2ab046a21f82c6 reached 22.606775 seconds /
+        260.575 model TFLOP/s/GPU over steps 5-8, and the retained fused-GDN
+        configuration later reached 22.152850 seconds / 265.925 model
+        TFLOP/s/GPU with finite losses, skipped=0, NaN=0, and exit 0:0.
+        Acceptance requires at least 287.305 model TFLOP/s/GPU over steps
+        41-50; no Qwen3.5 run has met it, so this item remains unverified. That
+        target belongs to the separate Qwen3-30B-A3B card, and audited Qwen3.5
+        FLOPs accounting already includes routed/shared experts, GDN, MTP, and
+        both logits.
