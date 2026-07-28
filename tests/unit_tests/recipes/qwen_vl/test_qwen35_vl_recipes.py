@@ -458,7 +458,7 @@ def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyP
 
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.calculate_per_token_loss is True
