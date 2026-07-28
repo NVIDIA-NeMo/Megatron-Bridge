@@ -69,7 +69,7 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
-    cfg.model.add_sound_encoder = False
+    cfg.model.has_sound = False
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=4096,
         preprocessing=ChatSFTPreprocessingConfig(),
@@ -102,7 +102,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
-    cfg.model.add_sound_encoder = False
+    cfg.model.has_sound = False
     cfg.peft = LoRA(
         target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"],
         dim=16,

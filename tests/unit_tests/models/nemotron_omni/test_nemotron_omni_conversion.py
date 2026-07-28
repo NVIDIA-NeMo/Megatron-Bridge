@@ -137,8 +137,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
 
     assert isinstance(provider, NemotronOmniModelProvider)
     assert provider.nemotron_omni_contract == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
-    assert not hasattr(provider, "has_sound")
-    assert provider.add_sound_encoder is True
+    assert provider.has_sound is True
     assert provider.language_model_type == "nemotron6-moe"
     assert provider.hidden_size == 256
     assert provider.ffn_hidden_size == 512
@@ -163,18 +162,47 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.temporal_ckpt_compat is True
     serialized = ConfigContainer._convert_value_to_dict(provider)
     assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
-    assert "has_sound" not in serialized
-    assert serialized["add_sound_encoder"] is True
+    assert serialized["has_sound"] is True
+    assert "add_sound_encoder" not in serialized
 
 
-def test_nemotron_omni_provider_bridge_requires_sound_config():
+def test_nemotron_omni_provider_bridge_omits_sound_when_config_is_absent():
     hf_config = _mock_omni_hf_config()
     del hf_config.sound_config
     hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = hf_config
 
-    with pytest.raises(ValueError, match="requires sound_config"):
-        NemotronOmniBridge().provider_bridge(hf_pretrained)
+    provider = NemotronOmniBridge().provider_bridge(hf_pretrained)
+
+    assert provider.has_sound is False
+    assert provider.sound_config is None
+    assert provider.sound_context_token_id == 0
+
+
+def test_nemotron_omni_hf_config_export_preserves_sound_capability():
+    provider = NemotronOmniModelProvider(
+        has_sound=True,
+        sound_context_token_id=27,
+        sound_config={"hidden_size": 128},
+    )
+
+    hf_config = NemotronOmniBridge.megatron_to_hf_config(provider)
+
+    assert hf_config["sound_config"] == {"hidden_size": 128}
+    assert hf_config["sound_context_token_id"] == 27
+
+
+def test_nemotron_omni_hf_config_export_omits_disabled_sound_capability():
+    provider = NemotronOmniModelProvider(
+        has_sound=False,
+        sound_context_token_id=27,
+        sound_config={"hidden_size": 128},
+    )
+
+    hf_config = NemotronOmniBridge.megatron_to_hf_config(provider)
+
+    assert hf_config["sound_config"] is None
+    assert hf_config["sound_context_token_id"] is None
 
 
 def test_nemotron_omni_provider_rejects_static_resolution():
@@ -194,14 +222,19 @@ def test_nemotron_omni_provider_rejects_nonpositive_image_token_index(image_toke
 
 
 def test_nemotron_omni_provider_rejects_nonpositive_sound_token_index():
-    provider = NemotronOmniModelProvider(image_token_index=18, sound_context_token_id=0, sound_config={})
+    provider = NemotronOmniModelProvider(
+        image_token_index=18,
+        has_sound=True,
+        sound_context_token_id=0,
+        sound_config={},
+    )
 
     with pytest.raises(ValueError, match="requires a positive sound_context_token_id"):
         provider.finalize()
 
 
-def test_nemotron_omni_provider_requires_sound_config():
-    provider = NemotronOmniModelProvider(image_token_index=18, sound_context_token_id=27)
+def test_nemotron_omni_provider_requires_sound_config_when_enabled():
+    provider = NemotronOmniModelProvider(image_token_index=18, has_sound=True, sound_context_token_id=27)
 
     with pytest.raises(ValueError, match="requires sound_config"):
         provider.finalize()
@@ -227,12 +260,28 @@ def test_canonical_provider_builds_dedicated_model(monkeypatch):
 
 
 def test_nemotron_omni_provider_can_omit_sound_modules():
-    provider = NemotronOmniModelProvider(add_sound_encoder=False)
+    provider = NemotronOmniModelProvider(has_sound=False)
 
     sound_model, sound_projection = provider._build_sound_modules(None, None, add_encoder=True)
 
+    assert provider.has_sound is False
     assert sound_model is None
     assert sound_projection is None
+
+
+def test_nemotron_omni_provider_builds_sound_modules_when_enabled(monkeypatch):
+    provider = NemotronOmniModelProvider(has_sound=True)
+    expected_sound_model = object()
+    expected_sound_projection = object()
+    monkeypatch.setattr(provider, "_build_sound_encoder", lambda: expected_sound_model)
+    monkeypatch.setattr(provider, "_build_sound_projection_config", lambda _: object())
+    monkeypatch.setattr(provider_module, "get_language_mlp_submodules", lambda _: object())
+    monkeypatch.setattr(provider_module, "MultimodalProjector", lambda **_: expected_sound_projection)
+
+    sound_model, sound_projection = provider._build_sound_modules(None, None, add_encoder=True)
+
+    assert sound_model is expected_sound_model
+    assert sound_projection is expected_sound_projection
 
 
 def test_nemotron_omni_vision_projection_uses_squared_relu():

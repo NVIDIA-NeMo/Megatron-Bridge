@@ -157,8 +157,9 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     # accepts a different 4D tensor contract and is not an Omni configuration.
     dynamic_resolution: Literal[True] = True
 
-    # Disabling the sound encoder also omits its dependent projector.
-    add_sound_encoder: bool = True
+    # This is the single source of truth for sound checkpoint capability:
+    # disabling it omits both the encoder and its dependent projector.
+    has_sound: bool = False
     sound_model_type: str = "parakeet"
     sound_hidden_size: int = 1024
     sound_projection_hidden_size: int = 4096
@@ -185,13 +186,13 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
                 "Nemotron Omni requires a positive image_token_index from the checkpoint configuration; "
                 f"got {self.image_token_index}. Construct the provider through AutoBridge or set it explicitly."
             )
-        if self.sound_context_token_id <= 0:
+        if self.has_sound and self.sound_context_token_id <= 0:
             raise ValueError(
-                "Nemotron Omni requires a positive sound_context_token_id from the checkpoint "
+                "Sound-enabled Nemotron Omni requires a positive sound_context_token_id from the checkpoint "
                 f"configuration; got {self.sound_context_token_id}."
             )
-        if self.sound_config is None:
-            raise ValueError("Nemotron Omni requires sound_config from the checkpoint configuration.")
+        if self.has_sound and self.sound_config is None:
+            raise ValueError("Sound-enabled Nemotron Omni requires sound_config from the checkpoint configuration.")
 
     def finalize(self) -> None:
         """Finalize a dynamic-resolution Nemotron Omni provider."""
@@ -280,7 +281,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
 
     def _build_sound_modules(self, language_cfg, language_spec, *, add_encoder: bool):
         """Build optional sound modules on the encoder pipeline stage."""
-        if not (self.add_sound_encoder and add_encoder):
+        if not (self.has_sound and add_encoder):
             return None, None
 
         sound_model = self._build_sound_encoder()

@@ -118,7 +118,8 @@ class NemotronOmniBridge(NemotronVLBridge):
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
         Always returns an Omni provider (MoE language model + RADIO ViT
-        vision + Parakeet sound encoder).
+        vision + optional Parakeet sound encoder). The presence of
+        ``sound_config`` is the Hugging Face checkpoint's sound capability.
         """
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
@@ -132,13 +133,13 @@ class NemotronOmniBridge(NemotronVLBridge):
             provider_kwargs["vision_proj_ffn_hidden_size"] = hf_config.projector_hidden_size
 
         sc = getattr(hf_config, "sound_config", None)
-        if sc is None:
-            raise ValueError("Nemotron Omni requires sound_config in the Hugging Face checkpoint configuration.")
-        provider_kwargs["sound_model_type"] = getattr(sc, "model_type", "parakeet")
-        provider_kwargs["sound_hidden_size"] = sc.hidden_size
-        provider_kwargs["sound_projection_hidden_size"] = sc.projection_hidden_size
-        provider_kwargs["sound_context_token_id"] = hf_config.sound_context_token_id
-        provider_kwargs["sound_config"] = sc.to_dict() if hasattr(sc, "to_dict") else dict(sc)
+        provider_kwargs["has_sound"] = sc is not None
+        if sc is not None:
+            provider_kwargs["sound_model_type"] = getattr(sc, "model_type", "parakeet")
+            provider_kwargs["sound_hidden_size"] = sc.hidden_size
+            provider_kwargs["sound_projection_hidden_size"] = sc.projection_hidden_size
+            provider_kwargs["sound_context_token_id"] = hf_config.sound_context_token_id
+            provider_kwargs["sound_config"] = sc.to_dict() if hasattr(sc, "to_dict") else dict(sc)
 
         provider_kwargs["language_model_type"] = "nemotron6-moe"
         provider_kwargs["image_token_index"] = getattr(hf_config, "img_context_token_id", 18)
@@ -170,6 +171,20 @@ class NemotronOmniBridge(NemotronVLBridge):
         provider = NemotronOmniModelProvider(**provider_kwargs)
         provider.mtp_hybrid_override_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Export sound capability consistently with model construction."""
+        hf_config = super().megatron_to_hf_config(provider)
+        if provider.has_sound:
+            hf_config["sound_config"] = provider.sound_config
+            hf_config["sound_context_token_id"] = provider.sound_context_token_id
+        else:
+            # Config synthesis fills missing keys from the reference HF config.
+            # Keep an explicit None so an image-text checkpoint stays sound-free.
+            hf_config["sound_config"] = None
+            hf_config["sound_context_token_id"] = None
+        return hf_config
 
     # ------------------------------------------------------------------
     # Parameter mapping
