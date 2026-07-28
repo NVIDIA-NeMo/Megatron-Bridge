@@ -687,8 +687,8 @@ def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
     assert perf_base is legacy_base
 
 
-def test_qwen35_h100_perf_recipe_configures_available_flash_qla_fields():
-    """Test that the recipe selects FlashQLA without creating fields on old MCore."""
+def test_qwen35_h100_perf_recipe_requires_flash_qla_mcore_fields():
+    """Test that the recipe selects FlashQLA and rejects an incompatible MCore."""
     from types import SimpleNamespace
 
     from megatron.bridge.perf_recipes.qwen.h100.qwen35 import (
@@ -703,10 +703,8 @@ def test_qwen35_h100_perf_recipe_configures_available_flash_qla_fields():
     assert new_mcore_model.gdn_pre_gated_delta_rule_fusion is True
     assert new_mcore_model.gated_delta_rule_backend == "flash_qla"
 
-    pinned_mcore_model = SimpleNamespace()
-    _configure_flash_qla_model_fields(pinned_mcore_model)
-    assert not hasattr(pinned_mcore_model, "gdn_pre_gated_delta_rule_fusion")
-    assert not hasattr(pinned_mcore_model, "gated_delta_rule_backend")
+    with pytest.raises(RuntimeError, match="requires the pinned MCore GDN performance fields"):
+        _configure_flash_qla_model_fields(SimpleNamespace())
 
 
 def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
@@ -744,6 +742,8 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.model.cuda_graph_impl == "none"
     assert cuda_graph_module_names(cfg.model) == []
     assert cfg.model.transformer_layer_spec is qwen35_h100_transformer_block_spec
+    assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
+    assert cfg.model.gated_delta_rule_backend == "flash_qla"
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 16

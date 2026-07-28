@@ -33,11 +33,19 @@ _QWEN35_35B_A3B_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  # pragma:
 
 
 def _configure_flash_qla_model_fields(model: object) -> None:
-    """Select the measured FlashQLA path when the pinned MCore exposes its fields."""
-    if hasattr(model, "gdn_pre_gated_delta_rule_fusion"):
-        setattr(model, "gdn_pre_gated_delta_rule_fusion", True)
-    if hasattr(model, "gated_delta_rule_backend"):
-        setattr(model, "gated_delta_rule_backend", "flash_qla")
+    """Select the measured FlashQLA path and fail closed on an incompatible MCore."""
+    required_fields = (
+        "gdn_pre_gated_delta_rule_fusion",
+        "gated_delta_rule_backend",
+    )
+    missing_fields = [field for field in required_fields if not hasattr(model, field)]
+    if missing_fields:
+        raise RuntimeError(
+            "The Qwen3.5 H100 performance recipe requires the pinned MCore GDN performance fields; "
+            f"missing {', '.join(missing_fields)}."
+        )
+    setattr(model, "gdn_pre_gated_delta_rule_fusion", True)
+    setattr(model, "gated_delta_rule_backend", "flash_qla")
 
 
 def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
