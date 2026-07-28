@@ -133,7 +133,7 @@ class TestNemotron3NanoPretrain:
         assert config.model.moe_permute_fusion is True
         assert config.model.moe_grouped_gemm is True
         assert config.model.cross_entropy_loss_fusion is True
-        assert config.model.cross_entropy_fusion_impl == "native"
+        assert config.model.cross_entropy_fusion_impl == "te"
 
     def test_pretrain_config_optimizer_settings(self):
         """Test optimizer settings for pretrain config."""

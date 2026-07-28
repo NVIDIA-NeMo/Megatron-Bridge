@@ -97,7 +97,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.apply_rope_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.cross_entropy_fusion_impl = "te"
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
