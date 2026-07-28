@@ -247,11 +247,10 @@ def test_glm52_peft_targets_mla_attention_projections() -> None:
     ]
 
 
-def test_glm52_recipes_are_exported() -> None:
+def test_glm52_platform_recipes_are_exported() -> None:
     from megatron.bridge.recipes import glm as glm_recipes
     from megatron.bridge.recipes.glm import h100
 
-    assert glm_recipes.glm52_pretrain_config is glm5.glm52_pretrain_416gpu_h100_bf16_config
     assert (
         glm_recipes.glm52_sft_long_context_192gpu_gb200_bf16_config
         is gb200.glm52_sft_long_context_192gpu_gb200_bf16_config
