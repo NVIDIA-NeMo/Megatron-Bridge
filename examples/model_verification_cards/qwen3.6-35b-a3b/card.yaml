@@ -336,7 +336,6 @@ items:
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-        --additional-slurm-params mem=512G
         --recipe qwen35_vl_35b_a3b_peft_config --mode lora --dataset medpix
         --step-func qwen3_vl_step
         --pretrained_checkpoint
