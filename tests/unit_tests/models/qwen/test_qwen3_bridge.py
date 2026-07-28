@@ -14,6 +14,7 @@
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -23,9 +24,18 @@ from transformers import Qwen2Config, Qwen3ForCausalLM
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
+
+
+@pytest.fixture(autouse=True)
+def _set_bridge_hf_config():
+    """Give explicit mapping tests a small logical Qwen layer count."""
+    previous = Qwen3Bridge.hf_config
+    Qwen3Bridge.hf_config = SimpleNamespace(num_hidden_layers=2)
+    yield
+    Qwen3Bridge.hf_config = previous
 
 
 class TestMegatronQwen3Bridge:
@@ -93,11 +103,11 @@ class TestMegatronQwen3Bridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Check that it returns a GPTModelProvider instance (after refactoring)
-        assert isinstance(result, GPTModelProvider)
+        assert isinstance(result, HybridModelProvider)
 
         # Check basic configuration mapping
-        assert result.num_layers == qwen3_config.num_hidden_layers
+        assert result.num_layers == 2 * qwen3_config.num_hidden_layers
+        assert result.hybrid_layer_pattern == "*-" * qwen3_config.num_hidden_layers
         assert result.hidden_size == qwen3_config.hidden_size
         assert result.num_attention_heads == qwen3_config.num_attention_heads
         assert result.seq_length == qwen3_config.max_position_embeddings
@@ -200,8 +210,7 @@ class TestMegatronQwen3Bridge:
         # Pass model only
         result = bridge.provider_bridge(mock_pretrained_qwen3)
 
-        # Just verify that we got a valid GPTModelProvider
-        assert isinstance(result, GPTModelProvider)
+        assert isinstance(result, HybridModelProvider)
 
     def test_provider_bridge_without_tie_embeddings(self, qwen3_config):
         """Test provider_bridge when tie_word_embeddings is not present."""
@@ -393,7 +402,7 @@ class TestAutoBridgeIntegration:
                     "megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge"
                 ) as mock_get_bridge:
                     mock_bridge = Mock()
-                    mock_provider = Mock(spec=GPTModelProvider)
+                    mock_provider = Mock(spec=HybridModelProvider)
                     mock_bridge.provider_bridge.return_value = mock_provider
                     mock_get_bridge.return_value = mock_bridge
 
@@ -448,6 +457,38 @@ class TestAutoBridgeIntegration:
         assert AutoBridge.supports(non_causal_config) == False
 
 
+class TestQwen3BridgeParameterMapping:
+    """Test parameter mapping functionality in Qwen3Bridge."""
+
+    def test_mapping_registry_has_qwen3_specific_mappings(self):
+        """Test that mapping registry includes Qwen3-specific QK norm mappings."""
+        bridge = Qwen3Bridge()
+        mapping_registry = bridge.mapping_registry()
+
+        mapping = mapping_registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.q_layernorm.weight")
+        assert mapping is not None
+        assert mapping.hf_param == "model.layers.0.self_attn.q_norm.weight"
+
+    def test_qwen3_qk_norm_mapping_difference(self):
+        """Test that Qwen3 bridge includes QK norm mappings not present in Qwen2."""
+        bridge = Qwen3Bridge()
+        mapping_registry = bridge.mapping_registry()
+
+        attention_mapping = mapping_registry.megatron_to_hf_lookup(
+            "decoder.layers.0.self_attention.k_layernorm.weight"
+        )
+        mlp_mapping = mapping_registry.megatron_to_hf_lookup("decoder.layers.1.mlp.linear_fc2.weight")
+        assert attention_mapping.hf_param == "model.layers.0.self_attn.k_norm.weight"
+        assert mlp_mapping.hf_param == "model.layers.0.mlp.down_proj.weight"
+
+    def test_qwen3_no_qkv_bias_mapping(self):
+        """Test that Qwen3 bridge doesn't include QKV bias mappings."""
+        bridge = Qwen3Bridge()
+        mapping_registry = bridge.mapping_registry()
+
+        assert mapping_registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_qkv.bias") is None
+
+
 class TestQwen3BridgeMTPMapping:
     """Tests for MTP (Multi-Token Prediction) weight mappings in Qwen3Bridge.
 
@@ -466,15 +507,15 @@ class TestQwen3BridgeMTPMapping:
         "mtp.layers.0.enorm.weight",
         "mtp.layers.0.hnorm.weight",
         "mtp.layers.0.final_layernorm.weight",
-        "mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight",
-        "mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight",
-        "mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight",
-        "mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight",
+        "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_qkv.layer_norm_weight",
+        "mtp.layers.0.mtp_model_layer.layers.0.self_attention.q_layernorm.weight",
+        "mtp.layers.0.mtp_model_layer.layers.0.self_attention.k_layernorm.weight",
+        "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj.weight",
         # QKVMapping stores a wildcard pattern, not a concrete layer index
-        "mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
-        "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.layer_norm_weight",
-        "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.weight",
-        "mtp.layers.0.mtp_model_layer.mlp.linear_fc2.weight",
+        "mtp.layers.*.mtp_model_layer.layers.0.self_attention.linear_qkv.weight",
+        "mtp.layers.0.mtp_model_layer.layers.1.mlp.linear_fc1.layer_norm_weight",
+        "mtp.layers.0.mtp_model_layer.layers.1.mlp.linear_fc1.weight",
+        "mtp.layers.0.mtp_model_layer.layers.1.mlp.linear_fc2.weight",
     )
 
     def _get_all_megatron_params(self, mapping_registry):
