@@ -320,6 +320,7 @@ class TestDataLoaders:
                 dataset_root="/tmp/dataset",
                 seq_length=512,
                 seed=4321,
+                shuffle=False,
                 num_workers=0,
                 persistent_workers=False,
             )
@@ -355,6 +356,9 @@ class TestDataLoaders:
         assert train_call.kwargs["seed"] == expected_seed
         assert valid_call.kwargs["seed"] == expected_seed
         assert test_call.kwargs["seed"] == expected_seed
+        assert train_call.kwargs["shuffle"] is cfg.dataset.shuffle
+        assert valid_call.kwargs["shuffle"] is cfg.dataset.shuffle
+        assert test_call.kwargs["shuffle"] is cfg.dataset.shuffle
 
     @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size", return_value=1)

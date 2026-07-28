@@ -55,6 +55,7 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
         hf_output_root=str(tmp_path),
         hf_validation_proportion=0.1,
         seed=5678,
+        shuffle=False,
         enable_offline_packing=True,
         offline_packing_specs=specs,
         do_test=False,
@@ -68,6 +69,7 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     assert restored.hf_dataset.dataset_name == "squad"
     assert restored.offline_packing_specs.packed_sequence_size == 128
     assert isinstance(restored.preprocessing, PromptCompletionSFTPreprocessingConfig)
+    assert restored.shuffle is False
     assert "tokenizer" not in serialized
 
 

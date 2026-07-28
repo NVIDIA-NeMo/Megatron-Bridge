@@ -202,6 +202,7 @@ class TestMegatronPretrainingBatchSampler:
         assert sampler.micro_batch_size == 4
         assert sampler._global_batch_size == 16
         assert sampler.data_parallel_size == 2
+        assert sampler.shuffle is True
 
     def test_batch_sampler_length(self):
         """Test length calculation for batch sampler.
@@ -844,6 +845,23 @@ class TestBatchUtilities:
 
 class TestBatchDataloaderIntegration:
     """Integration tests for batch dataloader type."""
+
+    def test_build_batch_dataloader_propagates_shuffle(self):
+        """The loader builder must pass shuffle through to the batch sampler."""
+        dataloader = build_pretraining_data_loader(
+            dataset=list(range(16)),
+            consumed_samples=0,
+            dataloader_type="batch",
+            micro_batch_size=1,
+            num_workers=0,
+            data_sharding=False,
+            global_batch_size=4,
+            seed=1234,
+            shuffle=False,
+        )
+
+        assert dataloader.batch_sampler.shuffle is False
+        assert next(iter(dataloader.batch_sampler)) == [0, 1, 2, 3]
 
     def test_build_batch_dataloader_explicit_seed_is_independent_of_model_rng(self):
         """Pipeline-stage model seeds must not change the fine-tuning sample order."""

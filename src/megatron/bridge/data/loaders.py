@@ -334,6 +334,7 @@ def build_train_valid_test_data_loaders(
         global_batch_size=cfg.train.global_batch_size,
         drop_last=drop_last,
         seed=sampler_seed,
+        shuffle=cfg.dataset.shuffle,
     )
     eval_gbs = (
         cfg.validation.eval_global_batch_size
@@ -361,6 +362,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
             seed=sampler_seed,
+            shuffle=cfg.dataset.shuffle,
         )
     elif cfg.validation.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
@@ -379,6 +381,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
             seed=sampler_seed,
+            shuffle=cfg.dataset.shuffle,
         )
 
     if cfg.validation.eval_iters > 0:
@@ -397,6 +400,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
             seed=sampler_seed,
+            shuffle=cfg.dataset.shuffle,
         )
 
     # Flags to know if we need to do training/validation/testing.
