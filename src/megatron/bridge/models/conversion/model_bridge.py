@@ -19,7 +19,7 @@ import itertools
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import (
     Any,
     Callable,
@@ -44,6 +44,7 @@ from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_pg_size
+from megatron.training.models.base import ModelConfig
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from torch.distributed._tensor import DTensor
 from transformers.configuration_utils import PretrainedConfig
@@ -70,6 +71,8 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
+from megatron.bridge.utils import fusions
 from megatron.bridge.utils.activation_map import ACTIVATION_FUNC_MAP
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -81,6 +84,10 @@ HFPreTrained = TypeVar("HFPreTrained")
 ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
+
+
+class ModelConfigNotSupportedError(NotImplementedError):
+    """Raised when a bridge has no builder-backed model config path."""
 
 
 class MegatronWeightTuple(NamedTuple):
@@ -420,6 +427,10 @@ class MegatronModelBridge(
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
 
+    # Builder-backed construction is opt-in while model families migrate.
+    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = None
+    TRANSFORMER_CONFIG_CLASS: ClassVar[type[BridgeTransformerConfig]] = BridgeTransformerConfig
+
     # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
     # Set this in bridge subclasses to include model-specific files beyond standard artifacts
     ADDITIONAL_FILE_PATTERNS = None
@@ -526,14 +537,14 @@ class MegatronModelBridge(
         """Return whether an HF config field should be mapped to provider kwargs."""
         return True
 
-    def hf_config_to_provider_kwargs(self, hf_config) -> dict:
-        """Convert HF config to Megatron provider kwargs using CONFIG_MAPPING.
+    def _hf_config_to_megatron_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert an HF config to flat Megatron config kwargs.
 
         Args:
             hf_config: HuggingFace model configuration object
 
         Returns:
-            dict: Provider kwargs ready for GPTModelProvider or similar
+            Megatron fields derived from ``CONFIG_MAPPING``.
         """
         provider_kwargs = {}
 
@@ -628,6 +639,88 @@ class MegatronModelBridge(
         provider_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
 
         return provider_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Return kwargs for the legacy provider compatibility path."""
+        return self._hf_config_to_megatron_kwargs(hf_config)
+
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Return flat kwargs for a builder-backed model config.
+
+        Model-family bridges should call ``super()`` and add their architecture
+        defaults here. This path intentionally does not call the provider-era
+        override hook.
+        """
+        config_kwargs = self._hf_config_to_megatron_kwargs(hf_config)
+        config_kwargs.update(
+            attention_softmax_in_fp32=False,
+            cross_entropy_loss_fusion=True,
+            deallocate_pipeline_outputs=True,
+            gradient_accumulation_fusion=fusions.can_enable_gradient_accumulation_fusion(),
+        )
+        return config_kwargs
+
+    @staticmethod
+    def _partition_model_config_kwargs(
+        config_kwargs: Mapping[str, Any],
+        model_config_class: type[ModelConfig],
+        transformer_config_class: type[BridgeTransformerConfig],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Partition flat kwargs between outer and nested config dataclasses."""
+        if not is_dataclass(model_config_class):
+            raise TypeError(f"Model config class {model_config_class.__name__} must be a dataclass.")
+        if not is_dataclass(transformer_config_class):
+            raise TypeError(f"Transformer config class {transformer_config_class.__name__} must be a dataclass.")
+
+        model_fields = {field.name for field in fields(model_config_class) if field.init} - {"transformer"}
+        transformer_fields = {field.name for field in fields(transformer_config_class) if field.init}
+        unknown_fields = set(config_kwargs) - model_fields - transformer_fields
+        if unknown_fields:
+            raise ValueError(
+                "Cannot map Hugging Face config fields to "
+                f"{model_config_class.__name__} + {transformer_config_class.__name__}: "
+                f"{sorted(unknown_fields)}. Override hf_config_to_model_config() for model-specific fields."
+            )
+
+        model_kwargs = {name: value for name, value in config_kwargs.items() if name in model_fields}
+        transformer_kwargs = {
+            name: value
+            for name, value in config_kwargs.items()
+            if name not in model_fields and name in transformer_fields
+        }
+        return model_kwargs, transformer_kwargs
+
+    def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> ModelConfig:
+        """Convert a Hugging Face config directly to a builder-backed config.
+
+        Model families opt in by defining ``MODEL_CONFIG_CLASS``. The legacy
+        provider path remains available to families that have not migrated.
+
+        Args:
+            hf_config: Hugging Face architecture configuration.
+
+        Returns:
+            Serializable model configuration linked to its builder.
+
+        Raises:
+            ModelConfigNotSupportedError: If the model family has not opted in.
+            ValueError: If mapped fields do not belong to either config dataclass.
+        """
+        model_config_class = self.MODEL_CONFIG_CLASS
+        if model_config_class is None:
+            raise ModelConfigNotSupportedError(
+                f"ModelConfig conversion is not implemented for {type(self).__name__}. "
+                "This model family must define MODEL_CONFIG_CLASS and a direct config mapping."
+            )
+
+        config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(
+            config_kwargs,
+            model_config_class,
+            self.TRANSFORMER_CONFIG_CLASS,
+        )
+        transformer_config = self.TRANSFORMER_CONFIG_CLASS(**transformer_kwargs)
+        return model_config_class(transformer=transformer_config, **model_kwargs)
 
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None

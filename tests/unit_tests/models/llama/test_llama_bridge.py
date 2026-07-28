@@ -24,6 +24,7 @@ from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
@@ -100,6 +101,86 @@ class TestLlamaBridgeConfigConverter:
         assert isinstance(result, GPTModelProvider)
         assert result.rope_scaling is True
         assert result.rope_scaling_factor == 32.0
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self, mock_pretrained_llama, llama_config):
+        """The builder config path must not route through the legacy provider."""
+        bridge = LlamaBridge()
+
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(
+                bridge,
+                "hf_config_to_provider_kwargs",
+                side_effect=AssertionError("provider kwargs path used"),
+            ),
+        ):
+            result = bridge.hf_config_to_model_config(mock_pretrained_llama.config)
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        assert result.num_layers == llama_config.num_hidden_layers
+        assert result.hidden_size == llama_config.hidden_size
+        assert result.ffn_hidden_size == llama_config.intermediate_size
+        assert result.num_attention_heads == llama_config.num_attention_heads
+        assert result.num_query_groups == llama_config.num_key_value_heads
+        assert result.seq_length == llama_config.max_position_embeddings
+        assert result.rotary_base == rope_theta_from_hf(llama_config)
+        assert result.vocab_size == llama_config.vocab_size
+        assert result.layernorm_epsilon == llama_config.rms_norm_eps
+        assert result.activation_func is F.silu
+        assert result.normalization == "RMSNorm"
+        assert result.position_embedding_type == "rope"
+        assert result.rope_scaling is True
+        assert result.rope_scaling_factor == 32.0
+
+    def test_model_config_matches_provider_architecture(self, mock_pretrained_llama):
+        """The migrated path preserves representative provider-era settings."""
+        bridge = LlamaBridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_llama)
+        model_config = bridge.hf_config_to_model_config(mock_pretrained_llama.config)
+
+        for field_name in (
+            "num_layers",
+            "hidden_size",
+            "ffn_hidden_size",
+            "num_attention_heads",
+            "num_query_groups",
+            "seq_length",
+            "rotary_base",
+            "vocab_size",
+            "layernorm_epsilon",
+            "normalization",
+            "gated_linear_unit",
+            "hidden_dropout",
+            "position_embedding_type",
+            "rotary_percent",
+            "rope_scaling",
+            "rope_scaling_factor",
+            "params_dtype",
+            "fp16",
+            "bf16",
+        ):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+    def test_model_config_preserves_linear_rope_scaling(self):
+        """Linear RoPE scaling maps to the builder config without provider use."""
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=256,
+            vocab_size=128,
+            rope_scaling={"type": "linear", "factor": 8.0},
+        )
+
+        result = LlamaBridge().hf_config_to_model_config(config)
+
+        assert result.position_embedding_type == "rope"
+        assert result.seq_len_interpolation_factor == 8.0
+        assert result.rope_scaling is False
 
     def test_provider_bridge_preserves_linear_rope_scaling(self):
         """Test that linear RoPE scaling is preserved in the Megatron provider."""
