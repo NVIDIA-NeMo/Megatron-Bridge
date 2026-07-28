@@ -938,6 +938,35 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the shared long-context SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B.
+
+    Default configuration: 32 GPUs
+    - TP=1, PP=2, CP=2, EP=8
+    - MBS=2, GBS=512 with deferred in-batch packing
+    - Sequence length: 8192
+    """
+    cfg = qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config()
+
+    cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.cp_comm_type = "p2p"
+    cfg.model.seq_length = 8192
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+
+    cfg.train.micro_batch_size = 2
+
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.enable_in_batch_packing = True
+    cfg.dataset.defer_in_batch_packing_to_step = True
+    cfg.dataset.in_batch_packing_pad_to_multiple_of = 4
+
+    cfg.ddp.average_in_collective = False
+    return cfg
+
+
 def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE) with Megatron FSDP.
 
@@ -2143,6 +2172,7 @@ __all__ = [
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",
+    "qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config",
     "qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config",
     "qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config",  # pragma: allowlist secret
     "qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config",
