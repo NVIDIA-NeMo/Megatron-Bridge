@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Functional H100 recipes for GLM-5.2 verification."""
+"""H100 recipes for GLM-5.2."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ _GLM52_VPP2_LAYOUT = (
     "Et|t||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|ttttmL"
 )
 _GLM52_PP13_LAYOUT = "Etttttt|tttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|tttt|tttt|tttt|ttttmL"
-_GLM52_PP19_LONG_CONTEXT_LAYOUT = (
+_GLM52_PP19_200K_LAYOUT = (
     "Etttttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|ttttmL"
 )
 
@@ -154,7 +154,7 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def glm52_sft_functional_416gpu_h100_bf16_config() -> ConfigContainer:
+def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded full SFT on 416 H100 GPUs."""
     cfg = _sft_common()
     _configure_model(
@@ -177,7 +177,7 @@ def glm52_sft_functional_416gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def glm52_sft_long_context_608gpu_h100_bf16_config() -> ConfigContainer:
+def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     """GLM-5.2 200K packed SFT with context parallelism on 608 H100 GPUs."""
     cfg = _sft_common()
     _configure_model(
@@ -189,7 +189,7 @@ def glm52_sft_long_context_608gpu_h100_bf16_config() -> ConfigContainer:
         microbatch_group_size=None,
     )
     cfg.model.pipeline_model_parallel_size = 19
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP19_LONG_CONTEXT_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = _GLM52_PP19_200K_LAYOUT
     cfg.dataset.seq_length = 200000
     cfg.dataset.hf_dataset = None
     cfg.dataset.dataset_root = "work/data/glm5-2/synthetic-200k"
@@ -247,6 +247,6 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
 __all__ = [
     "glm52_peft_208gpu_h100_bf16_config",
     "glm52_pretrain_416gpu_h100_bf16_config",
-    "glm52_sft_functional_416gpu_h100_bf16_config",
-    "glm52_sft_long_context_608gpu_h100_bf16_config",
+    "glm52_sft_416gpu_h100_bf16_config",
+    "glm52_sft_608gpu_h100_bf16_200k_config",
 ]

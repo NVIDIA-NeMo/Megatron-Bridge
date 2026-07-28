@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Unit tests for functional GLM-5.2 recipes."""
+"""Unit tests for GLM-5.2 recipes."""
 
 from types import SimpleNamespace
 
@@ -26,6 +26,8 @@ pytestmark = pytest.mark.unit
 
 class _FakeMegatronProvider(SimpleNamespace):
     _KNOWN_FIELDS = {
+        "account_for_embedding_in_pipeline_split",
+        "account_for_loss_in_pipeline_split",
         "apply_rope_fusion",
         "bias_activation_fusion",
         "bias_dropout_fusion",
@@ -56,6 +58,7 @@ class _FakeMegatronProvider(SimpleNamespace):
         "recompute_method",
         "recompute_num_layers",
         "seq_length",
+        "sequence_parallel",
         "tensor_model_parallel_size",
         "virtual_pipeline_model_parallel_size",
     }
@@ -99,12 +102,12 @@ def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
     ("recipe", "world_size", "pp", "cp", "ep", "gbs", "steps"),
     [
         (glm5.glm52_pretrain_416gpu_h100_bf16_config, 416, 13, 1, 32, 1024, 100),
-        (glm5.glm52_sft_functional_416gpu_h100_bf16_config, 416, 13, 16, 32, 32, 100),
-        (glm5.glm52_sft_long_context_608gpu_h100_bf16_config, 608, 19, 32, 32, 13, 20),
+        (glm5.glm52_sft_416gpu_h100_bf16_config, 416, 13, 16, 32, 32, 100),
+        (glm5.glm52_sft_608gpu_h100_bf16_200k_config, 608, 19, 32, 32, 13, 20),
         (glm5.glm52_peft_208gpu_h100_bf16_config, 208, 13, 1, 16, 32, 100),
     ],
 )
-def test_glm52_functional_recipe_topologies(recipe, world_size, pp, cp, ep, gbs, steps) -> None:
+def test_glm52_h100_recipe_topologies(recipe, world_size, pp, cp, ep, gbs, steps) -> None:
     cfg = recipe()
 
     assert cfg.model.tensor_model_parallel_size == 1
@@ -123,8 +126,8 @@ def test_glm52_functional_recipe_topologies(recipe, world_size, pp, cp, ep, gbs,
     assert world_size % (pp * ep) == 0
 
 
-def test_glm52_long_context_recipe_uses_200k_packed_cp() -> None:
-    cfg = glm5.glm52_sft_long_context_608gpu_h100_bf16_config()
+def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:
+    cfg = glm5.glm52_sft_608gpu_h100_bf16_200k_config()
 
     assert cfg.model.seq_length == 200000
     assert cfg.dataset.seq_length == 200000
@@ -132,7 +135,7 @@ def test_glm52_long_context_recipe_uses_200k_packed_cp() -> None:
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.microbatch_group_size_per_vp_stage is None
-    assert cfg.model.pipeline_model_parallel_layout == glm5._GLM52_PP19_LONG_CONTEXT_LAYOUT
+    assert cfg.model.pipeline_model_parallel_layout == glm5._GLM52_PP19_200K_LAYOUT
     stages = cfg.model.pipeline_model_parallel_layout.split("|")
     assert [stage.count("t") for stage in stages] == [6] + [4] * 18
     decoder_starts = []
@@ -145,8 +148,38 @@ def test_glm52_long_context_recipe_uses_200k_packed_cp() -> None:
     assert cfg.dataset.hf_dataset is None
 
 
-def test_glm52_gb200_long_context_recipe_uses_131k_packed_cp() -> None:
-    cfg = gb200.glm52_sft_long_context_192gpu_gb200_bf16_config()
+@pytest.mark.parametrize(
+    ("recipe", "gbs", "steps"),
+    [
+        (gb200.glm52_pretrain_192gpu_gb200_bf16_config, 1024, 100),
+        (gb200.glm52_sft_192gpu_gb200_bf16_config, 32, 100),
+        (gb200.glm52_peft_192gpu_gb200_bf16_config, 32, 100),
+    ],
+)
+def test_glm52_gb200_recipe_topologies(recipe, gbs, steps) -> None:
+    cfg = recipe()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.num_layers_in_first_pipeline_stage == 14
+    assert cfg.model.num_layers_in_last_pipeline_stage == 16
+    assert cfg.model.microbatch_group_size_per_vp_stage == 6
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.train.global_batch_size == gbs
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.train_iters == steps
+
+
+def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
+    cfg = gb200.glm52_sft_192gpu_gb200_bf16_128k_config()
 
     assert cfg.model.seq_length == 131072
     assert cfg.model.pipeline_model_parallel_size == 6
@@ -177,7 +210,7 @@ def test_glm52_gb200_long_context_recipe_uses_131k_packed_cp() -> None:
     "recipe",
     [
         glm5.glm52_pretrain_416gpu_h100_bf16_config,
-        glm5.glm52_sft_functional_416gpu_h100_bf16_config,
+        glm5.glm52_sft_416gpu_h100_bf16_config,
     ],
 )
 def test_glm52_vpp2_default_layout_shape(recipe) -> None:
@@ -248,13 +281,15 @@ def test_glm52_peft_targets_mla_attention_projections() -> None:
 
 
 def test_glm52_platform_recipes_are_exported() -> None:
+    import megatron.bridge.recipes as recipes
     from megatron.bridge.recipes import glm as glm_recipes
     from megatron.bridge.recipes.glm import h100
 
-    assert (
-        glm_recipes.glm52_sft_long_context_192gpu_gb200_bf16_config
-        is gb200.glm52_sft_long_context_192gpu_gb200_bf16_config
-    )
+    for recipe_name in gb200.__all__:
+        assert getattr(glm_recipes, recipe_name) is getattr(gb200, recipe_name)
+        assert getattr(recipes, recipe_name) is getattr(gb200, recipe_name)
+        assert recipe_name in glm_recipes.__all__
     for recipe_name in glm5.__all__:
         assert getattr(h100, recipe_name) is getattr(glm5, recipe_name)
+        assert getattr(recipes, recipe_name) is getattr(glm5, recipe_name)
         assert recipe_name in h100.__all__

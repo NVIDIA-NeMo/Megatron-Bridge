@@ -25,6 +25,6 @@ __all__ = [
     "glm45_air_106b_sft_32gpu_h100_bf16_config",
     "glm52_peft_208gpu_h100_bf16_config",
     "glm52_pretrain_416gpu_h100_bf16_config",
-    "glm52_sft_functional_416gpu_h100_bf16_config",
-    "glm52_sft_long_context_608gpu_h100_bf16_config",
+    "glm52_sft_416gpu_h100_bf16_config",
+    "glm52_sft_608gpu_h100_bf16_200k_config",
 ]
