@@ -506,13 +506,14 @@ overrides on both the pinned MCore and candidate commit
 path averaged 22.606775 seconds / 260.575 model TFLOP/s/GPU. Both completed all
 eight iterations with finite losses, zero skipped or NaN iterations, and every
 array task and distributed step exited 0:0. Keep version branching inside the
-reviewable runtime for ABI diagnostics, but do not let the published winner
-silently take the slower legacy path. Pin candidate MCore
-`aed727d4f14202dd8dc780044f2ab046a21f82c6`, require
-`gdn_pre_gated_delta_rule_fusion` and `gated_delta_rule_backend` in the recipe,
-set them to `True` and `"flash_qla"`, and fail before launch if either field is
-absent. Preserve the MCore FlashQLA adapter and branch on the weighted-SwiGLU
-call signature inside the runtime.
+model-specific runtime for ABI diagnostics. The reviewable delivery retains
+the main-line MCore pin `cd4afffa648426a959dc7cb1e24b5ce7d0c3ff54` and claims
+the lower measured result, 23.340825 seconds / 252.375 model TFLOP/s/GPU.
+Candidate-only pre-GDR and backend fields require the #5361 and #5564 main
+backports before they can become part of the published version contract.
+Select those fields only when MCore exposes them, preserve the legacy
+FlashQLA adapter for the retained pin, and keep weighted-SwiGLU API branching
+inside the model runtime.
 
 Audit the upstream delta before treating a newer MCore checkout as unexplored
 headroom. From candidate `aed727d4f14202dd8dc780044f2ab046a21f82c6` through

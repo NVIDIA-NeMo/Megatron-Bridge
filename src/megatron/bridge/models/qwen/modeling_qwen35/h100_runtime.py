@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Reviewable H100 expert runtime used by the Qwen3.5 performance recipe."""
+"""Model-specific Qwen3.5 runtime for the measured H100 performance path."""
 
 from __future__ import annotations
 

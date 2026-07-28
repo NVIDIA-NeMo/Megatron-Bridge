@@ -210,17 +210,10 @@ items:
         last_10_steps_step_time_ms_avg: 31751.010
         last_10_steps_model_tflops_per_gpu_avg: 185.560
       expected_result: >
-        A successful 2026-07-27 run completed all 50 steps on 16 H100 GPUs
-        with finite losses and gradients, skipped=0, NaN=0, and exit 0:0. It
-        recorded loss 12.82963 to 0.008182429 and averaged 31.751010 seconds /
-        185.560 model TFLOP/s/GPU over steps 41-50. A later exact, no-override
-        eight-step run also completed successfully: MCore
-        aed727d4f14202dd8dc780044f2ab046a21f82c6 reached 22.606775 seconds /
-        260.575 model TFLOP/s/GPU over steps 5-8, and the retained fused-GDN
-        configuration later reached 22.152850 seconds / 265.925 model
-        TFLOP/s/GPU with finite losses, skipped=0, NaN=0, and exit 0:0.
-        Acceptance requires at least 287.305 model TFLOP/s/GPU over steps
-        41-50; no Qwen3.5 run has met it, so this item remains unverified. That
-        target belongs to the separate Qwen3-30B-A3B card, and audited Qwen3.5
-        FLOPs accounting already includes routed/shared experts, GDN, MTP, and
-        both logits.
+        Both public runs completed successfully with finite values, skipped=0,
+        NaN=0, and exit 0:0. The 50-step run recorded loss 12.82963 to
+        0.008182429 and 185.560 model TFLOP/s/GPU over steps 41-50. The exact
+        no-override run on MCore cd4afffa648426a959dc7cb1e24b5ce7d0c3ff54
+        reached 23.340825 seconds / 252.375 model TFLOP/s/GPU over steps 5-8.
+        Verification still requires 287.305 model TFLOP/s/GPU over steps
+        41-50, so this item remains unverified.
