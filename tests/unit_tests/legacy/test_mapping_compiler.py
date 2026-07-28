@@ -310,7 +310,7 @@ def test_qwen3_moe_inherits_legacy_qwen2_moe_declarations() -> None:
 def test_qwen3_moe_proof_metadata_is_exactly_pinned() -> None:
     """Pin the migrated proof independently of historical card evidence."""
     assert HF_MODEL_ID == "Qwen/Qwen3-30B-A3B"
-    assert HF_REVISION == "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"
+    assert HF_REVISION == "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
     assert HF_ARCHITECTURE == "Qwen3MoeForCausalLM"
     assert MIN_TRANSFORMERS_VERSION == "5.8.1"
 
