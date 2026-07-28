@@ -4,18 +4,19 @@ This directory contains family-organized documentation for models supported by
 Megatron Bridge. Each model page covers supported variants, Hugging Face <->
 Megatron Bridge conversion, training recipe links, and model-specific notes.
 
-> **Deprecation notice:** Gemma 1 (2B/7B), Gemma 2 (2B/9B/27B), Llama 2,
-> Mistral 7B, Mistral Small 3 24B, Nemotron H v1 (4B/8B/47B/56B), and the
-> legacy `NemotronForCausalLM` bridge previously documented for Nemotron-4 340B
-> are no longer actively maintained or tested against current upstream
-> checkpoints. They will be removed in Megatron Bridge 0.7.0.
+> **Deprecation notice:** DeepSeek V2/V2 Lite, Gemma 1 (2B/7B), Gemma 2
+> (2B/9B/27B), Llama 2, Llama Nemotron, Mistral 7B, Mistral Small 3 24B,
+> Nemotron H v1 (4B/8B/47B/56B), Nemotron Nano v2 (9B/12B), Nemotron Nano v2
+> VL 12B, and the legacy `NemotronForCausalLM` bridge previously documented
+> for Nemotron-4 340B are no longer actively maintained or tested against
+> current upstream checkpoints. They will be removed in Megatron Bridge 0.7.0.
 
 ## Family Index
 
 | Family | Model documentation |
 |----------------|---------------------|
 | **Bailing** | [Ling 2.0](bailing/ling-2.md) |
-| **DeepSeek** | [DeepSeek V2](deepseek/deepseek-v2.md), [DeepSeek V3](deepseek/deepseek-v3.md), [DeepSeek V4](deepseek/deepseek-v4.md) |
+| **DeepSeek** | [DeepSeek V2 (deprecated)](deepseek/deepseek-v2.md), [DeepSeek V3](deepseek/deepseek-v3.md), [DeepSeek V4](deepseek/deepseek-v4.md) |
 | **Falcon** | [Falcon H1](falcon/falcon-h1.md) |
 | **Gemma** | [Gemma (deprecated)](gemma/gemma.md), [Gemma 2 (deprecated)](gemma/gemma2.md), [Gemma 3](gemma/gemma3.md), [Gemma 3 VL](gemma/gemma3-vl.md), [Gemma 4 VL](gemma/gemma4-vl.md) |
 | **GLM** | [GLM 4.5](glm/glm45.md), [GLM-4.5V](glm/glm-45v.md), [GLM-4.7 / 4.7-Flash](glm/glm47.md), [GLM-5 / 5.1](glm/glm5.md) |
@@ -26,7 +27,7 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 | **Mistral** | [Mistral 7B / Small 3 24B (deprecated)](mistral/mistral.md), [Ministral 3](mistral/ministral3.md) |
 | **Xiaomi-MiMo** | [Xiaomi-MiMo](mimo/mimo.md) |
 | **Moonlight** | [Moonlight](moonlight/moonlight.md) |
-| **Nemotron** | [Llama Nemotron](nemotron/llama-nemotron.md), [Nemotron H v1 (deprecated) and Nemotron Nano v2](nemotron/nemotronh.md), [Nemotron-3 Nano](nemotron/nemotron3-nano.md), [Nemotron-3 Super](nemotron/nemotron3-super.md), [Nemotron Nano V2 VL](nemotron/nemotron-nano-v2-vl.md), [Nemotron-3 Nano Omni](nemotron/nemotron-3-omni.md) |
+| **Nemotron** | [Llama Nemotron (deprecated)](nemotron/llama-nemotron.md), [Nemotron H v1 and Nemotron Nano v2 (deprecated)](nemotron/nemotronh.md), [Nemotron-3 Nano](nemotron/nemotron3-nano.md), [Nemotron-3 Super](nemotron/nemotron3-super.md), [Nemotron Nano V2 VL (deprecated)](nemotron/nemotron-nano-v2-vl.md), [Nemotron-3 Nano Omni](nemotron/nemotron-3-omni.md) |
 | **OLMoE** | [OLMoE](olmoe/olmoe.md) |
 | **Qwen** | [Qwen](qwen/qwen.md), [Qwen3-MoE](qwen/qwen3-moe.md), [Qwen3-Next](qwen/qwen3-next.md), [Qwen2.5-VL](qwen/qwen2.5-vl.md), [Qwen3-VL](qwen/qwen3-vl.md), [Qwen3.5 / 3.6](qwen/qwen35-vl.md), [Qwen2-Audio](qwen/qwen2-audio.md), [Qwen2.5-Omni](qwen/qwen25-omni.md), [Qwen3-Omni](qwen/qwen3-omni.md), [Qwen3-ASR](qwen/qwen3-asr.md) |
 | **Sarvam** | [Sarvam](sarvam/sarvam.md) |
@@ -73,7 +74,7 @@ Each model documentation page typically includes:
 - GLM-4.5V
 - Kimi-K2.5-VL
 - Ministral 3
-- Nemotron Nano V2 VL and Nemotron-3 Nano Omni
+- Nemotron Nano V2 VL (deprecated) and Nemotron-3 Nano Omni
 - Qwen2-Audio, Qwen2.5-VL, Qwen2.5-Omni, Qwen3-VL, Qwen3.5 / 3.6, Qwen3-Omni, and Qwen3-ASR
 
 ## Related Documentation
