@@ -967,11 +967,8 @@ class SafeTensorsStateSource(StateSource):
                 torch.distributed.barrier()
             return
 
-        filename_to_keys_map: Dict[str, Set[str]] = defaultdict(set)
         if is_saver_rank:
-            for key, fname in key_to_filename_map.items():
-                filename_to_keys_map[fname].add(key)
-            all_filenames = sorted(filename_to_keys_map)
+            all_filenames = sorted(set(key_to_filename_map.values()))
         else:
             all_filenames = []
 
@@ -982,6 +979,12 @@ class SafeTensorsStateSource(StateSource):
         else:
             assigned_filenames = []
             assigned_filenames_set = set()
+
+        filename_to_keys_map: Dict[str, Set[str]] = defaultdict(set)
+        if is_saver_rank:
+            for key, fname in key_to_filename_map.items():
+                if fname in assigned_filenames_set:
+                    filename_to_keys_map[fname].add(key)
 
         files_to_save = {fname: filename_to_keys_map[fname] for fname in assigned_filenames}
         remaining_keys_by_file = {fname: set(keys) for fname, keys in files_to_save.items()}
