@@ -37,6 +37,24 @@ _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
 _GB300_NVLINK_DOMAIN_GPUS = 64
 
 
+def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
+    """Apply the canonical Nemotron 3 Nano performance workload defaults."""
+    cfg.model.seq_length = 8192
+    cfg.dataset.seq_length = 8192
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    # Preserve the optimizer-state precision used by the measured performance
+    # recipes even if the source library recipe later adopts different
+    # optimizer-state storage for a constrained hardware target.
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+
 def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
     cfg.train.global_batch_size = global_batch_size
     return cfg

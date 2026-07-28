@@ -63,25 +63,27 @@ _MODULES_TO_MOCK = [
     "transformers",
 ]
 
-for _mod in _MODULES_TO_MOCK:
-    sys.modules.setdefault(_mod, MagicMock())
+_mocked_modules = {_mod: sys.modules[_mod] if _mod in sys.modules else MagicMock() for _mod in _MODULES_TO_MOCK}
+_compare_dir = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "conversion", "compare_hf_and_megatron")
 
-# Add compare.py's directory to sys.path so we can import from it
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(__file__), "..", "..", "examples", "conversion", "compare_hf_and_megatron"),
-)
-
-import compare  # noqa: E402
-from compare import (  # noqa: E402
-    SingleBatchIterator,
-    _broadcast_hf_results,
-    _maybe_gather_tensor_parallel_logits,
-    _run_hf_inference,  # noqa: E402
-    _run_megatron_forward,
-    inference_forward_step,
-    vlm_forward_step,
-)
+# Keep compare.py's heavy-dependency stubs local to this import. Leaving them in
+# sys.modules makes later tests import MagicMock placeholders instead of the
+# real Bridge modules.
+sys.path.insert(0, _compare_dir)
+try:
+    with patch.dict(sys.modules, _mocked_modules):
+        import compare  # noqa: E402
+        from compare import (  # noqa: E402
+            SingleBatchIterator,
+            _broadcast_hf_results,
+            _maybe_gather_tensor_parallel_logits,
+            _run_hf_inference,
+            _run_megatron_forward,
+            inference_forward_step,
+            vlm_forward_step,
+        )
+finally:
+    sys.path.remove(_compare_dir)
 
 
 @pytest.mark.unit

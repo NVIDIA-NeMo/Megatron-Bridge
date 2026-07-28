@@ -2864,6 +2864,20 @@ def _load_checkpoint_from_path(
                     return 0, 0
             checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
 
+        tp_pp_match = True
+        run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+        if file_exists(run_config_filename):
+            run_config = read_run_config(run_config_filename)
+            ckpt_tp_pp = (
+                run_config["model"]["tensor_model_parallel_size"],
+                run_config["model"]["pipeline_model_parallel_size"],
+            )
+            run_tp_pp = (
+                cfg.model.tensor_model_parallel_size,
+                cfg.model.pipeline_model_parallel_size,
+            )
+            tp_pp_match = ckpt_tp_pp == run_tp_pp
+
         reader = _get_filesystem_reader(checkpoint_name)
         try:
             state_dict_metadata = reader.read_metadata().state_dict_metadata
@@ -2880,9 +2894,15 @@ def _load_checkpoint_from_path(
                 gen_sd_rerun_state = get_rerun_state_machine().state_dict(
                     data_iterator=None, ckpt_format=ckpt_format, force=True
                 )
-            if cfg.checkpoint.load_rng:
+            if cfg.checkpoint.load_rng and tp_pp_match:
                 gen_sd_rng_state = get_rng_state(
                     cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
+                )
+            elif cfg.checkpoint.load_rng:
+                ignore_rng_state = True
+                print_rank_0(
+                    f"(TP, PP) mismatch after resume ({run_tp_pp} vs {ckpt_tp_pp} from checkpoint): "
+                    "RNG state will be ignored"
                 )
             if cfg.checkpoint.load_optim:
                 gen_sd_optim = optimizer
