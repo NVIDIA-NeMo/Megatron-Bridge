@@ -16,7 +16,7 @@ import copy
 import datetime
 import os
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import pytest
@@ -106,7 +106,9 @@ class _SoundEncoderBoundaryModel(NemotronOmniModel):
 class _TinyOmniProvider(NemotronOmniModelProvider):
     """One-layer image model for the real RADIO/NemotronH Stage 1 smoke."""
 
-    has_sound: bool = False
+    add_sound_encoder: bool = False
+    sound_context_token_id: int = 19
+    sound_config: dict = field(default_factory=dict)
     language_model_type: str = "nemotron6-moe"
     hidden_size: int = 128
     ffn_hidden_size: int = 256

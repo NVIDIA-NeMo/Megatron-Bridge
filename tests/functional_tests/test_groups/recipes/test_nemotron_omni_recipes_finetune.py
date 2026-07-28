@@ -16,7 +16,7 @@
 
 import copy
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -36,7 +36,8 @@ _DEFAULT_PROCESSOR_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 class _TinyNemotronOmniModelProvider(NemotronOmniModelProvider):
     """Small Omni provider used only for functional recipe smoke tests."""
 
-    has_sound: bool = False
+    add_sound_encoder: bool = False
+    sound_config: dict = field(default_factory=dict)
     language_model_type: str = "nemotron6-moe"
     hidden_size: int = 128
     ffn_hidden_size: int = 256

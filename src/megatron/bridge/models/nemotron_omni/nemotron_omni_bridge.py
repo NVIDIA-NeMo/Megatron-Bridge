@@ -118,9 +118,7 @@ class NemotronOmniBridge(NemotronVLBridge):
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
         Always returns an Omni provider (MoE language model + RADIO ViT
-        vision + optional Parakeet sound encoder). When ``sound_config`` is
-        absent on the HF config, ``has_sound=False`` and the sound branch
-        is skipped at construction time.
+        vision + Parakeet sound encoder).
         """
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
@@ -133,15 +131,14 @@ class NemotronOmniBridge(NemotronVLBridge):
         if hasattr(hf_config, "projector_hidden_size"):
             provider_kwargs["vision_proj_ffn_hidden_size"] = hf_config.projector_hidden_size
 
-        has_sound = hasattr(hf_config, "sound_config") and hf_config.sound_config is not None
-        if has_sound:
-            sc = hf_config.sound_config
-            provider_kwargs["has_sound"] = True
-            provider_kwargs["sound_model_type"] = getattr(sc, "model_type", "parakeet")
-            provider_kwargs["sound_hidden_size"] = sc.hidden_size
-            provider_kwargs["sound_projection_hidden_size"] = sc.projection_hidden_size
-            provider_kwargs["sound_context_token_id"] = hf_config.sound_context_token_id
-            provider_kwargs["sound_config"] = sc.to_dict() if hasattr(sc, "to_dict") else dict(sc)
+        sc = getattr(hf_config, "sound_config", None)
+        if sc is None:
+            raise ValueError("Nemotron Omni requires sound_config in the Hugging Face checkpoint configuration.")
+        provider_kwargs["sound_model_type"] = getattr(sc, "model_type", "parakeet")
+        provider_kwargs["sound_hidden_size"] = sc.hidden_size
+        provider_kwargs["sound_projection_hidden_size"] = sc.projection_hidden_size
+        provider_kwargs["sound_context_token_id"] = hf_config.sound_context_token_id
+        provider_kwargs["sound_config"] = sc.to_dict() if hasattr(sc, "to_dict") else dict(sc)
 
         provider_kwargs["language_model_type"] = "nemotron6-moe"
         provider_kwargs["image_token_index"] = getattr(hf_config, "img_context_token_id", 18)

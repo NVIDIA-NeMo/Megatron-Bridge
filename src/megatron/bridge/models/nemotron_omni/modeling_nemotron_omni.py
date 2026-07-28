@@ -646,9 +646,9 @@ class NemotronOmniModel(MegatronModule):
         if images is None:
             images = pixel_values
 
-        has_sound = sound_clips is not None and sound_clips.numel() > 0
-        if has_sound and sound_clips.shape == torch.Size([1, 1]):
-            has_sound = sound_clips[0, 0].item() != 0
+        has_sound_inputs = sound_clips is not None and sound_clips.numel() > 0
+        if has_sound_inputs and sound_clips.shape == torch.Size([1, 1]):
+            has_sound_inputs = sound_clips[0, 0].item() != 0
 
         lm_input_ids = input_ids
         combined_embeddings = None
@@ -665,7 +665,7 @@ class NemotronOmniModel(MegatronModule):
             else:
                 image_embeddings = None
 
-            if has_sound:
+            if has_sound_inputs:
                 sound_embeddings = self._encode_sound(sound_clips, sound_length)
             else:
                 sound_embeddings = None
