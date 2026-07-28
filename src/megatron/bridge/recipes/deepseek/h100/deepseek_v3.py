@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import torch
 
 from megatron.bridge import AutoBridge
@@ -393,17 +395,27 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
-    # Keep the complete process environment visible on the recipe.
-    cfg.env_vars = {
-        **COMMON_RECIPE_ENV_VARS,
-        # Model-specific Transformer Engine tuning.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # HybridEP topology for this recipe.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
-    }
+    # Temporary performance A/B switch. The default preserves the production recipe.
+    env_ab_variant = os.getenv("MB_DEEPSEEK_ENV_AB_VARIANT", "current")
+    if env_ab_variant not in {"current", "no-margin", "no-topology"}:
+        raise ValueError(f"Unsupported MB_DEEPSEEK_ENV_AB_VARIANT: {env_ab_variant}")
+
+    cfg.env_vars = dict(COMMON_RECIPE_ENV_VARS)
+    if env_ab_variant != "no-margin":
+        cfg.env_vars.update(
+            {
+                "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+                "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+            }
+        )
+    if env_ab_variant != "no-topology":
+        cfg.env_vars.update(
+            {
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+                "NVLINK_DOMAIN_SIZE": 8,
+                "USE_MNNVL": 0,
+            }
+        )
     return cfg
 
 
