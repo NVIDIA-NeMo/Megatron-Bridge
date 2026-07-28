@@ -335,11 +335,6 @@ def test_evaluate_and_print_results_multiple_validation_sets_stops_on_timelimit(
     assert "validation-1" not in printed and "validation-2" not in printed
 
 
-def _tensor_on_cpu(*args, **kwargs):
-    kwargs.pop("device", None)
-    return torch.tensor(*args, **kwargs)
-
-
 @patch("megatron.bridge.training.eval.print_rank_last")
 @patch("megatron.bridge.training.eval.evaluate")
 def test_evaluate_and_print_results_multiple_validation_sets_rank_count_agreement(mock_evaluate, mock_print_rank_last):
@@ -352,7 +347,6 @@ def test_evaluate_and_print_results_multiple_validation_sets_rank_count_agreemen
     with (
         patch("megatron.bridge.training.eval.torch.distributed.is_initialized", return_value=True),
         patch("megatron.bridge.training.eval.torch.distributed.all_reduce"),
-        patch("megatron.bridge.training.eval.torch.tensor", side_effect=_tensor_on_cpu),
     ):
         result = evaluate_and_print_results(
             state=_make_state(multiple_validation_sets=True),
@@ -379,7 +373,6 @@ def test_evaluate_and_print_results_multiple_validation_sets_rank_count_mismatch
     with (
         patch("megatron.bridge.training.eval.torch.distributed.is_initialized", return_value=True),
         patch("megatron.bridge.training.eval.torch.distributed.all_reduce", side_effect=fake_all_reduce),
-        patch("megatron.bridge.training.eval.torch.tensor", side_effect=_tensor_on_cpu),
     ):
         with pytest.raises(RuntimeError, match=r"min 2, max 3; this rank has 2"):
             evaluate_and_print_results(
@@ -477,8 +470,8 @@ def test_evaluate_timelimit_fires_start_but_not_end_callback():
     assert observed == [("on_eval_start", False)]
 
 
-def test_evaluate_advances_only_the_indexed_per_set_counter():
-    """With valid_set_index set, evaluate advances that set's counter and leaves the scalar alone."""
+def test_evaluate_advances_indexed_per_set_counter_and_aggregate():
+    """With valid_set_index set, evaluate advances that set's counter and the aggregate."""
     state = _make_evaluate_state(eval_iters=1)  # eval_global_batch_size defaults to 1
     state.train_state.consumed_valid_samples = 0
     state.train_state.consumed_valid_samples_per_set = [0, 0]
@@ -491,7 +484,7 @@ def test_evaluate_advances_only_the_indexed_per_set_counter():
     )
 
     assert state.train_state.consumed_valid_samples_per_set == [0, 1]
-    assert state.train_state.consumed_valid_samples == 0
+    assert state.train_state.consumed_valid_samples == 1
 
 
 def test_evaluate_uses_injected_eval_data_parallel_size_for_microbatches():

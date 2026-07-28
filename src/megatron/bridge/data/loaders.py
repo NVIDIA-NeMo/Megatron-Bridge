@@ -417,6 +417,12 @@ def build_train_valid_test_data_loaders(
             # Resume each validation set from its own consumed-samples offset.
             valid_consumed_samples = train_state.consumed_valid_samples_per_set
         else:
+            if train_state.consumed_valid_samples_per_set:
+                print_rank_0(
+                    "WARNING: checkpoint contains per-set validation counters but "
+                    "multiple_validation_sets is disabled; resuming validation from the "
+                    f"aggregate offset ({train_state.consumed_valid_samples})."
+                )
             valid_consumed_samples = train_state.consumed_valid_samples
         valid_dataloader = _build_eval_test_dataloaders(valid_ds, valid_consumed_samples, val_dataloader_type)
 

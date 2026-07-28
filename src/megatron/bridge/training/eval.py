@@ -88,8 +88,9 @@ def evaluate(
             Controls which callback events are fired (on_test_* vs on_eval_*).
         valid_set_index (int | None, optional): Index of the validation set being evaluated when
             ``multiple_validation_sets`` is enabled. Selects the per-set ``consumed_valid_samples``
-            counter to advance; the caller must have sized ``train_state.consumed_valid_samples_per_set``
-            to cover this index. Defaults to None (single aggregate counter).
+            counter to advance in addition to the aggregate ``consumed_valid_samples`` (which always
+            advances); the caller must have sized ``train_state.consumed_valid_samples_per_set``
+            to cover this index. Defaults to None (no per-set counter).
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -311,10 +312,11 @@ def evaluate(
                     else:
                         raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
 
+            # The aggregate always advances so it keeps its meaning (total validation
+            # samples consumed across all sets) regardless of multiple_validation_sets.
+            state.train_state.consumed_valid_samples += eval_batch_size
             if valid_set_index is not None:
                 state.train_state.consumed_valid_samples_per_set[valid_set_index] += eval_batch_size
-            else:
-                state.train_state.consumed_valid_samples += eval_batch_size
 
             if state.cfg.train.exit_duration_in_mins:
                 train_time = (time.time() - state.start_time) / 60.0
@@ -458,7 +460,9 @@ def evaluate_and_print_results(
             # runs collectives) and deadlock the others; fail loudly on every
             # rank instead.
             num_sets = len(data_iterators)
-            counts = torch.tensor([num_sets, -num_sets], dtype=torch.long, device="cuda")
+            counts = torch.tensor(
+                [num_sets, -num_sets], dtype=torch.long, device="cuda" if torch.cuda.is_available() else "cpu"
+            )
             torch.distributed.all_reduce(counts, op=torch.distributed.ReduceOp.MAX)
             max_sets, min_sets = counts[0].item(), -counts[1].item()
             if max_sets != min_sets:
