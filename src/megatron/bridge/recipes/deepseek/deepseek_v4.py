@@ -65,9 +65,7 @@ __all__ = [
 ]
 
 
-def deepseek_v4_flash_sft_openmath_thinking_packed_config(
-    hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH,
-) -> ConfigContainer:
+def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
     """DSv4 Flash SFT on OpenMathInstruct-2 with thinking channel and offline-packed sequences.
 
     CoT reasoning goes into the assistant thinking field and the final answer into the
@@ -76,7 +74,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_config(
     When using CP>1, pass ``model.cp_partition_mode=contiguous`` (required for DSv4 CSA
     attention) and ``pad_seq_to_mult=4`` to ensure divisibility by cp_size.
     """
-    cfg = deepseek_v4_flash_sft_config(hf_path=hf_path)
+    cfg = deepseek_v4_flash_sft_config()
     # DSv4 hybrid attention requires contiguous CP partition when CP > 1;
     # setting it unconditionally is safe (no-op when context_parallel_size=1).
     cfg.model.cp_partition_mode = "contiguous"
