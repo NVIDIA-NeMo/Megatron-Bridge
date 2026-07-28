@@ -457,12 +457,17 @@ the second run is passing short-run evidence.
 Fail closed on the exact external kernel version and make its path explicit in
 the published launch command. A lazy import with only a helpful error message
 does not prove that the measured version was loaded. Check
-`flash_qla.__version__ == "0.1.2"` in the reviewable runtime and pass its
-container-mounted Python prefix through `PYTHONPATH`; do not rely on an
-untracked `sitecustomize.py` or a user-specific source tree. FlashQLA also
-needs a shared persistent `TILELANG_CACHE_DIR`, and the grouped-expert path
-benefits from a persistent `TORCHINDUCTOR_CACHE_DIR`. A cold-cache allocation
-spent its bounded runtime compiling without producing an iteration.
+`flash_qla.__version__ == "0.1.2"` and
+`flash-linear-attention==0.4.2` in the reviewable runtime. Pin both packages
+in one optional performance extra, regenerate the Linux lock, and verify its
+public transitive contract (`tilelang==0.1.9` and
+`apache-tvm-ffi==0.1.9`) with a fresh-cache model-shape forward/backward
+smoke. Use the locked extra or a PR-built container in the published command;
+do not rely on an untracked `sitecustomize.py`, private package mount, or
+user-specific source tree. FlashQLA also needs a shared persistent
+`TILELANG_CACHE_DIR`, and the grouped-expert path benefits from a persistent
+`TORCHINDUCTOR_CACHE_DIR`. A cold-cache allocation spent its bounded runtime
+compiling without producing an iteration.
 
 Treat static capacity as a compiler shape, not only a routing scalar. On the
 pinned PR stack, changing capacity factor from 1.05 to 1.02 created a new
@@ -501,10 +506,13 @@ overrides on both the pinned MCore and candidate commit
 path averaged 22.606775 seconds / 260.575 model TFLOP/s/GPU. Both completed all
 eight iterations with finite losses, zero skipped or NaN iterations, and every
 array task and distributed step exited 0:0. Keep version branching inside the
-reviewable recipe/runtime: set newer GDN backend fields only when the config
-dataclass exposes them, preserve the newer MCore FlashQLA adapter, inject the
-raw kernel only for the pinned API, and branch on the weighted-SwiGLU call
-signature.
+reviewable runtime for ABI diagnostics, but do not let the published winner
+silently take the slower legacy path. Pin candidate MCore
+`aed727d4f14202dd8dc780044f2ab046a21f82c6`, require
+`gdn_pre_gated_delta_rule_fusion` and `gated_delta_rule_backend` in the recipe,
+set them to `True` and `"flash_qla"`, and fail before launch if either field is
+absent. Preserve the MCore FlashQLA adapter and branch on the weighted-SwiGLU
+call signature inside the runtime.
 
 Audit the upstream delta before treating a newer MCore checkout as unexplored
 headroom. From candidate `aed727d4f14202dd8dc780044f2ab046a21f82c6` through
