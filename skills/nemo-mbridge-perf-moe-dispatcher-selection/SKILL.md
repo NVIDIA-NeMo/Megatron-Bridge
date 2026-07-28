@@ -227,11 +227,27 @@ forward and backward before launching all ranks.
 On the measured exact-2-node H100 Qwen3.5 path, that gate passed with torch
 2.13, CUDA 13.3, TE 2.17, and TileLang 0.1.9. The matched HybridEP control
 averaged 24.236950 seconds / 243.043440 model TFLOP/s/GPU over its two
-post-compile steps. The NCCL-EP candidate reached iteration 0, but its first
-real dispatch kept every GPU idle until the backend's 101010 ms timeout; all
-16 ranks emitted `NCCL error 2 at nccl_ep.cc:886`, and the error did not
-propagate back to Python. Reject a backend that only bootstraps. Require a
-completed multi-node dispatch and combine before collecting end-to-end timing.
+post-compile steps. A minimal NCCL-EP buffer probe then separated single-node
+capability from the required topology: eight ranks on one H100 node registered
+the symmetric window successfully, but the same shape on 16 ranks across two
+nodes failed at the first
+`ncclCommWindowRegister(..., NCCL_WIN_COLL_SYMMETRIC)` call. Setting the
+NCCL-contrib recommendation `NCCL_GIN_TYPE=3` was not sufficient. NCCL logged
+`SPCX GPUNETIO dlopen failed` and failed
+`ncclGinGdakiCreateContext` with error 2 before window setup. The installed
+Spectrum-X and DOCA libraries had no missing `ldd -r` dependencies, while the
+plugin's embedded GPUNetIO loader was not a dynamic symbol that an external
+path probe could call. Treat this as a Spectrum-X/GDAKI runtime-plugin
+compatibility failure, not a Bridge backend or capacity result.
+
+The full NCCL-EP candidate was consistent with that isolated boundary: it
+reached iteration 0, but its first real dispatch kept every GPU idle until the
+backend's 101010 ms timeout; all 16 ranks emitted
+`NCCL error 2 at nccl_ep.cc:886`, and the error did not propagate back to
+Python. Reject a backend that passes only Python/process-group bootstrap or a
+single-node symmetric-window probe. Require a minimal exact-topology window
+registration followed by completed multi-node dispatch and combine before
+collecting end-to-end timing.
 
 Dispatcher selection also interacts with launch ordering after the SM budget is
 chosen. On the same exact 2-node no-overlap path with `num_sms=16`, changing
@@ -392,3 +408,9 @@ more comparable across dispatcher backends.
 10. **Do not transfer the NCCL EP static path to Hopper**: SM100+, the TE
     operation fuser, and the CuTe DSL fused grouped MLP are hard prerequisites;
     dynamic H100 mode retains a D2H shape synchronization.
+
+11. **Gate NCCL EP on the exact multi-node GDAKI path**: a one-node symmetric
+    window can pass while the same 16-rank shape fails in Spectrum-X/GPUNetIO
+    context creation. Check the recommended GIN mode and plugin dependencies,
+    but do not launch a training A/B until the exact-topology window,
+    dispatch, and combine probes all complete.

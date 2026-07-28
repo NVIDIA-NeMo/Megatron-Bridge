@@ -197,7 +197,9 @@ known_limitations:
   - Warm JIT caches can mask source/dependency incompatibility; the accepted torch-2.12 Qwen3.5 run reused FlashQLA artifacts even though TileLang 0.1.8 lacked T.async_copy, while a fresh cache required FlashQLA 0.1.2's pinned TileLang 0.1.9 and apache-tvm-ffi 0.1.9
   - Container migrations need a real model import plus fresh-cache model-shape forward/backward CUDA smoke before multi-rank dispatcher timing
   - The exact-2-node torch-2.13/TE-2.17 HybridEP control averaged 24.236950 seconds / 243.043440 model TFLOP/s/GPU, 8.486779% slower than the accepted torch-2.12 short-run control
-  - The matched NCCL-EP candidate completed bootstrap and reached iteration 0, but all GPUs stayed idle until the 101010 ms backend timeout and all 16 ranks emitted NCCL error 2 at nccl_ep.cc:886; the error did not propagate to Python and no performance sample completed
+  - An eight-rank one-node NCCL-EP buffer probe registered its symmetric window, but the identical 16-rank two-node shape failed at the first ncclCommWindowRegister call in nccl_ep.cc:886 even with NCCL_GIN_TYPE=3
+  - The isolated two-node failure logged SPCX GPUNETIO dlopen failure and ncclGinGdakiCreateContext error 2; Spectrum-X and DOCA libraries had no missing ldd dependencies, so classify it as a GDAKI runtime-plugin boundary rather than a Bridge configuration result
+  - The matched full NCCL-EP candidate reached iteration 0 but all GPUs stayed idle until the 101010 ms backend timeout; the error did not propagate to Python and no performance sample completed
   - A 16xH100 Qwen3.5 DeepEP candidate passed import, construction, and config validation but timed out in the first inter-node dispatch; verify the implementation's adaptive-routing requirement before treating the backend as benchmarkable
   - Clear HybridEP-only rank capacity with a true YAML null when switching backends; a CLI literal None may remain a non-null string and fail MCore validation
   - Static capacity must preserve GroupedLinear shapes and all routed work

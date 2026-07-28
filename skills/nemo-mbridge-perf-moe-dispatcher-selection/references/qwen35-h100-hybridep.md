@@ -118,13 +118,33 @@ Passing that stack gate did not make NCCL EP viable on the measured 2-node
 H100 topology. The matched torch 2.13 / CUDA 13.3 / TE 2.17 HybridEP control
 completed three iterations; its two post-compile steps averaged 24.236950
 seconds / 243.043440 model TFLOP/s/GPU, 8.486779% slower than the accepted
-torch 2.12 short-run control. The NCCL-EP candidate completed construction,
-process-group setup, bootstrap, and entered iteration 0, but all GPUs remained
-idle during the first real dispatch. After the backend's 101010 ms timeout,
-all 16 ranks reported `NCCL error 2 at nccl_ep.cc:886`; the error did not
-propagate to Python, and no iteration or throughput sample completed.
-Bootstrap success is therefore only a capability stage. Require the first
-multi-node dispatch/combine to finish before retaining NCCL EP as a candidate.
+torch 2.12 short-run control.
+
+A buffer-only probe localized the NCCL-EP failure before another training A/B
+was attempted. With 256 experts, hidden size 2,048, 4,096 maximum tokens,
+34,416 receive rows, 16 communication SMs, dynamic shape, zero-copy disabled,
+and `NCCL_GIN_TYPE=3`, eight ranks on one H100 node registered the symmetric
+window successfully. The identical shape on 16 ranks across two nodes failed
+at the first `ncclCommWindowRegister(..., NCCL_WIN_COLL_SYMMETRIC)` call in
+`nccl_ep.cc:886`. NCCL first logged `SPCX GPUNETIO dlopen failed`, then
+`ncclGinGdakiCreateContext` and `ncclGinDevCommSetup` returned error 2. The
+Spectrum-X plugin, GPUNetIO host library, and DOCA libraries were present and
+had no missing `ldd -r` dependencies. Although the plugin contained
+`NCCL_GIN_GPUNETIO_PATH` and loader-name strings, the loader was not exported
+as a dynamic symbol, so neither a file nor directory path could be validated
+through an external loader probe. Do not infer that an unverified path
+assignment repairs the runtime.
+
+The full NCCL-EP candidate was consistent with this isolated boundary. It
+completed model construction and Python/process-group bootstrap and entered
+iteration 0, but all GPUs remained idle during the first real dispatch. After
+the backend's 101010 ms timeout, all 16 ranks reported
+`NCCL error 2 at nccl_ep.cc:886`; the error did not propagate to Python, and
+no iteration or throughput sample completed. Single-node window success is
+only a capability stage. Require exact-topology window registration plus the
+first multi-node dispatch/combine to finish before retaining NCCL EP as a
+candidate. This failure belongs to the Spectrum-X/GDAKI runtime-plugin
+boundary, not the Bridge recipe or dispatcher selection fields.
 
 The runtime contract is more specific than "static shapes are graphable."
 With dynamic HybridEP sizing, `dispatch_with_permute(non_blocking=False)`

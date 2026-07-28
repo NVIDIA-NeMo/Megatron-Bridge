@@ -502,3 +502,23 @@ reviewable recipe/runtime: set newer GDN backend fields only when the config
 dataclass exposes them, preserve the newer MCore FlashQLA adapter, inject the
 raw kernel only for the pinned API, and branch on the weighted-SwiGLU call
 signature.
+
+Audit the upstream delta before treating a newer MCore checkout as unexplored
+headroom. From candidate `aed727d4f14202dd8dc780044f2ab046a21f82c6` through
+development `0e6ac576f`, the only new MoE performance commit was the fused
+pre-GDR path for chunkwise context parallelism. This recipe has CP=1, so that
+change is not on its execution path. The candidate already contains the fused
+shared-expert grouped-SwiGLU implementation, but that path requires
+Transformer Engine 2.14 or newer and an NVFP4 or MXFP8 recipe; it rejects this
+BF16 H100 workload. Do not spend another exact-topology allocation on either
+candidate without first changing a matching execution contract.
+
+Gate experimental NCCL EP below the training level. A minimal buffer probe
+with the production expert and receive-capacity shape registered its symmetric
+window on eight ranks within one H100 node. The same shape on 16 ranks across
+two nodes failed at the first symmetric-window registration even with
+`NCCL_GIN_TYPE=3`: Spectrum-X logged a GPUNetIO load failure and GDAKI context
+creation returned error 2. The relevant plugin and DOCA libraries were present
+with clean transitive linkage, so this is a runtime-plugin boundary, not a
+Bridge configuration A/B. Stop before training until the exact topology
+passes window registration, dispatch, and combine.
