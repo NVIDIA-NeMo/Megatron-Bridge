@@ -7,21 +7,20 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. This card covers the Kimi K3 language backbone in the published
   multimodal checkpoint. It does not claim support for the vision tower or
-  multimodal inputs. A diagnostic full-model direct Hugging
-  Face-to-Megatron import completed deterministic Megatron greedy text
-  generation, but its clean-commit provenance rerun is still pending.
-  Persisted CPU and GPU checkpoint conversion, full-model Hugging
-  Face/Megatron forward correlation, inference, and every training workflow
-  remain unverified.
+  multimodal inputs. Full-checkpoint GPU import and deterministic Megatron
+  greedy text generation are verified. CPU conversion, GPU export,
+  full-model Hugging Face/Megatron forward correlation, and every training
+  workflow remain unverified.
 verification_index:
   model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - inference
     unverified:
       - hf_to_megatron_cpu
-      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
-      - inference
   training:
     GB300:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -32,7 +31,7 @@ model:
   min_transformers_version: "4.56.2"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: eb91f8be86e5f88771bfa020b33cd74dd3de80ad  # pragma: allowlist secret
+  bridge_commit: ae77a6703c61669f15936a12ddf542c2cf5cbc3b  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -47,16 +46,25 @@ items:
       mapped keys, shapes, dtypes, and values.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: cec012e568c55a6c0906622d8a5b0986a79f40cf  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 12 --gpus-per-node 4
+      --hf-model moonshotai/Kimi-K3
+      --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
+      --megatron-path work/model-verification/kimi-k3/imported-megatron
+      --torch-dtype bfloat16 --tp 2 --pp 3 --ep 8 --etp 2
+      --distributed-timeout-minutes 180 --trust-remote-code
+    last_verified: 2026-07-28
     expected_result: >
-      Direct in-memory import of the pinned full language backbone completed at
-      TP1/PP3/EP8/ETP1 and supported the diagnostic inference run, including
-      dequantization of published MXFP4 routed-expert weights to BF16. No
-      persisted Megatron checkpoint was produced or reloaded, and no exact
-      full-state audit completed, so GPU conversion is not yet verified.
+      On 48x GB200, the pinned complete checkpoint imports at
+      TP2/PP3/EP8/ETP2 and exits successfully in 27:01. Published MXFP4
+      routed-expert weights are dequantized to BF16, and iter_0000000 is
+      persisted with 48 distributed-checkpoint shards, metadata, and the
+      recorded 93-layer run configuration. Exact Hugging Face round-trip
+      parity is tracked separately by megatron_to_hf_gpu.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -75,11 +83,14 @@ items:
     command: null
     last_verified: null
     expected_result: >
-      No GPU Megatron-to-Hugging-Face conversion result is claimed. Export still
-      needs to restore 32 inactive entries for every KDA A_log tensor because
-      Megatron retains the 96 active heads while the published checkpoint
-      stores 128 entries. A complete export, strict Transformers reload, and
-      exact key, shape, dtype, and value audit remain required.
+      No GPU Megatron-to-Hugging-Face conversion result is claimed. All 69
+      source KDA A_log tensors were audited: each stores 96 active heads plus
+      32 zero-valued inactive entries, for 2,208 checked padding values.
+      Import validation drops only this zero padding, and export unit tests
+      restore it with zeros. A strict full-checkpoint export over 497,220
+      source tensors did not complete within a one-hour 96x GB200 validation
+      allocation, so strict reload and exact key, shape, dtype, and value audit
+      remain required.
 
   manual_forward_pass:
     status: unverified
@@ -95,19 +106,23 @@ items:
       reported maximum and mean absolute logit differences.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: eb91f8be86e5f88771bfa020b33cd74dd3de80ad  # pragma: allowlist secret
+    command: >
+      uv run python examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path moonshotai/Kimi-K3 --trust-remote-code
+      --apply-chat-template --thinking-mode disabled
+      --prompt "What is 15% of 240? Answer in one short sentence."
+      --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1
+    last_verified: 2026-07-27
     expected_result: >-
-      No clean-commit inference result is claimed yet. A diagnostic run of the
-      pinned full language backbone imported directly into Megatron at
-      TP1/PP3/EP8/ETP1 and exited after 32 new greedy tokens with this
-      completion, represented with JSON Unicode escapes for the model
-      control-token brackets:
+      On 24x GB300, the pinned complete language backbone imports directly into
+      Megatron at TP1/PP3/EP8/ETP1. The command exits successfully in 22:59
+      after exactly 32 new greedy tokens and prints this completion,
+      represented with JSON Unicode escapes for the model control-token
+      brackets:
       "15% of 240 = 0.15 × 240 = 36.\u003c|close|\u003ethink\u003c|sep|\u003e\u003c|open|\u003eresponse\u003c|sep|\u003e15% of 240 is 36.".
-      Verification requires the same exact 32-token result from the pinned clean
-      Bridge commit.
 
   pretrain:
     GB300:
