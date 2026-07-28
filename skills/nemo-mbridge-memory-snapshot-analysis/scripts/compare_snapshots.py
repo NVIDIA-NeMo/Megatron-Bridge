@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (
+    TRUST_EPILOG,
     compute_baseline,
     compute_step_start_deltas,
     find_active_device,
@@ -31,6 +32,7 @@ from common import (
     get_profiler_steps,
     get_step_events,
     group_by_source,
+    live_set_before,
     load_snapshot,
     replay_events,
 )
@@ -39,15 +41,28 @@ from common import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_setting(value: object) -> object:
+    """Render a setting in a stable, comparable form.
+
+    ``roundup_power2_divisions`` arrives as a dict whose key order is not
+    meaningful, which makes a naive ``!=`` report spurious differences and reads
+    badly in the report. Sorting it gives a stable representation so the setting
+    can be compared and shown rather than suppressed — it changes allocator
+    rounding and is a legitimate explanation for two runs differing in reserved
+    memory or fragmentation.
+    """
+    if isinstance(value, dict):
+        return dict(sorted(value.items(), key=lambda kv: str(kv[0])))
+    return value
+
+
 def diff_settings(settings_a: dict, settings_b: dict) -> list:
     """Return list of (key, val_a, val_b) for differing settings."""
     all_keys = sorted(set(list(settings_a.keys()) + list(settings_b.keys())))
     diffs = []
     for k in all_keys:
-        if k == "roundup_power2_divisions":
-            continue
-        va = settings_a.get(k)
-        vb = settings_b.get(k)
+        va = _normalize_setting(settings_a.get(k))
+        vb = _normalize_setting(settings_b.get(k))
         if va != vb:
             diffs.append((k, va, vb))
     return diffs
@@ -85,10 +100,22 @@ def compare(
 
     # --- Segments ---
     def seg_summary(snap):
+        # allocated_size counts blocks currently handed out; active_size also
+        # counts active_awaiting_free (freed by the user, still held pending
+        # stream sync). Reusable memory is total - active, so computing inactive
+        # from allocated would report awaiting-free blocks as fragmentation.
         segs = snap.get("segments", [])
         total = sum(s.get("total_size", 0) for s in segs)
-        active = sum(s.get("allocated_size", 0) for s in segs)
-        return {"count": len(segs), "total": total, "active": active, "inactive": total - active}
+        allocated = sum(s.get("allocated_size", 0) for s in segs)
+        active = sum(s.get("active_size", s.get("allocated_size", 0)) for s in segs)
+        return {
+            "count": len(segs),
+            "total": total,
+            "allocated": allocated,
+            "active": active,
+            "awaiting_free": active - allocated,
+            "inactive": total - active,
+        }
 
     seg_a = seg_summary(snap_a)
     seg_b = seg_summary(snap_b)
@@ -125,8 +152,11 @@ def compare(
     for num in matching:
         events_a = get_step_events(traces_a, steps_a[num]["start"], steps_a[num]["end"])
         events_b = get_step_events(traces_b, steps_b[num]["start"], steps_b[num]["end"])
-        replay_a = replay_events(events_a)
-        replay_b = replay_events(events_b)
+        # Seed each replay with what was already live when the step opened, so
+        # the source table accounts for memory carried into the step rather than
+        # only what the step itself allocated.
+        replay_a = replay_events(events_a, initial_live=live_set_before(traces_a, steps_a[num]["start"]))
+        replay_b = replay_events(events_b, initial_live=live_set_before(traces_b, steps_b[num]["start"]))
         abs_peak_a = base_a + deltas_a.get(num, 0) + replay_a.peak_delta
         abs_peak_b = base_b + deltas_b.get(num, 0) + replay_b.peak_delta
         step_results.append(
@@ -179,8 +209,10 @@ def compare(
             logger.warning(f"step {step} not in matching complete steps {matching}")
             drill_step = None
     elif step_results:
-        # Step with largest absolute peak difference
-        drill_step = max(step_results, key=lambda r: abs(r["peak_diff"]))["step"]
+        # Rank by absolute peak, not the within-step delta: a step can allocate
+        # modestly yet still sit at the run's memory high-water mark because of
+        # what it inherited, and that is the step worth drilling into.
+        drill_step = max(step_results, key=lambda r: abs(r["abs_peak_diff"]))["step"]
     else:
         drill_step = None
 
@@ -303,9 +335,11 @@ def compare(
         sign = "+" if delta > 0 else ""
         print(f"  {label:20s}  {ka:>14}  {kb:>14}  {sign}{delta:>13}")
     for label, ka, kb in [
-        ("Total size", seg_a["total"], seg_b["total"]),
+        ("Reserved (total)", seg_a["total"], seg_b["total"]),
+        ("Allocated", seg_a["allocated"], seg_b["allocated"]),
         ("Active", seg_a["active"], seg_b["active"]),
-        ("Inactive", seg_a["inactive"], seg_b["inactive"]),
+        ("Awaiting free", seg_a["awaiting_free"], seg_b["awaiting_free"]),
+        ("Inactive (reusable)", seg_a["inactive"], seg_b["inactive"]),
         ("Baseline at start", base_a, base_b),
     ]:
         delta = kb - ka
@@ -437,7 +471,10 @@ def compare(
 def main() -> None:
     """Parse arguments and run the two-snapshot comparison."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    parser = argparse.ArgumentParser(description="Compare two CUDA memory snapshots.")
+    parser = argparse.ArgumentParser(
+        description="Compare two CUDA memory snapshots.",
+        epilog=TRUST_EPILOG,
+    )
     parser.add_argument("pickle_a", help="Path to snapshot A")
     parser.add_argument("pickle_b", help="Path to snapshot B")
     parser.add_argument("--step", type=int, help="Specific step to drill into (default: largest divergence)")

@@ -46,27 +46,47 @@ _INTERNAL_FUNC_NAMES = {"<module>", "<lambda>", "_call_impl", "_wrapped_call_imp
 
 logger = logging.getLogger(__name__)
 
+TRUST_EPILOG = (
+    "Security: snapshots are unpickled, and pickle.load executes arbitrary code. "
+    "Only analyze snapshot files from training runs you trust."
+)
+
+
+_KIB = 1024
+_MIB = 1024**2
+_GIB = 1024**3
+
 
 def format_size(num_bytes: int) -> str:
-    """Human-readable byte size, e.g. '37.91 GB', '58.72 MB'."""
+    """Human-readable byte size in binary units, e.g. '37.91 GiB', '58.72 MiB'.
+
+    Binary rather than decimal so the numbers line up with ``nvidia-smi`` and
+    ``torch.cuda.memory_allocated`` reporting. A decimal "GB" reads ~7.4% larger
+    than the same quantity in GiB, which is enough to make a cross-check against
+    ``nvidia-smi`` look like a real discrepancy when nothing is wrong.
+    """
     abs_b = abs(num_bytes)
     sign = "-" if num_bytes < 0 else ""
-    if abs_b >= 1e9:
-        return f"{sign}{abs_b / 1e9:.2f} GB"
-    if abs_b >= 1e6:
-        return f"{sign}{abs_b / 1e6:.2f} MB"
-    if abs_b >= 1e3:
-        return f"{sign}{abs_b / 1e3:.2f} KB"
+    if abs_b >= _GIB:
+        return f"{sign}{abs_b / _GIB:.2f} GiB"
+    if abs_b >= _MIB:
+        return f"{sign}{abs_b / _MIB:.2f} MiB"
+    if abs_b >= _KIB:
+        return f"{sign}{abs_b / _KIB:.2f} KiB"
     return f"{sign}{abs_b} B"
 
 
 def load_snapshot(path: str) -> dict:
-    """Load a CUDA memory snapshot pickle file."""
+    """Load a CUDA memory snapshot pickle file.
+
+    Snapshots are unpickled, and ``pickle.load`` executes arbitrary code, so
+    only load files produced by a training run you trust.
+    """
     if not os.path.isfile(path):
         logger.error(f"file not found: {path}")
         sys.exit(1)
-    size_mb = os.path.getsize(path) / 1e6
-    logger.info(f"Loading {path} ({size_mb:.1f} MB) ...")
+    size_mib = os.path.getsize(path) / _MIB
+    logger.info(f"Loading {path} ({size_mib:.1f} MiB) — unpickling executes code; load trusted files only.")
     with open(path, "rb") as f:
         data = pickle.load(f)
     if not isinstance(data, dict):
@@ -171,7 +191,11 @@ def compute_baseline(snapshot: dict, device_idx: int) -> BaselineInfo:
     (the freed ones hadn't been freed yet).
     """
     segments = snapshot.get("segments", [])
-    segments_active = sum(s.get("allocated_size", 0) for s in segments)
+    # active_size, not allocated_size: the trace replay below only releases a
+    # block on free_completed, so a block in active_awaiting_free is still live
+    # from the replay's point of view. Using allocated_size here would subtract
+    # those blocks on one side of the equation but not the other.
+    segments_active = sum(s.get("active_size", s.get("allocated_size", 0)) for s in segments)
 
     traces = snapshot.get("device_traces", [])
     device_trace = traces[device_idx] if device_idx < len(traces) else []
@@ -256,16 +280,46 @@ class ReplayResult:
     unmatched_free_bytes: int = 0
 
 
-def replay_events(events: list) -> ReplayResult:
+def live_set_before(traces: list, cutoff_us: int) -> dict[int, tuple[int, list]]:
+    """Return allocations still live immediately before *cutoff_us*.
+
+    Used to seed a windowed replay so that memory allocated earlier in the run
+    and still held (weights, optimizer state, graph pools, activations carried
+    across a step boundary) is attributable, not just the allocations that
+    happen to occur inside the window.
+    """
+    live: dict[int, tuple[int, list]] = {}
+    for e in traces:
+        if e.get("time_us", 0) >= cutoff_us:
+            break
+        action = e.get("action")
+        if action == "alloc":
+            live[e["addr"]] = (e["size"], e.get("frames", []))
+        elif action == "free_completed":
+            live.pop(e["addr"], None)
+    return live
+
+
+def replay_events(events: list, initial_live: dict[int, tuple[int, list]] | None = None) -> ReplayResult:
     """Replay alloc/free_completed events to track memory over time.
 
     Returns peak delta from start, the set of live allocations at peak,
     and summary statistics.
+
+    Args:
+        events: Trace events to replay, in chronological order.
+        initial_live: Allocations already live when the window opens, as
+            returned by :func:`live_set_before`. These are carried into
+            ``peak_live_set`` so source attribution accounts for them, but they
+            do not contribute to ``peak_delta``, which stays a delta measured
+            from the start of the window.
     """
-    live: dict[int, tuple[int, list]] = {}  # addr -> (size, frames)
+    live: dict[int, tuple[int, list]] = dict(initial_live) if initial_live else {}  # addr -> (size, frames)
     current_delta = 0
     peak_delta = 0
-    peak_snapshot: dict[int, tuple[int, list]] = {}
+    # Seeded state is the peak until an alloc beats it, so a window that only
+    # frees still reports the allocations that were live when it opened.
+    peak_snapshot: dict[int, tuple[int, list]] = dict(live)
     total_alloc = 0
     alloc_count = 0
     free_count = 0

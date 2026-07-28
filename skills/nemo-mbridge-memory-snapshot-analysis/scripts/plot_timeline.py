@@ -23,7 +23,7 @@ import sys
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import compute_baseline, find_active_device, load_snapshot
+from common import TRUST_EPILOG, compute_baseline, find_active_device, load_snapshot
 
 
 COLORS = [
@@ -62,6 +62,17 @@ def _replay_timeseries(traces):
     live = {}
     current = 0
     idx = 0
+
+    # Seed the state at trace start. Without this the series begins at the first
+    # alloc/free rather than at delta 0, so a trace whose earliest visible event
+    # is an unmatched free (older captures, or a ring buffer that dropped the
+    # matching allocs) yields only negative deltas and reports a peak below the
+    # reconstructed baseline — when the true peak was the baseline itself.
+    if traces:
+        times.append(traces[0].get("time_us", 0))
+        indices.append(idx)
+        deltas.append(0)
+        idx += 1
 
     for e in traces:
         action = e["action"]
@@ -249,24 +260,24 @@ DATA.forEach(d => {
   card.style.borderLeftColor = d.color;
   card.innerHTML = `
     <h3>${d.label} — Peak</h3>
-    <div class="value" style="color:${d.color}">${d.peak_abs_gb.toFixed(2)} GB</div>
+    <div class="value" style="color:${d.color}">${d.peak_abs_gib.toFixed(2)} GiB</div>
     <div class="detail">
-      Baseline: ${d.baseline_gb.toFixed(2)} GB
-      &nbsp;|&nbsp; Peak delta: ${d.peak_delta_gb.toFixed(2)} GB
+      Baseline: ${d.baseline_gib.toFixed(2)} GiB
+      &nbsp;|&nbsp; Peak delta: ${d.peak_delta_gib.toFixed(2)} GiB
       &nbsp;|&nbsp; ${d.alloc_count.toLocaleString()} alloc events
     </div>`;
   cardsDiv.appendChild(card);
 });
 
 if (DATA.length === 2) {
-  const diff = DATA[0].peak_abs_gb - DATA[1].peak_abs_gb;
+  const diff = DATA[0].peak_abs_gib - DATA[1].peak_abs_gib;
   const card = document.createElement('div');
   card.className = 'stat-card';
   card.style.borderLeftColor = '#ffd93d';
   const sign = diff >= 0 ? '+' : '';
   card.innerHTML = `
     <h3>Delta (${DATA[0].label} - ${DATA[1].label})</h3>
-    <div class="value" style="color:#ffd93d">${sign}${diff.toFixed(2)} GB</div>
+    <div class="value" style="color:#ffd93d">${sign}${diff.toFixed(2)} GiB</div>
     <div class="detail">Difference in absolute peak memory</div>`;
   cardsDiv.appendChild(card);
 }
@@ -311,18 +322,18 @@ function updatePlot() {
     let xData, deltaData;
     if (useEvent) {
       xData = d.event_idx;
-      deltaData = d.delta_gb_event;
+      deltaData = d.delta_gib_event;
     } else if (precMs <= BASE_PRECISION_MS) {
       // At base precision — use embedded data directly
       xData = d.times_s;
-      deltaData = d.delta_gb;
+      deltaData = d.delta_gib;
     } else {
       // Coarser than base — downsample client-side
-      const ds = downsampleByTime(d.times_s, d.delta_gb, precMs / 1000);
+      const ds = downsampleByTime(d.times_s, d.delta_gib, precMs / 1000);
       xData = ds.x;
       deltaData = ds.y;
     }
-    const yData = useAbs ? deltaData.map(v => v + d.baseline_gb) : deltaData;
+    const yData = useAbs ? deltaData.map(v => v + d.baseline_gib) : deltaData;
     totalPoints += xData.length;
     return {
       x: xData,
@@ -332,8 +343,8 @@ function updatePlot() {
       name: d.label,
       line: { color: d.color, width: 1.5 },
       hovertemplate: useEvent
-        ? `<b>${d.label}</b><br>Event: %{x:,}<br>Memory: %{y:.2f} GB<extra></extra>`
-        : `<b>${d.label}</b><br>Time: %{x:.2f}s<br>Memory: %{y:.2f} GB<extra></extra>`
+        ? `<b>${d.label}</b><br>Event: %{x:,}<br>Memory: %{y:.2f} GiB<extra></extra>`
+        : `<b>${d.label}</b><br>Time: %{x:.2f}s<br>Memory: %{y:.2f} GiB<extra></extra>`
     };
   });
   document.getElementById('pointCount').textContent =
@@ -348,8 +359,8 @@ function updatePlot() {
       tickformat: useEvent ? ',d' : '.1f'
     },
     yaxis: {
-      title: useAbs ? 'GPU Memory (GB)' : 'Memory Delta from Start (GB)',
-      gridcolor: '#2a2a4a', zerolinecolor: '#2a2a4a', ticksuffix: ' GB'
+      title: useAbs ? 'GPU Memory (GiB)' : 'Memory Delta from Start (GiB)',
+      gridcolor: '#2a2a4a', zerolinecolor: '#2a2a4a', ticksuffix: ' GiB'
     },
     legend: {
       orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'center', x: 0.5,
@@ -379,7 +390,7 @@ def generate(pickle_paths: list[str], labels: list[str], output: str, precision_
         output: Path the HTML file is written to.
         precision_ms: Time bucket width in milliseconds for the wall-clock view.
     """
-    GB = 1024**3
+    GIB = 1024**3
     precision_us = int(precision_ms * 1000)
     traces_data = []
 
@@ -391,7 +402,7 @@ def generate(pickle_paths: list[str], labels: list[str], output: str, precision_
             continue
         trace = snap["device_traces"][dev]
         baseline = compute_baseline(snap, dev)
-        base_gb = baseline.baseline_at_start / GB
+        base_gib = baseline.baseline_at_start / GIB
 
         # Anchor to profiling start (first event of any kind)
         t0 = trace[0].get("time_us", 0) if trace else 0
@@ -414,12 +425,12 @@ def generate(pickle_paths: list[str], labels: list[str], output: str, precision_
         )
 
         times_s = [(t - t0) / 1e6 for t in ds_times]
-        delta_gb_time = [d / GB for d in ds_deltas_t]
+        delta_gib_time = [d / GIB for d in ds_deltas_t]
         event_idx = list(ds_indices)
-        delta_gb_event = [d / GB for d in ds_deltas_e]
+        delta_gib_event = [d / GIB for d in ds_deltas_e]
 
-        peak_delta_gb = max(d / GB for d in raw_deltas) if raw_deltas else 0
-        peak_abs_gb = peak_delta_gb + base_gb
+        peak_delta_gib = max(d / GIB for d in raw_deltas) if raw_deltas else 0
+        peak_abs_gib = peak_delta_gib + base_gib
 
         label = labels[i] if i < len(labels) else os.path.basename(path)
         color = COLORS[i % len(COLORS)]
@@ -431,17 +442,17 @@ def generate(pickle_paths: list[str], labels: list[str], output: str, precision_
             {
                 "label": label,
                 "color": color,
-                "baseline_gb": round(base_gb, 4),
+                "baseline_gib": round(base_gib, 4),
                 "alloc_count": alloc_count,
-                "peak_delta_gb": round(peak_delta_gb, 4),
-                "peak_abs_gb": round(peak_abs_gb, 4),
+                "peak_delta_gib": round(peak_delta_gib, 4),
+                "peak_abs_gib": round(peak_abs_gib, 4),
                 "points": len(times_s),
                 # Time-based x-axis data
                 "times_s": times_s,
-                "delta_gb": delta_gb_time,
+                "delta_gib": delta_gib_time,
                 # Event-index x-axis data
                 "event_idx": event_idx,
-                "delta_gb_event": delta_gb_event,
+                "delta_gib_event": delta_gib_event,
             }
         )
 
@@ -457,8 +468,8 @@ def generate(pickle_paths: list[str], labels: list[str], output: str, precision_
     with open(output, "w") as f:
         f.write(html)
 
-    size_kb = os.path.getsize(output) / 1e3
-    logger.info(f"Written to {output} ({size_kb:.0f} KB)")
+    size_kib = os.path.getsize(output) / 1024
+    logger.info(f"Written to {output} ({size_kib:.0f} KiB)")
 
 
 def main() -> None:
@@ -466,6 +477,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description="Generate an interactive HTML timeline of CUDA memory usage.",
+        epilog=TRUST_EPILOG,
     )
     parser.add_argument("pickles", nargs="+", help="Snapshot pickle file(s)")
     parser.add_argument(

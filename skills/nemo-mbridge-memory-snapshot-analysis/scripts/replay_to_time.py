@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (
+    TRUST_EPILOG,
     compute_baseline,
     find_active_device,
     format_size,
@@ -244,10 +245,10 @@ def drill_compare(path_a: str, path_b: str, time_s: float, top_n: int, frame_dep
     only_b = [(src, tb, cb) for _, _, ta, ca, tb, cb, src in rows if ta == 0 and tb > 1024 * 1024]
     if only_a:
         total = sum(t for _, t, _ in only_a)
-        print(f"\n  Only in A (> 1 MB): {len(only_a)} sources, {format_size(total)} total")
+        print(f"\n  Only in A (> 1 MiB): {len(only_a)} sources, {format_size(total)} total")
     if only_b:
         total = sum(t for _, t, _ in only_b)
-        print(f"  Only in B (> 1 MB): {len(only_b)} sources, {format_size(total)} total")
+        print(f"  Only in B (> 1 MiB): {len(only_b)} sources, {format_size(total)} total")
     print()
 
 
@@ -256,6 +257,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(
         description="Drill down into CUDA memory state at a specific elapsed time.",
+        epilog=TRUST_EPILOG,
     )
     parser.add_argument("pickles", nargs="+", help="One or two snapshot pickle files")
     parser.add_argument(

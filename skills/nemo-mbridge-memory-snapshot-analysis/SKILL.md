@@ -92,7 +92,7 @@ their construction site and `baseline_at_start` is small.
 Snapshots captured before that commit — or by an external callback that enables
 recording at train start — begin after model construction instead, and their
 `baseline_at_start` is the whole model. A verified pre-fix capture shows a
-28.22 GB baseline for exactly this reason. Check the earliest frames in the
+26.29 GiB baseline for exactly this reason. Check the earliest frames in the
 trace to tell which regime you are in.
 
 **3. The trace is capped at 100k entries.** `trace_alloc_max_entries=100_000`
@@ -119,6 +119,15 @@ it captures exactly what was live when the allocator gave up. Analyze it with
 ## Workflows
 
 Scripts live in `skills/nemo-mbridge-memory-snapshot-analysis/scripts/`.
+
+> **Load trusted snapshots only.** Every script below starts by unpickling the
+> file, and `pickle.load` executes arbitrary code embedded in it. Analyze
+> snapshots produced by your own training runs or by someone you trust — never a
+> pickle from an untrusted issue attachment, bucket, or download. There is no
+> safe-mode parse: the format requires full deserialization.
+>
+> Snapshots also carry absolute paths and stack frames from the machine that
+> produced them, so check before sharing one outside your organization.
 
 ### 1. Single snapshot overview
 
@@ -198,26 +207,34 @@ allocations at peak grouped by source, and active annotation phases.
                             Snapshot A      Snapshot B           Delta
   ────────────────────  ──────────────  ──────────────  ──────────────
   Segments                          24              24               0
-  Total size                  53.21 GB        73.49 GB  +     20.27 GB
-  Active                      45.10 GB        62.28 GB  +     17.18 GB
-  Baseline at start           39.61 GB        52.77 GB  +     13.15 GB
+  Reserved (total)           53.21 GiB       73.49 GiB  +    20.27 GiB
+  Allocated                  45.10 GiB       62.28 GiB  +    17.18 GiB
+  Active                     45.10 GiB       62.28 GiB  +    17.18 GiB
+  Awaiting free                    0 B             0 B            0 B
+  Inactive (reusable)         8.12 GiB       11.21 GiB  +     3.09 GiB
+  Baseline at start          39.61 GiB       52.77 GiB  +    13.15 GiB
 
 --- Full-Trace Summary (no ProfilerStep annotations) ---
                                            Snapshot A      Snapshot B      Delta(B-A)
   ───────────────────────────────────  ──────────────  ──────────────  ──────────────
-  Peak delta (from trace start)               9.65 GB        19.15 GB  +      9.50 GB
-  Absolute peak (baseline+delta)             49.26 GB        71.92 GB  +     22.65 GB
+  Peak delta (from trace start)              9.65 GiB       19.15 GiB  +     9.50 GiB
+  Absolute peak (baseline+delta)            49.26 GiB       71.92 GiB  +    22.65 GiB
   Alloc count                                     760           1,840  +        1,080
 
---- Drill-Down: Full Trace (peak diff: +9.50 GB) ---
+--- Drill-Down: Full Trace (peak diff: +9.50 GiB) ---
   Source                                            Peak A        Peak B    Delta(B-A)
   ────────────────────────────────────────────  ──────────  ──────────  ────────────
-  router_forward@router.py:145                     1.81 GB     4.51 GB  +    2.70 GB
-  mlp_forward@mlp.py:301                           1.59 GB     4.28 GB  +    2.69 GB
-  attention_forward@attention.py:88                1.77 GB     3.99 GB  +    2.21 GB
+  router_forward@router.py:145                    1.81 GiB    4.51 GiB  +   2.70 GiB
+  mlp_forward@mlp.py:301                          1.59 GiB    4.28 GiB  +   2.69 GiB
+  attention_forward@attention.py:88               1.77 GiB    3.99 GiB  +   2.21 GiB
 ```
 
 ## Interpreting Results
+
+All sizes are **binary** — KiB/MiB/GiB, 1024-based — so they line up directly
+with `nvidia-smi` and `torch.cuda.memory_allocated`. A decimal "GB" reads about
+7.4% larger for the same bytes, which is enough to make a correct cross-check
+look like a discrepancy.
 
 ### Segments vs device traces
 
@@ -227,11 +244,34 @@ over time. The two are cross-referenced to derive `baseline_at_start`, which is
 what turns relative deltas into real GPU memory figures. A timeline alone cannot
 tell you how much memory the model was actually using.
 
+### Reserved, allocated, active, inactive
+
+The four segment numbers are distinct and easy to conflate:
+
+| Term | Meaning |
+|---|---|
+| Reserved (total) | Memory the allocator holds from the driver |
+| Allocated | Blocks currently handed out to tensors |
+| Active | Allocated **plus** `active_awaiting_free` — freed by the caller but still held pending stream sync |
+| Inactive (reusable) | `reserved - active`; free blocks the allocator can hand out again |
+
+Fragmentation is reported as `inactive / reserved`. It is deliberately computed
+from *active*, not *allocated*: awaiting-free blocks are not reusable yet and
+are not fragmentation, so counting them as such over-reports the problem. When
+`Awaiting free` is non-zero, expect the two definitions to disagree.
+
 ### Absolute peak
 
 `absolute_peak = baseline_at_start + cumulative_delta_at_step_start + step_peak_delta`.
 Compare this against `nvidia-smi` or the `memory/` metrics Bridge logs to
 TensorBoard to sanity-check that the trace covers what you think it covers.
+
+Per-step replays seed their live set with whatever was already live when the
+step opened, so the source table accounts for memory carried into the step
+(weights, optimizer state, graph pools, activations held across the boundary)
+and not just what the step itself allocated. The remainder between the table's
+total and `absolute_peak` is `baseline_at_start` — allocations that predate the
+trace entirely and therefore have no recorded stack frames to attribute.
 
 ### Unmatched frees
 
@@ -264,10 +304,10 @@ shows both halves of this:
 | | Graphs off | Graphs on |
 |---|---|---|
 | Alloc count | 281,949 | 62,271 |
-| Total alloc throughput | 25,429 GB | 8,249 GB |
-| Absolute peak | 92.22 GB | 128.63 GB |
+| Total alloc throughput | 23,683 GiB | 7,682 GiB |
+| Absolute peak | 85.89 GiB | 119.80 GiB |
 
-The trace got 4.5x quieter and peak memory went *up* 36 GB. Running
+The trace got 4.5x quieter and peak memory went *up* 34 GiB. Running
 `compare_snapshots.py` on the pair attributes most of that increase to the graph
 memory pool rather than to any model tensor — which is the signal you want, and
 the reason to diff rather than eyeball a single file. See

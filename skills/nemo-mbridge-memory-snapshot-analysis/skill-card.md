@@ -34,9 +34,9 @@ Risk: Snapshot files embed absolute source paths and Python stack frames from th
 Mitigation: Review before sharing snapshot files or script output outside your organization. <br>
 
 ## Reference(s): <br>
-- [Profiling Documentation](docs/training/profiling.md) <br>
-- [Memory Tuning Skill](skills/nemo-mbridge-perf-memory-tuning/SKILL.md) <br>
-- [CUDA Graphs Skill](skills/nemo-mbridge-perf-cuda-graphs/SKILL.md) <br>
+- [Profiling Documentation](../../docs/training/profiling.md) <br>
+- [Memory Tuning Skill](../nemo-mbridge-perf-memory-tuning/SKILL.md) <br>
+- [CUDA Graphs Skill](../nemo-mbridge-perf-cuda-graphs/SKILL.md) <br>
 - [Understanding GPU Memory (PyTorch blog)](https://pytorch.org/blog/understanding-gpu-memory-1/) <br>
 
 ## Skill Output: <br>

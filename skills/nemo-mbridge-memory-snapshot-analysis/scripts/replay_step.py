@@ -24,6 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (
+    TRUST_EPILOG,
     compute_baseline,
     compute_step_start_deltas,
     find_active_device,
@@ -32,6 +33,7 @@ from common import (
     get_step_annotations,
     get_step_events,
     group_by_source,
+    live_set_before,
     load_snapshot,
     replay_events,
 )
@@ -55,7 +57,9 @@ def replay_one_step(
     start = step_info["start"]
     end = step_info["end"]
     events = get_step_events(traces, start, end)
-    result = replay_events(events)
+    # Seed with what was already live when the step opened, so the source table
+    # accounts for memory carried into the step, not only what it allocated.
+    result = replay_events(events, initial_live=live_set_before(traces, start))
     sources = group_by_source(result.peak_live_set, depth=frame_depth)
     ann_counts = get_step_annotations(annotations, start, end)
 
@@ -116,7 +120,10 @@ def replay_one_step(
 def main() -> None:
     """Parse arguments and replay the requested training step(s)."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    parser = argparse.ArgumentParser(description="Replay device_traces for a training step.")
+    parser = argparse.ArgumentParser(
+        description="Replay device_traces for a training step.",
+        epilog=TRUST_EPILOG,
+    )
     parser.add_argument("pickle_path", help="Path to the snapshot .pickle file")
     parser.add_argument("--step", type=int, help="Step number to replay")
     parser.add_argument("--all-steps", action="store_true", help="Replay all complete steps")

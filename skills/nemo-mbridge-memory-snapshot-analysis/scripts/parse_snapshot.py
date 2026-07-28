@@ -25,6 +25,7 @@ from collections import defaultdict
 # Allow running as script from any directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (
+    TRUST_EPILOG,
     compute_baseline,
     find_active_device,
     format_size,
@@ -45,9 +46,15 @@ def print_overview(snapshot: dict, path: str, as_json: bool = False) -> None:
     file_size = os.path.getsize(path)
 
     # --- Segments ---
+    # allocated_size counts blocks currently handed out; active_size also counts
+    # active_awaiting_free (freed by the user, still held pending stream sync).
+    # Reusable memory is total - active, so computing inactive from allocated
+    # would report awaiting-free blocks as fragmentation.
     segments = snapshot.get("segments", [])
     total_size = sum(s.get("total_size", 0) for s in segments)
-    active_size = sum(s.get("allocated_size", 0) for s in segments)
+    allocated_size = sum(s.get("allocated_size", 0) for s in segments)
+    active_size = sum(s.get("active_size", s.get("allocated_size", 0)) for s in segments)
+    awaiting_free_size = active_size - allocated_size
     inactive_size = total_size - active_size
 
     # --- Profiler steps ---
@@ -81,7 +88,9 @@ def print_overview(snapshot: dict, path: str, as_json: bool = False) -> None:
             "segments": {
                 "count": len(segments),
                 "total_size": total_size,
+                "allocated_size": allocated_size,
                 "active_size": active_size,
+                "awaiting_free_size": awaiting_free_size,
                 "inactive_size": inactive_size,
             },
             "baseline": {
@@ -125,20 +134,25 @@ def print_overview(snapshot: dict, path: str, as_json: bool = False) -> None:
     settings = snapshot.get("allocator_settings", {})
     if settings:
         print("\n--- Allocator Settings ---")
-        for k, v in settings.items():
-            if k == "roundup_power2_divisions":
-                continue  # noisy, skip
+        for k, v in sorted(settings.items()):
+            # roundup_power2_divisions is usually an empty dict, but when set it
+            # changes allocation rounding and can explain a reserved-memory or
+            # fragmentation difference, so report it rather than hiding it.
+            if isinstance(v, dict):
+                v = dict(sorted(v.items(), key=lambda kv: str(kv[0]))) or "(unset)"
             print(f"  {k}: {v}")
 
     # Segments
     print("\n--- Segments ---")
-    print(f"  Count:    {len(segments)}")
-    print(f"  Total:    {format_size(total_size)}")
-    print(f"  Active:   {format_size(active_size)}")
-    print(f"  Inactive: {format_size(inactive_size)}")
+    print(f"  Count:               {len(segments)}")
+    print(f"  Reserved (total):    {format_size(total_size)}")
+    print(f"  Allocated:           {format_size(allocated_size)}")
+    print(f"  Active:              {format_size(active_size)}")
+    print(f"  Awaiting free:       {format_size(awaiting_free_size)}")
+    print(f"  Inactive (reusable): {format_size(inactive_size)}")
     if total_size > 0:
         frag_pct = inactive_size / total_size * 100
-        print(f"  Fragmentation: {frag_pct:.1f}%")
+        print(f"  Fragmentation:       {frag_pct:.1f}%  (inactive / reserved)")
 
     # Baseline memory
     if baseline:
@@ -189,7 +203,10 @@ def print_overview(snapshot: dict, path: str, as_json: bool = False) -> None:
 
 def main() -> None:
     """Parse arguments and print the snapshot overview."""
-    parser = argparse.ArgumentParser(description="Overview of a CUDA memory snapshot pickle file.")
+    parser = argparse.ArgumentParser(
+        description="Overview of a CUDA memory snapshot pickle file.",
+        epilog=TRUST_EPILOG,
+    )
     parser.add_argument("pickle_path", help="Path to the snapshot .pickle file")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     args = parser.parse_args()
