@@ -155,8 +155,9 @@ def test_glm52_gb200_long_context_recipe_uses_131k_packed_cp() -> None:
     assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.num_layers_in_first_pipeline_stage == 14
     assert cfg.model.num_layers_in_last_pipeline_stage == 16
-    assert cfg.model.moe_token_dispatcher_type == "alltoall"
-    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.apply_rope_fusion is False
     assert cfg.train.global_batch_size == 8
     assert cfg.train.micro_batch_size == 1
@@ -166,6 +167,10 @@ def test_glm52_gb200_long_context_recipe_uses_131k_packed_cp() -> None:
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
 
 
 @pytest.mark.parametrize(

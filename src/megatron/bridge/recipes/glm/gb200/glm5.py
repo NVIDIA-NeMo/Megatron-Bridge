@@ -29,8 +29,9 @@ def glm52_sft_long_context_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.num_layers_in_first_pipeline_stage = 14
     cfg.model.num_layers_in_last_pipeline_stage = 16
     cfg.model.microbatch_group_size_per_vp_stage = None
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.apply_rope_fusion = False
 
     cfg.dataset.seq_length = 131072
@@ -44,6 +45,14 @@ def glm52_sft_long_context_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.train_iters = 20
+    cfg.env_vars.update(
+        {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        }
+    )
     return cfg
 
 

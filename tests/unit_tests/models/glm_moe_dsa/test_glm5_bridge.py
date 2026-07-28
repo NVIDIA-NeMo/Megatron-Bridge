@@ -44,6 +44,11 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
         "num_hidden_layers": 78,
         "moe_intermediate_size": 2048,
         "n_shared_experts": 1,
+        "qk_head_dim": 256,
+        "qk_nope_head_dim": 192,
+        # Transformers currently normalizes this raw-config value from 64 to
+        # head_dim=192 for GLM-5.2. The bridge must not propagate that value.
+        "qk_rope_head_dim": 192,
         "rope_parameters": {"rope_theta": 1_000_000},
         "index_head_dim": 128,
         "index_n_heads": 32,
@@ -78,6 +83,7 @@ def test_provider_bridge_maps_dsa_architecture_from_hf_config(
 
     assert provider.experimental_attention_variant == "dsa"
     assert provider.cp_comm_type == "allgather"
+    assert provider.qk_pos_emb_head_dim == 64
     assert provider.dsa_indexer_head_dim == 128
     assert provider.dsa_indexer_n_heads == 32
     assert provider.dsa_indexer_topk == 2048
