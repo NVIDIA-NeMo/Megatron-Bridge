@@ -16,11 +16,15 @@ from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLMo
 
 
 class NemotronOmniLlavaModel(NemotronVLModel):
-    """Legacy collapse/expand Omni wrapper around MCore ``LLaVAModel``.
+    """Deprecated collapse/expand Omni wrapper around MCore ``LLaVAModel``.
 
     forward() is inherited from NemotronVLModel (which delegates to LLaVAModel),
     so sound kwargs (sound_clips, sound_length) pass through automatically when
     the selected LLaVAModel implementation supports them.
+
+    Use :class:`~megatron.bridge.models.nemotron_omni.modeling_nemotron_omni.NemotronOmniModel`
+    for the canonical processor-expanded sequence and collator-owned packing
+    contract.
     """
 
     def freeze(

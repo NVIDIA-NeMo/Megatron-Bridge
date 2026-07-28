@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    inference_expanded_image_token_counts,
     inference_merged_sequence_length,
     inference_num_image_tiles,
     select_inference_next_token,
@@ -83,21 +84,47 @@ def test_inference_num_image_tiles_rejects_unshufflable_image_grid():
         inference_num_image_tiles(torch.tensor([[528, 512]]), patch_dim=16)
 
 
+def test_inference_expanded_image_token_counts_aggregates_dynamic_tiles_by_media():
+    counts = inference_expanded_image_token_counts(
+        torch.tensor([256, 128, 64]),
+        torch.tensor([2, 1]),
+    )
+
+    assert counts.tolist() == [384, 64]
+
+
+def test_inference_expanded_image_token_counts_applies_temporal_feature_width():
+    counts = inference_expanded_image_token_counts(
+        torch.ones(3, dtype=torch.int),
+        torch.ones(3, dtype=torch.int),
+        feature_multiplier=256,
+    )
+
+    assert counts.tolist() == [256, 256, 256]
+
+
+def test_inference_expanded_image_token_counts_rejects_incomplete_tile_ownership():
+    with pytest.raises(ValueError, match="account for every tile"):
+        inference_expanded_image_token_counts(torch.tensor([256, 128]), torch.tensor([1]))
+
+
 def test_inference_merged_sequence_length_uses_exact_image_replacements():
     input_ids = torch.tensor([[10, -200, 11, -200, 12]])
 
-    dynamic_length = inference_merged_sequence_length(
-        input_ids,
-        image_token_index=-200,
-        num_image_tiles=torch.tensor([3, 2]),
-        image_seq_len=1,
-    )
-    temporal_length = inference_merged_sequence_length(
-        input_ids,
-        image_token_index=-200,
-        num_image_tiles=torch.tensor([1, 1]),
-        image_seq_len=256,
-    )
+    with pytest.warns(FutureWarning, match="deprecated"):
+        dynamic_length = inference_merged_sequence_length(
+            input_ids,
+            image_token_index=-200,
+            num_image_tiles=torch.tensor([3, 2]),
+            image_seq_len=1,
+        )
+    with pytest.warns(FutureWarning, match="deprecated"):
+        temporal_length = inference_merged_sequence_length(
+            input_ids,
+            image_token_index=-200,
+            num_image_tiles=torch.tensor([1, 1]),
+            image_seq_len=256,
+        )
 
     assert dynamic_length == 8
     assert temporal_length == 515
@@ -114,10 +141,11 @@ def test_select_inference_next_token_ignores_pipeline_padding_logits():
 
 
 def test_inference_merged_sequence_length_rejects_misaligned_image_metadata():
-    with pytest.raises(ValueError, match="Expected 2 num_image_tiles entries"):
-        inference_merged_sequence_length(
-            torch.tensor([[10, -200, 11, -200, 12]]),
-            image_token_index=-200,
-            num_image_tiles=torch.tensor([3]),
-            image_seq_len=1,
-        )
+    with pytest.warns(FutureWarning, match="deprecated"):
+        with pytest.raises(ValueError, match="Expected 2 num_image_tiles entries"):
+            inference_merged_sequence_length(
+                torch.tensor([[10, -200, 11, -200, 12]]),
+                image_token_index=-200,
+                num_image_tiles=torch.tensor([3]),
+                image_seq_len=1,
+            )

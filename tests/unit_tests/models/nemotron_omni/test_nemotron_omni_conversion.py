@@ -292,7 +292,8 @@ def test_llava_bridge_retains_legacy_wrapper_namespace():
     hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = _mock_omni_hf_config()
 
-    provider = NemotronOmniLlavaBridge().provider_bridge(hf_pretrained)
+    with pytest.warns(FutureWarning, match="NemotronOmniLlavaBridge is deprecated"):
+        provider = NemotronOmniLlavaBridge().provider_bridge(hf_pretrained)
     registry = NemotronOmniLlavaBridge().mapping_registry()
 
     assert isinstance(provider, NemotronOmniLlavaModelProvider)

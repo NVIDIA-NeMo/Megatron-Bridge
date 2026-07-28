@@ -1929,13 +1929,14 @@ def test_nemotron_omni_llava_collate_packs_heterogeneous_image_rows_at_post_merg
     processor = _DynamicNemotronOmniProcessor()
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
 
-    batch = collate.nemotron_omni_llava_collate_fn(
-        _heterogeneous_nemotron_examples(),
-        processor,
-        enable_in_batch_packing=True,
-        sequence_length=24,
-        in_batch_packing_pad_to_multiple_of=4,
-    )
+    with pytest.warns(FutureWarning, match="collapse/expand data contract is deprecated"):
+        batch = collate.nemotron_omni_llava_collate_fn(
+            _heterogeneous_nemotron_examples(),
+            processor,
+            enable_in_batch_packing=True,
+            sequence_length=24,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
 
     assert batch["input_ids"].tolist() == [
         [

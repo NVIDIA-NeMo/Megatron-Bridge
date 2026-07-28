@@ -89,6 +89,8 @@ class NemotronOmniEnergonTaskEncoderConfig:
 
     ``visual_keys`` is retained for configuration compatibility, but Omni owns
     its visual input contract and supports only ``("pixel_values",)``.
+    ``collapse_image_tokens=True`` selects the deprecated LLaVA compatibility
+    path; the default ``False`` selects the canonical expanded-sequence path.
     """
 
     hf_processor_path: str

@@ -33,6 +33,7 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
 """
 
 import copy
+import warnings
 from dataclasses import fields
 
 from megatron.core.activations import squared_relu
@@ -264,9 +265,19 @@ class NemotronOmniBridge(NemotronVLBridge):
 
 
 class NemotronOmniLlavaBridge(NemotronOmniBridge):
-    """Explicit fallback bridge for the historical collapse/expand model."""
+    """Deprecated fallback bridge for the historical collapse/expand model.
+
+    Use :class:`NemotronOmniBridge`, which is the canonical AutoBridge
+    registration and consumes processor-expanded media-token sequences.
+    """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniLlavaModelProvider:
+        warnings.warn(
+            "NemotronOmniLlavaBridge is deprecated; use NemotronOmniBridge with the canonical "
+            "processor-expanded sequence contract.",
+            FutureWarning,
+            stacklevel=2,
+        )
         provider = super().provider_bridge(hf_pretrained)
         provider_kwargs = {
             field.name: getattr(provider, field.name)

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import tempfile
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -823,6 +824,14 @@ def nemotron_omni_collate_fn(
     Use :func:`nemotron_omni_llava_collate_fn` for the legacy LLaVA
     collapse/expand contract.
     """
+    if collapse_image_tokens:
+        warnings.warn(
+            "The Nemotron Omni LLaVA collapse/expand data contract is deprecated; use "
+            "nemotron_omni_expanded_collate_fn (the default registry path) with the canonical "
+            "processor-expanded model.",
+            FutureWarning,
+            stacklevel=2,
+        )
     _validate_nemotron_omni_visual_keys(visual_keys)
     del start_of_response_token, min_pixels, max_pixels
     if not examples:
@@ -999,7 +1008,7 @@ def nemotron_omni_collate_fn(
 
 
 def nemotron_omni_llava_collate_fn(*args, **kwargs) -> dict[str, torch.Tensor]:
-    """Collate inputs for the explicit legacy LLaVA collapse/expand path."""
+    """Collate inputs for the deprecated LLaVA collapse/expand path."""
 
     kwargs["collapse_image_tokens"] = True
     return nemotron_omni_collate_fn(*args, **kwargs)

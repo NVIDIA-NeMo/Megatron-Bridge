@@ -128,7 +128,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
     assistant masking, modality-token expansion, padding, and in-batch packing
     are performed by the canonical expanded-sequence collator for both
     Direct-HF and Energon datasets. ``collapse_image_tokens=True`` selects the
-    explicit legacy LLaVA compatibility contract.
+    deprecated LLaVA compatibility contract.
     """
 
     def __init__(

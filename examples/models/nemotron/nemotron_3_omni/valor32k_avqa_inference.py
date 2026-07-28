@@ -44,6 +44,7 @@ from transformers import AutoTokenizer, ParakeetFeatureExtractor
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     COMPACT_IMAGE_PLACEHOLDER,
+    inference_expanded_image_token_counts,
     inference_num_image_tiles,
     patchify_temporal_frame,
     select_inference_next_token,
@@ -113,8 +114,6 @@ class SingleBatchIterator:
             self.batch["imgs_sizes"] = kwargs["imgs_sizes"]
         if kwargs.get("num_frames") is not None:
             self.batch["num_frames"] = kwargs["num_frames"]
-        if kwargs.get("num_image_tiles") is not None:
-            self.batch["num_image_tiles"] = kwargs["num_image_tiles"]
         if kwargs.get("vision_packed_seq_params") is not None:
             self.batch["vision_packed_seq_params"] = kwargs["vision_packed_seq_params"]
         self._yielded = False
@@ -151,8 +150,6 @@ def vlm_forward_step(data_iterator, model, **kwargs):
         forward_args["imgs_sizes"] = batch["imgs_sizes"]
     if "num_frames" in batch:
         forward_args["num_frames"] = batch["num_frames"]
-    if "num_image_tiles" in batch:
-        forward_args["num_image_tiles"] = batch["num_image_tiles"]
     if "vision_packed_seq_params" in batch:
         forward_args["vision_packed_seq_params"] = batch["vision_packed_seq_params"]
 
@@ -286,9 +283,14 @@ def process_sample(
             f"{num_image_tiles.numel()} replacement counts for {num_placeholders} image placeholders."
         )
     image_seq_len = (_VIDEO_FRAME_H // _VISION_PATCH_DIM) * (_VIDEO_FRAME_W // _VISION_PATCH_DIM) // 4
+    expanded_counts = inference_expanded_image_token_counts(
+        num_image_tiles,
+        torch.ones_like(num_image_tiles),
+        feature_multiplier=image_seq_len,
+    )
     input_ids = adjust_image_tokens(
         input_ids,
-        torch.full_like(num_image_tiles, image_seq_len),
+        expanded_counts,
         tokenizer.convert_tokens_to_ids("<img>"),
         tokenizer.convert_tokens_to_ids("</img>"),
     )
@@ -341,7 +343,6 @@ def process_sample(
         "images": images,
         "imgs_sizes": imgs_sizes,
         "num_frames": num_frames,
-        "num_image_tiles": num_image_tiles,
         "sound_clips": sound_clips,
         "sound_length": sound_length,
         "question": qa["question"],
@@ -382,7 +383,6 @@ def generate(model, tokenizer, sample, *, sequence_length, max_new_tokens=50):
     sound_length = sample["sound_length"].cuda() if sample["sound_length"] is not None else None
     imgs_sizes = sample["imgs_sizes"].cuda() if sample.get("imgs_sizes") is not None else None
     num_frames = sample["num_frames"].cuda() if sample.get("num_frames") is not None else None
-    num_image_tiles = sample["num_image_tiles"].cuda() if sample.get("num_image_tiles") is not None else None
 
     position_ids = torch.arange(input_ids.size(1), device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
@@ -403,7 +403,6 @@ def generate(model, tokenizer, sample, *, sequence_length, max_new_tokens=50):
                 sound_length=sound_length,
                 imgs_sizes=imgs_sizes,
                 num_frames=num_frames,
-                num_image_tiles=num_image_tiles,
                 vision_packed_seq_params=vision_packed_seq_params,
             )
             output = fwd_bwd_function(
@@ -412,8 +411,7 @@ def generate(model, tokenizer, sample, *, sequence_length, max_new_tokens=50):
                 model=model,
                 num_microbatches=1,
                 forward_only=True,
-                # LLaVA pads PP activations to the configured model width, so
-                # pipeline receive buffers must use that same fixed length.
+                # Ignored for PP shape allocation when variable_seq_lengths is enabled.
                 seq_length=sequence_length,
                 micro_batch_size=1,
                 collect_non_loss_data=True,
@@ -496,6 +494,9 @@ def main():
     model_provider.separate_video_embedder = True
     model_provider.temporal_ckpt_compat = True
     model_provider.vision_class_token_len = 10
+    # Canonical multimodal inputs retain their actual expanded length. PP
+    # stages therefore need shape exchange instead of fixed receive buffers.
+    model_provider.variable_seq_lengths = args.pp > 1
     model_provider.initialize_model_parallel(seed=0)
 
     if args.megatron_model_path:
@@ -512,6 +513,7 @@ def main():
                 "separate_video_embedder": True,
                 "temporal_ckpt_compat": True,
                 "vision_class_token_len": 10,
+                "variable_seq_lengths": args.pp > 1,
             },
             wrap_with_ddp=False,
         )

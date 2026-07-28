@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import warnings
 from abc import ABC
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -483,7 +484,11 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
 
 @dataclass
 class NemotronOmniLlavaModelProvider(NemotronOmniModelProvider):
-    """Explicit fallback provider for the historical collapse/expand path."""
+    """Deprecated fallback provider for the historical collapse/expand path.
+
+    Use :class:`NemotronOmniModelProvider`, which constructs the canonical
+    processor-expanded model with collator-owned packing.
+    """
 
     # Preserve the existing LLaVA provider default for compatibility.
     radio_interpolate_only_cpe: bool = True
@@ -496,5 +501,11 @@ class NemotronOmniLlavaModelProvider(NemotronOmniModelProvider):
         )
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        warnings.warn(
+            "NemotronOmniLlavaModelProvider is deprecated; use NemotronOmniModelProvider with the canonical "
+            "processor-expanded sequence contract.",
+            FutureWarning,
+            stacklevel=2,
+        )
         self.validate_model_contract()
         return self._provide_llava(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

@@ -9,6 +9,17 @@ dynamic-resolution RADIO vision tower and a Parakeet sound encoder.
 |---|---|---|
 | Nemotron-3-Nano-Omni-30B-A3B-Reasoning | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16` | MoE hybrid LM (Mamba+attn) + RADIO vision + Parakeet audio |
 
+AutoBridge, all shipped recipes, Direct-HF collation, Energon collation, and
+the inference examples use the canonical processor-expanded
+`NemotronOmniModel` path. The collator owns dense padding and complete MCore
+THD packing; the model only inserts media embeddings and applies CP/SP
+sharding.
+
+The historical `NemotronOmniLlavaModel`, `NemotronOmniLlavaModelProvider`,
+`NemotronOmniLlavaBridge`, and `nemotron_omni_llava_collate_fn` collapse/expand
+path remains available only for compatible legacy checkpoints and is
+deprecated. Selecting it emits a `FutureWarning`.
+
 > **Verified hardware:** all conversion, inference, and training flows in
 > this directory have been verified on **NVIDIA H100 80GB** nodes with 8
 > GPUs per node. Other GPU SKUs may work but have not been tested.

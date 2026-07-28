@@ -189,6 +189,7 @@ def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder_config(fake_process
     assert cfg.dataset.task_encoder.num_mel_bins == 128
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.dataset.task_encoder.patch_dim == 16
+    assert cfg.dataset.task_encoder.collapse_image_tokens is False
     assert cfg.model.temporal_patch_dim == 2
     assert cfg.model.separate_video_embedder is True
     assert cfg.model.temporal_ckpt_compat is True

@@ -261,6 +261,15 @@ def test_llava_provider_preserves_existing_radio_cpe_default():
     assert provider.radio_interpolate_only_cpe is True
 
 
+def test_llava_provider_emits_deprecation_notice(monkeypatch):
+    provider = NemotronOmniLlavaModelProvider(nemotron_omni_contract=NEMOTRON_OMNI_LLAVA_CONTRACT)
+    legacy_model = object()
+    monkeypatch.setattr(provider, "_provide_llava", lambda **_: legacy_model)
+
+    with pytest.warns(FutureWarning, match="NemotronOmniLlavaModelProvider is deprecated"):
+        assert provider.provide() is legacy_model
+
+
 def test_dynamic_resolution_pixel_shuffle_groups_spatial_2x2_blocks():
     features = torch.arange(2 * 4 * 2, dtype=torch.float32).reshape(1, 8, 2)
 
@@ -585,6 +594,7 @@ def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
     input_ids = torch.tensor([[7, 18, 9, 0, 11, 18, 12, 0]], device="cuda")
     labels = torch.tensor([[18, 9, -100, -100, 18, 12, -100, -100]], device="cuda")
     loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]], device="cuda")
+    padding_mask = torch.tensor([[False, False, False, True, False, False, False, True]], device="cuda")
     cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32, device="cuda")
     cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
     packed_seq_params = PackedSeqParams(
@@ -603,6 +613,7 @@ def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
         input_ids=input_ids,
         labels=labels,
         loss_mask=loss_mask,
+        padding_mask=padding_mask,
         packed_seq_params=packed_seq_params,
         pixel_values=torch.randn(2, 3, 32, 32, device="cuda"),
         imgs_sizes=torch.tensor([[32, 32], [32, 32]], dtype=torch.int32, device="cuda"),
