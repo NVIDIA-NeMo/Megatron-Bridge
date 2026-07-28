@@ -285,6 +285,9 @@ class KimiK3Bridge(MegatronModelBridge):
         weight = self._load_one_hf_weight(hf_param, hf_state_dict)
         if hf_param.endswith(".self_attn.A_log"):
             num_heads = self.hf_config.text_config.linear_attn_config["num_heads"]
+            padding = weight[num_heads:]
+            if padding.numel() and torch.count_nonzero(padding).item():
+                raise ValueError(f"Kimi K3 requires zero-padded inactive A_log entries in {hf_param}")
             weight = weight[:num_heads]
         return weight
 
@@ -294,12 +297,26 @@ class KimiK3Bridge(MegatronModelBridge):
         converted_weights_dict: dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
-        """Restore the source checkpoint's routed-expert MXFP4 representation."""
-        if task.weight_dtype is not None:
-            return converted_weights_dict
-
+        """Restore KDA padding and the source routed-expert MXFP4 representation."""
         result: dict[str, torch.Tensor] = {}
         for name, weight in converted_weights_dict.items():
+            if name.endswith(".self_attn.A_log"):
+                if name not in hf_state_dict:
+                    raise ValueError(f"Missing source Kimi K3 A_log tensor {name}")
+                source_weight = hf_state_dict[name]
+                if weight.ndim != 1 or source_weight.ndim != 1 or weight.shape[0] > source_weight.shape[0]:
+                    raise ValueError(
+                        f"Cannot restore Kimi K3 A_log padding for {name}: "
+                        f"Megatron shape {tuple(weight.shape)}, HF shape {tuple(source_weight.shape)}"
+                    )
+                padding_size = source_weight.shape[0] - weight.shape[0]
+                result[name] = torch.cat((weight, weight.new_zeros(padding_size)))
+                continue
+
+            if task.weight_dtype is not None:
+                result[name] = weight
+                continue
+
             packed_key = f"{name}_packed" if name.endswith(".weight") else ""
             scale_key = f"{name}_scale" if name.endswith(".weight") else ""
             if packed_key and packed_key in hf_state_dict:

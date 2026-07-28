@@ -155,6 +155,44 @@ def test_mapping_registry_covers_kda_latent_moe_and_attn_res(kimi_k3_pretrained:
         assert reverse.megatron_param == megatron_name
 
 
+def test_kda_a_log_import_drops_zero_padding(kimi_k3_pretrained: Mock) -> None:
+    """K3 imports only the 96 active KDA heads from the padded HF tensor."""
+    bridge = KimiK3Bridge()
+    bridge.hf_config = kimi_k3_pretrained.config
+    name = "language_model.model.layers.0.self_attn.A_log"
+    active = torch.arange(96, dtype=torch.float32)
+    source = torch.cat((active, torch.zeros(32)))
+
+    result = bridge.maybe_modify_loaded_hf_weight(name, {name: source})
+
+    torch.testing.assert_close(result, active, rtol=0, atol=0)
+
+
+def test_kda_a_log_import_rejects_nonzero_padding(kimi_k3_pretrained: Mock) -> None:
+    """K3 fails explicitly if a future HF checkpoint changes the padding contract."""
+    bridge = KimiK3Bridge()
+    bridge.hf_config = kimi_k3_pretrained.config
+    name = "language_model.model.layers.0.self_attn.A_log"
+    source = torch.cat((torch.arange(96, dtype=torch.float32), torch.ones(32)))
+
+    with pytest.raises(ValueError, match="zero-padded inactive A_log"):
+        bridge.maybe_modify_loaded_hf_weight(name, {name: source})
+
+
+def test_kda_a_log_export_restores_zero_padding() -> None:
+    """K3 exports the 96 active KDA heads in the 128-entry HF layout."""
+    bridge = KimiK3Bridge()
+    name = "language_model.model.layers.0.self_attn.A_log"
+    active = torch.arange(96, dtype=torch.float32)
+    task = SimpleNamespace(weight_dtype=None)
+
+    result = bridge.maybe_modify_converted_hf_weight(task, {name: active}, {name: torch.zeros(128)})
+
+    assert result[name].shape == (128,)
+    torch.testing.assert_close(result[name][:96], active, rtol=0, atol=0)
+    assert torch.count_nonzero(result[name][96:]).item() == 0
+
+
 def test_stage_boundary_pack_unpack_and_bank_schedule() -> None:
     """AttnRes state survives pipeline packing without mixing rows."""
     prefix_sum = torch.randn(5, 2, 16, dtype=torch.bfloat16)
