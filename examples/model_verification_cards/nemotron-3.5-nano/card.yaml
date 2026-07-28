@@ -174,6 +174,7 @@ items:
         initial_loss: 12.18927
         final_loss: 7.239111
         last_10_steps_step_time_ms_avg: 36869.270
+        # Real RP2 convergence-verification run, not a mock-data benchmark.
         last_10_steps_model_tflops_per_gpu_avg: 200.180
         peak_allocated_memory_gib: 68.547
         peak_reserved_memory_gib: 73.893
@@ -188,9 +189,10 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: 7365728c27dd863291c7b7406c699761b0388592  # pragma: allowlist secret
+      bridge_commit: 404b4c950796343f43b162f68b1efd515a2b9484  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
+        cross_entropy_fusion: transformer_engine
         cuda_graph:
           implementation: transformer_engine
           scopes: [attn, mamba, moe_router, moe_preprocess]
@@ -203,30 +205,31 @@ items:
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
         rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=20
+        train.global_batch_size=512 train.micro_batch_size=2
         validation.eval_iters=0 validation.eval_interval=0
         model.moe_router_force_load_balancing=false
-        checkpoint.load=null
-        --save_dir work/model-verification/nemotron-3.5-nano-gb200/pretrain-reference
-        --save_interval 10 checkpoint.async_save=false
+        model.cross_entropy_fusion_impl=te
+        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
       last_verified: 2026-07-28
       metrics:
-        initial_loss: 12.17202
-        final_loss: 7.176786
-        last_10_steps_step_time_ms_avg: 26051.240
-        last_10_steps_model_tflops_per_gpu_avg: 566.580
-        peak_allocated_memory_gib: 130.120
-        peak_reserved_memory_gib: 137.510
+        initial_loss: 12.171970
+        final_loss: 7.179049
+        last_10_steps_step_time_ms_avg: 22796.270
+        # Real RP2 convergence-verification run, not a mock-data benchmark.
+        last_10_steps_model_tflops_per_gpu_avg: 647.700
+        peak_allocated_memory_gib: 158.220
+        peak_reserved_memory_gib: 162.290
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
-        the sequence-length-8,192, GBS/MBS 512/1 real-data RP2 run completes
-        exactly 20 finite-loss optimizer steps with natural routing, finite
-        LM/MTP-1/MTP-2 losses, no skipped or NaN iterations, and complete
-        12-file, 430-GiB checkpoints at steps 10 and 20. LM loss is 12.17202
-        -> 7.176786; steps 11-20 average 26,051.240 ms / 566.580
-        TFLOP/s/GPU with 130.120 GiB peak allocated and 137.510 GiB peak
-        reserved memory.
+        the sequence-length-8,192, GBS/MBS 512/2 real-data RP2
+        convergence-verification run completes exactly 20 finite-loss
+        optimizer steps with natural routing, Transformer Engine fused cross
+        entropy, finite LM/MTP-1/MTP-2 losses, and no skipped or NaN
+        iterations. LM loss is 12.171970 -> 7.179049; real-data steps 11-20
+        average 22,796.270 ms / 647.700 TFLOP/s/GPU with 158.220 GiB peak
+        allocated and 162.290 GiB peak reserved memory.
 
   pretrain_fsdp:
     GB200:
@@ -239,6 +242,7 @@ items:
           enabled_features:
             moe_dispatcher: hybridep
             megatron_fsdp: optim_grads_params
+            cross_entropy_fusion: transformer_engine
           command: >
             ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
             --additional-slurm-params segment=2
@@ -248,30 +252,36 @@ items:
             'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
             dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
             rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=20
+            train.global_batch_size=512 train.micro_batch_size=2
             validation.eval_iters=0 validation.eval_interval=0
             model.moe_router_force_load_balancing=false
+            model.cross_entropy_fusion_impl=te
             checkpoint.load=null checkpoint.save=null
             logger.log_interval=1 logger.log_throughput=true
             logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
           last_verified: 2026-07-28
           metrics:
-            initial_loss: 12.17206
-            final_loss: 7.249386
-            last_10_steps_step_time_ms_avg: 40722.940
-            last_10_steps_model_tflops_per_gpu_avg: 363.450
-            peak_allocated_memory_gib: 123.040
-            peak_reserved_memory_gib: 129.770
+            initial_loss: 12.171970
+            final_loss: 7.222255
+            last_10_steps_step_time_ms_avg: 24690.750
+            # Real RP2 convergence-verification run, not a mock-data benchmark.
+            last_10_steps_model_tflops_per_gpu_avg: 597.840
+            peak_allocated_memory_gib: 152.520
+            peak_reserved_memory_gib: 156.370
           expected_result: >
             On two complete four-GPU GB200 nodes in one segment-2 NVLink
-            domain, the sequence-length-8,192, GBS/MBS 512/1 BF16 real-data
-            RP2 FSDP run completes exactly 20 finite-loss optimizer steps
-            with natural routing, active MTP-1/MTP-2 losses, and no skipped or
-            NaN iterations. LM loss is 12.17206 -> 7.249386; steps 11-20
-            average 40,722.940 ms / 363.450 TFLOP/s/GPU with 123.040 GiB peak
-            allocated and 129.770 GiB peak reserved memory. Do not compare this
-            run with the ordinary BF16 pretrain run for convergence: Megatron
-            FSDP's required BF16 sharded gradient/update path did not satisfy
-            the 1% stepwise LM/MTP loss-neutrality gate.
+            domain, the sequence-length-8,192, GBS/MBS 512/2 BF16 real-data
+            RP2 FSDP convergence-verification run completes exactly 20
+            finite-loss optimizer steps with natural routing, Transformer
+            Engine fused cross entropy, active MTP-1/MTP-2 losses, and no
+            skipped or NaN iterations. LM loss is 12.171970 -> 7.222255;
+            real-data steps 11-20 average 24,690.750 ms / 597.840
+            TFLOP/s/GPU with 152.520 GiB peak allocated and 156.370 GiB peak
+            reserved memory. Do not compare this run with the ordinary BF16
+            pretrain run for convergence: despite a 0.60% final LM-loss delta,
+            Megatron FSDP's required BF16 sharded gradient/update path reaches
+            8.29% maximum stepwise LM-loss divergence and 31-44% step-11 MTP
+            divergence, failing the 1% stepwise loss-neutrality gate.
 
         fp8_mx:
           status: verified
@@ -290,6 +300,7 @@ items:
             initial_loss: 12.19034
             final_loss: 3.913218
             last_10_steps_step_time_ms_avg: 13917.000
+            # Mock-data performance run; not a convergence measurement.
             last_10_steps_model_tflops_per_gpu_avg: 795.390
             peak_allocated_memory_gib: 169.54
             peak_reserved_memory_gib: 173.86
