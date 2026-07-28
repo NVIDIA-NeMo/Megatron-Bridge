@@ -307,6 +307,33 @@ step-time and 0.179% throughput regression. Both sides completed eight finite
 steps with zero skipped or NaN iterations and successful exits. Keep the local
 GDN fusion and leave the global residual fusion disabled on this recipe.
 
+Retain `NVTE_FWD_LAYERNORM_SM_MARGIN=20` and
+`NVTE_BWD_LAYERNORM_SM_MARGIN=20` for this exact stack. A bracketed A/B/A on
+the same two-node allocation changed only the backward margin to 16. Steps
+5--8 averaged 22.199950 seconds for the first margin-20 control, 22.180425
+seconds for margin 16, and 22.178600 seconds for the repeated margin-20
+control. The candidate was only 0.040% faster than the two-control mean while
+the controls drifted 0.096%, so the apparent benefit was noise rather than a
+recipe improvement.
+
+Do not transpose grouped-expert weights merely to make their KxN view
+contiguous. At the production expert shape, a corrected BF16 primitive probe
+preserved output and gradients at cosine 1.0, but the contiguous KxN layout
+regressed forward+backward by 0.181% (1.800661 versus 1.797403 milliseconds).
+Likewise, FP8-storing the weighted-SwiGLU activation is a memory trade, not a
+standalone H100 speed optimization: it saved 34 MiB per expert call and
+preserved output/gradient cosines of at least 0.999288082, but increased
+forward+backward latency 14.428% (1.419549 versus 1.240563 milliseconds).
+Test it end to end only when the memory saving enables a larger microbatch.
+
+That larger-microbatch test failed the end-to-end feasibility gate. With
+microbatch size 2 and FP8 activation-function input storage enabled, all 16
+H100s held about 80.7--81.0 GiB, half the ranks remained in persistent
+100%-busy kernels while their peers waited, and no first iteration completed
+before the 15-minute job timeout. Reject the combination: it produced neither
+a finite loss nor a throughput sample and cannot replace the microbatch-1
+recipe.
+
 Adding TE-scoped attention/router/preprocess graphs to that shared-overlap
 winner did not improve it. Steps 5-8 averaged 22.365 seconds / about 263.39
 model TFLOP/s/GPU, 0.106% slower than eager, while iteration 1 grew to 150.351

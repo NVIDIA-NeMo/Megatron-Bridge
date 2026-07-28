@@ -556,3 +556,40 @@ creation returned error 2. The relevant plugin and DOCA libraries were present
 with clean transitive linkage, so this is a runtime-plugin boundary, not a
 Bridge configuration A/B. Stop before training until the exact topology
 passes window registration, dispatch, and combine.
+
+Bracket sub-percent launch-environment candidates with repeated controls.
+Job 5720911 used one exact two-node allocation for margin-20 control, backward
+margin 16, and a repeated margin-20 control. Over steps 5--8 their means were
+22.199950, 22.180425, and 22.178600 seconds. Margin 16 was 0.040% faster than
+the two-control mean, while the controls themselves drifted 0.096%. Every
+segment completed eight finite steps with zero skipped or NaN iterations and
+exit 0:0. Keep forward/backward LayerNorm margins at 20 and reject the
+candidate as noise.
+
+Probe memory and layout ideas at the production expert shape before spending
+a two-node allocation. Corrected job 5720895 compared the existing transposed
+grouped-weight view with a contiguous KxN layout. Output and gradients had
+cosine 1.0; contiguous KxN changed forward from 0.622466 to 0.618936
+milliseconds but regressed forward+backward from 1.797403 to 1.800661
+milliseconds, so the training-critical path was 0.181% slower. Keep the
+existing layout.
+
+Job 5720897 tested FP8 storage for the weighted-SwiGLU activation. It preserved
+output and gradient cosines of at least 0.999288082 and reduced retained
+memory from 236.438 to 202.438 MiB per expert call, but forward+backward grew
+from 1.240563 to 1.419549 milliseconds, a 14.428% regression. Do not enable it
+at microbatch one. Its only plausible value is enabling microbatch two, which
+must fit and win in an exact end-to-end run after accounting for the
+quantize/dequantize cost.
+
+The exact end-to-end feasibility run did not pass. Job 5720901 kept the
+reviewable Bridge commit, candidate MCore, TP1/EP16 topology, GBS1024, and all
+retained recipe settings fixed, then set microbatch size 2 and enabled
+`activation_func_fp8_input_store`. It built the model and entered iteration 0,
+but every H100 reached roughly 80.7--81.0 GiB. Repeated telemetry showed a
+stable split where half the ranks remained in 100%-busy persistent kernels and
+their peers waited. The log stopped immediately after GDN kernel compilation,
+no first iteration or loss completed, and Slurm ended the job as `TIMEOUT`
+after 15:13. This is neither an OOM claim nor a valid timing sample; it is a
+failed progress/feasibility gate. Reject MBS2 with FP8 activation storage and
+retain microbatch size 1.

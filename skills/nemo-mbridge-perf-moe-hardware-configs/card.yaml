@@ -258,6 +258,18 @@ best_configs:
     global_fused_residual_rmsnorm_tflops: 265.450
     global_fused_residual_rmsnorm_step_time_regression_percent: 0.170
     global_fused_residual_rmsnorm_throughput_regression_percent: 0.179
+    layernorm_margin_control_a1_step_time_ms: 22199.950
+    layernorm_margin_bwd16_step_time_ms: 22180.425
+    layernorm_margin_control_a2_step_time_ms: 22178.600
+    layernorm_margin_bwd16_gain_vs_bracketed_control_percent: 0.040
+    layernorm_margin_control_drift_percent: 0.096
+    grouped_weight_contiguous_kn_forward_backward_regression_percent: 0.181
+    fp8_activation_store_retained_memory_saving_mib_per_expert_call: 34
+    fp8_activation_store_forward_backward_regression_percent: 14.428
+    fp8_activation_store_min_output_or_gradient_cosine: 0.999288082
+    fp8_activation_store_mbs2_status: "rejected; no iteration completed before the 15-minute timeout"
+    fp8_activation_store_mbs2_observed_memory_gib: "80.7-81.0"
+    fp8_activation_store_mbs2_valid_loss_or_throughput_sample: false
     numa_bound_step_time_ms: 22341.025
     numa_bound_tflops: 263.6688
     numa_bound_regression_percent: 0.000448
@@ -336,7 +348,7 @@ best_configs:
     owner_release_connections_2_steps_2_3_mean_tflops_per_gpu: 117.0
     owner_release_connections_2_iteration_2_allocator_retries: 64
     owner_release_connections_2_iteration_2_reserved_gib: 77.265
-    rejected_dimensions: "plain EP overlap, high-priority shared-expert stream, shared-overlap connections=2, scoped graphs with shared overlap, HybridEP preprocessing=32, HybridEP fused unpermute blocks=32, tensorwise global FP8 with BF16 experts, scaled grouped-MM tensorwise/rowwise, fixed-capacity padded batched GEMM, other tested FP8 modes, native TE variable/fixed split experts, Q/K norm folding, standalone fused GDN norm, non-default FlashQLA and coupled HybridEP chunking"
+    rejected_dimensions: "plain EP overlap, high-priority shared-expert stream, shared-overlap connections=2, scoped graphs with shared overlap, HybridEP preprocessing=32, HybridEP fused unpermute blocks=32, tensorwise global FP8 with BF16 experts, scaled grouped-MM tensorwise/rowwise, fixed-capacity padded batched GEMM, other tested FP8 modes, native TE variable/fixed split experts, Q/K norm folding, standalone fused GDN norm, global fused residual RMSNorm, backward LayerNorm SM margin 16, contiguous-KN grouped weights, standalone FP8 expert-activation storage, MBS2 with FP8 activation-function input storage, non-default FlashQLA and coupled HybridEP chunking"
     note: "FlashQLA + pre-GDR + fused HybridEP permutation development stack; normal-priority shared-expert overlap with connections=1 is the short-run winner but remains 8.22% below the gate"
 
   qwen3_next_80b_gb200_64:

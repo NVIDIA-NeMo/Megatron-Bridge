@@ -241,7 +241,18 @@ items:
         skipped or NaN iterations, and exit 0:0. Enabling global TE
         fused_residual_rmsnorm did not stack: it regressed to 22.190525 seconds
         / 265.450 model TFLOP/s/GPU and was rejected. The retained short-run
-        result remains 7.442% below the gate and needs another 8.040%
-        throughput improvement. The exact 50-step gate has not been rerun on
-        the current PR runtime, and no result at or above 287.305 exists, so
-        this item remains unverified.
+        configuration also retained forward/backward LayerNorm SM margins of
+        20. A bracketed 8-step A/B/A changed only the backward margin to 16:
+        steps 5-8 averaged 22.199950, 22.180425, and 22.178600 seconds for
+        control, candidate, and repeated control. The candidate was 0.040%
+        faster than the two-control mean, smaller than the 0.096% control
+        drift, so it was rejected as noise. All three runs had finite losses,
+        zero skipped or NaN iterations, and exit 0:0. A three-step feasibility
+        variant then combined microbatch size 2 with FP8 activation-function
+        input storage. It reached about 80.7-81.0 GiB on every GPU, completed
+        no training iteration, and timed out after 15 minutes with no loss or
+        throughput sample, so that larger-microbatch path was rejected. The
+        retained short-run result remains 7.442% below the gate and needs
+        another 8.040% throughput improvement. The exact 50-step gate has not
+        been rerun on the current PR runtime, and no result at or above
+        287.305 exists, so this item remains unverified.
