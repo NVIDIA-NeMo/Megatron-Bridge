@@ -181,10 +181,8 @@ def build_mcore_thd_sequence_batch_from_rows(
         "attention_mask": None,
     }
     if emit_padding_mask:
-        # MoE routing operates on the physical THD stream, including alignment
-        # gaps between logical rows. Keep those gaps explicit so callers can
-        # exclude them from router statistics without reconstructing packing
-        # state inside the model.
+        # MCore routes the physical THD stream; mask alignment gaps out of MoE
+        # z/aux losses and expert-bias token counts.
         packed["padding_mask"] = torch.ones((1, total_length), dtype=torch.bool, device=first_tokens.device)
 
     output_pad_values: dict[str, int | float] = {"labels": ignore_index, "loss_mask": 0, **extra_pad_values}
