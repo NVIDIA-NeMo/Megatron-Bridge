@@ -2765,6 +2765,59 @@ class TestCalcParamsL2Norm:
         assert isinstance(result, float)
         assert result > 0
 
+    def test_bf16_sharded_dense_and_expert_norm_uses_matching_dp_groups(
+        self,
+        monkeypatch,
+        mock_model_config_bf16,
+        _patch_pg_collection,
+    ):
+        """Dense and expert optimizer shards contribute through their matching DP groups."""
+
+        class _DenseAndExpertModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert.allreduce = False
+
+                self.dense.main_param = torch.tensor([2.0], device="cuda")
+                self.dense.main_param_sharded = True
+                self.expert.main_param = torch.tensor([3.0], device="cuda")
+                self.expert.main_param_sharded = True
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.dp_cp:
+                tensor.add_(12.0)
+            elif group is _patch_pg_collection.expt_dp:
+                tensor.add_(16.0)
+            elif group is not _patch_pg_collection.mp:
+                raise AssertionError("unexpected reduction group")
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            lambda param, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr("torch.distributed.get_process_group_ranks", lambda group: [0])
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(
+            _DenseAndExpertModel(),
+            mock_model_config_bf16,
+            force_create_fp32_copy=False,
+        )
+
+        # Dense: 2**2 local + 12 remote over DP/CP. Expert: 3**2 local + 16 remote over expert DP.
+        assert actual_norm == pytest.approx(math.sqrt(41.0))
+
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
     @mock.patch("megatron.bridge.training.utils.train_utils.to_local_if_dtensor")
