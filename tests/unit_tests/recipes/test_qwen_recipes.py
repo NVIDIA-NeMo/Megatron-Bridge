@@ -687,6 +687,28 @@ def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
     assert perf_base is legacy_base
 
 
+def test_qwen35_h100_perf_recipe_configures_available_flash_qla_fields():
+    """Test that the recipe selects FlashQLA without creating fields on old MCore."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.perf_recipes.qwen.h100.qwen35 import (
+        _configure_flash_qla_model_fields,
+    )
+
+    new_mcore_model = SimpleNamespace(
+        gdn_pre_gated_delta_rule_fusion=False,
+        gated_delta_rule_backend="fla",
+    )
+    _configure_flash_qla_model_fields(new_mcore_model)
+    assert new_mcore_model.gdn_pre_gated_delta_rule_fusion is True
+    assert new_mcore_model.gated_delta_rule_backend == "flash_qla"
+
+    pinned_mcore_model = SimpleNamespace()
+    _configure_flash_qla_model_fields(pinned_mcore_model)
+    assert not hasattr(pinned_mcore_model, "gdn_pre_gated_delta_rule_fusion")
+    assert not hasattr(pinned_mcore_model, "gated_delta_rule_backend")
+
+
 def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -825,6 +847,103 @@ def test_qwen35_h100_flash_qla_runtime_loads_pinned_version(
     monkeypatch.setitem(sys.modules, "flash_qla", flash_qla)
 
     assert qwen35_runtime._load_flash_qla_gated_delta_rule() is gated_delta_rule
+
+
+def test_qwen35_h100_flash_qla_runtime_configures_pinned_mcore(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that pinned MCore receives the raw FlashQLA kernel."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    gated_delta_rule = object()
+    module = SimpleNamespace(config=SimpleNamespace(), gated_delta_rule=object())
+    monkeypatch.setattr(qwen35_runtime, "_load_flash_qla_gated_delta_rule", lambda: gated_delta_rule)
+
+    qwen35_runtime._configure_flash_qla_gated_delta_rule(module)
+
+    assert module.gated_delta_rule is gated_delta_rule
+
+
+def test_qwen35_h100_flash_qla_runtime_preserves_new_mcore_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that newer MCore keeps its keyword-compatible backend adapter."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    native_adapter = object()
+    module = SimpleNamespace(
+        config=SimpleNamespace(gated_delta_rule_backend="flash_qla"),
+        gated_delta_rule=native_adapter,
+    )
+    monkeypatch.setattr(qwen35_runtime, "_load_flash_qla_gated_delta_rule", lambda: object())
+
+    qwen35_runtime._configure_flash_qla_gated_delta_rule(module)
+
+    assert module.gated_delta_rule is native_adapter
+
+
+def test_qwen35_h100_flash_qla_runtime_rejects_new_mcore_fla_backend(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that newer MCore cannot silently retain a different GDN backend."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    module = SimpleNamespace(
+        config=SimpleNamespace(gated_delta_rule_backend="fla"),
+        gated_delta_rule=object(),
+    )
+    monkeypatch.setattr(qwen35_runtime, "_load_flash_qla_gated_delta_rule", lambda: object())
+
+    with pytest.raises(RuntimeError, match="requires gated_delta_rule_backend='flash_qla'"):
+        qwen35_runtime._configure_flash_qla_gated_delta_rule(module)
+
+
+@pytest.mark.parametrize(
+    ("supports_clamp_value", "expected_argument_count"),
+    [(False, 3), (True, 4)],
+)
+def test_qwen35_h100_weighted_swiglu_runtime_supports_mcore_api_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    supports_clamp_value: bool,
+    expected_argument_count: int,
+):
+    """Test pinned and newer MCore weighted-SwiGLU call signatures."""
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    result = object()
+    applied_args: tuple[object, ...] = ()
+
+    def fake_apply(*args: object) -> object:
+        nonlocal applied_args
+        applied_args = args
+        return result
+
+    monkeypatch.setattr(
+        qwen35_runtime,
+        "_WEIGHTED_SWIGLU_FORWARD_HAS_CLAMP_VALUE",
+        supports_clamp_value,
+    )
+    monkeypatch.setattr(qwen35_runtime.WeightedSwiGLUFunction, "apply", fake_apply)
+
+    input_tensor = object()
+    token_weights = object()
+    output = qwen35_runtime._apply_weighted_swiglu(
+        input_tensor,
+        token_weights,
+        fp8_input_store=False,
+        clamp_value=None,
+    )
+
+    assert output is result
+    assert len(applied_args) == expected_argument_count
+    assert applied_args[:2] == (input_tensor, token_weights)
+    assert applied_args[2:] == ((False, None) if supports_clamp_value else (False,))
 
 
 def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():

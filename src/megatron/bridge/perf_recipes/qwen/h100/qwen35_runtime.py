@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from functools import partial
 from types import MethodType
@@ -36,6 +37,9 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 _H100_HYBRIDEP_BF16_ALIGNMENT = 16
 _FLASH_QLA_VERSION = "0.1.2"
+_WEIGHTED_SWIGLU_FORWARD_HAS_CLAMP_VALUE = (
+    "clamp_value" in inspect.signature(WeightedSwiGLUFunction.forward).parameters
+)
 
 
 def _load_flash_qla_gated_delta_rule() -> Any:
@@ -54,6 +58,19 @@ def _load_flash_qla_gated_delta_rule() -> Any:
     return chunk_gated_delta_rule
 
 
+def _configure_flash_qla_gated_delta_rule(module: GatedDeltaNet) -> None:
+    """Configure the measured kernel across pinned and newer MCore APIs."""
+    raw_gated_delta_rule = _load_flash_qla_gated_delta_rule()
+    backend = getattr(module.config, "gated_delta_rule_backend", None)
+    if backend is None:
+        module.gated_delta_rule = raw_gated_delta_rule
+    elif backend != "flash_qla":
+        raise RuntimeError(
+            "The Qwen3.5 H100 performance recipe requires gated_delta_rule_backend='flash_qla' "
+            f"when MCore exposes backend adapters; found {backend!r}."
+        )
+
+
 class _Qwen35H100FlashQLAGatedDeltaNet(GatedDeltaNet):
     """Gated Delta Net using the measured FlashQLA Hopper kernel."""
 
@@ -68,7 +85,7 @@ class _Qwen35H100FlashQLAGatedDeltaNet(GatedDeltaNet):
         capability = torch.cuda.get_device_capability(torch.cuda.current_device())
         if capability != (9, 0):
             raise RuntimeError(f"The Qwen3.5 H100 FlashQLA path requires SM90, got {capability}")
-        self.gated_delta_rule = _load_flash_qla_gated_delta_rule()
+        _configure_flash_qla_gated_delta_rule(self)
 
 
 def _setup_h100_static_hybridep_metadata(
@@ -105,6 +122,28 @@ def _grouped_mm(
     if grouped_mm is None:
         raise RuntimeError("The Qwen3.5 H100 performance recipe requires PyTorch grouped_mm support.")
     return grouped_mm(lhs, rhs, offs=offsets)
+
+
+def _apply_weighted_swiglu(
+    input_tensor: torch.Tensor,
+    token_weights: torch.Tensor,
+    *,
+    fp8_input_store: bool,
+    clamp_value: float | None,
+) -> torch.Tensor:
+    """Apply weighted SwiGLU across pinned and newer MCore APIs."""
+    if _WEIGHTED_SWIGLU_FORWARD_HAS_CLAMP_VALUE:
+        return WeightedSwiGLUFunction.apply(
+            input_tensor,
+            token_weights,
+            fp8_input_store,
+            clamp_value,
+        )
+    return WeightedSwiGLUFunction.apply(
+        input_tensor,
+        token_weights,
+        fp8_input_store,
+    )
 
 
 def _consolidate_expert_weights(
@@ -198,10 +237,11 @@ class _Qwen35H100TorchGroupedMLP(TEGroupedMLP):
             self.linear_fc1._torch_grouped_weight.transpose(1, 2),
             offsets,
         )
-        activation_output = WeightedSwiGLUFunction.apply(
+        activation_output = _apply_weighted_swiglu(
             fc1_output.view(-1, fc1_output.shape[-1]),
             permuted_probs.unsqueeze(-1),
-            self.config.activation_func_fp8_input_store,
+            fp8_input_store=self.config.activation_func_fp8_input_store,
+            clamp_value=self.config.activation_func_clamp_value,
         )
         output = _grouped_mm(
             activation_output,
