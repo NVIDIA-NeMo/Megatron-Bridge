@@ -117,6 +117,7 @@ def test_provider_bridge_configures_four_layer_proxy(kimi_k3_pretrained: Mock) -
     assert provider.attention_dropout == 0.0
     assert provider.make_vocab_size_divisible_by == 128
     assert provider.use_te_activation_func is True
+    assert provider.variable_seq_lengths is True
     assert provider.bf16 is True
     assert provider.params_dtype == torch.bfloat16
 

@@ -23,6 +23,7 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 class KimiK3ModelProvider(MLAModelProvider):
     """Megatron configuration and provider for Kimi K3."""
 
+    variable_seq_lengths: bool = True
     kimi_kda_layers: tuple[int, ...] = ()
     kimi_linear_num_heads: int = 96
     kimi_linear_head_dim: int = 128
