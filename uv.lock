@@ -2402,6 +2402,7 @@ parquet = [
     { name = "pyarrow" },
 ]
 qwen35-h100-perf = [
+    { name = "flash-linear-attention" },
     { name = "flash-qla" },
 ]
 recipes = [
@@ -2472,6 +2473,7 @@ requires-dist = [
     { name = "diffusers", specifier = ">=0.36.0" },
     { name = "einops" },
     { name = "flash-linear-attention" },
+    { name = "flash-linear-attention", marker = "extra == 'qwen35-h100-perf'", specifier = "==0.4.2" },
     { name = "flash-qla", marker = "extra == 'qwen35-h100-perf'", specifier = "==0.1.2" },
     { name = "flashinfer-cubin", specifier = "==0.6.8.post1" },
     { name = "flashinfer-python", specifier = "==0.6.8.post1" },

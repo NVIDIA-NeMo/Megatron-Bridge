@@ -192,6 +192,7 @@ recipes = [
     "nemo-run",
 ]
 qwen35-h100-perf = [
+    "flash-linear-attention==0.4.2",
     "flash-qla==0.1.2",
 ]
 parquet = [
