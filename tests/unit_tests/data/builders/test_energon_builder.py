@@ -276,6 +276,8 @@ def test_builder_honors_requested_splits_and_reuses_runtime_encoder(monkeypatch:
         DatasetBuildContext(train_samples=10, valid_samples=5, test_samples=3)
     )
 
+    assert train is datamodule.train_dataloader.return_value
+    assert validation is datamodule.val_dataloader.return_value
     assert list(train) == ["train"]
     assert list(validation) == ["validation"]
     assert test is None
