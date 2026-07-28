@@ -617,10 +617,31 @@ def get_model(
         list[MegatronModule]: List of model modules. Contains multiple modules
             when using virtual pipeline parallelism, otherwise a single module
     """
-    if fp16:
+    if fp16 is True and bf16 is True:
+        raise ValueError("Only one of fp16 and bf16 can be enabled.")
+
+    if fp16 is not None:
         model_provider.fp16 = fp16
-    if bf16:
+    if bf16 is not None:
         model_provider.bf16 = bf16
+
+    # Enabling one precision mode overrides the provider's existing mode even
+    # when the caller omits the corresponding explicit False.
+    if fp16 is True and bf16 is None:
+        model_provider.bf16 = False
+    elif bf16 is True and fp16 is None:
+        model_provider.fp16 = False
+
+    if fp16 is not None or bf16 is not None:
+        if model_provider.fp16:
+            selected_dtype = torch.float16
+        elif model_provider.bf16:
+            selected_dtype = torch.bfloat16
+        else:
+            selected_dtype = torch.float32
+        for field_name in ("params_dtype", "pipeline_dtype", "autocast_dtype"):
+            if hasattr(model_provider, field_name):
+                setattr(model_provider, field_name, selected_dtype)
 
     model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
     if init_model_with_meta_device:

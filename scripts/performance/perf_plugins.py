@@ -64,6 +64,43 @@ def _ensure_sqlite_nsys_export(nsys_extra_args: list[str]) -> list[str]:
     return nsys_extra_args + [NSYS_SQLITE_EXPORT_ARG]
 
 
+def _nsys_arg_name(arg: str) -> Optional[str]:
+    """Return the option name for a flag-like token (e.g. '--cuda-graph-trace'), else None."""
+    if not arg.startswith("-"):
+        return None
+    return arg.split("=", 1)[0]
+
+
+def _merge_nsys_extra_args(user_args: list[str], default_args: list[str]) -> list[str]:
+    """Merge user-provided nsys args over defaults, deduplicating by option name.
+
+    nemo_run seeds ``launcher.nsys_extra_args`` with defaults such as
+    ``--cuda-graph-trace=node``. Naively concatenating user args with these defaults
+    emits the same option twice (e.g. both ``--cuda-graph-trace=node`` and
+    ``--cuda-graph-trace=graph``), which nsys rejects. Here, any default whose option
+    name is also supplied by the user is dropped so the user value wins.
+
+    Both ``--flag=value`` and space-separated ``--flag value`` forms are handled.
+    """
+    user_names = {name for name in (_nsys_arg_name(arg) for arg in user_args) if name is not None}
+
+    retained_defaults: list[str] = []
+    skip_next = False
+    for index, arg in enumerate(default_args):
+        if skip_next:
+            skip_next = False
+            continue
+        name = _nsys_arg_name(arg)
+        if name is not None and name in user_names:
+            # Drop this default; also drop its space-separated value, if any.
+            if "=" not in arg and index + 1 < len(default_args) and not default_args[index + 1].startswith("-"):
+                skip_next = True
+            continue
+        retained_defaults.append(arg)
+
+    return user_args + retained_defaults
+
+
 @dataclass
 class NsysPluginScriptArgs:
     """Arguments for NsysPlugin to pass to run.Script."""
@@ -137,8 +174,9 @@ class NsysPlugin(Plugin):
         if self.nsys_extra_args is not None:
             # Get existing launcher extra args (nemo_run defaults)
             existing_extra_args = launcher.nsys_extra_args or []
-            # Combine user args with existing args (user args first for precedence)
-            launcher.nsys_extra_args = self.nsys_extra_args + existing_extra_args
+            # Merge, letting user args override any default sharing the same option
+            # name (e.g. --cuda-graph-trace) instead of emitting a duplicate flag.
+            launcher.nsys_extra_args = _merge_nsys_extra_args(self.nsys_extra_args, existing_extra_args)
             logger.info(f"Combined nsys_extra_args: {launcher.nsys_extra_args}")
 
         if self.export_sqlite:

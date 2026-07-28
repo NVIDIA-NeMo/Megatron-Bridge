@@ -294,7 +294,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 last_stage = is_pp_last_stage(pp_group)
                 dp_cp_group = grid.get_pg(["dp", "cp"])
                 expt_dp_group = grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME)
+                tp_ep_pp_group = grid.get_pg(["expt_tp", "ep", "pp"], view=EXPERT_VIEW_NAME)
 
+                # HyperCommGrid does not define GTP-remat axes, so the GTP-inclusive
+                # process groups collapse to their existing non-GTP equivalents.
                 pg_collections[module_name] = ProcessGroupCollection(
                     tp=grid.get_pg(["tp"]),
                     dp=grid.get_pg(["dp"]),
@@ -304,12 +307,15 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     expt_tp=grid.get_pg(["expt_tp"], view=EXPERT_VIEW_NAME),
                     expt_dp=expt_dp_group,
                     dp_cp=dp_cp_group,
+                    dp_cp_gtp_remat=dp_cp_group,
+                    expt_dp_gtp_remat=expt_dp_group,
                     intra_dp_cp=dp_cp_group,
                     tp_cp=grid.get_pg(["tp", "cp"]),
                     tp_dp_cp=grid.get_pg(["tp", "dp", "cp"]),
                     mp=grid.get_pg(["tp", "pp"]),
                     tp_ep=grid.get_pg(["expt_tp", "ep"], view=EXPERT_VIEW_NAME),
-                    tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=EXPERT_VIEW_NAME),
+                    tp_ep_pp=tp_ep_pp_group,
+                    tp_ep_pp_with_egtp_remat=tp_ep_pp_group,
                     intra_expt_dp=expt_dp_group,
                     intra_dist_opt=grid.get_pg(["tp", "cp", "dp", "pp"]),
                     pos_embd=pos_embd_pg if first_stage else None,

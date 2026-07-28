@@ -20,12 +20,18 @@ from transformers import PretrainedConfig
 
 from megatron.bridge.models._deprecation import _deprecated_model_name
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.recipes.nemotronh import nemotronh_4b_pretrain_config
+from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_pretrain_config, nemotronh_4b_pretrain_config
 
 
 @pytest.mark.parametrize(
     ("config", "expected_name"),
     [
+        (SimpleNamespace(architectures=["DeepseekV2ForCausalLM"]), "DeepSeek V2 and DeepSeek V2 Lite"),
+        (SimpleNamespace(architectures=["DeciLMForCausalLM"]), "Llama Nemotron"),
+        (
+            SimpleNamespace(architectures=["LlamaForCausalLM"], name_or_path="nvidia/Llama-3.1-Nemotron-Nano-8B-v1"),
+            "Llama Nemotron",
+        ),
         (SimpleNamespace(architectures=["GemmaForCausalLM"]), "Gemma 1"),
         (SimpleNamespace(architectures=["Gemma2ForCausalLM"]), "Gemma 2"),
         (
@@ -40,6 +46,11 @@ from megatron.bridge.recipes.nemotronh import nemotronh_4b_pretrain_config
             SimpleNamespace(architectures=["NemotronHForCausalLM"], hidden_size=4096, num_hidden_layers=52),
             "Nemotron H v1",
         ),
+        (
+            SimpleNamespace(architectures=["NemotronHForCausalLM"], hidden_size=4480, num_hidden_layers=56),
+            "Nemotron Nano v2",
+        ),
+        (SimpleNamespace(architectures=["NemotronH_Nano_VL_V2"]), "Nemotron Nano v2 VL"),
         (SimpleNamespace(architectures=["NemotronForCausalLM"]), "legacy Nemotron bridge"),
     ],
 )
@@ -51,7 +62,7 @@ def test_deprecated_model_detection(config, expected_name):
     "config",
     [
         SimpleNamespace(architectures=["LlamaForCausalLM"], vocab_size=128256, max_position_embeddings=131072),
-        SimpleNamespace(architectures=["NemotronHForCausalLM"], hidden_size=4480, num_hidden_layers=56),
+        SimpleNamespace(architectures=["NemotronHForCausalLM"], hidden_size=2688, num_hidden_layers=52),
         SimpleNamespace(architectures=["Mistral3ForConditionalGeneration"]),
     ],
 )
@@ -79,3 +90,8 @@ def test_legacy_nemotron_warns_before_config_load():
 def test_nemotron_h_v1_recipe_warns():
     with pytest.warns(FutureWarning, match=r"Nemotron H v1.*removed in Megatron Bridge 0\.7\.0"):
         nemotronh_4b_pretrain_config()
+
+
+def test_nemotron_nano_v2_recipe_warns():
+    with pytest.warns(FutureWarning, match=r"Nemotron Nano v2.*removed in Megatron Bridge 0\.7\.0"):
+        nemotron_nano_9b_v2_pretrain_config()
