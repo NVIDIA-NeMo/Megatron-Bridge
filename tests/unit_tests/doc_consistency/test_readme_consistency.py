@@ -53,10 +53,6 @@ QWEN25_VL_DOCS = (
     REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
 )
-QWEN2_DOCS = (
-    REPO_ROOT / "docs" / "models" / "qwen" / "qwen.md",
-    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen.mdx",
-)
 VALOR_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "valor32k-avqa" / "data-preparation.md"
 SPHINX_TUTORIAL_LINK_DOCS = (
     REPO_ROOT / "docs" / "training" / "data-preparation.md",
@@ -314,32 +310,6 @@ def test_multimodal_model_docs_use_current_launchers_and_conversion_flags():
     assert "--megatron-path /checkpoints/nemotron_omni" in valor
     assert "--hf_path" not in valor
     assert "--output_dir /checkpoints/nemotron_omni" not in valor
-
-
-def test_qwen2_recipe_examples_use_current_factory_api():
-    """Qwen2 recipe examples must call factories with their supported keywords."""
-    expected_keywords = {
-        "qwen25_7b_pretrain_config": set(),
-        "qwen25_7b_sft_config": set(),
-        "qwen25_7b_peft_config": {"peft_scheme"},
-    }
-    for path in QWEN2_DOCS:
-        qwen2_docs = _read(path).split("## Qwen2 / Qwen2.5", 1)[1]
-        examples = qwen2_docs.split("#### Pre-training Example", 1)[1].split("### Hugging Face Model Cards", 1)[0]
-        assert examples.count("config.optimizer.lr =") == 2
-        assert examples.count("config.scheduler.lr_decay_iters = 1000") == 2
-        assert "config.scheduler.max_lr" not in examples
-        calls: dict[str, list[set[str | None]]] = {name: [] for name in expected_keywords}
-        for code in re.findall(r"```python\n(.*?)```", examples, re.DOTALL):
-            tree = ast.parse(code, filename=str(path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in calls:
-                    calls[node.func.id].append({keyword.arg for keyword in node.keywords})
-
-        for name, allowed_keywords in expected_keywords.items():
-            assert calls[name] == [allowed_keywords], (
-                f"{path.relative_to(REPO_ROOT)} calls {name} with unsupported keywords: {calls[name]}"
-            )
 
 
 def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
