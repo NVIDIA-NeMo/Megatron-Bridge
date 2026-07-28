@@ -19,7 +19,7 @@ import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -469,6 +469,83 @@ class TestTrainingLog:
 
         comet_logger.log_metrics.assert_any_call({"learning-rate": 1e-4}, step=1)
         comet_logger.log_metrics.assert_any_call({"batch-size": 64}, step=1)
+
+    def test_detailed_timers_reach_all_enabled_backends(self, monkeypatch, mock_config, mock_global_state):
+        """Detailed timer samples are shared by every enabled logging backend."""
+        from megatron.bridge.training.state import (
+            _timers_write_to_comet,
+            _timers_write_to_mlflow,
+            _timers_write_to_wandb,
+        )
+
+        class StatefulTimers:
+            def __init__(self):
+                self.samples = {"forward-backward": (4.0, 6.0)}
+
+            def _get_global_min_max_time(self, names, reset, barrier, normalizer):
+                samples = {name: self.samples[name] for name in names if name in self.samples}
+                if reset:
+                    self.samples.clear()
+                return samples
+
+            def write(self, names, writer, iteration, normalizer=1.0, reset=True, barrier=False):
+                self._get_global_min_max_time(names, reset, barrier, normalizer)
+
+        timers = StatefulTimers()
+        timers.write_to_wandb = MethodType(_timers_write_to_wandb, timers)
+        timers.write_to_mlflow = MethodType(_timers_write_to_mlflow, timers)
+        timers.write_to_comet = MethodType(_timers_write_to_comet, timers)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_num_microbatches",
+            lambda: 8,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
+            lambda value, mp_group: value,
+            raising=True,
+        )
+
+        mock_config.logger.tensorboard_log_interval = 1
+        mock_config.logger.log_interval = 5
+        mock_config.logger.timing_log_level = 1
+        mock_config.logger.log_throughput_to_tensorboard = False
+        mock_config.logger.log_memory_to_tensorboard = False
+        mock_config.logger.log_runtime_to_tensorboard = False
+        mock_config.logger.log_l2_norm_grad_to_tensorboard = False
+        mock_config.logger.log_loss_scale_to_tensorboard = False
+        mock_config.logger.log_world_size_to_tensorboard = False
+
+        mock_global_state.train_state.step = 1
+        mock_global_state.timers = timers
+        mock_global_state.tensorboard_logger = None
+        mock_global_state.wandb_logger = None
+        mlflow_logger = mock.MagicMock()
+        comet_logger = mock.MagicMock()
+        mock_global_state.mlflow_logger = mlflow_logger
+        mock_global_state.comet_logger = comet_logger
+
+        training_log(
+            loss_dict={},
+            total_loss_dict={},
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=None,
+            params_norm=None,
+            num_zeros_in_grad=None,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=[],
+            model=None,
+        )
+
+        mlflow_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+        comet_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+        assert timers.samples == {}
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
