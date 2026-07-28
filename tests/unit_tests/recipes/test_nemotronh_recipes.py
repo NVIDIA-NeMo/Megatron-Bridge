@@ -178,7 +178,7 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
 
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is False
-    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
     assert cfg.model.recompute_granularity == "selective"
@@ -222,7 +222,7 @@ def test_nemotron_3_5_nano_4k_convergence_recipe_uses_perf_execution_policy():
 
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is False
-    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
     assert cfg.model.recompute_granularity is None

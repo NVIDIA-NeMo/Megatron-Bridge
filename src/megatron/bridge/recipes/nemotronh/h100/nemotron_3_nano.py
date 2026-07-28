@@ -163,7 +163,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     # Memory Saving (recompute & offloading)
     cfg.model.recompute_granularity = "selective"
