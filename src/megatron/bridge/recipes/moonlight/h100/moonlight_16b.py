@@ -65,6 +65,9 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
+    # Keep from-scratch pretraining tied to the runtime tokenizer when the
+    # performance launcher replaces this placeholder (for example, with RP2).
+    cfg.tokenizer.use_tokenizer_vocab_size = True
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
@@ -103,6 +106,10 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     # Scheduler config
     cfg.scheduler.lr_warmup_iters = 2000
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
+    # Match the 48,000-step release-convergence schedule used by the shortened
+    # RC validation runs and by this full 100B-token run.
+    cfg.scheduler.max_steps = 48000
+    cfg.scheduler.lr_warmup_iters = 480
 
     # Optimizer settings - precision-aware optimizer with bf16 moments
     cfg.optimizer.use_precision_aware_optimizer = True
