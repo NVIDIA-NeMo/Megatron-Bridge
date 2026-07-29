@@ -16,7 +16,7 @@ import pytest
 import torch.nn.functional as F
 
 from megatron.bridge.models.common.base import ModelConfig
-from megatron.bridge.models.conversion.model_bridge import ModelConfigNotSupportedError
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -96,9 +96,15 @@ def test_model_config_mapping_rejects_unknown_fields() -> None:
         )
 
 
-def test_unmigrated_bridge_requires_explicit_model_config_opt_in() -> None:
-    class UnmigratedBridge(LlamaBridge):
+def test_gpt_model_config_is_the_bridge_default() -> None:
+    assert MegatronModelBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+    assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+    assert "MODEL_CONFIG_CLASS" not in LlamaBridge.__dict__
+
+
+def test_bridge_can_explicitly_disable_model_config() -> None:
+    class UnsupportedBridge(LlamaBridge):
         MODEL_CONFIG_CLASS = None
 
-    with pytest.raises(ModelConfigNotSupportedError, match="must define MODEL_CONFIG_CLASS"):
-        UnmigratedBridge().hf_config_to_model_config(object())
+    with pytest.raises(ModelConfigNotSupportedError, match="sets MODEL_CONFIG_CLASS to None"):
+        UnsupportedBridge().hf_config_to_model_config(object())

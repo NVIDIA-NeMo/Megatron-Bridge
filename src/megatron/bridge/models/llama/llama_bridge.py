@@ -27,7 +27,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -46,8 +45,6 @@ class LlamaBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-8B-Instruct")
         >>> model_config = bridge.get_model_config()
     """
-
-    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Convert a Hugging Face Llama config to builder config kwargs."""

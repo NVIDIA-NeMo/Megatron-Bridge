@@ -71,6 +71,7 @@ from megatron.bridge.models.conversion.utils import (
     unwrap_model,
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
 from megatron.bridge.utils import fusions
@@ -422,18 +423,22 @@ class MegatronModelBridge(
         - MegatronModel: The Megatron model type
     """
 
+    # These are extension points, not a setup checklist. Most new model bridges should keep all defaults below.
+
+    # Set to False only when this bridge cannot produce a standalone Hugging Face checkpoint.
     SUPPORTS_HF_PRETRAINED_EXPORT: ClassVar[bool] = True
 
-    # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
-    # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
-    PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
+    # None selects GPTModelProvider. Pass provider=... to @register_bridge only for a specialized
+    # provider, such as one implementing MLA.
+    PROVIDER_CLASS = None
 
-    # Builder-backed construction is opt-in while model families migrate.
-    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = None
+    # Override these only when the standard GPT or Transformer config cannot represent the model.
+    # Set MODEL_CONFIG_CLASS to None only when builder-backed construction is unsupported.
+    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
     TRANSFORMER_CONFIG_CLASS: ClassVar[type[BridgeTransformerConfig]] = BridgeTransformerConfig
 
-    # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
-    # Set this in bridge subclasses to include model-specific files beyond standard artifacts
+    # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
+    # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
 
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
@@ -694,8 +699,9 @@ class MegatronModelBridge(
     def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> ModelConfig:
         """Convert a Hugging Face config directly to a builder-backed config.
 
-        Model families opt in by defining ``MODEL_CONFIG_CLASS``. The legacy
-        provider path remains available to families that have not migrated.
+        GPT-style model families use ``BridgeGPTModelConfig`` by default.
+        A bridge may select a specialized config class or explicitly disable
+        this path by setting ``MODEL_CONFIG_CLASS`` to ``None``.
 
         Args:
             hf_config: Hugging Face architecture configuration.
@@ -704,14 +710,14 @@ class MegatronModelBridge(
             Serializable model configuration linked to its builder.
 
         Raises:
-            ModelConfigNotSupportedError: If the model family has not opted in.
+            ModelConfigNotSupportedError: If the model family explicitly disables this path.
             ValueError: If mapped fields do not belong to either config dataclass.
         """
         model_config_class = self.MODEL_CONFIG_CLASS
         if model_config_class is None:
             raise ModelConfigNotSupportedError(
                 f"ModelConfig conversion is not implemented for {type(self).__name__}. "
-                "This model family must define MODEL_CONFIG_CLASS and a direct config mapping."
+                "This model family sets MODEL_CONFIG_CLASS to None."
             )
 
         config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
