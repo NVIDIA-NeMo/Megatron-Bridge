@@ -274,7 +274,11 @@ items:
             real-data steps 91-100 average 26,665.830 ms / 553.430
             TFLOP/s/GPU with 160.760 GiB peak allocated and 166.230 GiB peak
             reserved memory. Complete 14-file, 369-GiB FSDP checkpoints with
-            distributed metadata are written at steps 50 and 100.
+            distributed metadata are written at steps 50 and 100. Do not use
+            this run to claim convergence neutrality against ordinary BF16
+            pretraining: 188 of 300 shared LM/MTP loss values exceed the 1%
+            loss gate, with a maximum relative difference of 12.95%, despite
+            the similar final loss.
 
         fp8_mx:
           status: verified
