@@ -76,7 +76,10 @@ def setup_model_and_tokenizer(
     model_provider = bridge.to_megatron_provider(load_weights=False)
     model_provider.tensor_model_parallel_size = tp
     model_provider.pipeline_model_parallel_size = pp
-    model_provider.pipeline_dtype = torch.bfloat16
+    model_provider.params_dtype = params_dtype
+    model_provider.pipeline_dtype = params_dtype
+    model_provider.bf16 = params_dtype == torch.bfloat16
+    model_provider.fp16 = params_dtype == torch.float16
     model_provider.parallel_output = False
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
@@ -86,7 +89,10 @@ def setup_model_and_tokenizer(
         mp_overrides={
             "tensor_model_parallel_size": tp,
             "pipeline_model_parallel_size": pp,
-            "pipeline_dtype": torch.bfloat16,
+            "params_dtype": params_dtype,
+            "pipeline_dtype": params_dtype,
+            "bf16": params_dtype == torch.bfloat16,
+            "fp16": params_dtype == torch.float16,
         },
         wrap_with_ddp=False,
     )
@@ -112,7 +118,7 @@ def setup_model_and_tokenizer(
     inference_wrapped_model = setup_inference_wrapper(
         model[0],
         processor.tokenizer,
-        params_dtype=torch.bfloat16,
+        params_dtype=params_dtype,
         inference_batch_times_seqlen_threshold=1000,
         inference_max_seq_length=inference_max_seq_length,
         inference_max_batch_size=inference_max_batch_size,
