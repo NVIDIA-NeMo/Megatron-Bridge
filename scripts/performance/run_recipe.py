@@ -243,11 +243,18 @@ def _finalize_recipe(recipe, args, cli_overrides: list[str], base_env_vars: dict
 
     recipe = finalize_config_overrides(recipe)
     protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
-    apply_target_topology_environment(
-        recipe,
-        gpu=args.gpu,
-        protected_env_names=protected_env_names,
+    skip_target_topology = (
+        os.getenv("MB_DEEPSEEK_ENV_AB_VARIANT") == "no-topology"
+        and args.model_family_name == "deepseek"
+        and args.model_recipe_name == "deepseek_v3_32nodes"
+        and args.task == "pretrain"
     )
+    if not skip_target_topology:
+        apply_target_topology_environment(
+            recipe,
+            gpu=args.gpu,
+            protected_env_names=protected_env_names,
+        )
     apply_feature_environment(
         recipe,
         nccl_ub_override=args.nccl_ub,
