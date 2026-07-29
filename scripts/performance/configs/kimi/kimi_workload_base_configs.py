@@ -102,6 +102,17 @@ KIMI_K2_PRETRAIN_CONFIG_B200 = replace(
     BASE_KIMI_K2_CONFIG,
     num_gpus=256,
     pipeline_model_parallel_size=16,
+    expert_model_parallel_size=16,
+    global_batch_size=2048,
+    recompute_modules=["mla_up_proj"],
+    moe_a2a_overlap=False,
+)
+KIMI_K2_PRETRAIN_CONFIG_B200_BF16 = KIMI_K2_PRETRAIN_CONFIG_B200
+KIMI_K2_PRETRAIN_CONFIG_B200_FP8_CS = KIMI_K2_PRETRAIN_CONFIG_B200
+KIMI_K2_PRETRAIN_CONFIG_B200_FP8_MX = replace(
+    BASE_KIMI_K2_CONFIG,
+    num_gpus=256,
+    pipeline_model_parallel_size=16,
     virtual_pipeline_model_parallel_size=None,
     expert_model_parallel_size=16,
     global_batch_size=4096,
@@ -111,10 +122,6 @@ KIMI_K2_PRETRAIN_CONFIG_B200 = replace(
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["moe_router", "moe_preprocess","attn"],
 )
-KIMI_K2_PRETRAIN_CONFIG_B200_BF16 = KIMI_K2_PRETRAIN_CONFIG_B200
-KIMI_K2_PRETRAIN_CONFIG_B200_FP8_CS = KIMI_K2_PRETRAIN_CONFIG_B200
-KIMI_K2_PRETRAIN_CONFIG_B200_FP8_MX = KIMI_K2_PRETRAIN_CONFIG_B200
-
 
 KIMI_K2_PRETRAIN_CONFIG_H100 = replace(
     BASE_KIMI_K2_CONFIG,
