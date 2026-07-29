@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import warnings
 from typing import List, Optional
 
 import torch
@@ -28,8 +29,220 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.fused_mrope import (
+    fused_apply_mrope,
+    fused_apply_mrope_thd,
+    get_fused_mrope_thd_unavailable_reason,
+    get_fused_mrope_unavailable_reason,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_q_cu_seqlens
+
+
+_ROPE_FUSION_FALLBACK_WARNINGS: set[tuple[str, str]] = set()
+
+
+def is_raw_mrope_freqs(
+    freqs: torch.Tensor | None,
+    *,
+    sequence_length: int | None = None,
+    mrope_section: list[int] | None = None,
+) -> bool:
+    """Return whether ``freqs`` uses the raw T/H/W mRoPE layout.
+
+    ``sequence_length`` disambiguates raw ``[3, B, S, D/2]`` from a legacy
+    materialized embedding whose sequence length happens to be three.
+    """
+    is_raw_shape = isinstance(freqs, torch.Tensor) and freqs.dim() == 4 and freqs.size(0) == 3
+    if not is_raw_shape:
+        return False
+    if sequence_length is not None and freqs.size(2) != sequence_length:
+        return False
+    if mrope_section is not None and len(mrope_section) == 3:
+        # Materialized split-half RoPE doubles the raw frequency width.
+        return freqs.size(-1) != 2 * sum(int(value) for value in mrope_section)
+    return True
+
+
+def materialize_mrope_freqs(
+    freqs: torch.Tensor,
+    mrope_section: list[int],
+    *,
+    interleaved_mrope: bool,
+    rotary_interleaved: bool = False,
+) -> torch.Tensor:
+    """Convert raw T/H/W frequencies to Bridge's legacy unfused layout.
+
+    Unlike the fused Qwen3.5-VL kernel, this compatibility converter accepts
+    any valid stride-three section split used by existing Qwen3-VL providers.
+    """
+    if not is_raw_mrope_freqs(freqs):
+        raise ValueError(
+            f"Raw mRoPE frequencies must have shape [3, batch, seq, rotary_dim / 2], got {tuple(freqs.shape)}"
+        )
+    if len(mrope_section) != 3:
+        raise ValueError(f"mrope_section must contain T/H/W lengths, got {mrope_section}")
+
+    sec_t, sec_h, sec_w = (int(section) for section in mrope_section)
+    half_rotary_dim = freqs.size(-1)
+    if min(sec_t, sec_h, sec_w) < 0 or sec_t + sec_h + sec_w != half_rotary_dim:
+        raise ValueError(
+            f"mrope_section {mrope_section} must be non-negative and sum to rotary_dim / 2 = {half_rotary_dim}"
+        )
+
+    if interleaved_mrope:
+        freqs_out = freqs[0].clone()
+        for axis, offset in enumerate((1, 2), start=1):
+            idx = slice(offset, mrope_section[axis] * 3, 3)
+            freqs_out[..., idx] = freqs[axis, ..., idx]
+        if rotary_interleaved:
+            batch = freqs_out.size(0)
+            emb = torch.stack(
+                (freqs_out.reshape(batch, -1, 1), freqs_out.reshape(batch, -1, 1)),
+                dim=-1,
+            ).view(batch, freqs_out.size(1), -1)
+        else:
+            emb = torch.cat((freqs_out, freqs_out), dim=-1)
+    elif rotary_interleaved:
+        batch = freqs.size(1)
+        emb = torch.stack(
+            (freqs.reshape(3, batch, -1, 1), freqs.reshape(3, batch, -1, 1)),
+            dim=-1,
+        ).view(3, batch, freqs.size(2), -1)
+        doubled_sections = list(mrope_section) * 2
+        emb = torch.cat(
+            [chunk[index % 3] for index, chunk in enumerate(emb.split(doubled_sections, dim=-1))],
+            dim=-1,
+        )
+    else:
+        freqs_out = torch.empty_like(freqs[0])
+        freqs_out[..., :sec_t] = freqs[0, ..., :sec_t]
+        freqs_out[..., sec_t : sec_t + sec_h] = freqs[1, ..., sec_t : sec_t + sec_h]
+        freqs_out[..., sec_t + sec_h :] = freqs[2, ..., sec_t + sec_h :]
+        emb = torch.cat((freqs_out, freqs_out), dim=-1)
+
+    return emb[..., None, :].transpose(0, 1).contiguous()
+
+
+def _fused_section_unavailable_reason(
+    t: torch.Tensor,
+    freqs: torch.Tensor,
+    mrope_section: list[int],
+    *,
+    interleaved_mrope: bool,
+) -> str | None:
+    if len(mrope_section) != 3:
+        return f"mrope_section must contain three values, got {mrope_section}"
+    half_rotary_dim = freqs.size(-1)
+    section = tuple(int(value) for value in mrope_section)
+    if min(section) < 0 or sum(section) != half_rotary_dim:
+        return f"mrope_section {mrope_section} must sum to rotary_dim / 2 = {half_rotary_dim}"
+    if interleaved_mrope:
+        expected = (
+            (half_rotary_dim + 2) // 3,
+            (half_rotary_dim + 1) // 3,
+            half_rotary_dim // 3,
+        )
+        if section != expected:
+            return (
+                f"stride-three interleaved mRoPE requires section {list(expected)} "
+                f"for rotary_dim / 2 = {half_rotary_dim}, got {mrope_section}"
+            )
+    if 2 * half_rotary_dim > t.size(-1):
+        return f"raw mRoPE rotary dim {2 * half_rotary_dim} exceeds input head dim {t.size(-1)}"
+    return None
+
+
+def _warn_rope_fusion_fallback(layout: str, reason: str) -> None:
+    warning_key = (layout, reason)
+    if warning_key in _ROPE_FUSION_FALLBACK_WARNINGS:
+        return
+    warnings.warn(
+        f"Qwen-VL fused mRoPE is unavailable for {layout}: {reason}. Using the unfused implementation.",
+        UserWarning,
+        stacklevel=3,
+    )
+    _ROPE_FUSION_FALLBACK_WARNINGS.add(warning_key)
+
+
+def _get_cp_rank(
+    config: Qwen3VLTransformerConfig,
+    cp_group: torch.distributed.ProcessGroup | None,
+) -> tuple[int, int]:
+    cp_size = max(int(getattr(config, "context_parallel_size", 1)), 1)
+    if cp_size == 1:
+        return 1, 0
+    if cp_group is None:
+        raise ValueError("Qwen-VL packed mRoPE with context parallelism requires a CP group.")
+    if cp_group.size() != cp_size:
+        raise ValueError(f"CP group size {cp_group.size()} does not match config size {cp_size}.")
+    return cp_size, cp_group.rank()
+
+
+def _get_thd_cp_freq_indices(
+    cu_seqlens: torch.Tensor,
+    *,
+    cp_size: int,
+    cp_rank: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build exact packed CP indices, including odd local sequence lengths."""
+    cu_seqlens_cpu = cu_seqlens.detach().cpu().tolist()
+    indices: list[int] = []
+    for global_start, global_end in zip(cu_seqlens_cpu[:-1], cu_seqlens_cpu[1:]):
+        global_length = global_end - global_start
+        if global_length % cp_size != 0:
+            raise ValueError(
+                f"Packed sequence length {global_length} must be divisible by context parallel size {cp_size}."
+            )
+        local_length = global_length // cp_size
+        first_length = (local_length + 1) // 2
+        second_length = local_length // 2
+        indices.extend(range(global_start + cp_rank * first_length, global_start + (cp_rank + 1) * first_length))
+        indices.extend(range(global_end - (cp_rank + 1) * second_length, global_end - cp_rank * second_length))
+    return torch.tensor(indices, dtype=torch.long, device=device)
+
+
+def _apply_unfused_raw_mrope(
+    t: torch.Tensor,
+    freqs: torch.Tensor,
+    config: Qwen3VLTransformerConfig,
+    *,
+    cu_seqlens: torch.Tensor | None,
+    cp_size: int,
+    cp_rank: int,
+    freqs_are_local: bool,
+) -> torch.Tensor:
+    materialized = materialize_mrope_freqs(
+        freqs,
+        list(config.mrope_section),
+        interleaved_mrope=bool(getattr(config, "mrope_interleaved", True)),
+        rotary_interleaved=config.rotary_interleaved,
+    )
+    if cu_seqlens is not None and not freqs_are_local:
+        indices = _get_thd_cp_freq_indices(
+            cu_seqlens,
+            cp_size=cp_size,
+            cp_rank=cp_rank,
+            device=materialized.device,
+        )
+        materialized = materialized.index_select(0, indices)
+
+    orig_dtype = t.dtype
+    compute_input = t.float() if config.apply_rotary_pos_emb_in_fp32 else t
+    if cu_seqlens is None:
+        result = _apply_rotary_pos_emb_bshd(
+            compute_input,
+            materialized,
+            rotary_interleaved=config.rotary_interleaved,
+        )
+    else:
+        result = _apply_rotary_pos_emb_bshd(
+            compute_input[:, None],
+            materialized,
+            rotary_interleaved=config.rotary_interleaved,
+        ).squeeze(1)
+    return result.to(orig_dtype) if config.apply_rotary_pos_emb_in_fp32 else result
 
 
 def _get_flat_packed_ranges(
@@ -120,6 +333,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         seq_len_interpolation_factor: Optional[float] = None,
         rotary_base: int = 10000,
         cp_group: torch.distributed.ProcessGroup = None,
+        return_raw_freqs: bool = False,
     ) -> None:
         super().__init__()
 
@@ -134,6 +348,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=torch.cuda.current_device()) / dim)
         )
         self.is_thd_format = False  # if is thd format, we do not need to split the rotary_pos_emb along CP
+        self.return_raw_freqs = return_raw_freqs
 
         # default mrope section is [24, 20, 20], if no mrope section is provided, use default mrope section
         self.mrope_section = [24, 20, 20]
@@ -150,7 +365,7 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         returns:
             x_t: (bs, seq_len, head_dim // 2)
         """
-        freqs_t = freqs[0]  # just overwrite the first dimension T
+        freqs_t = freqs[0].clone()  # overwrite a copy of the first dimension T
         for dim, offset in enumerate((1, 2), start=1):  # H, W
             length = mrope_section[dim] * 3
             idx = slice(offset, length, 3)
@@ -188,11 +403,13 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         seq_expanded = seq[:, :, None, :].float()
         # shape (3, bs, seq_length, dim)
         freqs = (inv_freq_expanded @ seq_expanded).transpose(2, 3)
-        if mrope_section is not None:
-            freqs = self.apply_interleaved_mrope(freqs, mrope_section)
-        else:
-            # if mrope_section is not provided, use default mrope section
-            freqs = self.apply_interleaved_mrope(freqs, self.mrope_section)
+        mrope_section = self.mrope_section if mrope_section is None else mrope_section
+        if self.return_raw_freqs:
+            if self.cp_group.size() > 1 and not self.is_thd_format:
+                freqs = get_pos_emb_on_this_cp_rank(freqs, 2, self.cp_group)
+            return freqs.contiguous()
+
+        freqs = self.apply_interleaved_mrope(freqs, mrope_section)
         emb = torch.cat((freqs, freqs), dim=-1)
 
         # shape (seq_length, bs, 1, 2 * dim)
@@ -457,30 +674,119 @@ def apply_rotary_pos_emb_absolute(
     freqs: Tensor,
     config: Qwen3VLTransformerConfig,
     cu_seqlens: Optional[Tensor] = None,
-):
-    """
-    Reroute to the appropriate apply_rotary_pos_emb function depending on
-    bshd (conventional) / thd (packed seq) format
+    *,
+    cp_group: torch.distributed.ProcessGroup | None = None,
+    max_seqlen: int | None = None,
+) -> Tensor:
+    """Apply Qwen-VL absolute mRoPE in BSHD or packed THD layout.
 
-    In Qwen3-VL, the shape of freqs is (seq_length, bs, 1, 2 * dim) instead of [max_seqlen, 1, 1, 2 * dim]
+    Raw ``[3, batch, seq, rotary_dim / 2]`` frequencies use the local Triton
+    kernel when requested and supported. Legacy materialized frequencies keep
+    the existing unfused behavior.
     """
-    # Fused RoPE (TE kernels) is not supported for Qwen3-VL / Qwen3.5-VL because:
-    # 1. This function uses per-token absolute freqs with shape (seq_len, bs, 1, 2*dim),
-    #    which differs from the standard mcore format (max_seqlen, 1, 1, 2*dim).
-    #    TE's fused_apply_rotary_pos_emb / fused_apply_rotary_pos_emb_thd expect the
-    #    standard format and would produce incorrect results with absolute freqs.
-    # 2. Qwen3VLSelfAttention calls this function directly, bypassing the mcore
-    #    apply_rotary_pos_emb() dispatcher that routes to fused kernels.
-    # 3. validate_rope_fusion_compatibility() already blocks fusion for mrope models
-    #    (position_embedding_type='mrope'), so provide() resets the flag to False.
-    #    This assert is a safety net in case the flag is forced on after provide().
-    assert not config.apply_rope_fusion, (
-        "apply_rope_fusion is not supported for Qwen3-VL / Qwen3.5-VL models. "
-        "This code path uses per-token absolute positional frequencies that are incompatible "
-        "with TE's fused RoPE kernels. Setting apply_rope_fusion=True would not actually "
-        "enable fusion (Qwen3VLSelfAttention bypasses the fused dispatch), but the flag "
-        "must remain False to avoid misleading configuration state."
-    )
+    del max_seqlen  # Propagated by attention for a stable packed call contract.
+
+    section = list(config.mrope_section)
+    cp_size_hint = max(int(getattr(config, "context_parallel_size", 1)), 1)
+    raw_sequence_lengths = {t.size(0), t.size(0) * cp_size_hint} if cu_seqlens is not None else {t.size(0)}
+    if is_raw_mrope_freqs(freqs, mrope_section=section) and freqs.size(2) in raw_sequence_lengths:
+        interleaved_mrope = bool(getattr(config, "mrope_interleaved", True))
+        section_reason = _fused_section_unavailable_reason(
+            t,
+            freqs,
+            section,
+            interleaved_mrope=interleaved_mrope,
+        )
+        cp_size, cp_rank = _get_cp_rank(config, cp_group)
+
+        if cu_seqlens is None:
+            if freqs.size(1) != t.size(1) or freqs.size(2) != t.size(0):
+                raise ValueError(
+                    "BSHD raw mRoPE frequencies must match input batch and sequence dimensions: "
+                    f"input={tuple(t.shape)}, freqs={tuple(freqs.shape)}"
+                )
+            reason = section_reason
+            if config.apply_rope_fusion and reason is None:
+                reason = get_fused_mrope_unavailable_reason(t, freqs, config.rotary_interleaved)
+            if config.apply_rope_fusion and reason is None:
+                return fused_apply_mrope(
+                    t,
+                    freqs,
+                    section,
+                    interleaved_mrope=interleaved_mrope,
+                    fp32_compute=config.apply_rotary_pos_emb_in_fp32,
+                )
+            if config.apply_rope_fusion:
+                _warn_rope_fusion_fallback("BSHD", reason)
+            return _apply_unfused_raw_mrope(
+                t,
+                freqs,
+                config,
+                cu_seqlens=None,
+                cp_size=1,
+                cp_rank=0,
+                freqs_are_local=True,
+            )
+
+        if t.dim() != 3:
+            raise ValueError(f"Packed THD input must have shape [tokens, heads, head_dim], got {tuple(t.shape)}")
+        if freqs.size(1) != 1:
+            raise ValueError(f"Packed THD raw mRoPE requires frequency batch size 1, got {freqs.size(1)}")
+
+        local_tokens = t.size(0)
+        global_tokens = local_tokens * cp_size
+        if freqs.size(2) == local_tokens:
+            freqs_are_local = True
+            launch_cp_size, launch_cp_rank = 1, 0
+            if cp_size > 1:
+                if bool(torch.any((cu_seqlens[1:] - cu_seqlens[:-1]) % cp_size).item()):
+                    raise ValueError("Each packed sequence length must be divisible by context parallel size.")
+                launch_cu_seqlens = torch.div(cu_seqlens, cp_size, rounding_mode="floor")
+            else:
+                launch_cu_seqlens = cu_seqlens
+        elif freqs.size(2) == global_tokens:
+            freqs_are_local = False
+            launch_cp_size, launch_cp_rank = cp_size, cp_rank
+            launch_cu_seqlens = cu_seqlens
+        else:
+            raise ValueError(
+                "Packed THD raw mRoPE frequency sequence length must be local or global: "
+                f"input tokens={local_tokens}, CP={cp_size}, freqs={freqs.size(2)}"
+            )
+
+        reason = section_reason
+        if config.apply_rope_fusion and reason is None:
+            reason = get_fused_mrope_thd_unavailable_reason(
+                t,
+                launch_cu_seqlens,
+                freqs,
+                config.rotary_interleaved,
+                cp_size=launch_cp_size,
+                cp_rank=launch_cp_rank,
+            )
+        if config.apply_rope_fusion and reason is None:
+            return fused_apply_mrope_thd(
+                t,
+                launch_cu_seqlens,
+                freqs,
+                section,
+                interleaved_mrope=interleaved_mrope,
+                cp_size=launch_cp_size,
+                cp_rank=launch_cp_rank,
+                fp32_compute=config.apply_rotary_pos_emb_in_fp32,
+            )
+        if config.apply_rope_fusion:
+            _warn_rope_fusion_fallback("THD", reason)
+        return _apply_unfused_raw_mrope(
+            t,
+            freqs,
+            config,
+            cu_seqlens=cu_seqlens,
+            cp_size=cp_size,
+            cp_rank=cp_rank,
+            freqs_are_local=freqs_are_local,
+        )
+
     orig_t_dtype = t.dtype
     if config.apply_rotary_pos_emb_in_fp32:
         t = t.float()

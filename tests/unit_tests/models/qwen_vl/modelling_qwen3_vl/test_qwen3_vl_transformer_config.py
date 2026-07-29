@@ -152,3 +152,12 @@ class TestGetVisionModelConfigVisionCudaGraph:
         )
         with pytest.raises(KeyError):
             get_vision_model_config(_hf_config(), megatron)
+
+    def test_rope_fusion_propagates_with_vision_axis_sections(self):
+        """Vision maps row/column frequencies into raw sectioned mRoPE."""
+        cfg = get_vision_model_config(_hf_config(), _megatron_base(apply_rope_fusion=True))
+
+        assert cfg.apply_rope_fusion is True
+        assert cfg.mrope_section == [0, 4, 4]
+        assert cfg.mrope_interleaved is False
+        assert cfg.apply_rotary_pos_emb_in_fp32 is True

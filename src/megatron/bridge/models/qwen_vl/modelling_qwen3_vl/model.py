@@ -857,7 +857,7 @@ class Qwen3VLModel(MegatronModule):
                     .permute(2, 0, 1)
                     .contiguous()
                 )
-            elif packed_cp_index is not None:
+            elif packed_cp_index is not None and not getattr(self.config, "apply_rope_fusion", False):
                 position_ids = _select_sequence(position_ids, packed_cp_index, seq_dim=2)
             attention_mask = None
             if self.language_model is not None:

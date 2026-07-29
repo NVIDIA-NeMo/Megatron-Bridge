@@ -27,6 +27,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.perf_recipes.qwen_vl.common import _qwen35_vl_post
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -231,6 +232,23 @@ def test_qwen35_vl_h100_module_has_no_parameterized_recipe_helpers():
     assert not hasattr(_qwen35_vl_h100_module, "_qwen35_vl_apply_common")
     assert not hasattr(_qwen35_vl_h100_module, "_qwen35_vl_apply_moe")
     assert not hasattr(_qwen35_vl_h100_module, "_qwen35_vl_enable_recompute")
+
+
+def test_qwen35_perf_post_keeps_generic_rope_fusion_enabled():
+    """Performance recipes no longer undo the benchmark fusion request."""
+    cfg = type(
+        "Cfg",
+        (),
+        {
+            "model": type("Model", (), {"apply_rope_fusion": True, "cuda_graph_impl": "local"})(),
+            "optimizer": type("Optimizer", (), {"overlap_param_gather": True})(),
+        },
+    )()
+
+    _qwen35_vl_post(cfg)
+
+    assert cfg.model.apply_rope_fusion is True
+    assert cfg.model.cuda_graph_impl == "none"
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import materialize_mrope_freqs
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import (
     Qwen3VLVisionModel,
@@ -90,6 +91,23 @@ class TestMaybePadVisionSequenceForCudaGraph:
         rotary_pos_emb = torch.randn(seq_len, 1, 1, 4)
         with pytest.raises(ValueError, match="exceeds max_vision_cuda_graph_seq_length"):
             _maybe_pad_vision_sequence_for_cuda_graph(hidden_states, rotary_pos_emb, seq_len, max_seq_len)
+
+    def test_raw_mrope_padding_preserves_axis_layout(self):
+        seq_len, max_seq_len, hidden, half_rotary_dim = 3, 8, 4, 6
+        hidden_states = torch.ones(seq_len, hidden)
+        raw_freqs = torch.ones(3, 1, seq_len, half_rotary_dim)
+
+        _, padded_freqs, out_len = _maybe_pad_vision_sequence_for_cuda_graph(
+            hidden_states,
+            raw_freqs,
+            seq_len,
+            max_seq_len,
+        )
+
+        assert out_len == max_seq_len
+        assert padded_freqs.shape == (3, 1, max_seq_len, half_rotary_dim)
+        torch.testing.assert_close(padded_freqs[:, :, :seq_len], raw_freqs)
+        assert torch.count_nonzero(padded_freqs[:, :, seq_len:]) == 0
 
 
 class TestVisionForwardPackedAttentionSetup:
@@ -201,3 +219,33 @@ class TestQwen3VLVisionModelCudaGraphHelpers:
         m = _vision_model_shell(cfg)
         m.train()
         assert m._uses_vision_cuda_graph() is False
+
+    def test_rot_pos_emb_raw_layout_materializes_to_legacy_vision_rope(self):
+        """The fused vision path preserves the original row/column frequency math."""
+        cfg = _minimal_vision_config(
+            apply_rope_fusion=True,
+            mrope_section=[0, 4, 4],
+            mrope_interleaved=False,
+        )
+        model = _vision_model_shell(cfg)
+        model.spatial_merge_size = 2
+
+        def fake_rotary_embedding(max_hw):
+            positions = torch.arange(max_hw, dtype=torch.float32)[:, None]
+            dims = torch.arange(4, dtype=torch.float32)[None, :]
+            return positions + dims / 10
+
+        model.rotary_pos_emb = fake_rotary_embedding
+        grid_thw = torch.tensor([[1, 4, 4]], dtype=torch.long)
+
+        raw_freqs = model.rot_pos_emb(grid_thw)
+        materialized = materialize_mrope_freqs(
+            raw_freqs,
+            [0, 4, 4],
+            interleaved_mrope=False,
+        )
+
+        cfg.apply_rope_fusion = False
+        legacy = model.rot_pos_emb(grid_thw).reshape(16, 1, 1, -1).repeat(1, 1, 1, 2)
+        assert raw_freqs.shape == (3, 1, 16, 8)
+        torch.testing.assert_close(materialized, legacy)
