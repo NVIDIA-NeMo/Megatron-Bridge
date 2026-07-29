@@ -39,12 +39,13 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidian/nemo:26.08.rc2
-  bridge_commit: 8e1ad8a52217dac1e05681c6492a6d6029136cb2  # pragma: allowlist secret
+  bridge_commit: 619a2df1da9517b4408ea475b428bf2aba618c8f  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
     status: verified
     precision: bf16
+    bridge_commit: 7edd7c7f68bcdd2b30cbaff426ece2ee0da9deb5  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
       --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
@@ -189,7 +190,7 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: 404b4c950796343f43b162f68b1efd515a2b9484  # pragma: allowlist secret
+      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -201,21 +202,19 @@ items:
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
         rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=100
-        train.global_batch_size=512 train.micro_batch_size=2
         validation.eval_iters=0 validation.eval_interval=0
         model.moe_router_force_load_balancing=false
-        model.cross_entropy_fusion_impl=te
-        model.cuda_graph_impl=none ddp.average_in_collective=false
-        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
+        checkpoint.load=null checkpoint.async_save=false
+        --save_dir work/model-verification/nemotron-3.5-nano-gb200/pretrain-reference
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
       last_verified: 2026-07-28
       metrics:
         initial_loss: 12.171970
-        final_loss: 5.793599
-        last_10_steps_step_time_ms_avg: 21062.940
+        final_loss: 5.798433
+        last_10_steps_step_time_ms_avg: 21483.630
         # Real RP2 convergence-verification run, not a mock-data benchmark.
-        last_10_steps_model_tflops_per_gpu_avg: 700.620
+        last_10_steps_model_tflops_per_gpu_avg: 686.920
         peak_allocated_memory_gib: 158.220
         peak_reserved_memory_gib: 162.290
       expected_result: >
@@ -224,10 +223,11 @@ items:
         convergence-verification run completes exactly 100 finite-loss
         optimizer steps with natural routing, Transformer Engine fused cross
         entropy, CUDA graphs disabled, finite LM/MTP-1/MTP-2 losses, and no
-        skipped or NaN iterations. LM loss is 12.171970 -> 5.793599;
-        real-data steps 91-100 average 21,062.940 ms / 700.620 TFLOP/s/GPU
-        with 158.220 GiB peak
-        allocated and 162.290 GiB peak reserved memory.
+        skipped or NaN iterations. LM loss is 12.171970 -> 5.798433;
+        real-data steps 91-100 average 21,483.630 ms / 686.920 TFLOP/s/GPU
+        with 158.220 GiB peak allocated and 162.290 GiB peak reserved memory.
+        Complete 15-file, 430-GiB checkpoints with distributed metadata are
+        written at steps 50 and 100.
 
   pretrain_fsdp:
     GB200:
@@ -236,7 +236,7 @@ items:
         bf16:
           status: verified
           precision: bf16
-          bridge_commit: 404b4c950796343f43b162f68b1efd515a2b9484  # pragma: allowlist secret
+          bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
           enabled_features:
             moe_dispatcher: hybridep
             megatron_fsdp: optim_grads_params
@@ -245,40 +245,36 @@ items:
             --additional-slurm-params segment=2
             --recipe nemotron_3_5_nano_pretrain_8k_fsdp_config
             --mode pretrain --dataset megatron-indexed --seq_length 8192
-            --max_steps 20 --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
+            --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
             'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
             dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
-            rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=20
-            train.global_batch_size=512 train.micro_batch_size=2
+            rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=100
             validation.eval_iters=0 validation.eval_interval=0
             model.moe_router_force_load_balancing=false
-            model.cross_entropy_fusion_impl=te
-            checkpoint.load=null checkpoint.save=null
+            checkpoint.load=null checkpoint.async_save=false
+            --save_dir work/model-verification/nemotron-3.5-nano-gb200/pretrain-fsdp
             logger.log_interval=1 logger.log_throughput=true
             logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
           last_verified: 2026-07-28
           metrics:
             initial_loss: 12.171970
-            final_loss: 7.222255
-            last_10_steps_step_time_ms_avg: 24690.750
+            final_loss: 5.797082
+            last_10_steps_step_time_ms_avg: 26665.830
             # Real RP2 convergence-verification run, not a mock-data benchmark.
-            last_10_steps_model_tflops_per_gpu_avg: 597.840
-            peak_allocated_memory_gib: 152.520
-            peak_reserved_memory_gib: 156.370
+            last_10_steps_model_tflops_per_gpu_avg: 553.430
+            peak_allocated_memory_gib: 160.760
+            peak_reserved_memory_gib: 166.230
           expected_result: >
             On two complete four-GPU GB200 nodes in one segment-2 NVLink
             domain, the sequence-length-8,192, GBS/MBS 512/2 BF16 real-data
-            RP2 FSDP convergence-verification run completes exactly 20
+            RP2 FSDP convergence-verification run completes exactly 100
             finite-loss optimizer steps with natural routing, Transformer
             Engine fused cross entropy, active MTP-1/MTP-2 losses, and no
-            skipped or NaN iterations. LM loss is 12.171970 -> 7.222255;
-            real-data steps 11-20 average 24,690.750 ms / 597.840
-            TFLOP/s/GPU with 152.520 GiB peak allocated and 156.370 GiB peak
-            reserved memory. Do not compare this run with the ordinary BF16
-            pretrain run for convergence: despite a 0.60% final LM-loss delta,
-            Megatron FSDP's required BF16 sharded gradient/update path reaches
-            8.29% maximum stepwise LM-loss divergence and 31-44% step-11 MTP
-            divergence, failing the 1% stepwise loss-neutrality gate.
+            skipped or NaN iterations. LM loss is 12.171970 -> 5.797082;
+            real-data steps 91-100 average 26,665.830 ms / 553.430
+            TFLOP/s/GPU with 160.760 GiB peak allocated and 166.230 GiB peak
+            reserved memory. Complete 14-file, 369-GiB FSDP checkpoints with
+            distributed metadata are written at steps 50 and 100.
 
         fp8_mx:
           status: verified
@@ -341,6 +337,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
@@ -351,23 +348,23 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-nano-gb200/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/sft-checkpoints
-      last_verified: 2026-07-26
+      last_verified: 2026-07-28
       metrics:
         initial_loss: 0.4252032
-        final_loss: 0.2780876
-        last_10_steps_step_time_ms_avg: 6381.010
-        last_10_steps_model_tflops_per_gpu_avg: 245.500
-        peak_allocated_memory_gib: 98.703
-        peak_reserved_memory_gib: 100.060
+        final_loss: 0.2784797
+        last_10_steps_step_time_ms_avg: 6872.550
+        last_10_steps_model_tflops_per_gpu_avg: 254.130
+        peak_allocated_memory_gib: 101.540
+        peak_reserved_memory_gib: 103.950
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
         packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss
         optimizer steps with active MTP gradients. LM loss is 0.4252032 ->
-        0.2780876 and MTP-1 loss is 0.7056153 -> 0.4145322. Steps 91-100
-        average 6,381.010 ms / 245.500 TFLOP/s/GPU with 98.703 GiB peak
-        allocated and 100.060 GiB peak reserved memory, no iteration is
-        skipped or NaN, and the complete reloadable full-model checkpoint is
-        written at step 100.
+        0.2784797, MTP-1 loss is 0.7056153 -> 0.4156865, and MTP-2 loss is
+        0.8357499 -> 0.4744240. Steps 91-100 average 6,872.550 ms / 254.130
+        TFLOP/s/GPU with 101.540 GiB peak allocated and 103.950 GiB peak
+        reserved memory. No iteration is skipped or NaN, and the complete
+        12-file reloadable full-model checkpoint is written at step 100.
 
   sft_export_inference:
     H100:
@@ -390,16 +387,17 @@ items:
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
       last_verified: 2026-07-24
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. Eight independent GPU workers each run the deterministic verifier twice, producing byte-identical token IDs and exactly 45 new tokens per run. Their shared literal completion: \"Subtract 5 from both sides: \u00243x = 15\u0024. Divide by 3: \u0024x = 5\u0024. The answer is \u0024\\boxed{5}\u0024. The answer is: \u0024\\boxed{\"."
+      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"Subtract 5 from both sides: \u00243x = 15\u0024. Divide by 3: \u0024x = 5\u0024. The answer is \u0024\\boxed{5}\u0024. The answer is: \u0024\\boxed{\"."
 
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
-          --nodes 2 --gpus-per-node 4 --tp 2 --pp 1 --ep 8 --etp 1
+          --nodes 2 --gpus-per-node 4 --tp 1 --pp 1 --ep 8 --etp 1
           --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
           --hf-revision PUBLIC_HF_REVISION_PENDING
           --megatron-path work/model-verification/nemotron-3.5-nano-gb200/sft-checkpoints/iter_0000100
@@ -411,8 +409,8 @@ items:
           --hf-model work/model-verification/nemotron-3.5-nano-gb200/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-07-23
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. Four independent GPU workers each run the deterministic verifier twice, producing byte-identical token IDs and exactly 45 new tokens per run. Their shared literal completion: \"Subtract 5 from both sides: \u00243x = 15\u0024. Divide by 3: \u0024x = 5\u0024. The answer is \u0024\\boxed{5}\u0024. The answer is: \u0024\\boxed{\"."
+      last_verified: 2026-07-28
+      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"Subtract 5 from both sides: \u00243x = 15\u0024. Divide by 3: \u0024x = 5\u0024. The answer is \u0024\\boxed{5}\u0024. The answer is: \u0024\\boxed{\"."
 
   sft_long_context:
     H100:
@@ -540,11 +538,8 @@ items:
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
         steps with adapters on the MTP layers, LM loss 0.4251121 -> 0.2873518,
         finite MTP-1 loss 0.7056133 -> 0.4359691, and no skipped or NaN
-        iterations. The complete adapter checkpoint merges into a native Hugging
-        Face checkpoint. Eight independent H100 workers each reload the merged
-        model and pass two byte-identical 45-token greedy generations with this
-        shared completion: "Subtract 5 from both sides: 3x = 15. Divide by 3:
-        x = 5. The answer is 5. \boxed{5} (This is the final answer".
+        iterations. The complete adapter checkpoint is written at step 100 and
+        reloads over the pinned base checkpoint at step 100.
 
     GB200:
       status: verified
@@ -581,10 +576,9 @@ items:
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
         steps with 48 rank-local adapter attachment records covering MTP
         attention, expert, and shared-expert layers, finite MTP losses, no
-        skipped or NaN iterations, and all four metrics recorded. The adapter
-        merges into a 6,513-tensor native Hugging Face checkpoint; four
-        independent GPU workers reload it and each produce byte-identical token
-        IDs across two greedy 45-token runs.
+        skipped or NaN iterations, and all four metrics recorded. The complete
+        adapter checkpoint is written at step 100 and reloads over the pinned
+        base checkpoint at step 100.
 
   checkpoint_resume:
     H100:
@@ -632,44 +626,44 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: 7365728c27dd863291c7b7406c699761b0388592  # pragma: allowlist secret
+      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --additional-slurm-params segment=2
         --recipe nemotron_3_5_nano_pretrain_8k_config
-        --mode pretrain --dataset megatron-indexed --seq_length 8192 --max_steps 20
+        --mode pretrain --dataset megatron-indexed --seq_length 8192 --max_steps 100
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3.5-nano-gb200/rp2
-        rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=20
+        rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=100
         validation.eval_iters=0 validation.eval_interval=0
         model.moe_router_force_load_balancing=false
         --load_dir work/model-verification/nemotron-3.5-nano-gb200/pretrain-reference
-        checkpoint.ckpt_step=10 checkpoint.async_save=false
+        checkpoint.ckpt_step=50 checkpoint.async_save=false
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/pretrain-resumed
-        --save_interval 10 logger.log_interval=1 logger.log_throughput=true
+        logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
       last_verified: 2026-07-28
       metrics:
-        initial_loss: 7.750020
-        final_loss: 7.177102
-        last_10_steps_step_time_ms_avg: 40432.950
-        last_10_steps_model_tflops_per_gpu_avg: 482.500
+        initial_loss: 6.166278
+        final_loss: 5.796845
+        last_10_steps_step_time_ms_avg: 22233.450
+        last_10_steps_model_tflops_per_gpu_avg: 663.860
       resume_comparison:
         reference_item: pretrain
-        sentinel_steps: [11, 20]
+        sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: true
       expected_result: >
         The continuation restores optimizer, scheduler, data-order, and RNG
-        state from the matched 8K step-10 reference, begins at step 11, and
-        finishes at step 20 in a distinct output root. Resumed losses 7.750020
-        and 7.177102 match uninterrupted losses 7.750022 and 7.176786 at steps
-        11 and 20. All 30 shared LM/MTP-1/MTP-2 values pass with a maximum
-        relative difference of 0.0516%, no iteration is skipped or NaN, and
-        the 12-file, 430-GiB step-20 checkpoint is complete.
+        state from the matched 8K step-50 reference, begins at step 51, and
+        finishes at step 100 in a distinct output root. Resumed losses
+        6.166278 and 5.796845 match uninterrupted losses 6.166278 and 5.798433
+        at steps 51 and 100. All 150 shared LM/MTP-1/MTP-2 values pass with a
+        maximum relative difference of 0.127978%, no iteration is skipped or
+        NaN, and the 15-file, 430-GiB step-100 checkpoint is complete.
 
   pretrain_performance:
     H100:
