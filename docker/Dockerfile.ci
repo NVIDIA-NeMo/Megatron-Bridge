@@ -102,6 +102,7 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
     fi
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
+COPY docker/diffusion-codecs.txt /opt/Megatron-Bridge/docker/diffusion-codecs.txt
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
 COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
 COPY 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
@@ -136,8 +137,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
     fi && \
-    # Diffusion tests run without package-index access, so bake their opt-in codecs into the CI image.
-    uv pip install --no-config imageio imageio-ffmpeg av easydict && \
+    # Diffusion tests run without package-index access, so bake their reviewed wheels into the CI image.
+    uv pip install --no-config --no-deps --require-hashes --only-binary=:all: \
+        -r docker/diffusion-codecs.txt && \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \

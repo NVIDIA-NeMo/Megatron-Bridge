@@ -1,0 +1,9 @@
+# Hashes correspond to the reviewed CPython 3.12-compatible Linux x86_64 wheels.
+av==18.0.0 \
+    --hash=sha256:ae56b40b6f8b067a8ad2dac664fbfbabac7f7a55b9a7bb031eb99289252bc017
+imageio==2.37.4 \
+    --hash=sha256:1ab2e22c8debf700f24c3ac43e8f95f3b3a8110c83b93411e97b4b0b2cd1c7e6
+imageio-ffmpeg==0.6.0 \
+    --hash=sha256:c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282
+easydict==1.13 \
+    --hash=sha256:6b787daf4dcaf6377b4ad9403a5cee5a86adbc0ca9a5bcf5410e9902002aeac2
