@@ -192,6 +192,8 @@ def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]
     expected_global_batch_size = 512 if recipe_factory is nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config else 1024
     assert cfg.train.global_batch_size == expected_global_batch_size
     assert cfg.train.micro_batch_size == 1
+    expected_context_parallel_size = 2 if recipe_factory is nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config else 1
+    assert cfg.model.context_parallel_size == expected_context_parallel_size
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
@@ -207,6 +209,8 @@ def test_bf16_perf_recipes_share_training_workload() -> None:
     gb200_cfg = nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config()
 
     gb200_cfg.train.micro_batch_size = h100_cfg.train.micro_batch_size
+    gb200_cfg.model.context_parallel_size = h100_cfg.model.context_parallel_size
+    gb200_cfg.model.cp_comm_type = h100_cfg.model.cp_comm_type
     gb200_cfg.model.recompute_granularity = h100_cfg.model.recompute_granularity
     gb200_cfg.model.recompute_modules = h100_cfg.model.recompute_modules
     gb200_cfg.model.cuda_graph_impl = h100_cfg.model.cuda_graph_impl
