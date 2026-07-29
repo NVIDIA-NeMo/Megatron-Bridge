@@ -2,7 +2,7 @@
 name: nemo-mbridge-memory-snapshot-analysis
 description: Analyze and compare PyTorch CUDA memory snapshots produced by Megatron Bridge's ProfilingConfig(record_memory_history=True). Replays the recorded allocation timeline to plot memory over time, compare two runs, and attribute peak memory to source code locations.
 license: Apache-2.0
-when_to_use: Debugging an OOM or peak-memory regression from a captured snapshot pickle, comparing memory between two configurations, or attributing memory to specific allocations; 'snapshot.pickle', 'snapshot_0.pickle', 'memory snapshot', 'record_memory_history', 'memory_snapshot_path', 'device_traces', 'why does this config use more memory', 'peak memory analysis', 'OOM pickle'.
+when_to_use: Debugging an OOM or peak-memory regression from a captured snapshot pickle, plotting GPU memory over time, comparing memory between two configurations, or attributing memory to specific allocations; 'snapshot.pickle', 'snapshot_0.pickle', 'memory snapshot', 'record_memory_history', 'memory_snapshot_path', 'device_traces', 'plot memory usage', 'graph memory over time', 'memory timeline', 'visualize GPU memory', 'memory usage chart', 'why does this config use more memory', 'peak memory analysis', 'OOM pickle'.
 ---
 
 # Memory Snapshot Analysis
@@ -25,9 +25,14 @@ is set on `ProfilingConfig`. Each snapshot pickle contains:
 
 The bundled scripts replay `device_traces` to reconstruct memory over time,
 group allocations by source location, and diff two snapshots to explain *which
-tensors* account for a memory difference. PyTorch's own `memory_viz` renders a
-timeline from the same file; these scripts add cross-snapshot comparison,
-source attribution, and scriptable/JSON output.
+tensors* account for a memory difference.
+
+PyTorch's own `memory_viz` also renders a timeline from these files and is worth
+using for a single snapshot. What it cannot do is put **two runs on one axis** —
+which is the whole question when you are asking why config B peaks higher than
+config A. `plot_timeline.py` overlays them, and `compare_snapshots.py` then
+attributes the gap to specific allocation sites. Add scriptable JSON output on
+top and that is the reason this skill exists alongside `memory_viz`.
 
 **No dependencies** — Python stdlib only, and they run on any `python3` back to
 3.9, so a login node or laptop system interpreter is fine (macOS ships 3.9;
@@ -35,6 +40,29 @@ source attribution, and scriptable/JSON output.
 evaluated at import). No virtualenv, no `uv sync`, no GPU. The HTML plot loads
 Plotly.js from a CDN in the browser, so it adds nothing to the Python
 environment.
+
+## Pick a Script
+
+| If the question is… | Run | Output |
+|---|---|---|
+| "what's even in this file?" | `parse_snapshot.py` | text / JSON |
+| "**plot / graph / visualize** memory over time" | `plot_timeline.py` | **standalone HTML** |
+| "why does B peak higher than A?" | `compare_snapshots.py` | text / JSON |
+| "what's live at *this* moment?" | `replay_to_time.py` | text / JSON |
+| "what happened during step N?" | `replay_step.py` (needs step markers) | text / JSON |
+
+`plot_timeline.py` is the only script that writes a file; the rest print to
+stdout. It also takes **two** snapshots and overlays them, which is usually the
+fastest way to see *where* two runs diverge before asking `compare_snapshots.py`
+*why*.
+
+A good default loop for a memory regression: overview both files, overlay them
+on a timeline, read off the time where they split, then drill in at that moment.
+
+```bash
+python3 skills/nemo-mbridge-memory-snapshot-analysis/scripts/plot_timeline.py A_0.pickle B_0.pickle --labels A B -o compare.html
+python3 skills/nemo-mbridge-memory-snapshot-analysis/scripts/replay_to_time.py A_0.pickle B_0.pickle --time 83.0
+```
 
 ## How Bridge Produces These Files
 
