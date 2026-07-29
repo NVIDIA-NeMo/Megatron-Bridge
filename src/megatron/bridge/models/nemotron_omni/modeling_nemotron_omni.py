@@ -18,7 +18,8 @@ Unlike MCore ``LLaVAModel``, it does
 not collapse a run of image placeholders before the model and reconstruct it
 inside the model. The processor-provided sequence already contains one image
 placeholder per projected RADIO feature. This model replaces those positions
-in place, then owns sequence packing and context-parallel sharding.
+in place. Packing is completed by the collator; the model only applies
+context-parallel sharding after media insertion.
 
 The historical collapse/expand implementation remains available explicitly as
 ``NemotronOmniLlavaModel`` for compatibility with existing checkpoints, but it
@@ -41,9 +42,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.nemotron_omni.sequence_packing import (
-    pack_sequences_from_attention_mask,
-)
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 
 
 def _ignore_transformer_engine_extra_state(module: torch.nn.Module, incompatible_keys: namedtuple) -> None:
@@ -110,18 +109,19 @@ def _pixel_shuffle_dynamic_resolution(
 class NemotronOmniModel(MegatronModule):
     """Nemotron Omni model whose input sequence is already media-expanded.
 
-    NeMo-RL detects ``model_owns_packing`` and passes this model the complete
-    padded ``[batch, sequence]`` token tensor and boolean validity mask. Media
-    features are inserted before the generic Qwen-style THD packing helper is
-    called, so packing and CP sharding happen exactly once.
+    The collator supplies either a dense batch or a complete MCore THD stream.
+    Media insertion is one-for-one and therefore length preserving. With
+    context parallelism, the model inserts media into the full stream and then
+    selects the rank-local CP shard without changing packed metadata.
 
     Image and text inputs are supported. The sound modules are retained in the
     model namespace, but sound insertion remains unsupported until its
     one-feature-per-placeholder contract is implemented and tested.
     """
 
-    model_owns_packing = True
-    model_owns_mtp_loss_mask_packing = True
+    model_owns_packing = False
+    model_owns_mtp_loss_mask_packing = False
+    model_slices_context_parallel_inputs = True
 
     def __init__(
         self,
@@ -301,7 +301,7 @@ class NemotronOmniModel(MegatronModule):
                 "Expanded-sequence media alignment failed: "
                 f"found {expected_features} valid placeholders for "
                 f"{actual_features} projected features. NemotronOmniModel requires the processor "
-                "to emit one placeholder for every projected media token before model-owned packing. "
+                "to emit one placeholder for every projected media token before collator-owned packing. "
                 "A single placeholder for multiple features usually means this batch was prepared "
                 "for the legacy LLaVAModel collapse/expand path. Use expanded processor output, or "
                 "load the checkpoint through the explicit NemotronOmniLlavaModelProvider/"
@@ -434,62 +434,142 @@ class NemotronOmniModel(MegatronModule):
             patches.append(image_patches)
         return torch.cat(patches, dim=0).unsqueeze(0).contiguous()
 
-    def _pack_after_media_insertion(
+    @staticmethod
+    def _select_sequence(tensor: Optional[torch.Tensor], index: torch.Tensor, *, dim: int) -> Optional[torch.Tensor]:
+        """Select one CP shard from a token-aligned tensor."""
+
+        if tensor is None:
+            return None
+        return tensor.index_select(dim, index.to(device=tensor.device))
+
+    def _context_parallel_index(
         self,
         *,
-        input_ids: torch.Tensor,
-        combined_embeddings: torch.Tensor,
+        packed_seq_params: Optional[PackedSeqParams],
+        total_tokens: int,
+        device: torch.device,
+    ) -> Optional[torch.Tensor]:
+        """Build this rank's CP index without changing sequence metadata."""
+
+        cp_size = self.context_parallel_lm
+        if cp_size <= 1:
+            return None
+
+        if self.pg_collection.cp.size() != cp_size:
+            raise ValueError(
+                "Nemotron Omni context-parallel configuration does not match its process group: "
+                f"config={cp_size}, group={self.pg_collection.cp.size()}."
+            )
+        cp_rank = self.pg_collection.cp.rank()
+        if packed_seq_params is not None:
+            return get_packed_seq_cp_partition_indices(
+                packed_seq_params,
+                total_tokens=total_tokens,
+                cp_size=cp_size,
+                cp_rank=cp_rank,
+                device=device,
+                cp_group=self.pg_collection.cp,
+            )
+
+        chunks = 2 * cp_size
+        if total_tokens % chunks:
+            raise ValueError(
+                "Dense Nemotron Omni context parallelism requires sequence length "
+                f"to be divisible by 2 * CP ({chunks}); got {total_tokens}."
+            )
+        chunk_size = total_tokens // chunks
+        first = torch.arange(
+            cp_rank * chunk_size,
+            (cp_rank + 1) * chunk_size,
+            device=device,
+            dtype=torch.long,
+        )
+        mirrored_rank = chunks - cp_rank - 1
+        second = torch.arange(
+            mirrored_rank * chunk_size,
+            (mirrored_rank + 1) * chunk_size,
+            device=device,
+            dtype=torch.long,
+        )
+        return torch.cat((first, second))
+
+    def _apply_context_parallel_sharding(
+        self,
+        *,
+        input_ids: Optional[torch.Tensor],
+        combined_embeddings: Optional[torch.Tensor],
+        position_ids: Optional[torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         labels: Optional[torch.Tensor],
         loss_mask: Optional[torch.Tensor],
+        packed_seq_params: Optional[PackedSeqParams],
     ) -> tuple[
-        torch.Tensor,
-        torch.Tensor,
         Optional[torch.Tensor],
         Optional[torch.Tensor],
-        PackedSeqParams,
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        bool,
     ]:
-        """Pack and CP-shard every token-aligned tensor from one full mask."""
+        """Apply one shared CP index after length-preserving media insertion."""
 
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-
-        packed_input_ids, packed_seq_params = pack_sequences_from_attention_mask(
-            input_ids,
-            attention_mask,
-            pre_process=True,
-            pg_collection=self.pg_collection,
+        sequence_tensors = (
+            (input_ids, 1),
+            (combined_embeddings, 0),
+            (position_ids, 1),
+            (labels, 1),
+            (loss_mask, 1),
         )
-        packed_embeddings, _ = pack_sequences_from_attention_mask(
-            combined_embeddings.transpose(0, 1).contiguous(),
-            attention_mask,
-            pre_process=True,
-            pg_collection=self.pg_collection,
-        )
-        packed_embeddings = packed_embeddings.transpose(0, 1).contiguous()
+        full_lengths = {tensor.size(dim) for tensor, dim in sequence_tensors if tensor is not None}
+        if len(full_lengths) > 1:
+            raise ValueError(f"Nemotron Omni token-aligned tensors have inconsistent lengths: {sorted(full_lengths)}.")
+        if not full_lengths:
+            # Intermediate PP stages receive an already CP-local pipeline
+            # tensor and only need the unchanged global THD metadata.
+            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, False
 
-        def pack_optional(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
-            if tensor is None:
-                return None
-            packed_tensor, _ = pack_sequences_from_attention_mask(
-                tensor,
-                attention_mask,
-                pre_process=True,
-                pg_collection=self.pg_collection,
-            )
-            return packed_tensor
+        total_tokens = full_lengths.pop()
+        if packed_seq_params is not None:
+            metadata_total = getattr(packed_seq_params, "total_tokens", None)
+            if metadata_total is not None and int(metadata_total) != total_tokens:
+                raise ValueError(
+                    "Packed Nemotron Omni metadata does not match the collator-owned token stream: "
+                    f"total_tokens={metadata_total}, tensor width={total_tokens}."
+                )
+
+        device = next(tensor.device for tensor, _ in sequence_tensors if tensor is not None)
+        index = self._context_parallel_index(
+            packed_seq_params=packed_seq_params,
+            total_tokens=total_tokens,
+            device=device,
+        )
+        if index is None:
+            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, False
+
+        input_ids = self._select_sequence(input_ids, index, dim=1)
+        combined_embeddings = self._select_sequence(combined_embeddings, index, dim=0)
+        position_ids = self._select_sequence(position_ids, index, dim=1)
+        labels = self._select_sequence(labels, index, dim=1)
+        loss_mask = self._select_sequence(loss_mask, index, dim=1)
+
+        if attention_mask is not None:
+            attention_seq_dim = 1 if attention_mask.dim() == 2 else 2
+            attention_mask = self._select_sequence(attention_mask, index, dim=attention_seq_dim)
 
         return (
-            packed_input_ids,
-            packed_embeddings,
-            pack_optional(labels),
-            pack_optional(loss_mask),
-            packed_seq_params,
+            input_ids,
+            combined_embeddings,
+            position_ids,
+            attention_mask,
+            labels,
+            loss_mask,
+            loss_mask is not None,
         )
 
     def forward(
         self,
-        input_ids: torch.Tensor,
+        input_ids: Optional[torch.Tensor],
         position_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
@@ -507,8 +587,13 @@ class NemotronOmniModel(MegatronModule):
         *,
         inference_params=None,
         **kwargs,
-    ) -> torch.Tensor:
-        """Insert media into the expanded sequence, then call NemotronH."""
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Insert media into the expanded sequence, shard for CP, then call NemotronH.
+
+        Returns:
+            Model output, or ``(output, local_loss_mask)`` when this model
+            applies a context-parallel shard to the supervision tensors.
+        """
 
         del kwargs, sound_length
         if images is None:
@@ -521,6 +606,8 @@ class NemotronOmniModel(MegatronModule):
         lm_input_ids = input_ids
         combined_embeddings = None
         if self.pre_process:
+            if input_ids is None:
+                raise ValueError("The first Nemotron Omni pipeline stage requires input_ids.")
             if images is not None and images.numel() > 0:
                 image_embeddings = self._encode_images(
                     images,
@@ -549,28 +636,36 @@ class NemotronOmniModel(MegatronModule):
             )
 
         if packed_seq_params is not None:
-            if not self.pre_process:
-                raise NotImplementedError("Model-owned packing on non-first pipeline stages is not implemented.")
-            (
-                lm_input_ids,
-                combined_embeddings,
-                labels,
-                loss_mask,
-                packed_seq_params,
-            ) = self._pack_after_media_insertion(
-                input_ids=input_ids,
-                combined_embeddings=combined_embeddings,
-                attention_mask=attention_mask,
-                labels=labels,
-                loss_mask=loss_mask,
-            )
+            # THD tensors and their logical boundaries are final collator
+            # outputs. The model may shard token-aligned tensors for CP, but
+            # never rebuilds or mutates the packing metadata.
             attention_mask = None
-            position_ids = None
-        elif self.context_parallel_lm > 1:
-            raise ValueError("Context parallelism requires model-owned packing for expanded Omni sequences.")
+
+        (
+            lm_input_ids,
+            combined_embeddings,
+            position_ids,
+            attention_mask,
+            labels,
+            loss_mask,
+            return_sliced_loss_mask,
+        ) = self._apply_context_parallel_sharding(
+            input_ids=lm_input_ids,
+            combined_embeddings=combined_embeddings,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+            loss_mask=loss_mask,
+            packed_seq_params=packed_seq_params,
+        )
 
         language_packed_seq_params = packed_seq_params
-        if language_packed_seq_params is not None and self.context_parallel_lm == 1 and input_ids.shape[0] == 1:
+        if (
+            language_packed_seq_params is not None
+            and self.context_parallel_lm == 1
+            and language_packed_seq_params.cu_seqlens_q is not None
+            and language_packed_seq_params.cu_seqlens_q.numel() == 2
+        ):
             # A one-sample CP=1 "pack" neither concatenates sequences nor
             # shards them. Keeping PackedSeqParams here would nevertheless
             # switch Mamba to its packed-sequence kernel. Use the ordinary
@@ -580,7 +675,10 @@ class NemotronOmniModel(MegatronModule):
             language_packed_seq_params = None
 
         if combined_embeddings is not None and self.sequence_parallel_lm:
-            combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings).contiguous()
+            combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
+                combined_embeddings,
+                group=self.pg_collection.tp,
+            ).contiguous()
 
         # Match LLaVAModel's external-embedding contract. Once media has been
         # merged into decoder embeddings, the language model must not receive
@@ -592,7 +690,7 @@ class NemotronOmniModel(MegatronModule):
         if combined_embeddings is not None and not mtp_enabled:
             lm_input_ids = None
 
-        return self.language_model(
+        output = self.language_model(
             input_ids=lm_input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
@@ -604,3 +702,6 @@ class NemotronOmniModel(MegatronModule):
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=language_packed_seq_params,
         )
+        if return_sliced_loss_mask:
+            return output, loss_mask
+        return output

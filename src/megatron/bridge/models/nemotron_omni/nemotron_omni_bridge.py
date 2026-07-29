@@ -248,7 +248,7 @@ class NemotronOmniBridge(NemotronVLBridge):
         mtp_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
 
         language_bridge = NemotronHBridge()
-        language_bridge._mtp_layers_per_block = len(mtp_pattern) if mtp_pattern else 0
+        language_bridge.hf_config = llm_config
         for mapping in language_bridge.mapping_registry().mappings:
             is_mtp = mapping.megatron_param.startswith("mtp.")
             mappings.append(

@@ -172,7 +172,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
 
     # This field is serialized in run_config.yaml. It prevents an older
     # checkpoint whose provider had the same class name but LLaVA semantics
-    # from being loaded as the canonical model-owned-packing implementation.
+    # from being loaded as the canonical expanded-sequence implementation.
     nemotron_omni_contract: Optional[str] = None
 
     def _validate_omni_config(self) -> None:
@@ -206,7 +206,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
                 f"Cannot construct {implementation}: the Nemotron Omni model contract is missing. "
                 "Older branches used the name NemotronOmniModelProvider for the LLaVAModel "
                 "collapse/expand implementation, while this branch uses that name for the "
-                "model-owned-packing implementation. Refusing to guess which checkpoint layout "
+                "expanded-sequence implementation. Refusing to guess which checkpoint layout "
                 "was intended. Reconvert the checkpoint with this branch, or use the explicit "
                 "NemotronOmniLlavaModelProvider/NemotronOmniLlavaBridge with a compatible legacy "
                 "Megatron-LM implementation."
@@ -216,7 +216,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             f"Cannot construct {implementation}: run_config.yaml declares Nemotron Omni contract "
             f"{actual!r}, but this implementation requires {expected!r}. Use the provider/bridge "
             "that matches the checkpoint contract instead of reusing a provider class name across "
-            "the LLaVA collapse/expand and model-owned-packing implementations."
+            "the LLaVA collapse/expand and expanded-sequence implementations."
         )
 
     def _build_vision_config(self, language_cfg):

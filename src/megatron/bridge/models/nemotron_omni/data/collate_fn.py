@@ -827,12 +827,6 @@ def nemotron_omni_collate_fn(
     del start_of_response_token, min_pixels, max_pixels
     if not examples:
         raise ValueError("Nemotron Omni collation requires at least one example.")
-    if enable_in_batch_packing and not collapse_image_tokens:
-        raise ValueError(
-            "Canonical Nemotron Omni owns sequence packing after media insertion; "
-            "collator-side in-batch packing is supported only by the explicit "
-            "nemotron_omni_llava_collate_fn compatibility path."
-        )
     if hasattr(processor.image_processor, "max_num_tiles"):
         raise ValueError(
             "Nemotron Omni requires its dynamic-resolution image processor; "
@@ -935,16 +929,34 @@ def nemotron_omni_collate_fn(
     if pad_token_id is None:
         pad_token_id = processor.tokenizer.eos_token_id or 0
     if enable_in_batch_packing:
-        if post_merge_row_lengths is None:
-            post_merge_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
-        _pack_omni_rows_to_mcore_thd(
-            batch,
-            post_merge_row_lengths,
-            sequence_length=sequence_length,
-            pad_to_max_length=pad_to_max_length,
-            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-            pad_token_id=int(pad_token_id),
-        )
+        if collapse_image_tokens:
+            if post_merge_row_lengths is None:
+                post_merge_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
+            _pack_omni_rows_to_mcore_thd(
+                batch,
+                post_merge_row_lengths,
+                sequence_length=sequence_length,
+                pad_to_max_length=pad_to_max_length,
+                pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                pad_token_id=int(pad_token_id),
+            )
+        else:
+            # The canonical model receives one placeholder per projected media
+            # feature, so media insertion is length preserving. Build the final
+            # THD token stream here; the model only applies rank-local CP
+            # indices after replacing placeholders with media embeddings.
+            prepare_sequence_batch(
+                batch,
+                sequence_length=sequence_length,
+                enable_in_batch_packing=True,
+                in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                pad_token_id=int(pad_token_id),
+                ignore_index=IGNORE_INDEX,
+            )
+            # Do not synthesize PackedSeqParams.tokens_per_sample: canonical
+            # packing is compact and rows may have different physical lengths.
+            # Exact per-row seq_aux_loss restoration requires the planned
+            # MCore boundary-aware unflattening support.
     else:
         compact_sequence_length = sequence_length
         compact_pad_to_max_length = pad_to_max_length

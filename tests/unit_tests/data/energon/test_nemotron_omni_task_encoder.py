@@ -26,6 +26,7 @@ from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
     NemotronOmniTaskSample,
 )
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -409,13 +410,29 @@ def test_raw_video_bytes_are_decoded_through_one_temporary_mp4(monkeypatch):
     assert sampled_fps == 2.5
 
 
-def test_energon_canonical_collator_rejects_collator_side_packing():
+def test_energon_canonical_collator_owns_complete_thd_packing(monkeypatch):
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
     encoder = NemotronOmniTaskEncoder(
-        processor=_Processor([[1, 2]]),
+        processor=_Processor([[1, 2, 3], [4, 5]]),
+        seq_length=8,
         enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
         pad_to_multiple_of=1,
     )
+    samples = [
+        encoder.encode_sample(_sample([{"role": "user", "content": "text"}], key=f"row-{row_index}"))
+        for row_index in range(2)
+    ]
 
-    sample = encoder.encode_sample(_sample([{"role": "user", "content": "text"}]))
-    with pytest.raises(ValueError, match="Canonical Nemotron Omni owns sequence packing"):
-        encoder.batch([sample])
+    batch = encoder.batch(samples)
+    encoded = encoder.encode_batch(batch)
+
+    assert batch.input_ids.tolist() == [[1, 2, 3, PAD_AND_END_ID, 4, 5, PAD_AND_END_ID, PAD_AND_END_ID]]
+    assert batch.attention_mask is None
+    assert getattr(batch, "padding_mask", None) is None
+    assert batch.cu_seqlens_q.tolist() == [0, 3, 5]
+    assert batch.cu_seqlens_q_padded.tolist() == [0, 4, 8]
+    assert batch.total_tokens == 8
+    assert encoded["tokens"] is batch.input_ids
+    assert encoded.get("padding_mask") is None
+    assert get_packed_seq_params(encoded).tokens_per_sample is None

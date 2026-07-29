@@ -41,13 +41,17 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 
 
 class _FakeLanguageModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.last_kwargs = None
+
     def embedding(self, input_ids, position_ids):
         del position_ids
         values = input_ids.transpose(0, 1).unsqueeze(-1).to(torch.float32)
         return values.repeat(1, 1, 3)
 
     def forward(self, *, decoder_input, **kwargs):
-        del kwargs
+        self.last_kwargs = kwargs
         return decoder_input
 
 
@@ -179,6 +183,12 @@ def single_rank_model_parallel():
 def test_llava_provider_is_explicit_and_does_not_replace_canonical_provider():
     assert issubclass(NemotronOmniLlavaModelProvider, NemotronOmniModelProvider)
     assert NemotronOmniLlavaModelProvider.provide is not NemotronOmniModelProvider.provide
+
+
+def test_canonical_model_advertises_collator_owned_packing():
+    assert NemotronOmniModel.model_owns_packing is False
+    assert NemotronOmniModel.model_owns_mtp_loss_mask_packing is False
+    assert NemotronOmniModel.model_slices_context_parallel_inputs is True
 
 
 def test_canonical_provider_rejects_ambiguous_legacy_class_name():
@@ -335,8 +345,106 @@ def test_media_merge_supports_backward_for_batch_size_one():
     assert media_embeddings.grad is not None
 
 
+def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkeypatch):
+    cp_index = torch.tensor([0, 1, 4, 7], dtype=torch.long)
+    seen = {}
+
+    def fake_get_packed_seq_cp_partition_indices(packed_seq_params, **kwargs):
+        seen["packed_seq_params"] = packed_seq_params
+        seen.update(kwargs)
+        return cp_index
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.nemotron_omni.modeling_nemotron_omni.get_packed_seq_cp_partition_indices",
+        fake_get_packed_seq_cp_partition_indices,
+    )
+
+    image_features = torch.tensor([[101.0, 102.0, 103.0]])
+    model = _BoundaryModel(image_features)
+    model.context_parallel_lm = 2
+    model.pg_collection = SimpleNamespace(
+        cp=SimpleNamespace(size=lambda: 2, rank=lambda: 0),
+        tp=SimpleNamespace(size=lambda: 1, rank=lambda: 0),
+    )
+    input_ids = torch.tensor([[7, 18, 9, 0, 11, 12, 13, 0]])
+    position_ids = torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]])
+    labels = input_ids.clone()
+    loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]])
+    cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+    cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+        max_seqlen_q=4,
+        max_seqlen_kv=4,
+        total_tokens=8,
+    )
+
+    output, local_loss_mask = model(
+        input_ids=input_ids,
+        position_ids=position_ids,
+        labels=labels,
+        loss_mask=loss_mask,
+        packed_seq_params=packed_seq_params,
+        images=torch.ones(1),
+    )
+
+    assert seen["packed_seq_params"] is packed_seq_params
+    assert seen["total_tokens"] == 8
+    assert seen["cp_size"] == 2
+    assert seen["cp_rank"] == 0
+    assert output.shape == (4, 1, 3)
+    assert torch.equal(output[0, 0], torch.tensor([7.0, 7.0, 7.0]))
+    assert torch.equal(output[1, 0], image_features[0])
+    assert torch.equal(output[2, 0], torch.tensor([11.0, 11.0, 11.0]))
+    assert torch.equal(output[3, 0], torch.zeros(3))
+    assert torch.equal(local_loss_mask, loss_mask.index_select(1, cp_index))
+    assert model.language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+    assert torch.equal(model.language_model.last_kwargs["labels"], labels.index_select(1, cp_index))
+    assert model.language_model.last_kwargs["attention_mask"] is None
+
+
+def test_dense_expanded_sequence_is_cp_sharded_after_media_insertion():
+    image_features = torch.tensor([[101.0, 102.0, 103.0]])
+    model = _BoundaryModel(image_features)
+    model.context_parallel_lm = 2
+    model.pg_collection = SimpleNamespace(
+        cp=SimpleNamespace(size=lambda: 2, rank=lambda: 0),
+        tp=SimpleNamespace(size=lambda: 1, rank=lambda: 0),
+    )
+    input_ids = torch.tensor([[7, 18, 9, 10, 11, 12, 13, 14]])
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+    labels = input_ids.clone()
+    loss_mask = torch.ones_like(input_ids, dtype=torch.float32)
+    expected_index = torch.tensor([0, 1, 6, 7])
+
+    output, local_loss_mask = model(
+        input_ids=input_ids,
+        position_ids=torch.arange(8).unsqueeze(0),
+        attention_mask=attention_mask,
+        labels=labels,
+        loss_mask=loss_mask,
+        images=torch.ones(1),
+    )
+
+    assert output.shape == (4, 1, 3)
+    assert torch.equal(output[0, 0], torch.tensor([7.0, 7.0, 7.0]))
+    assert torch.equal(output[1, 0], image_features[0])
+    assert torch.equal(output[2, 0], torch.tensor([13.0, 13.0, 13.0]))
+    assert torch.equal(output[3, 0], torch.tensor([14.0, 14.0, 14.0]))
+    assert torch.equal(local_loss_mask, loss_mask.index_select(1, expected_index))
+    assert torch.equal(model.language_model.last_kwargs["labels"], labels.index_select(1, expected_index))
+    assert torch.equal(
+        model.language_model.last_kwargs["attention_mask"],
+        attention_mask.index_select(1, expected_index),
+    )
+
+
 @pytest.mark.run_only_on("GPU")
-def test_real_radio_image_forward_with_model_owned_cp1_packing(
+def test_real_radio_image_forward_with_collator_owned_cp1_packing(
     single_rank_model_parallel,
 ):
     del single_rank_model_parallel
@@ -344,7 +452,6 @@ def test_real_radio_image_forward_with_model_owned_cp1_packing(
     provider.finalize()
     model = provider.provide().cuda().eval()
     input_ids = torch.tensor([[7, 18, 9, 10]], device="cuda")
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
     cu_seqlens = torch.tensor([0, 4], dtype=torch.int32, device="cuda")
     caller_packed_seq_params = PackedSeqParams(
         qkv_format="thd",
@@ -352,12 +459,12 @@ def test_real_radio_image_forward_with_model_owned_cp1_packing(
         cu_seqlens_kv=cu_seqlens,
         max_seqlen_q=4,
         max_seqlen_kv=4,
+        total_tokens=4,
     )
 
     with torch.no_grad():
         output = model(
             input_ids=input_ids,
-            attention_mask=attention_mask,
             packed_seq_params=caller_packed_seq_params,
             pixel_values=torch.randn(1, 3, 32, 32, device="cuda"),
             imgs_sizes=torch.tensor([[32, 32]], dtype=torch.int32, device="cuda"),
@@ -369,39 +476,92 @@ def test_real_radio_image_forward_with_model_owned_cp1_packing(
 
 
 @pytest.mark.run_only_on("GPU")
+def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider(temporal_patch_dim=1, separate_video_embedder=False)
+    provider.finalize()
+    model = provider.provide().cuda().train()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+
+    input_ids = torch.tensor([[7, 18, 9, 0, 11, 18, 12, 0]], device="cuda")
+    labels = torch.tensor([[18, 9, -100, -100, 18, 12, -100, -100]], device="cuda")
+    loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]], device="cuda")
+    cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32, device="cuda")
+    cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+        max_seqlen_q=4,
+        max_seqlen_kv=4,
+        total_tokens=8,
+    )
+
+    optimizer.zero_grad(set_to_none=True)
+    per_token_loss = model(
+        input_ids=input_ids,
+        labels=labels,
+        loss_mask=loss_mask,
+        packed_seq_params=packed_seq_params,
+        pixel_values=torch.randn(2, 3, 32, 32, device="cuda"),
+        imgs_sizes=torch.tensor([[32, 32], [32, 32]], dtype=torch.int32, device="cuda"),
+    )
+    loss = (per_token_loss.float() * loss_mask).sum() / loss_mask.sum()
+    loss.backward()
+
+    updated_parameter = next(
+        parameter
+        for parameter in model.parameters()
+        if parameter.grad is not None and torch.count_nonzero(parameter.grad).item() > 0
+    )
+    parameter_before_step = updated_parameter.detach().clone()
+    optimizer.step()
+
+    assert torch.isfinite(loss)
+    assert not torch.equal(updated_parameter, parameter_before_step)
+
+
+@pytest.mark.run_only_on("GPU")
 def test_packed_mamba_resets_state_between_samples(single_rank_model_parallel):
     del single_rank_model_parallel
     provider = _TinyOmniProvider()
     provider.finalize()
     model = provider.provide().cuda().eval()
 
-    def forward(input_ids, attention_mask):
-        caller_packed_seq_params = PackedSeqParams(qkv_format="thd")
+    def forward(input_ids, cu_seqlens, cu_seqlens_padded):
+        caller_packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+            max_seqlen_q=4,
+            max_seqlen_kv=4,
+            total_tokens=input_ids.size(1),
+        )
         return model(
             input_ids=input_ids,
-            attention_mask=attention_mask,
             packed_seq_params=caller_packed_seq_params,
         )
 
-    input_ids = torch.tensor(
-        [
-            [7, 8, 9, 0],
-            [11, 12, 0, 0],
-        ],
-        device="cuda",
-    )
-    attention_mask = torch.tensor(
-        [
-            [True, True, True, False],
-            [True, True, False, False],
-        ],
-        device="cuda",
-    )
+    input_ids = torch.tensor([[7, 8, 9, 0, 11, 12, 0, 0]], device="cuda")
+    cu_seqlens = torch.tensor([0, 3, 5], dtype=torch.int32, device="cuda")
+    cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
 
     with torch.no_grad():
-        packed_output = forward(input_ids, attention_mask)
-        first_output = forward(input_ids[:1, :3], attention_mask[:1, :3])
-        second_output = forward(input_ids[1:2, :2], attention_mask[1:2, :2])
+        packed_output = forward(input_ids, cu_seqlens, cu_seqlens_padded)
+        first_output = forward(
+            input_ids[:, :4],
+            torch.tensor([0, 3], dtype=torch.int32, device="cuda"),
+            torch.tensor([0, 4], dtype=torch.int32, device="cuda"),
+        )
+        second_output = forward(
+            input_ids[:, 4:],
+            torch.tensor([0, 2], dtype=torch.int32, device="cuda"),
+            torch.tensor([0, 4], dtype=torch.int32, device="cuda"),
+        )
 
     expected = torch.cat((first_output, second_output), dim=1)
     torch.testing.assert_close(packed_output, expected)

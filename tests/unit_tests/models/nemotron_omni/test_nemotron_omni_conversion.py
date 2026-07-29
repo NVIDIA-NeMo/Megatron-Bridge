@@ -194,19 +194,23 @@ def test_nemotron_omni_provider_requires_sound_config_when_enabled():
         provider.finalize()
 
 
-def test_nemotron_omni_provide_uses_provider_as_runtime_config(monkeypatch):
-    provider = NemotronOmniModelProvider(image_token_index=18)
-    llava_model = SimpleNamespace()
+def test_canonical_provider_builds_dedicated_model(monkeypatch):
+    provider = NemotronOmniModelProvider(
+        image_token_index=18,
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+    )
     model = SimpleNamespace()
     model_factory = Mock(return_value=model)
+    llava_factory = Mock()
 
-    monkeypatch.setattr(provider_module, "LLaVAModel", Mock(return_value=llava_model))
+    monkeypatch.setattr(provider_module, "LLaVAModel", llava_factory)
     monkeypatch.setattr(provider_module, "get_vit_layer_with_transformer_engine_spec", Mock(return_value=object()))
     monkeypatch.setattr(provider_module, "get_language_mlp_submodules", Mock(return_value=object()))
     monkeypatch.setattr(provider_module, "NemotronOmniModel", model_factory)
 
     assert provider.provide() is model
-    model_factory.assert_called_once_with(config=provider, llava_model=llava_model)
+    model_factory.assert_called_once()
+    llava_factory.assert_not_called()
 
 
 def test_nemotron_omni_vision_projection_uses_squared_relu():
@@ -219,8 +223,9 @@ def test_nemotron_omni_vision_projection_uses_squared_relu():
     assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
 
 
-def test_nemotron_omni_direct_provider_preserves_legacy_cpe_default():
-    assert NemotronOmniModelProvider().radio_interpolate_only_cpe is True
+def test_nemotron_omni_providers_use_contract_specific_cpe_defaults():
+    assert NemotronOmniModelProvider().radio_interpolate_only_cpe is False
+    assert NemotronOmniLlavaModelProvider().radio_interpolate_only_cpe is True
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():
@@ -259,6 +264,7 @@ def test_canonical_mapping_registry_uses_top_level_model_names():
     bridge = NemotronOmniBridge()
     bridge.hf_config = _mock_omni_hf_config()
     bridge.hf_config.llm_config.mtp_hybrid_override_pattern = "*E"
+    bridge.hf_config.llm_config.num_nextn_predict_layers = 1
     registry = bridge.mapping_registry()
 
     embedding = registry.megatron_to_hf_lookup("language_model.embedding.word_embeddings.weight")
@@ -358,13 +364,12 @@ def test_nemotron_omni_freeze_sound_modules_without_stdout(monkeypatch, capsys):
 
 def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
     model = NemotronOmniModel.__new__(NemotronOmniModel)
-    model.llava_model = SimpleNamespace(
-        language_model=nn.Linear(4, 4),
-        vision_model=None,
-        vision_projection=None,
-        sound_model=None,
-        sound_projection=None,
-    )
+    nn.Module.__init__(model)
+    model.language_model = nn.Linear(4, 4)
+    model.vision_model = None
+    model.vision_projection = None
+    model.sound_model = None
+    model.sound_projection = None
 
     model.freeze(
         freeze_language_model=True,
@@ -374,4 +379,4 @@ def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
         freeze_sound_projection=True,
     )
 
-    assert all(not param.requires_grad for param in model.llava_model.language_model.parameters())
+    assert all(not param.requires_grad for param in model.language_model.parameters())
