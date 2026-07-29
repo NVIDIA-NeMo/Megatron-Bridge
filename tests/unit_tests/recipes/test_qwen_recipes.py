@@ -689,27 +689,6 @@ def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
     assert perf_base is legacy_base
 
 
-def test_qwen35_h100_perf_recipe_uses_available_flash_qla_mcore_fields():
-    """Test that the recipe selects available fields and supports the main MCore pin."""
-    from types import SimpleNamespace
-
-    from megatron.bridge.perf_recipes.qwen.h100.qwen35 import (
-        _configure_flash_qla_model_fields,
-    )
-
-    new_mcore_model = SimpleNamespace(
-        gdn_pre_gated_delta_rule_fusion=False,
-        gated_delta_rule_backend="fla",
-    )
-    _configure_flash_qla_model_fields(new_mcore_model)
-    assert new_mcore_model.gdn_pre_gated_delta_rule_fusion is True
-    assert new_mcore_model.gated_delta_rule_backend == "flash_qla"
-
-    legacy_mcore_model = SimpleNamespace()
-    _configure_flash_qla_model_fields(legacy_mcore_model)
-    assert vars(legacy_mcore_model) == {}
-
-
 def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -745,8 +724,6 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.model.cuda_graph_impl == "none"
     assert cuda_graph_module_names(cfg.model) == []
     assert cfg.model.transformer_layer_spec is qwen35_h100_transformer_block_spec
-    assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
-    assert cfg.model.gated_delta_rule_backend == "flash_qla"
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 16
@@ -812,99 +789,8 @@ def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
     assert first_custom_moe is second_custom_moe
     assert first_custom_moe.func is qwen35_runtime._Qwen35H100MoELayer
     assert first_custom_moe.keywords["submodules"].experts.func is qwen35_runtime._Qwen35H100TorchGroupedMLP
-    assert result.layer_specs[0].submodules.self_attention.module is qwen35_runtime._Qwen35H100FlashQLAGatedDeltaNet
-    assert result.layer_specs[1].submodules.self_attention.module is qwen35_runtime._Qwen35H100FlashQLAGatedDeltaNet
-
-
-def test_qwen35_h100_flash_qla_runtime_requires_exact_version(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Test that the measured GDN runtime rejects a different FlashQLA version."""
-    import sys
-    from types import ModuleType
-
-    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
-
-    flash_qla = ModuleType("flash_qla")
-    flash_qla.__version__ = "0.1.1"
-    flash_qla.chunk_gated_delta_rule = object()
-    monkeypatch.setitem(sys.modules, "flash_qla", flash_qla)
-
-    with pytest.raises(ImportError, match=r"requires flash_qla==0\.1\.2; found 0\.1\.1"):
-        qwen35_runtime._load_flash_qla_gated_delta_rule()
-
-
-def test_qwen35_h100_flash_qla_runtime_loads_pinned_version(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Test that the measured GDN runtime accepts the pinned FlashQLA version."""
-    import sys
-    from types import ModuleType
-
-    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
-
-    gated_delta_rule = object()
-    flash_qla = ModuleType("flash_qla")
-    flash_qla.__version__ = "0.1.2"
-    flash_qla.chunk_gated_delta_rule = gated_delta_rule
-    monkeypatch.setitem(sys.modules, "flash_qla", flash_qla)
-
-    assert qwen35_runtime._load_flash_qla_gated_delta_rule() is gated_delta_rule
-
-
-def test_qwen35_h100_flash_qla_runtime_configures_pinned_mcore(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Test that pinned MCore receives the raw FlashQLA kernel."""
-    from types import SimpleNamespace
-
-    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
-
-    gated_delta_rule = object()
-    module = SimpleNamespace(config=SimpleNamespace(), gated_delta_rule=object())
-    monkeypatch.setattr(qwen35_runtime, "_load_flash_qla_gated_delta_rule", lambda: gated_delta_rule)
-
-    qwen35_runtime._configure_flash_qla_gated_delta_rule(module)
-
-    assert module.gated_delta_rule is gated_delta_rule
-
-
-def test_qwen35_h100_flash_qla_runtime_preserves_new_mcore_adapter(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Test that newer MCore keeps its keyword-compatible backend adapter."""
-    from types import SimpleNamespace
-
-    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
-
-    native_adapter = object()
-    module = SimpleNamespace(
-        config=SimpleNamespace(gated_delta_rule_backend="flash_qla"),
-        gated_delta_rule=native_adapter,
-    )
-    monkeypatch.setattr(qwen35_runtime, "_load_flash_qla_gated_delta_rule", lambda: object())
-
-    qwen35_runtime._configure_flash_qla_gated_delta_rule(module)
-
-    assert module.gated_delta_rule is native_adapter
-
-
-def test_qwen35_h100_flash_qla_runtime_rejects_new_mcore_fla_backend(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Test that newer MCore cannot silently retain a different GDN backend."""
-    from types import SimpleNamespace
-
-    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
-
-    module = SimpleNamespace(
-        config=SimpleNamespace(gated_delta_rule_backend="fla"),
-        gated_delta_rule=object(),
-    )
-    monkeypatch.setattr(qwen35_runtime, "_load_flash_qla_gated_delta_rule", lambda: object())
-
-    with pytest.raises(RuntimeError, match="requires gated_delta_rule_backend='flash_qla'"):
-        qwen35_runtime._configure_flash_qla_gated_delta_rule(module)
+    assert result.layer_specs[0].submodules.self_attention.module is qwen35_runtime._Qwen35H100GatedDeltaNet
+    assert result.layer_specs[1].submodules.self_attention.module is qwen35_runtime._Qwen35H100GatedDeltaNet
 
 
 def test_qwen35_h100_fused_gated_rms_norm_requires_exact_fla_version(

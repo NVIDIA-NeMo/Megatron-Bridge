@@ -30,14 +30,6 @@ _QWEN35_35B_A3B = "Qwen/Qwen3.5-35B-A3B"
 _QWEN35_35B_A3B_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  # pragma: allowlist secret
 
 
-def _configure_flash_qla_model_fields(model: object) -> None:
-    """Select optional GDN performance fields when the MCore pin exposes them."""
-    if hasattr(model, "gdn_pre_gated_delta_rule_fusion"):
-        setattr(model, "gdn_pre_gated_delta_rule_fusion", True)
-    if hasattr(model, "gated_delta_rule_backend"):
-        setattr(model, "gated_delta_rule_backend", "flash_qla")
-
-
 def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5 text 35B-A3B pretrain: 16× H100, BF16, EP=16."""
     cfg = qwen35_text_35b_a3b_pretrain_config()
@@ -72,7 +64,6 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     set_cuda_graph_modules(cfg.model, [])
     cfg.model.transformer_layer_spec = qwen35_h100_transformer_block_spec
-    _configure_flash_qla_model_fields(cfg.model)
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"

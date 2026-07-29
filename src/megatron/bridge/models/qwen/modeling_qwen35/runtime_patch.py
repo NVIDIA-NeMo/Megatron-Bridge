@@ -37,40 +37,10 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 _H100_HYBRIDEP_BF16_ALIGNMENT = 16
-_FLASH_QLA_VERSION = "0.1.2"
 _FLASH_LINEAR_ATTENTION_VERSION = "0.4.2"
 _WEIGHTED_SWIGLU_FORWARD_HAS_CLAMP_VALUE = (
     "clamp_value" in inspect.signature(WeightedSwiGLUFunction.forward).parameters
 )
-
-
-def _load_flash_qla_gated_delta_rule() -> Any:
-    """Load the measured Hopper GDN kernel lazily."""
-    try:
-        from flash_qla import __version__ as flash_qla_version
-        from flash_qla import chunk_gated_delta_rule
-    except (ImportError, RuntimeError, ValueError) as exc:
-        raise ImportError(f"The Qwen3.5 H100 performance recipe requires flash_qla=={_FLASH_QLA_VERSION}.") from exc
-
-    if flash_qla_version != _FLASH_QLA_VERSION:
-        raise ImportError(
-            f"The Qwen3.5 H100 performance recipe requires flash_qla=={_FLASH_QLA_VERSION}; found {flash_qla_version}."
-        )
-
-    return chunk_gated_delta_rule
-
-
-def _configure_flash_qla_gated_delta_rule(module: GatedDeltaNet) -> None:
-    """Configure the measured kernel across pinned and newer MCore APIs."""
-    raw_gated_delta_rule = _load_flash_qla_gated_delta_rule()
-    backend = getattr(module.config, "gated_delta_rule_backend", None)
-    if backend is None:
-        module.gated_delta_rule = raw_gated_delta_rule
-    elif backend != "flash_qla":
-        raise RuntimeError(
-            "The Qwen3.5 H100 performance recipe requires gated_delta_rule_backend='flash_qla' "
-            f"when MCore exposes backend adapters; found {backend!r}."
-        )
 
 
 def _load_fused_gated_rms_norm() -> Any:
@@ -130,21 +100,18 @@ def _apply_fused_gated_rms_norm(
     )
 
 
-class _Qwen35H100FlashQLAGatedDeltaNet(GatedDeltaNet):
-    """Gated Delta Net using the measured FlashQLA and FLA Hopper kernels."""
+class _Qwen35H100GatedDeltaNet(GatedDeltaNet):
+    """Gated Delta Net using MCore's FLA backend and the measured output fusion."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        if self.config.deterministic_mode:
-            raise RuntimeError("FlashQLA is not certified for deterministic mode")
         if self.cp_size != 1:
-            raise RuntimeError("The Qwen3.5 H100 FlashQLA path requires context parallel size 1")
+            raise RuntimeError("The Qwen3.5 H100 GDN path requires context parallel size 1")
         if self.key_head_dim != 128 or self.value_head_dim != 128:
-            raise RuntimeError("The Qwen3.5 H100 FlashQLA path requires 128-dimensional QK/V heads")
+            raise RuntimeError("The Qwen3.5 H100 GDN path requires 128-dimensional QK/V heads")
         capability = torch.cuda.get_device_capability(torch.cuda.current_device())
         if capability != (9, 0):
-            raise RuntimeError(f"The Qwen3.5 H100 FlashQLA path requires SM90, got {capability}")
-        _configure_flash_qla_gated_delta_rule(self)
+            raise RuntimeError(f"The Qwen3.5 H100 GDN path requires SM90, got {capability}")
         _configure_fused_gated_rms_norm(self)
 
     def _apply_gated_norm(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
@@ -362,10 +329,10 @@ def _replace_moe_runtime(moe_builder: Any) -> partial:
 
 
 def _replace_gdn_runtime(attention_spec: Any) -> Any:
-    """Replace stock GDN attention with the measured Hopper kernel."""
+    """Replace stock GDN attention with the measured H100 runtime."""
     if not isinstance(attention_spec, ModuleSpec) or attention_spec.module is not GatedDeltaNet:
         return attention_spec
-    return replace(attention_spec, module=_Qwen35H100FlashQLAGatedDeltaNet)
+    return replace(attention_spec, module=_Qwen35H100GatedDeltaNet)
 
 
 def qwen35_h100_transformer_block_spec(

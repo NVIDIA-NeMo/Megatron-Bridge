@@ -191,10 +191,6 @@ flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 recipes = [
     "nemo-run",
 ]
-qwen35-h100-perf = [
-    "flash-linear-attention==0.4.2",
-    "flash-qla==0.1.2",
-]
 parquet = [
     "pyarrow>=14.0.0",
 ]
