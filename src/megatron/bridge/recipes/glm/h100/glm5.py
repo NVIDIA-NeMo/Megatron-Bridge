@@ -88,7 +88,6 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.validation.eval_iters = 0
     cfg.validation.eval_interval = 0
     cfg.logger.log_interval = 1
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
 
     cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
@@ -107,6 +106,7 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 
@@ -159,7 +159,6 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.validation.eval_iters = 0
     cfg.validation.eval_interval = 0
     cfg.logger.log_interval = 1
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
 
     cfg.dataset = default_tulu3_config(
         seq_length=2048,
@@ -188,6 +187,7 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.checkpoint.save_optim = False
     cfg.checkpoint.save_rng = False
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 
@@ -240,7 +240,6 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.validation.eval_iters = 0
     cfg.validation.eval_interval = 0
     cfg.logger.log_interval = 1
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
 
     cfg.dataset.seq_length = 200000
     cfg.dataset.hf_dataset = None
@@ -264,6 +263,7 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_iters = 20
     cfg.checkpoint.save = None
     cfg.checkpoint.load = None
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 
@@ -316,7 +316,6 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.validation.eval_iters = 0
     cfg.validation.eval_interval = 0
     cfg.logger.log_interval = 1
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
 
     peft_cfg = default_peft_config(peft_scheme)
     if isinstance(peft_scheme, str) and peft_scheme.lower() in {"lora", "dora"}:
@@ -357,6 +356,7 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 
