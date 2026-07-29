@@ -112,6 +112,10 @@ processes, 128 threads per process, a 512-pixel resize target,
 `keep_ratio_largest`, JPEG output, two retries, 10,000 attempts per WebDataset
 shard, and face-bounding-box blurring.
 
+Before each initial or resumed image download, the script revalidates every
+pinned metadata file and rejects unexpected Parquet files so the upstream
+downloader's metadata wildcard cannot silently widen the selected slice.
+
 If a worker pool stops making progress, you can run the same command again.
 img2dataset's incremental mode skips shards with completed `*_stats.json`
 files and replaces interrupted shards that lack completion stats.

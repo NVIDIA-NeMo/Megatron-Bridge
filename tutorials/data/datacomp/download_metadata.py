@@ -70,6 +70,10 @@ def download_metadata(output_dir: Path) -> dict[str, object]:
         The validated metadata manifest.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    unexpected_files = sorted(path.name for path in output_dir.glob("*.parquet") if path.name not in EXPECTED_FILES)
+    if unexpected_files:
+        raise RuntimeError(f"Metadata directory contains unexpected Parquet files: {', '.join(unexpected_files)}.")
+
     records = []
     for filename, (expected_rows, expected_size, expected_sha256) in sorted(EXPECTED_FILES.items()):
         path = Path(

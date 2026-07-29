@@ -24,10 +24,14 @@ datacomp_root=$1
 datacomp_env="${datacomp_root}/downloader-env"
 datacomp_upstream="${datacomp_root}/datacomp-upstream"
 datacomp_metadata="${datacomp_root}/raw/metadata"
+datacomp_script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 test -x "${datacomp_env}/bin/python"
-test -f "${datacomp_metadata}/metadata-manifest.json"
 test "$(git -C "${datacomp_upstream}" rev-parse HEAD)" = 4a8df1992566ef8334773f7152e1855b1f716162
+
+uv run --no-project --python "${datacomp_env}/bin/python" \
+    python "${datacomp_script_dir}/download_metadata.py" \
+    --output-dir "${datacomp_metadata}"
 
 uv run --no-project --python "${datacomp_env}/bin/python" \
     python "${datacomp_upstream}/download_upstream.py" \
