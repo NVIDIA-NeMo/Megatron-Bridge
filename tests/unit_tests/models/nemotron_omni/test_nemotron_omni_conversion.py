@@ -91,6 +91,7 @@ def _mock_omni_hf_config():
         convolution_bias=False,
     )
     vision_config = _DictConfig(
+        class_token_len=8,
         separate_video_embedder=True,
         video_temporal_patch_size=2,
     )
@@ -144,6 +145,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
+    assert provider.vision_class_token_len == 8
 
 
 def test_nemotron_omni_provider_rejects_static_resolution():

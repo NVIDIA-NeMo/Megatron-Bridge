@@ -122,7 +122,13 @@ class NemotronOmniBridge(NemotronVLBridge):
         provider_kwargs["img_end_token_id"] = 22
         provider_kwargs["tokenizer_type"] = "nemotron6-moe"
         provider_kwargs["use_vision_backbone_fp8_arch"] = False
-        provider_kwargs["vision_class_token_len"] = 10
+        # Older checkpoints may have been trained with a different number of RADIO class tokens
+        # (e.g. 8 instead of the current default of 10).  Read the value from the HF vision
+        # config when present so that conversions from those checkpoints produce the correct
+        # provider configuration without requiring a manual run_config override.
+        provider_kwargs["vision_class_token_len"] = getattr(
+            getattr(hf_config, "vision_config", None), "class_token_len", 10
+        )
         # Match C-RADIO's eval-time position embedding behavior: interpolate
         # to a square grid covering the longest image dimension, then crop to
         # the requested aspect ratio. Keep the provider's historical default
