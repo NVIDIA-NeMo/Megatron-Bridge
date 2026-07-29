@@ -310,6 +310,7 @@ def import_checkpoint(
         megatron_path,
         hf_tokenizer_path=hf_model,
         hf_tokenizer_kwargs=_hf_tokenizer_kwargs(bridge, trust_remote_code=trust_remote_code),
+        low_memory_save=True,
     )
     print_rank_0(f"GPU import complete: {megatron_path}")
 

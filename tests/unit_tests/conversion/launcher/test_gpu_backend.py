@@ -168,7 +168,7 @@ class TestImportHfToMegatron:
 
         save_call = next(call for call in calls if call[0] == "save_megatron_model")
         assert save_call[1] == (["megatron-model"], "/ckpt")
-        assert "low_memory_save" not in save_call[2]
+        assert save_call[2]["low_memory_save"] is True
         assert save_call[2]["hf_tokenizer_path"] == "hf"
         assert save_call[2]["hf_tokenizer_kwargs"] == {
             "padding_side": "left",
