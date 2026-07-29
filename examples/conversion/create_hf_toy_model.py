@@ -225,6 +225,13 @@ def _truncate_config(source_dir: Path, output_dir: Path, *, num_hidden_layers: i
         ]
     linear_attn_config = transformer_config.get("linear_attn_config")
     if isinstance(linear_attn_config, dict):
+        # Unlike the exclusive bounds used above, these lists hold 1-indexed global layer
+        # *numbers*, not 0-indexed offsets, so the retained range is [1, num_hidden_layers]
+        # and the bound is inclusive. Kimi K3's published config is the reference case:
+        # across 93 layers, `kda_layers` spans 1..91 and `full_attn_layers` spans 4..93,
+        # and the two partition 1..93 exactly. The consumer side agrees — the layer spec
+        # tests `layer_number in config.kimi_kda_layers` with MCore's 1-indexed
+        # `layer_number` (see `KimiK3Attention.__init__`).
         for layer_list_name in ("kda_layers", "full_attn_layers"):
             if isinstance(linear_attn_config.get(layer_list_name), list):
                 linear_attn_config[layer_list_name] = [
