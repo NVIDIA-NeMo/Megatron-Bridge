@@ -81,7 +81,7 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
 
 
 def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
-    """GLM-5.2 131K packed SFT with context parallelism on 192 GB200 GPUs."""
+    """GLM-5.2 128K packed SFT with context parallelism on 192 GB200 GPUs."""
     cfg = glm52_sft_608gpu_h100_bf16_200k_config()
 
     cfg.model.seq_length = 131072
