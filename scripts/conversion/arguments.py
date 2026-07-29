@@ -356,7 +356,7 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     if args.command == "import":
         if args.low_memory_save:
             worker_args.append("--low-memory-save")
-    else:
+    elif args.command == "export":
         worker_args.extend(["--hf-path", args.hf_path])
         if args.no_progress:
             worker_args.append("--no-progress")
