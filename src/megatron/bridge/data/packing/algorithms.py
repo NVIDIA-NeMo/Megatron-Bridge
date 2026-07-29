@@ -16,7 +16,7 @@
 
 import collections
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple, TypeVar
 
 import numpy as np
 from tqdm import tqdm
@@ -27,6 +27,8 @@ from megatron.bridge.utils.safe_pickle import safe_load_npy
 PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 
 logger = logging.getLogger(__name__)
+
+_ItemT = TypeVar("_ItemT")
 
 
 class _SegmentTree:
@@ -66,6 +68,57 @@ class _SegmentTree:
         return self._query(1, 0, self._n - 1, need)
 
 
+def first_fit_by_length(items: Sequence[_ItemT], item_lengths: Sequence[int], pack_size: int) -> list[list[_ItemT]]:
+    """
+    Packs arbitrary items into bins using First-Fit, driven by precomputed lengths.
+
+    A segment-tree index over per-bin remaining capacity makes each placement O(log N)
+    instead of a scan over every open bin, giving O(N log N) overall.
+
+    This is the shared core behind :func:`first_fit`. Callers that pack objects rather
+    than raw integers (for example diffusion samples keyed on padded query sequence
+    length) pass the lengths separately and get their original objects back in the bins.
+
+    Args:
+      items: The objects to pack, in the order they should be considered.
+      item_lengths: Length of each entry in `items`, in the same order.
+      pack_size: The maximum capacity of each bin.
+
+    Returns:
+      A list of lists, where each inner list represents a bin and contains the
+        items assigned to that bin.
+
+    Raises:
+      ValueError: If `items` and `item_lengths` do not have the same number of entries.
+    """
+    if len(items) != len(item_lengths):
+        raise ValueError(
+            f"items and item_lengths must have the same number of entries, got {len(items)} and {len(item_lengths)}"
+        )
+    if not items:
+        return []
+
+    n = len(items)
+    tree = _SegmentTree(n)
+    res: list[list[_ItemT]] = []
+    remaining: list[int] = []
+
+    for item, length in zip(items, item_lengths):
+        first_bin = tree.query_first_fit(length)
+        # An unopened bin still reads as 0 remaining capacity, so a zero-length item can
+        # match an index past the end of `res`; that case must open a bin, not index it.
+        if first_bin == -1 or first_bin >= len(res):
+            new_idx = len(res)
+            res.append([item])
+            remaining.append(pack_size - length)
+            tree.update(new_idx, remaining[new_idx])
+        else:
+            res[first_bin].append(item)
+            remaining[first_bin] -= length
+            tree.update(first_bin, remaining[first_bin])
+    return res
+
+
 def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
     """
     Packs sequences of varying lengths into bins using the First-Fit algorithm
@@ -79,26 +132,8 @@ def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
       A list of lists, where each inner list represents a bin and contains the
         lengths of the sequences assigned to that bin.
     """
-    if not seqlens:
-        return []
-
-    n = len(seqlens)
-    tree = _SegmentTree(n)
-    res = []
-    remaining = []
-
-    for s in seqlens:
-        first_bin = tree.query_first_fit(s)
-        if first_bin == -1 or first_bin >= len(res):
-            new_idx = len(res)
-            res.append([s])
-            remaining.append(pack_size - s)
-            tree.update(new_idx, remaining[new_idx])
-        else:
-            res[first_bin].append(s)
-            remaining[first_bin] -= s
-            tree.update(first_bin, remaining[first_bin])
-    return res
+    # The items being packed are themselves the lengths.
+    return first_fit_by_length(seqlens, seqlens, pack_size)
 
 
 def first_fit_decreasing(seqlens: List[int], pack_size: int) -> List[List[int]]:
