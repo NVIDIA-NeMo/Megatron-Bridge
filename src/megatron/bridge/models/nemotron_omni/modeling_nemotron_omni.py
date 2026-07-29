@@ -764,6 +764,10 @@ class NemotronOmniModel(MegatronModule):
         if combined_embeddings is not None and not mtp_enabled:
             lm_input_ids = None
 
+        # TODO(https://github.com/NVIDIA/Megatron-LM/issues/6111): Forward the
+        # CP/SP-local padding_mask once MCore's expert-bias router supports it.
+        # Until then, packed alignment gaps remain loss-masked but are counted
+        # by MoE router auxiliary statistics.
         output = self.language_model(
             input_ids=lm_input_ids,
             position_ids=position_ids,
@@ -775,7 +779,6 @@ class NemotronOmniModel(MegatronModule):
             inference_params=inference_params,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=language_packed_seq_params,
-            padding_mask=padding_mask,
         )
         if return_sliced_loss_mask:
             return output, loss_mask

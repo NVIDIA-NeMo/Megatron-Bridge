@@ -516,10 +516,7 @@ def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkey
     assert torch.equal(local_loss_mask, loss_mask.index_select(1, cp_index))
     assert model.language_model.last_kwargs["packed_seq_params"] is packed_seq_params
     assert torch.equal(model.language_model.last_kwargs["labels"], labels.index_select(1, cp_index))
-    assert torch.equal(
-        model.language_model.last_kwargs["padding_mask"],
-        padding_mask.index_select(1, cp_index),
-    )
+    assert "padding_mask" not in model.language_model.last_kwargs
     assert model.language_model.last_kwargs["attention_mask"] is None
 
 
