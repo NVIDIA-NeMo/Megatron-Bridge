@@ -67,7 +67,7 @@ env:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@d241fcfa92900f804cd425c7abc11855e5532064 # v0.80.1
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
@@ -83,6 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pre-flight]
     outputs:
+      docs_only:         ${{ steps.configure.outputs.docs_only }}
       needs_more_tests:  ${{ steps.configure.outputs.needs_more_tests }}
       full_test_suite:   ${{ steps.configure.outputs.full_test_suite }}
       expect_l0:         ${{ steps.configure.outputs.expect_l0 }}
@@ -94,7 +95,7 @@ jobs:
       - name: Get PR info
         id: get-pr-info
         if: startsWith(github.ref, 'refs/heads/pull-request/')
-        uses: nv-gha-runners/get-pr-info@main
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
 
       - name: Resolve merge commit sha
         id: merge-sha
@@ -114,7 +115,9 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         env:
           GH_TOKEN:      ${{ github.token }}
-          DOCS_ONLY:     ${{ needs.pre-flight.outputs.docs_only }}
+          # An MCore-triggered run tests a different dependency revision even
+          # when the checked-out MBridge commit contains documentation only.
+          DOCS_ONLY:     ${{ needs.pre-flight.outputs.docs_only == 'true' && github.event.inputs.mcore_ref == '' }}
           IS_DEPLOYMENT: ${{ needs.pre-flight.outputs.is_deployment_workflow }}
           EVENT_NAME:    ${{ github.event_name }}
           REF:           ${{ github.ref }}
@@ -167,6 +170,7 @@ jobs:
             EXPECT_L2=true
           fi
 
+          echo "docs_only=$DOCS_ONLY"               | tee -a "$GITHUB_OUTPUT"
           echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
           echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
           echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
@@ -240,7 +244,7 @@ jobs:
       || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: "recursive"
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -275,7 +279,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
-      || needs.pre-flight.outputs.docs_only == 'true'
+      || needs.configure.outputs.docs_only == 'true'
       || needs.configure.outputs.perf_scripts_only == 'true')
       && github.event_name != 'merge_group'
     steps:
@@ -305,10 +309,11 @@ jobs:
           REGISTRY_AWS: ${{ needs.pre-flight.outputs.registry }}
           REGISTRY_GCP: ${{ env.container-registry-gb200 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
+          DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
           AWS_ENTRY=$(jq -nc --arg registry "$REGISTRY_AWS" --arg runner "${RUNNER_PREFIX}" \
             '{"cloud": "aws", "registry": $registry, "runner": $runner}')
-          if [[ "$IS_MEMBER" == "true" ]]; then
+          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
             GCP_ENTRY=$(jq -nc --arg registry "$REGISTRY_GCP" --arg runner "nemo-ci-gcp-gpu-x2" \
               '{"cloud": "gcp", "registry": $registry, "runner": $runner}')
             MATRIX=$(jq -nc --argjson aws "$AWS_ENTRY" --argjson gcp "$GCP_ENTRY" \
@@ -338,10 +343,10 @@ jobs:
       - name: Get PR info
         id: get-pr-info
         if: startsWith(github.ref, 'refs/heads/pull-request/')
-        uses: nv-gha-runners/get-pr-info@main
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -384,12 +389,12 @@ jobs:
           echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Setup python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: 3.12
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Compute cache keys
         id: cache_keys
@@ -410,10 +415,24 @@ jobs:
           # digest on every cold build. Listing more than one cache-from donor lets
           # BuildKit chain from a conflicting copy of such a layer and miss every
           # layer downstream — a ~40 min cold rebuild even when a warm cache exists.
-          # So read EXACTLY ONE donor: PR builds integrate into main, so they seed
-          # from main; main/branch builds seed from their own chain.
+          # So we still read EXACTLY ONE donor; only WHICH donor changes below.
+          #
+          # A PR's first build has no cache of its own and seeds from main. Every
+          # LATER push on the same PR seeds from the PR's OWN buildcache instead of
+          # main: a PR that touches an early layer (Dockerfile.ci, pyproject.toml,
+          # uv.lock, the MCore stubs) never has those layers in main-buildcache, so
+          # seeding from main cold-rebuilt the ~40 min dependency layer on EVERY
+          # push. Seeding from the PR's own cache reuses the layers that same PR
+          # already built and pushed to ${KEY}-buildcache. This stays single-donor,
+          # so the non-reproducible-DeepEP cascade above cannot happen. The probe
+          # falls back to main on any error, so this never fails the build.
           if [[ -n "$PR_NUMBER" && "${{ github.ref }}" != "refs/heads/main" ]]; then
-            SEED="main"
+            PR_CACHE="${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache"
+            if docker buildx imagetools inspect "$PR_CACHE" > /dev/null 2>&1; then
+              SEED="$KEY"
+            else
+              SEED="main"
+            fi
           else
             SEED="$KEY"
           fi
@@ -431,7 +450,7 @@ jobs:
           fi
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           file: ./docker/Dockerfile.ci
           push: true
@@ -465,7 +484,7 @@ jobs:
     name: Launch_Import_Check
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.configure.outputs.merge_sha }}
 
@@ -499,7 +518,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -533,7 +552,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -566,7 +585,7 @@ jobs:
       )
       && !cancelled()
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.configure.outputs.merge_sha }}
       - id: scan
@@ -635,7 +654,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -676,7 +695,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -717,7 +736,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -748,7 +767,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -782,8 +801,9 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.configure.outputs.merge_sha }}
       - id: scan
@@ -843,6 +863,7 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -852,7 +873,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -890,6 +911,7 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
@@ -900,7 +922,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -938,6 +960,7 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
@@ -948,7 +971,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -970,7 +993,7 @@ jobs:
           runner: ${{ matrix.runner }}
 
   cicd-functional-tests-gb200-flaky:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true' && vars.DISABLE_GB200_TESTS != 'true'
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -985,7 +1008,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
@@ -1024,7 +1047,7 @@ jobs:
     permissions: write-all
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.configure.outputs.merge_sha }}
 
@@ -1038,6 +1061,7 @@ jobs:
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
+          DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
           # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
           # any failure (e.g. "failed to determine base repo" when git context is
@@ -1064,7 +1088,7 @@ jobs:
           check_tier_skips "L0" "$EXPECT_L0"
           check_tier_skips "L1" "$EXPECT_L1"
           check_tier_skips "L2" "$EXPECT_L2"
-          if [[ "$IS_MEMBER" == "true" ]]; then
+          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
             check_tier_skips "gb200_L0" "$EXPECT_L0"
             check_tier_skips "gb200_L1" "$EXPECT_L1"
             check_tier_skips "gb200_L2" "$EXPECT_L2"
@@ -1090,13 +1114,13 @@ jobs:
       && !cancelled()
       && needs.pre-flight.outputs.is_ci_workload == 'false'
       && (
-        needs.pre-flight.outputs.docs_only == 'true'
+        needs.configure.outputs.docs_only == 'true'
         || needs.pre-flight.outputs.is_deployment_workflow == 'true'
         || needs.configure.outputs.perf_scripts_only == 'true'
       )
     steps:
       - name: Generate fake coverage report
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           github-token: ${{ secrets.PAT }}
           script: |
@@ -1114,7 +1138,7 @@ jobs:
     needs: [Nemo_CICD_Test, pre-flight, configure]
     if: |
       needs.Nemo_CICD_Test.result == 'success'
-      && needs.pre-flight.outputs.docs_only == 'false'
+      && needs.configure.outputs.docs_only == 'false'
       && needs.pre-flight.outputs.is_deployment_workflow == 'false'
       && needs.configure.outputs.perf_scripts_only == 'false'
       && github.event.inputs.mcore_ref == ''
@@ -1128,15 +1152,15 @@ jobs:
       - name: Get PR info
         id: get-pr-info
         if: startsWith(github.ref, 'refs/heads/pull-request/')
-        uses: nv-gha-runners/get-pr-info@main
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: Download coverage reports of current branch
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: coverage-${{ matrix.flag }}-*
 
@@ -1154,7 +1178,7 @@ jobs:
           ls -al
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
@@ -1162,7 +1186,7 @@ jobs:
           base_sha: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.sha }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: coverage-${{ matrix.flag }}-aggregated
           path: |

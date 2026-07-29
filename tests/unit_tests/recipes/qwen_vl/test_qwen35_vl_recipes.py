@@ -715,7 +715,9 @@ def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable
 
     _assert_basic_config(cfg)
 
-    assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model == cfg.dataset.hf_processor_path
+    assert cfg.tokenizer.use_tokenizer_vocab_size is True
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
@@ -728,14 +730,14 @@ def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable
 
 @pytest.mark.parametrize("recipe_func", _QWEN35_VL_PRETRAIN_MOCK_FUNCS)
 def test_qwen35_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that pretrain mock configs use MockVLMConversationProvider."""
+    """Test that pretrain mock configs use the declarative mock VLM config."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
-    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+    from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, MockVLMConversationProvider)
+    assert isinstance(cfg.dataset, MockVLMSFTDatasetConfig)
 
 
 def test_qwen35_vl_9b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -801,6 +803,8 @@ def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPa
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.sequence_parallel is True
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.ddp.average_in_collective is False
 
 
 def test_qwen35_vl_397b_a17b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -817,6 +821,8 @@ def test_qwen35_vl_397b_a17b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPa
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.sequence_parallel is True
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.ddp.average_in_collective is False
 
 
 def test_qwen35_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):

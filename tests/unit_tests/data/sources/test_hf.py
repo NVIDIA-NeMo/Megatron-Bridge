@@ -156,6 +156,17 @@ def test_source_rejects_load_kwargs_that_duplicate_source_fields():
         source.validate()
 
 
+@pytest.mark.parametrize(
+    "data_files",
+    [None, "", [], {}, {"train": None}, {"train": ""}],
+)
+def test_source_rejects_unset_data_files(data_files):
+    source = HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": data_files})
+
+    with pytest.raises(ValueError, match="data_files must contain non-empty paths"):
+        source.validate()
+
+
 def test_named_source_resolves_physical_source_and_declarative_overrides():
     source = HFDatasetSourceConfig(
         dataset_name="raven",
@@ -190,6 +201,36 @@ def test_named_source_uses_preset_split_and_adapter(monkeypatch):
     assert adapted[0]["original_answers"] == ["2"]
 
 
+def test_tulu3_preset_uses_current_native_chat_dataset(monkeypatch):
+    rows = [
+        {
+            "id": "example-1",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi"},
+            ],
+            "source": "example-source",
+        }
+    ]
+    calls = []
+
+    def _load_dataset(path, *, split, **kwargs):
+        calls.append((path, split, kwargs))
+        return rows
+
+    monkeypatch.setattr(source_module, "load_dataset", _load_dataset)
+    source = HFDatasetSourceConfig(dataset_name="tulu3")
+
+    resolved = resolve_hf_dataset_source(source)
+    adapted = load_and_adapt_hf_dataset(source)
+
+    assert resolved.path_or_dataset == "allenai/tulu-3-sft-mixture"
+    assert resolved.split == "train"
+    assert resolved.schema_adapter is None
+    assert calls == [("allenai/tulu-3-sft-mixture", "train", {})]
+    assert adapted == rows
+
+
 def test_load_and_adapt_composes_source_loader_and_adapter(monkeypatch):
     rows = [{"context": "ctx", "question": "q", "answers": {"text": ["a"]}}]
     monkeypatch.setattr(source_module, "load_hf_dataset_source", lambda source: rows)
@@ -199,6 +240,26 @@ def test_load_and_adapt_composes_source_loader_and_adapter(monkeypatch):
 
     assert adapted[0]["prompt"] == "Context: ctx Question: q Answer:"
     assert adapted[0]["completion"] == "a"
+
+
+def test_json_data_files_use_hugging_face_loader(monkeypatch):
+    calls = []
+
+    def _load_dataset(path, *, split, **kwargs):
+        calls.append((path, split, kwargs))
+        return [{"messages": [{"role": "user", "content": "hello"}]}]
+
+    monkeypatch.setattr(source_module, "load_dataset", _load_dataset)
+    source = HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="train",
+        load_kwargs={"data_files": {"train": "training.jsonl"}},
+    )
+
+    rows = load_and_adapt_hf_dataset(source)
+
+    assert calls == [("json", "train", {"data_files": {"train": "training.jsonl"}})]
+    assert rows[0]["messages"][0]["content"] == "hello"
 
 
 def test_distributed_source_preparation_materializes_on_rank_zero(monkeypatch):

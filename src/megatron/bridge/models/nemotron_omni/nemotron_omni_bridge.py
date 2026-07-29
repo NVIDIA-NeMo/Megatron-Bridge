@@ -122,8 +122,12 @@ class NemotronOmniBridge(NemotronVLBridge):
         provider_kwargs["img_end_token_id"] = 22
         provider_kwargs["tokenizer_type"] = "nemotron6-moe"
         provider_kwargs["use_vision_backbone_fp8_arch"] = False
-        provider_kwargs["dynamic_resolution"] = True
         provider_kwargs["vision_class_token_len"] = 10
+        # Match C-RADIO's eval-time position embedding behavior: interpolate
+        # to a square grid covering the longest image dimension, then crop to
+        # the requested aspect ratio. Keep the provider's historical default
+        # unchanged for serialized configurations that explicitly select it.
+        provider_kwargs["radio_interpolate_only_cpe"] = False
 
         # NemotronH uses squared_relu for MLP layers (HF config: mlp_hidden_act="relu2").
         # The base hf_config_to_provider_kwargs reads "hidden_act" which doesn't exist on

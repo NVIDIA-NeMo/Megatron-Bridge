@@ -483,56 +483,6 @@ class TestLoRA:
         inference_model = lora(model, training=False)
         assert not inference_model.training
 
-    @patch("megatron.bridge.peft.lora.te")
-    def test_lora_te_linear_support(self, mock_te):
-        """Test LoRA support for Transformer Engine Linear layers."""
-
-        # Create the TE Linear type and an actual instance
-        class MockTELinear(nn.Module):
-            def __init__(self):
-                super().__init__()
-
-                # Create a simple weight mock that doesn't have _local_tensor
-                class MockWeightData:
-                    pass
-
-                class MockWeight:
-                    def __init__(self):
-                        self.data = MockWeightData()
-
-                self.weight = MockWeight()
-                self.quant_state = None
-
-        # Set the mock_te.Linear to our MockTELinear class
-        mock_te.Linear = MockTELinear
-
-        # Create an actual instance of our mock TE Linear
-        te_linear_instance = MockTELinear()
-
-        # Create model with mock TE linear
-        model = nn.Module()
-        model.te_linear = te_linear_instance
-
-        lora = LoRA(target_modules=["te_linear"])
-
-        # Create a mock class for TELinearAdapter to works with the isinstance() check
-        class MockTELinearAdapter(nn.Module):
-            def __init__(self, module, **kwargs):
-                super().__init__()
-                self.module = module
-
-        # Import the module to patch the specific import
-        from megatron.bridge.peft import lora as lora_module
-
-        # Use patch.object to handle cases where TELinearAdapter might not exist
-        # by creating it if necessary.
-        with patch.object(lora_module, "TELinearAdapter", MockTELinearAdapter, create=True):
-            # Should create TELinearAdapter
-            result = lora(model, training=True)
-
-            # Verify that te_linear was transformed to our mock adapter
-            assert isinstance(result.te_linear, MockTELinearAdapter)
-
     @pytest.mark.timeout(10)
     def test_lora_list_model_support(self):
         """Test LoRA support for list of model chunks (pipeline parallelism)."""

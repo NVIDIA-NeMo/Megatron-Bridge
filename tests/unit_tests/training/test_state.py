@@ -12,14 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import multiprocessing
 import os
 import signal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
 from megatron.bridge.training.state import FaultToleranceState, GlobalState, TrainState
+
+
+def _send_sigterm_with_handler_disabled() -> None:
+    # Forked test processes inherit the runner's signal disposition. Establish
+    # the baseline that the disabled Bridge setting must preserve explicitly.
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            exit_signal_handler=False,
+            exit_signal=signal.SIGTERM,
+        )
+    )
+    state = GlobalState()
+    state.cfg = config
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 class TestTrainState:
@@ -697,6 +714,19 @@ class TestGlobalState:
             mock_dsh.assert_not_called()
             assert state._signal_handler is None
 
+    def test_disabled_signal_handler_does_not_intercept_sigterm(self):
+        """Disabling graceful signal handling preserves SIGTERM's default disposition."""
+        process = multiprocessing.get_context("fork").Process(target=_send_sigterm_with_handler_disabled)
+        process.start()
+        process.join(timeout=10)
+
+        if process.is_alive():
+            process.kill()
+            process.join()
+            pytest.fail("child process did not terminate after SIGTERM")
+
+        assert process.exitcode == -signal.SIGTERM
+
     @pytest.fixture
     def restore_sigterm_handler(self):
         """Snapshot SIGTERM handler and restore it after the test.
@@ -1021,6 +1051,17 @@ class TestGlobalState:
         assert state._cfg == mock_config
         assert state._async_calls_queue == mock_async_queue
         assert state.rank_monitor_client is not None
+
+    def test_reset_for_restart_closes_tensorboard_writer(self):
+        """Test reset_for_restart closes the attempt-scoped TensorBoard writer."""
+        state = GlobalState()
+        mock_writer = MagicMock()
+        state._tensorboard_logger = mock_writer
+
+        state.reset_for_restart()
+
+        mock_writer.close.assert_called_once_with()
+        assert state._tensorboard_logger is None
 
 
 class TestTimersWriteToMlflow:

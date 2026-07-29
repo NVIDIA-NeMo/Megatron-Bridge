@@ -343,7 +343,8 @@ def calc_params_l2_norm(
                             if param.main_param is not None:
                                 sharded_params_data.append(param.main_param)
                         else:
-                            moe_params_data.append(param.main_param)
+                            main_param = param.main_param
+                            moe_params_data.append(main_param if main_param is not None else param.data.float())
                     else:
                         # Fallback to original logic of making a fp32 copy of the
                         # parameter if `.main_param` attribute is not available.
@@ -359,7 +360,8 @@ def calc_params_l2_norm(
                                 if param.main_param is not None:
                                     sharded_params_data.append(param.main_param)
                             else:
-                                params_data.append(param.main_param)
+                                main_param = param.main_param
+                                params_data.append(main_param if main_param is not None else param.data.float())
                         else:
                             # Fallback to original logic of making a fp32 copy of the
                             # parameter if `.main_param` attribute is not available.
@@ -718,7 +720,9 @@ def training_log(
     train_config = config.train
     pg_collection = pg_collection or get_pg_collection(model)
 
-    loggers_exist = writer is not None or wandb_writer is not None or mlflow_logger is not None
+    loggers_exist = (
+        writer is not None or wandb_writer is not None or mlflow_logger is not None or comet_logger is not None
+    )
 
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"

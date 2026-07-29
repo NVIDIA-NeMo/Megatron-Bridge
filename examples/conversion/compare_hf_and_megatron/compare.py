@@ -100,6 +100,8 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
+from megatron.core.inference.contexts import StaticInferenceContext
+from megatron.core.inference.utils import InferenceMode
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
@@ -125,8 +127,8 @@ from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_la
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
-# Cosine similarity threshold: require at least 98% similarity (2% tolerance)
-SIMILARITY_THRESHOLD = 0.98
+# Cosine similarity threshold: require at least 99% similarity (1% cosine distance)
+SIMILARITY_THRESHOLD = 0.99
 
 
 sys.path.append(os.path.dirname(__file__))
@@ -210,7 +212,16 @@ def get_model_class(model_class_name: str = None, is_vl_model: bool = False):
         return AutoModelForCausalLM
 
 
-def is_vision_language_model(model_path: str, trust_remote_code: bool | None = None) -> bool:
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Return an optional immutable Hugging Face revision argument."""
+    return {"revision": revision} if revision is not None else {}
+
+
+def is_vision_language_model(
+    model_path: str,
+    trust_remote_code: bool | None = None,
+    revision: str | None = None,
+) -> bool:
     """Check if the model is a vision-language model.
 
     Args:
@@ -226,6 +237,7 @@ def is_vision_language_model(model_path: str, trust_remote_code: bool | None = N
                 trust_remote_code=trust_remote_code,
                 hf_path=model_path,
             ),
+            **_hf_revision_kwargs(revision),
         )
 
         # Check for VL model indicators in config
@@ -264,11 +276,20 @@ class SingleBatchIterator:
     then raises StopIteration. Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None):
+    def __init__(
+        self,
+        input_ids,
+        position_ids,
+        attention_mask,
+        pixel_values=None,
+        image_grid_thw=None,
+        inference_context=None,
+    ):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
+            inference_context=inference_context,
         )
 
         # Add vision inputs if provided
@@ -327,6 +348,47 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         output_tensor = model_output
 
     return output_tensor, loss_func
+
+
+def inference_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
+    """Run a text-model forward step with an explicit inference context."""
+    batch = next(data_iterator)
+
+    def loss_func(x, **kwargs):
+        return x
+
+    model_output = model(
+        input_ids=batch["tokens"],
+        position_ids=batch["position_ids"],
+        attention_mask=batch.get("attention_mask"),
+        inference_context=batch["inference_context"],
+        runtime_gather_output=True,
+    )
+    if isinstance(model_output, tuple):
+        model_output = model_output[0]
+    return model_output, loss_func
+
+
+def _run_megatron_forward(fwd_bwd_function, **kwargs):
+    """Run a Megatron forward pass with the inference execution paths active."""
+    with InferenceMode.active():
+        return fwd_bwd_function(**kwargs)
+
+
+def _maybe_gather_tensor_parallel_logits(megatron_output, hf_vocab_size: int, world_size: int, group):
+    """Gather sharded TP logits while preserving an already gathered full-vocabulary tensor."""
+    if megatron_output.size(-1) >= hf_vocab_size:
+        return megatron_output
+
+    gathered_tensors = [torch.zeros_like(megatron_output) for _ in range(world_size)]
+    dist.all_gather(gathered_tensors, megatron_output, group=group)
+    gathered_output = torch.cat(gathered_tensors, dim=2)
+    if gathered_output.size(-1) < hf_vocab_size:
+        raise ValueError(
+            f"Gathered Megatron vocabulary ({gathered_output.size(-1)}) is smaller than "
+            f"the Hugging Face vocabulary ({hf_vocab_size})."
+        )
+    return gathered_output
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -453,6 +515,7 @@ def _load_hf_model(args, is_vl_model: bool):
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
+        **_hf_revision_kwargs(args.hf_revision),
     )
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
@@ -581,7 +644,14 @@ def _load_megatron_model(args):
 
     if args.megatron_model_path:
         # Load from Megatron checkpoint
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=args.trust_remote_code,
+                hf_path=args.hf_model_path,
+            ),
+            **_hf_revision_kwargs(args.hf_revision),
+        )
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -608,6 +678,7 @@ def _load_megatron_model(args):
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
             ),
+            **_hf_revision_kwargs(args.hf_revision),
         )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
@@ -650,6 +721,7 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
+        **_hf_revision_kwargs(args.hf_revision),
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -663,12 +735,36 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
                     trust_remote_code=args.trust_remote_code,
                     hf_path=args.hf_model_path,
                 ),
+                **_hf_revision_kwargs(args.hf_revision),
             )
         except Exception as e:
             print_rank_0(f"Warning: Could not load processor for VL model: {e}")
             print_rank_0("Falling back to tokenizer-only mode")
 
     return tokenizer, processor
+
+
+def _broadcast_hf_results(hf_logits, hf_next_token, device):
+    """Broadcast rank-0 HF results using the model's actual output vocabulary size."""
+    if hf_logits is not None:
+        hf_logits = hf_logits.float()
+
+    hf_logits_size = torch.tensor(
+        [hf_logits.numel() if hf_logits is not None else 0],
+        device=device,
+        dtype=torch.long,
+    )
+    torch.distributed.broadcast(hf_logits_size, 0)
+
+    if hf_next_token is None:
+        hf_next_token = torch.zeros(1, device=device, dtype=torch.long)
+    if hf_logits is None:
+        hf_logits = torch.zeros(hf_logits_size.item(), device=device, dtype=torch.float32)
+
+    torch.distributed.broadcast(hf_next_token, 0)
+    torch.distributed.broadcast(hf_logits, 0)
+    torch.distributed.barrier()
+    return hf_logits, hf_next_token
 
 
 def compare_models_one_step(args) -> None:
@@ -685,7 +781,7 @@ def compare_models_one_step(args) -> None:
         print_rank_0(f"Set CUDA device to: {torch.cuda.current_device()}")
 
     # Detect model type
-    is_vl_model = is_vision_language_model(args.hf_model_path, args.trust_remote_code)
+    is_vl_model = is_vision_language_model(args.hf_model_path, args.trust_remote_code, args.hf_revision)
     print_rank_0(f"Detected model type: {'Vision-Language' if is_vl_model else 'Text-only LLM'}")
 
     # Validate vision requirements
@@ -733,28 +829,10 @@ def compare_models_one_step(args) -> None:
 
     # Broadcast HF results to all ranks
     if torch.distributed.is_initialized():
-        # Ensure consistent dtype across ranks: rank 0 has bfloat16 logits from the HF model,
-        # so all ranks must use the same dtype for NCCL broadcast to work correctly.
-        if hf_logits is not None:
-            hf_logits = hf_logits.float()
-
-        # Create tensors for broadcasting if they don't exist on non-rank-0
-        if hf_next_token is None:
-            hf_next_token = torch.zeros(1, device=input_ids.device, dtype=torch.long)
-        if hf_logits is None:
-            # Get vocab size from tokenizer for proper tensor size
-            vocab_size = getattr(
-                tokenizer, "vocab_size", len(tokenizer.vocab) if hasattr(tokenizer, "vocab") else 32000
-            )
-            hf_logits = torch.zeros(vocab_size, device=input_ids.device, dtype=torch.float32)
-
-        # Ensure consistent dtype across ranks before broadcast
-        hf_logits = hf_logits.float()
-
-        # Broadcast from rank 0 to all ranks
-        torch.distributed.broadcast(hf_next_token, 0)
-        torch.distributed.broadcast(hf_logits, 0)
-        torch.distributed.barrier()
+        # The model's output vocabulary can be larger than the tokenizer vocabulary.
+        # Broadcast the actual logits length before allocating receive buffers so every
+        # rank participates in the logits broadcast with the same tensor shape.
+        hf_logits, hf_next_token = _broadcast_hf_results(hf_logits, hf_next_token, input_ids.device)
         print_rank_0("HF results broadcast complete.")
 
     # Run Megatron model forward pass
@@ -773,18 +851,44 @@ def compare_models_one_step(args) -> None:
         attention_mask = None
 
         fwd_bwd_function = get_forward_backward_func()
-        iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
-
-        megatron_output = fwd_bwd_function(
-            forward_step_func=vlm_forward_step,
-            data_iterator=iterator,
-            model=megatron_model,
-            num_microbatches=1,
-            forward_only=True,
-            seq_length=input_ids.size(1),
-            micro_batch_size=1,
-            collect_non_loss_data=True,
-        )
+        forward_kwargs = {
+            "model": megatron_model,
+            "num_microbatches": 1,
+            "forward_only": True,
+            "seq_length": input_ids.size(1),
+            "micro_batch_size": 1,
+            "collect_non_loss_data": True,
+        }
+        if is_vl_model:
+            iterator = SingleBatchIterator(
+                input_ids,
+                position_ids,
+                attention_mask,
+                pixel_values,
+                image_grid_thw,
+            )
+            megatron_output = fwd_bwd_function(
+                forward_step_func=vlm_forward_step,
+                data_iterator=iterator,
+                **forward_kwargs,
+            )
+        else:
+            inference_context = StaticInferenceContext(
+                max_batch_size=input_ids.size(0),
+                max_sequence_length=input_ids.size(1),
+            )
+            iterator = SingleBatchIterator(
+                input_ids,
+                position_ids,
+                attention_mask,
+                inference_context=inference_context,
+            )
+            megatron_output = _run_megatron_forward(
+                fwd_bwd_function,
+                forward_step_func=inference_forward_step,
+                data_iterator=iterator,
+                **forward_kwargs,
+            )
 
         if isinstance(megatron_output, list) and len(megatron_output) > 0:
             megatron_output = megatron_output[0]
@@ -796,11 +900,12 @@ def compare_models_one_step(args) -> None:
             # Gather tensor parallel results if using TP
             if torch.distributed.is_initialized() and parallel_state.get_tensor_model_parallel_world_size() > 1:
                 world_size = parallel_state.get_tensor_model_parallel_world_size()
-                gathered_tensors = [torch.zeros_like(megatron_output) for _ in range(world_size)]
-                dist.all_gather(
-                    gathered_tensors, megatron_output, group=parallel_state.get_tensor_model_parallel_group()
+                megatron_output = _maybe_gather_tensor_parallel_logits(
+                    megatron_output,
+                    hf_logits.size(0),
+                    world_size,
+                    parallel_state.get_tensor_model_parallel_group(),
                 )
-                megatron_output = torch.cat(gathered_tensors, dim=2)
 
             megatron_logits = megatron_output[0, -1, :]
             megatron_next_token = torch.argmax(megatron_logits, dim=-1)
@@ -838,8 +943,12 @@ def compare_models_one_step(args) -> None:
                 cos_val = cosine_sim.item()
                 percent = cos_val * 100.0
                 status_emoji = "✅" if cos_val >= SIMILARITY_THRESHOLD else "❌"
-                tolerance_text = "within ±2%" if cos_val >= SIMILARITY_THRESHOLD else "outside ±2%"
-                print(f"Cosine similarity: {cos_val:.6f} ({percent:.2f}%) {status_emoji} ({tolerance_text} tolerance)")
+                limit_text = "within" if cos_val >= SIMILARITY_THRESHOLD else "outside"
+                distance_limit = 1.0 - SIMILARITY_THRESHOLD
+                print(
+                    f"Cosine similarity: {cos_val:.6f} ({percent:.2f}%) {status_emoji} "
+                    f"({limit_text} {distance_limit:.0%} cosine-distance limit)"
+                )
 
                 print("=== COMPARISON COMPLETE ===")
         else:
@@ -859,6 +968,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="Path to the HuggingFace model.",
+    )
+    parser.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision used for model, config, and tokenizer loading.",
     )
     parser.add_argument(
         "--prompt",

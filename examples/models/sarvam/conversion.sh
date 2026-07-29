@@ -22,13 +22,13 @@ MODEL_NAME=sarvam-30b
 HF_MODEL_ID=sarvamai/sarvam-30b
 
 # Import HF → Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}" \
     --trust-remote-code
 
 # Export Megatron → HF
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}/iter_0000000" \
     --hf-path "${WORKSPACE}/models/${MODEL_NAME}-hf-export"

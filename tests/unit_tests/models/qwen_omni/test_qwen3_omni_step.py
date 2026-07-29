@@ -84,6 +84,24 @@ def test_get_batch_from_iterator_moves_omni_tensors_to_cuda():
     assert out["pixel_values"] is not None
     assert out["input_features"] is not None
     assert out["video_second_per_grid"] is not None
+    assert out["attention_mask"] is not None
+
+
+def test_get_batch_from_iterator_drops_attention_mask_when_skipped():
+    batch = _make_batch()
+    for key, value in list(batch.items()):
+        if isinstance(value, torch.Tensor):
+            batch[key] = _as_nocuda(value)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=True,
+        is_last_pp_stage=True,
+    )
+
+    assert "attention_mask" not in out
 
 
 def test_normalize_multimodal_inputs_flattens_expected_shapes():

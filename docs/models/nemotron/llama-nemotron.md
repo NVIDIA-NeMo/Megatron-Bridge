@@ -1,5 +1,9 @@
 # Llama Nemotron
 
+> **Deprecation notice:** Llama Nemotron support (Super 49B, Ultra 253B, 70B,
+> Nano 8B, and Nano 4B) is no longer actively maintained or tested against
+> current upstream checkpoints and will be removed in Megatron Bridge 0.7.0.
+
 [Llama Nemotron](https://huggingface.co/collections/nvidia/llama-nemotron) is NVIDIA's family of large language models derived from Meta's Llama architecture, post-trained for enhanced reasoning, human chat preferences, and agentic tasks such as RAG and tool calling. The models feature neural architecture search (NAS) optimizations for improved efficiency and accuracy trade-offs.
 
 Llama Nemotron models are supported via the Bridge system with auto-detected configuration and weight mapping.
@@ -56,7 +60,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 \
   --megatron-path /checkpoints/llama_nemotron_super_49b_megatron \
   --trust-remote-code
@@ -120,4 +124,3 @@ Training recipes for Llama Nemotron models are not currently available.
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

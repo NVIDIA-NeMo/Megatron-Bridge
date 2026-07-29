@@ -40,12 +40,18 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.checkpointing import (
     CheckpointLoadContext,
     CheckpointManager,
+    _has_global_non_persistent_checkpoint,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
+    maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.optim import setup_optimizer, sync_hybrid_device_optimizer_fp32_master_copies
+from megatron.bridge.training.optim import (
+    memory_efficient_fp32_optimizer_state_loading,
+    setup_optimizer,
+    sync_hybrid_device_optimizer_fp32_master_copies,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -107,11 +113,15 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
+        cfg.checkpoint.load, cfg.checkpoint
+    )
 
     if cfg.peft is not None:
-        return cfg.checkpoint.load is not None and (
+        load_checkpoint_exists = cfg.checkpoint.load is not None and (
             checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
         )
+        return load_checkpoint_exists or has_global_non_persistent_checkpoint
 
     load_checkpoint_exists = cfg.checkpoint.load is not None and (
         checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
@@ -120,7 +130,12 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
         or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
     )
-    should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
+    should_load_checkpoint = (
+        load_checkpoint_exists
+        or has_pretrained_checkpoint
+        or has_local_checkpoint
+        or has_global_non_persistent_checkpoint
+    )
 
     if cfg._checkpoint_load_required and not should_load_checkpoint:
         raise FileNotFoundError(
@@ -233,6 +248,7 @@ def setup(
     cfg.model.vocab_size, cfg.model.should_pad_vocab = _validate_and_set_vocab_size(
         model_vocab_size=cfg.model.vocab_size,
         tokenizer_vocab_size=tokenizer.vocab_size,
+        use_tokenizer_vocab_size=getattr(cfg.tokenizer, "use_tokenizer_vocab_size", False),
     )
 
     if hasattr(cfg.dataset, "tokenizer"):
@@ -285,20 +301,24 @@ def setup(
         def modelopt_pre_wrap_hook(model):
             from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
-            # Check which checkpoint path has modelopt state
-            if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
-                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
-                ckpt_step = None
-            elif cfg.checkpoint.load and has_modelopt_state(
-                cfg.checkpoint.load, ckpt_step=cfg.checkpoint.ckpt_step
-            ):
+            has_resume_checkpoint = cfg.checkpoint.load is not None and (
+                checkpoint_exists(cfg.checkpoint.load)
+                or is_hf_checkpoint_dir(cfg.checkpoint.load)
+                or _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
+            )
+            if has_resume_checkpoint:
                 checkpoint_path = cfg.checkpoint.load
                 ckpt_step = cfg.checkpoint.ckpt_step
+            elif cfg.checkpoint.pretrained_checkpoint:
+                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
+                ckpt_step = None
             else:
                 raise RuntimeError(
-                    f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
-                    f"or load={cfg.checkpoint.load}"
+                    "No checkpoint source is available for ModelOpt state restoration"
                 )
+
+            if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
+                raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
 
             load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
@@ -336,15 +356,17 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_manager.load(
-            CheckpointLoadContext(
-                state=state,
-                model=model,
-                optimizer=optimizer,
-                opt_param_scheduler=scheduler,
-                skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim and not cfg.checkpoint.finetune else None
+        with memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
+            checkpoint_manager.load(
+                CheckpointLoadContext(
+                    state=state,
+                    model=model,
+                    optimizer=optimizer,
+                    opt_param_scheduler=scheduler,
+                    skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+                )
             )
-        )
         # Workaround for upstream mcore: reload_model_params() only refreshes the
         # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
         # clones and level-3 FP32 working copies retain their random init.  Without
@@ -404,6 +426,24 @@ def setup(
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
+
+    # Resume the dataloader stream position so a resumed run continues over the same data (currently
+    # only Megatron Energon). Runs after the iterator is built and the model checkpoint load restored
+    # state.train_state.step. The default source is resolved by load_checkpoint from the checkpoint
+    # actually selected (recorded as "dataloader_state_dir"); an explicit dataset.dataloader_load
+    # overrides. Gated on step > 0 so only a real resume restores -- fresh, finetune, and
+    # pretrained-init runs (step reset to 0) start the data stream from the beginning.
+    if state.train_state.step > 0:
+        dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
+        if dataloader_load_path is None:
+            ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
+            dataloader_load_path = ckpt_ctx.get("dataloader_state_dir")
+        maybe_load_dataloader_state(
+            train_data_iterator,
+            state.train_state.step,
+            dataloader_load_path,
+            pg_collection=pg_collection,
+        )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
     #     ft_integration.get_rank_monitor_client().init_workload_monitoring()
@@ -591,12 +631,18 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     return transformed_model
 
 
-def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
+def _validate_and_set_vocab_size(
+    model_vocab_size: Optional[int],
+    tokenizer_vocab_size: int,
+    use_tokenizer_vocab_size: bool = False,
+) -> tuple[int, bool]:
     """Validate and determine the correct vocab size for the model.
 
     Args:
         model_vocab_size: Vocab size set in model config (can be None)
         tokenizer_vocab_size: Unpadded tokenizer vocab size
+        use_tokenizer_vocab_size: Ignore a preset model vocabulary and derive it
+            from the tokenizer. Intended for from-scratch pretraining recipes.
 
     Returns:
         tuple[int, bool]: The validated unpadded vocab size and padding flag
@@ -606,8 +652,9 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
     Raises:
         ValueError: If model vocab size is invalid
     """
-    if model_vocab_size is None:
-        # If model vocab size is not set, use the tokenizer's vocab size
+    if use_tokenizer_vocab_size or model_vocab_size is None:
+        # Use the tokenizer's vocab size when the model vocab is unset, or when
+        # use_tokenizer_vocab_size forces it for from-scratch pretraining.
         # Enable padding since this came from tokenizer
         return tokenizer_vocab_size, True
     elif model_vocab_size < tokenizer_vocab_size:

@@ -31,20 +31,19 @@ REGISTRATION_CHECK_SCRIPT = Path(__file__).with_name("autobridge_registration_ch
 
 EXPECTED_REGISTRATIONS = {
     "BailingMoeV2ForCausalLM": "megatron.bridge.models.bailing.bailing_moe2_bridge.BailingMoeV2Bridge",
-    "DeciLMForCausalLM": "megatron.bridge.models.llama_nemotron.llama_nemotron_bridge.LlamaNemotronBridge",
-    "DeepseekV2ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v2_bridge.DeepSeekV2Bridge",
     "DeepseekV3ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v3_bridge.DeepSeekV3Bridge",
     "DeepseekV4ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v4_bridge.DeepSeekV4Bridge",
     "Ernie4_5_MoeForCausalLM": "megatron.bridge.models.ernie.ernie_45_bridge.Ernie45Bridge",
     "Ernie4_5_VLMoeForConditionalGeneration": ("megatron.bridge.models.ernie_vl.ernie45_vl_bridge.Ernie45VLBridge"),
-    "Exaone4ForCausalLM": "megatron.bridge.models.exaone.exaone4_bridge.Exaone4Bridge",
+    "Exaone4ForCausalLM": "megatron.bridge.models.exaone.exaone4.exaone4_bridge.Exaone4Bridge",
+    "Exaone4_5_ForConditionalGeneration": "megatron.bridge.models.exaone.exaone45.exaone45_bridge.Exaone45Bridge",
+    "ExaoneMoEForCausalLM": "megatron.bridge.models.exaone.exaone_moe.exaone_moe_bridge.ExaoneMoeBridge",
+    "ExaoneMoeForCausalLM": "megatron.bridge.models.exaone.exaone_moe.exaone_moe_bridge.ExaoneMoeBridge",
     "FalconH1ForCausalLM": "megatron.bridge.models.falcon_h1.falconh1_bridge.FalconH1Bridge",
-    "Gemma2ForCausalLM": "megatron.bridge.models.gemma.gemma2_bridge.Gemma2Bridge",
     "Gemma3ForCausalLM": "megatron.bridge.models.gemma.gemma3_bridge.Gemma3ModelBridge",
     "Gemma3ForConditionalGeneration": "megatron.bridge.models.gemma_vl.gemma3_vl_bridge.Gemma3VLBridge",
     "Gemma4ForCausalLM": "megatron.bridge.models.gemma.gemma4_bridge.Gemma4Bridge",
     "Gemma4ForConditionalGeneration": "megatron.bridge.models.gemma_vl.gemma4_vl_bridge.Gemma4VLBridge",
-    "GemmaForCausalLM": "megatron.bridge.models.gemma.gemma_bridge.GemmaBridge",
     "Glm4MoeForCausalLM": "megatron.bridge.models.glm.glm45_bridge.GLM45Bridge",
     "Glm4MoeLiteForCausalLM": "megatron.bridge.models.glm.glm47_flash_bridge.GLM47FlashBridge",
     "Glm4vMoeForConditionalGeneration": "megatron.bridge.models.glm_vl.glm_45v_bridge.GLM45VBridge",
@@ -59,13 +58,10 @@ EXPECTED_REGISTRATIONS = {
     "MiniMaxM2ForCausalLM": "megatron.bridge.models.minimax_m2.minimax_m2_bridge.MiniMaxM2Bridge",
     "MiniMaxM3SparseForConditionalGeneration": ("megatron.bridge.models.minimax_m3.minimax_m3_bridge.MiniMaxM3Bridge"),
     "Mistral3ForConditionalGeneration": ("megatron.bridge.models.ministral3.ministral3_bridge.Ministral3Bridge"),
-    "MistralForCausalLM": "megatron.bridge.models.mistral.mistral_bridge.MistralBridge",
-    "NemotronForCausalLM": "megatron.bridge.models.nemotron.nemotron_bridge.NemotronBridge",
     "NemotronHForCausalLM": "megatron.bridge.models.nemotronh.nemotron_h_bridge.NemotronHBridge",
     "NemotronH_Nano_Omni_Reasoning_V3": (
         "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
     ),
-    "NemotronH_Nano_VL_V2": "megatron.bridge.models.nemotron_vl.nemotron_vl_bridge.NemotronVLBridge",
     "NemotronLabsDiffusionModel": (
         "megatron.bridge.diffusion.conversion.nemotron_labs_diffusion."
         "nemotron_labs_diffusion_bridge.NemotronLabsDiffusionBridge"
@@ -94,13 +90,12 @@ EXPECTED_REGISTRATIONS = {
 
 STRING_REGISTRATIONS = {
     "BailingMoeV2ForCausalLM",
-    "DeciLMForCausalLM",
-    "DeepseekV2ForCausalLM",
     "DeepseekV3ForCausalLM",
     "DeepseekV4ForCausalLM",
     "Ernie4_5_MoeForCausalLM",
     "Ernie4_5_VLMoeForConditionalGeneration",
     "Exaone4ForCausalLM",
+    "ExaoneMoEForCausalLM",
     "FalconH1ForCausalLM",
     "Gemma4ForCausalLM",
     "Gemma4ForConditionalGeneration",
@@ -114,15 +109,26 @@ STRING_REGISTRATIONS = {
     "MiniMaxM3SparseForConditionalGeneration",
     "NemotronHForCausalLM",
     "NemotronH_Nano_Omni_Reasoning_V3",
-    "NemotronH_Nano_VL_V2",
     "NemotronLabsDiffusionModel",
     "Qwen3ASRForConditionalGeneration",
+    "Qwen3_5ForCausalLM",
     "Qwen3_5ForConditionalGeneration",
+    "Qwen3_5MoeForCausalLM",
     "Qwen3_5MoeForConditionalGeneration",
     "SarvamMLAForCausalLM",
     "SarvamMoEForCausalLM",
     "Step3p5ForCausalLM",
     "Step3p7ForConditionalGeneration",
+}
+
+DEPRECATED_REGISTRATIONS = {
+    "DeciLMForCausalLM",
+    "DeepseekV2ForCausalLM",
+    "Gemma2ForCausalLM",
+    "GemmaForCausalLM",
+    "MistralForCausalLM",
+    "NemotronH_Nano_VL_V2",
+    "NemotronForCausalLM",
 }
 
 
@@ -134,6 +140,7 @@ def test_public_autobridge_import_registers_every_supported_model() -> None:
             str(REGISTRATION_CHECK_SCRIPT),
             json.dumps(EXPECTED_REGISTRATIONS, sort_keys=True),
             json.dumps(sorted(STRING_REGISTRATIONS)),
+            json.dumps(sorted(DEPRECATED_REGISTRATIONS)),
         ],
         capture_output=True,
         text=True,

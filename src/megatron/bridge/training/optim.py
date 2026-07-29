@@ -13,8 +13,12 @@
 # limitations under the License.
 
 import logging
-from typing import Optional, Union
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from types import MethodType
+from typing import Optional, Union, cast
 
+import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
@@ -109,6 +113,132 @@ def setup_optimizer(
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
     return optimizer, scheduler
+
+
+def _optimizer_state_is_fp32_adam(state_dict: Mapping[str, object]) -> bool:
+    """Return whether a state dict contains only FP32 Adam moment tensors."""
+    states = state_dict.get("state")
+    if not isinstance(states, Mapping) or not states:
+        return False
+
+    expected_state_names = {"exp_avg", "exp_avg_sq"}
+    for state in states.values():
+        if not isinstance(state, Mapping) or set(state) != expected_state_names:
+            return False
+        if any(not isinstance(value, torch.Tensor) or value.dtype != torch.float32 for value in state.values()):
+            return False
+    return True
+
+
+def _get_te_fused_adam_class() -> type[torch.optim.Optimizer] | None:
+    """Return Transformer Engine's FusedAdam class when it is available."""
+    try:
+        from transformer_engine.pytorch.optimizers import FusedAdam
+    except ImportError:
+        return None
+    return cast(type[torch.optim.Optimizer], FusedAdam)
+
+
+@contextmanager
+def memory_efficient_fp32_optimizer_state_loading(
+    optimizer: MegatronOptimizer | None,
+) -> Iterator[int]:
+    """Avoid redundant TE FusedAdam state copies during checkpoint loading.
+
+    Megatron-Core's distributed optimizer creates FP32 Adam moment tensors as
+    its loading scaffold. Transformer Engine's loader replaces those tensors
+    with another FP32 copy even though no conversion is needed. This context
+    temporarily uses PyTorch's base loader only for compatible standard
+    distributed FusedAdam instances, allowing them to adopt the scaffold
+    tensors directly.
+
+    Args:
+        optimizer: Optimizer participating in checkpoint loading.
+
+    Yields:
+        Number of compatible FusedAdam instances using the base loader.
+    """
+    if optimizer is None:
+        yield 0
+        return
+
+    fused_adam_class = _get_te_fused_adam_class()
+    if fused_adam_class is None:
+        yield 0
+        return
+
+    sub_optimizers = optimizer.chained_optimizers if hasattr(optimizer, "chained_optimizers") else [optimizer]
+    missing_method = object()
+    patched: list[tuple[torch.optim.Optimizer, object]] = []
+
+    try:
+        for distributed_optimizer in sub_optimizers:
+            if getattr(distributed_optimizer, "is_stub_optimizer", False):
+                continue
+            if not hasattr(distributed_optimizer, "shard_fp32_from_float16_groups"):
+                continue
+            if getattr(getattr(distributed_optimizer, "ddp_config", None), "use_megatron_fsdp", False):
+                continue
+
+            config = getattr(distributed_optimizer, "config", None)
+            if getattr(config, "use_precision_aware_optimizer", False):
+                continue
+            if getattr(config, "optimizer_cpu_offload", False):
+                continue
+
+            inner = getattr(distributed_optimizer, "optimizer", None)
+            if not isinstance(inner, fused_adam_class):
+                continue
+            if getattr(inner, "master_weights", None) is not False:
+                continue
+            if getattr(inner, "store_param_remainders", False):
+                continue
+
+            state_dtype_map = getattr(inner, "name_to_dtype_map", None)
+            if not isinstance(state_dtype_map, Mapping) or any(
+                state_dtype_map.get(name) != torch.float32 for name in ("exp_avg", "exp_avg_sq")
+            ):
+                continue
+
+            params = [param for group in inner.param_groups for param in group["params"]]
+            if not params or any(param.dtype != torch.float32 for param in params):
+                continue
+
+            original_load_state_dict: Callable[[dict[str, object]], None] = inner.load_state_dict
+
+            def _load_state_dict_without_fp32_reallocation(
+                fused_adam: torch.optim.Optimizer,
+                state_dict: dict[str, object],
+                *,
+                _fallback: Callable[[dict[str, object]], None] = original_load_state_dict,
+            ) -> None:
+                if not _optimizer_state_is_fp32_adam(state_dict):
+                    _fallback(state_dict)
+                    return
+                torch.optim.Optimizer.load_state_dict(fused_adam, state_dict)
+
+            previous_instance_method = inner.__dict__.get("load_state_dict", missing_method)
+            setattr(inner, "load_state_dict", MethodType(_load_state_dict_without_fp32_reallocation, inner))
+            patched.append((inner, previous_instance_method))
+
+        if patched:
+            G_LOGGER.info(
+                "Enabled memory-efficient FP32 checkpoint-state loading for %d distributed "
+                "Transformer Engine FusedAdam optimizer(s).",
+                len(patched),
+            )
+
+        yield len(patched)
+    finally:
+        for inner, previous_instance_method in patched:
+            if previous_instance_method is missing_method:
+                delattr(inner, "load_state_dict")
+            else:
+                setattr(inner, "load_state_dict", previous_instance_method)
+        if patched:
+            # The replaced scaffold tensors cannot enter the allocator cache
+            # until the checkpoint-loading frame releases its state dict.
+            torch.cuda.empty_cache()
 
 
 def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer | None) -> bool:

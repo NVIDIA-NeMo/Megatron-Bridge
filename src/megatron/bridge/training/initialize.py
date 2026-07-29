@@ -335,9 +335,8 @@ def _initialize_tp_communicators(
     communication overlap"""
 
     try:
-        import transformer_engine  # noqa: F401
         import yaml
-        from transformer_engine.pytorch import module as te_module
+        from transformer_engine.pytorch import initialize_ub
 
     except ImportError:
         raise RuntimeError(
@@ -358,8 +357,9 @@ def _initialize_tp_communicators(
         model_config.hidden_size,
     ]
 
-    if is_te_min_version("2.7.0"):
-        UserBufferQuantizationMode = te_module.base.UserBufferQuantizationMode
+    if is_te_min_version("2.8.0"):
+        from transformer_engine.pytorch import UserBufferQuantizationMode
+
         quantization_modes = [UserBufferQuantizationMode.FP8 if model_config.fp8 else UserBufferQuantizationMode.NONE]
         if (
             model_config.fp8 is not None
@@ -368,7 +368,7 @@ def _initialize_tp_communicators(
         ):
             quantization_modes.append(UserBufferQuantizationMode.NONE)
         # The process group with the target bootstrap backend is created in Transformer Engine.
-        te_module.base.initialize_ub(
+        initialize_ub(
             shape=input_shape,
             tp_size=model_config.tensor_model_parallel_size,
             quantization_modes=quantization_modes,
@@ -377,7 +377,7 @@ def _initialize_tp_communicators(
         )
     elif is_te_min_version("1.9.0"):
         # The process group with the target bootstrap backend is created in Transformer Engine.
-        te_module.base.initialize_ub(
+        initialize_ub(
             shape=input_shape,
             tp_size=model_config.tensor_model_parallel_size,
             use_fp8=(model_config.fp8 is not None),
@@ -390,7 +390,7 @@ def _initialize_tp_communicators(
         # Create a MPI process group to help with TP communication overlap bootstrap.
         torch.distributed.new_group(backend="mpi")
 
-        te_module.base.initialize_ub(
+        initialize_ub(
             shape=input_shape,
             tp_size=model_config.tensor_model_parallel_size,
             use_fp8=(model_config.fp8 is not None),

@@ -77,6 +77,8 @@ def get_batch_from_iterator(
 
     batch_required_keys: dict[str, Any] = {}
     for key, value in batch.items():
+        if key == "attention_mask" and skip_getting_attention_mask_from_dataset:
+            continue
         if key in required_device_keys:
             if key == "visual_inputs":
                 if value is None:

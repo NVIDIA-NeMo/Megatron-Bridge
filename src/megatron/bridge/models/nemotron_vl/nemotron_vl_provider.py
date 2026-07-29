@@ -171,7 +171,7 @@ class NemotronVLModelProvider(HybridModelProvider):
 
         from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 
-        model = NemotronVLModel(llava_model=llava_model)
+        model = NemotronVLModel(config=self, llava_model=llava_model)
 
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
             model.freeze(

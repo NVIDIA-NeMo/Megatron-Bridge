@@ -15,6 +15,6 @@
 """Flat performance benchmark recipes for throughput measurement.
 
 Each sub-package corresponds to one model family.  Every recipe function is
-self-contained: it calls a library recipe, overrides parallelism / precision,
+self-contained: it calls a model recipe, overrides parallelism / precision,
 calls ``_benchmark_common()``, and returns a ``ConfigContainer``.
 """

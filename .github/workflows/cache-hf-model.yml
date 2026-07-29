@@ -30,17 +30,32 @@ jobs:
       HF_HOME: /mnt/datadrive/TestData/HF_HOME
     steps:
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install dependencies
         run: |
-          TRANSFORMERS_VERSION=$(grep -E 'transformers[[:space:]]*[=><!~]+' ${GITHUB_WORKSPACE}/pyproject.toml | sed -E 's/.*transformers[[:space:]]*([=><!~]+)[[:space:]]*"?([0-9a-zA-Z\.\-\*]+)"?.*/\1\2/')
-          pip install torch "transformers${TRANSFORMERS_VERSION}" "huggingface_hub[cli]"
+          TRANSFORMERS_REQUIREMENT=$(
+            python - "${GITHUB_WORKSPACE}/pyproject.toml" <<'PY'
+          import re
+          import sys
+          import tomllib
+
+          with open(sys.argv[1], "rb") as pyproject:
+              dependencies = tomllib.load(pyproject)["project"]["dependencies"]
+
+          pattern = re.compile(r"^transformers(?:$|[\s\[<>=!~;@])", re.IGNORECASE)
+          requirement = next((item for item in dependencies if pattern.match(item)), None)
+          if requirement is None:
+              raise SystemExit("Transformers requirement not found in pyproject.toml")
+          sys.stdout.write(requirement)
+          PY
+          )
+          pip install torch "${TRANSFORMERS_REQUIREMENT}" "huggingface_hub[cli]"
 
       - name: Log in to HuggingFace
         env:

@@ -32,6 +32,7 @@ from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 CHATML_ASSISTANT_ROLE = "assistant"
+_LEGACY_CHAT_ROLE_ALIASES = {"human": "user", "gpt": CHATML_ASSISTANT_ROLE}
 
 
 @dataclass(frozen=True)
@@ -176,11 +177,16 @@ def normalize_energon_vlm_sample(sample: Any) -> NormalizedVLMSample:
         tools = json.loads(tools)
     if tools is not None and (not isinstance(tools, list) or not all(isinstance(tool, Mapping) for tool in tools)):
         raise ValueError("Energon ChatML tools must be a list of tool-definition dictionaries.")
+    if isinstance(videos, (bytes, bytearray)):
+        normalized_videos = [videos]
+    else:
+        normalized_videos = _videos_to_pil(videos) if videos is not None and len(videos) > 0 else None
+
     return NormalizedVLMSample(
         conversation=cook_chatml_sample(sample.conversation),
         tools=copy.deepcopy(tools),
         images=_images_to_pil(imgs) if imgs is not None and len(imgs) > 0 else None,
-        videos=_videos_to_pil(videos) if videos is not None and len(videos) > 0 else None,
+        videos=normalized_videos,
         audio=getattr(sample, "audio", None),
     )
 
@@ -489,7 +495,8 @@ def normalize_chat_conversation(
             normalized.append(turn)
             continue
         if "from" in turn and "value" in turn:
-            normalized.append({"role": str(turn["from"]).lower(), "content": turn["value"]})
+            role = str(turn["from"]).lower()
+            normalized.append({"role": _LEGACY_CHAT_ROLE_ALIASES.get(role, role), "content": turn["value"]})
             continue
         raise ValueError("Chat turns must contain role/content or legacy from/value fields.")
 
@@ -950,6 +957,16 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
             "<|im_end|>\n",
             ("<|im_end|>",),
             {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")},
+        ),
+        (
+            ("<|im_assistant|>", "<|im_user|>", "<|im_system|>", "<|im_middle|>", "<|im_end|>"),
+            "<|im_assistant|>assistant<|im_middle|>",
+            "<|im_end|>",
+            (),
+            {
+                "system": "<|im_system|>system<|im_middle|>",
+                "user": "<|im_user|>user<|im_middle|>",
+            },
         ),
         (("<|turn>model", "<turn|>"), "<|turn>model\n", "<turn|>", (), {}),
         (("<start_of_turn>model", "<end_of_turn>"), "<start_of_turn>model\n", "<end_of_turn>", (), {}),

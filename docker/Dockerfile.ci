@@ -16,14 +16,44 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
+ARG APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH=True
+
+RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
+    if [ "$APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH" != "True" ]; then exit 0; fi; \
+    TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
+    patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
+    python - <<'PY'
+import torch
+from torch.library import Library, _clear_torch_ops_cache
+
+namespace_name = "_mbridge_finalizer_test"
+library = Library(namespace_name, "DEF")
+library.define("uncached_op() -> None")
+namespace = getattr(torch.ops, namespace_name)
+original_getattr = type(namespace).__getattr__
+
+
+def fail_getattr(self, name):
+    raise AssertionError(f"Torch op cache cleanup called __getattr__ for {name}")
+
+
+type(namespace).__getattr__ = fail_getattr
+try:
+    _clear_torch_ops_cache({f"{namespace_name}::uncached_op"})
+finally:
+    type(namespace).__getattr__ = original_getattr
+PY
+
 ARG INSTALL_DEEPEP=True
 ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
+ARG REINSTALL_NVSHMEM=True
 
 ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     VIRTUAL_ENV=/opt/venv \
     UV_LINK_MODE=copy \
     UV_VERSION="0.7.2" \
+    UV_HTTP_TIMEOUT=120 \
     NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
     HYBRID_EP_MULTINODE=1 \
     RDMA_CORE_HOME=/opt/rdma-core/build \
@@ -59,10 +89,12 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
         git fetch origin $DEEPEP_COMMIT && \
         git checkout FETCH_HEAD && \
         patch -p1 < /opt/deepep.patch && \
-        pip install --no-cache-dir nvidia-nvshmem-cu13==3.6.5 && \
-        # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
-        NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
-        ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so && \
+        if [ "$REINSTALL_NVSHMEM" = "True" ]; then \
+            pip install --no-cache-dir nvidia-nvshmem-cu13==3.6.5 && \
+            # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
+            NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
+            ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so; \
+        fi && \
         apt-get update && \
         apt-get install -y --no-install-recommends libnvidia-ml-dev && \
         TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
@@ -95,6 +127,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
     # Reinstall nvidia-cutlass-dsl in system site packages
     # uv install can run into non-deterministic install issues
+    # Keep this pin compatible with cuDNN Frontend; mismatched versions can break
+    # its CUTLASS-backed kernels.
     pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
     pip install nvidia-cutlass-dsl[cu13]==4.5.0 && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \

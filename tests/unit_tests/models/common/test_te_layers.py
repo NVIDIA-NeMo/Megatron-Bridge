@@ -21,7 +21,7 @@ from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 
 
 class TestTERowParallelLinearLayerNorm:
-    """Test cases for the TERowParallelLinearLayerNorm module shared by Gemma2, Gemma3, and EXAONE 4.0."""
+    """Test cases for the TERowParallelLinearLayerNorm module shared by Gemma3 and EXAONE 4.0."""
 
     def test_forward_applies_post_layernorm(self):
         """Forward applies Post-LN to the linear output and passes the None bias through."""
