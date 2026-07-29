@@ -49,12 +49,12 @@ fi
   --vision-depth "${VISION_DEPTH}" \
   --audio-layers "${AUDIO_LAYERS}"
 
-"${PYTHON}" examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model "${HF_SMOKE_PATH}" \
   --megatron-path "${MEGATRON_PATH}" \
   --torch-dtype bfloat16
 
-"${PYTHON}" examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
   --hf-model "${HF_SMOKE_PATH}" \
   --megatron-path "${MEGATRON_PATH}/iter_0000000" \
   --hf-path "${HF_EXPORT_PATH}"

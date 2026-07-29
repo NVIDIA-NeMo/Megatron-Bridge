@@ -168,7 +168,7 @@ CLI_OVERRIDES="\
 CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func qwen3_vl_step \
-    --peft_scheme lora \
+    --mode lora \
     $CLI_OVERRIDES"
 
 echo "Executing command..."

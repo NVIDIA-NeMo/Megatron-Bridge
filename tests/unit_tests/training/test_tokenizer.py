@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch
+from unittest.mock import patch, sentinel
 
 import pytest
 from transformers import AutoTokenizer
@@ -68,7 +68,7 @@ class TestTokenizers:
         metadata_path = {"library": "huggingface", "chat_template": chat_template}
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
+            tokenizer_model="meta-llama/Meta-Llama-3-8B-Instruct",
             metadata_path=metadata_path,
         )
 
@@ -79,27 +79,78 @@ class TestTokenizers:
         assert tokenizer.library == "huggingface"
         assert tokenizer.chat_template == chat_template
 
-    @patch("megatron.core.tokenizers.text.libraries.SentencePieceTokenizer")
-    @pytest.mark.parametrize("legacy", [True])
-    def test_build_sp_tokenizer(self, mock_sp_tokenizer, legacy):
-        # Setup
-        custom_kwargs = {
-            "legacy": legacy,
-        }
-
+    @pytest.mark.parametrize(
+        ("model_id", "revision", "trust_remote_code"),
+        [
+            ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", False),  # pragma: allowlist secret
+            (
+                "moonshotai/Moonlight-16B-A3B",
+                "476b36a473d4467f94469414bef6cee75c9c8172",  # pragma: allowlist secret
+                True,
+            ),
+        ],
+    )
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
+    def test_build_hf_tokenizer_resolves_immutable_revision(
+        self,
+        mock_snapshot_download,
+        mock_build_mcore_tokenizer,
+        model_id,
+        revision,
+        trust_remote_code,
+    ):
+        mock_snapshot_download.return_value = f"/cache/models--resolved/snapshots/{revision}"
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        hf_tokenizer_kwargs = {"revision": revision, "trust_remote_code": trust_remote_code}
         config = TokenizerConfig(
-            tokenizer_type="Llama2Tokenizer",
-            tokenizer_model="sp.model",
-            special_tokens=["<TEST_SPECIAL>"],
-            sp_tokenizer_kwargs=custom_kwargs,
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=model_id,
+            hf_tokenizer_kwargs=hf_tokenizer_kwargs,
         )
 
-        # Execute
         tokenizer = build_tokenizer(config)
 
-        # Verify
-        assert tokenizer.library == "sentencepiece"
-        assert tokenizer.additional_args["legacy"] == legacy
+        assert tokenizer is sentinel.tokenizer
+        mock_snapshot_download.assert_called_once()
+        snapshot_kwargs = mock_snapshot_download.call_args.kwargs
+        assert snapshot_kwargs["repo_id"] == model_id
+        assert snapshot_kwargs["revision"] == revision
+        assert {"config.json", "tokenizer*", "*.py", "*.jinja"}.issubset(snapshot_kwargs["allow_patterns"])
+        assert {"*.safetensors", "*.bin", "*.pt", "*.gguf"}.issubset(snapshot_kwargs["ignore_patterns"])
+
+        resolved_config = mock_build_mcore_tokenizer.call_args.args[0]
+        assert resolved_config is not config
+        assert resolved_config.tokenizer_model == mock_snapshot_download.return_value
+        assert resolved_config.trust_remote_code is trust_remote_code
+        assert config.tokenizer_model == model_id
+        assert config.hf_tokenizer_kwargs == hf_tokenizer_kwargs
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
+    def test_build_tokenizer_skips_snapshot_resolution_without_remote_hf_revision(
+        self, mock_snapshot_download, mock_build_mcore_tokenizer, tmp_path
+    ):
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        configs = [
+            TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model="Qwen/Qwen3-8B"),
+            TokenizerConfig(
+                tokenizer_type="NullTokenizer",
+                vocab_size=32,
+                hf_tokenizer_kwargs={"revision": "not-used"},
+            ),
+            TokenizerConfig(
+                tokenizer_type="HuggingFaceTokenizer",
+                tokenizer_model=tmp_path,
+                hf_tokenizer_kwargs={"revision": "local-path-is-already-resolved"},
+            ),
+        ]
+
+        for config in configs:
+            assert build_tokenizer(config) is sentinel.tokenizer
+            assert mock_build_mcore_tokenizer.call_args.args[0] is config
+
+        mock_snapshot_download.assert_not_called()
 
     @patch("megatron.core.tokenizers.text.libraries.TikTokenTokenizer")
     @pytest.mark.parametrize("pattern", ["v1"])
@@ -166,3 +217,80 @@ class TestTokenizers:
         # verify that the directory actually contains files (sanity check)
         assert (local_model_path / "tokenizer_config.json").exists()
         assert (local_model_path / "tokenizer.json").exists()
+
+
+CHAT_TEMPLATE = "{% generation %}{{ messages }}{% endgeneration %}"
+
+
+class TestChatTemplatePathOverride:
+    """`TokenizerConfig.chat_template_path` loads a jinja template from a local or msc:// path."""
+
+    def test_resolve_from_local_file(self, tmp_path):
+        from megatron.bridge.training.tokenizers import tokenizer as tok_mod
+
+        template_file = tmp_path / "template.jinja"
+        template_file.write_text(CHAT_TEMPLATE)
+        config = TokenizerConfig(chat_template_path=str(template_file))
+
+        with patch.object(tok_mod.MultiStorageClientFeature, "is_enabled", return_value=False):
+            assert tok_mod._resolve_chat_template(config) == CHAT_TEMPLATE
+
+    def test_inline_chat_template_passthrough(self):
+        from megatron.bridge.training.tokenizers.tokenizer import _resolve_chat_template
+
+        config = TokenizerConfig(chat_template=CHAT_TEMPLATE)
+
+        assert _resolve_chat_template(config) == CHAT_TEMPLATE
+
+    def test_none_when_neither_set(self):
+        from megatron.bridge.training.tokenizers.tokenizer import _resolve_chat_template
+
+        assert _resolve_chat_template(TokenizerConfig()) is None
+
+    def test_inline_and_path_are_mutually_exclusive(self, tmp_path):
+        from megatron.bridge.training.tokenizers.tokenizer import _resolve_chat_template
+
+        template_file = tmp_path / "template.jinja"
+        template_file.write_text(CHAT_TEMPLATE)
+        config = TokenizerConfig(chat_template=CHAT_TEMPLATE, chat_template_path=str(template_file))
+
+        with pytest.raises(ValueError):
+            _resolve_chat_template(config)
+
+    def test_resolve_via_msc_when_enabled(self):
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.training.tokenizers import tokenizer as tok_mod
+
+        fake_handle = MagicMock()
+        fake_handle.read.return_value = CHAT_TEMPLATE
+        fake_msc = MagicMock()
+        fake_msc.open.return_value.__enter__.return_value = fake_handle
+
+        config = TokenizerConfig(chat_template_path="msc://bucket/template.jinja")
+        with patch.object(tok_mod, "MultiStorageClientFeature") as msc_feat:
+            msc_feat.is_enabled.return_value = True
+            msc_feat.import_package.return_value = fake_msc
+            assert tok_mod._resolve_chat_template(config) == CHAT_TEMPLATE
+        fake_msc.open.assert_called_once_with("msc://bucket/template.jinja", "r")
+
+    def test_build_hf_tokenizer_passes_resolved_template(self, tmp_path):
+        from megatron.bridge.training.tokenizers import tokenizer as tok_mod
+
+        template_file = tmp_path / "template.jinja"
+        template_file.write_text(CHAT_TEMPLATE)
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
+            chat_template_path=str(template_file),
+        )
+
+        with (
+            patch.object(tok_mod.MultiStorageClientFeature, "is_enabled", return_value=False),
+            patch.object(tok_mod, "build_mcore_tokenizer") as mock_build_mcore,
+        ):
+            build_tokenizer(config)
+
+        (called_config,), _ = mock_build_mcore.call_args
+        assert called_config.chat_template == CHAT_TEMPLATE
+        assert called_config.chat_template_path is None

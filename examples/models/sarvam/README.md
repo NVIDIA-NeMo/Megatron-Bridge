@@ -28,7 +28,7 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 ### Import HF → Megatron
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model sarvamai/sarvam-30b \
     --megatron-path ${WORKSPACE}/models/sarvam-30b \
     --trust-remote-code
@@ -37,7 +37,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model sarvamai/sarvam-30b \
     --megatron-path ${WORKSPACE}/models/sarvam-30b/iter_0000000 \
     --hf-path ${WORKSPACE}/models/sarvam-30b-hf-export

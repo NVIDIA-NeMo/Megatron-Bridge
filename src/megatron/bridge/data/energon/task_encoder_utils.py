@@ -19,6 +19,7 @@ reused by the generic ``HFTaskEncoder`` and any future
 model-specific encoders.
 """
 
+import inspect
 import json
 import logging
 import re
@@ -293,6 +294,14 @@ class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
     def __init__(self, path: EPath, *, auto_decode: bool = True, image_decode_spec: Optional[str] = None, **kwargs):
         kwargs.pop("decoder", None)
         kwargs.pop("auto_decode", None)
+        parent_parameters = inspect.signature(DefaultDecoderWebdatasetFactory.__init__).parameters
+        if "decoder" in parent_parameters:
+            # Energon 7.4+ accepts a decoder object directly.
+            kwargs["decoder"] = None
+        else:
+            # Earlier 7.x releases construct their optional PyAV decoder when
+            # auto_decode is true, even for image-only datasets.
+            kwargs["auto_decode"] = False
         super().__init__(path, **kwargs)
         if auto_decode:
             spec = image_decode_spec if image_decode_spec is not None else getattr(self, "image_decode", "torchrgb")

@@ -14,6 +14,8 @@
 # ruff: noqa: F401
 """Common helpers for deepseek performance recipes."""
 
+import torch
+
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
@@ -35,6 +37,15 @@ def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
+def _enable_deepseek_precision_aware_optimizer(cfg: ConfigContainer) -> None:
+    """Enable the optimizer precision settings used by tuned DeepSeek recipes."""
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+
+
 def _enable_deepseek_full_iteration_mxfp8(
     cfg: ConfigContainer,
     *,
@@ -42,6 +53,10 @@ def _enable_deepseek_full_iteration_mxfp8(
     fp8_output_proj: bool = False,
 ) -> None:
     """Apply legacy DeepSeek V3 HybridEP full-iteration MXFP8 settings."""
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = 32
     cfg.model.cuda_graph_impl = "full_iteration"
     cfg.model.cuda_graph_scope = []
     cfg.model.high_priority_a2a_comm_stream = True

@@ -2,17 +2,20 @@
 
 Choose the tutorial that matches how your examples should reach the training loop:
 
-| Workflow | Tutorial | Runtime path |
-| --- | --- | --- |
-| LLM pretraining from Megatron binary data | [DCLM preprocessing](dclm/README.md) | `GPTDatasetConfig` → Megatron Core dataset builder |
-| Text SFT or PEFT from local JSONL or materialized Hugging Face data | [Text-only SFT](text-only-sft/README.md) | `GPTSFTDatasetConfig` → `GPTSFTDatasetBuilder` |
-| Direct Hugging Face SFT for text, vision, or audio | [Direct Hugging Face SFT](direct-hf-sft/README.md) | `DirectHFSFTDatasetConfig` → `DirectHFSFTDatasetBuilder` |
-| Large multimodal WebDataset/Energon data | [VALOR32K-AVQA](valor32k-avqa/data-preparation.md) | Energon provider |
+| Workflow | Status and starting data | Tutorial | Runtime path |
+| --- | --- | --- | --- |
+| Pretraining from Megatron `.bin`/`.idx` | Recommended; prepared token IDs | [DCLM preprocessing](dclm/README.md) | `GPTDatasetConfig` → Megatron Core dataset builder |
+| Text SFT or PEFT directly from Hugging Face | Recommended for hosted chat/prompt-completion rows or local JSON/JSONL loaded through Hugging Face datasets | [Hugging Face text-only](hf-text-only/README.md) | `HFDatasetSourceConfig` → `DirectHFSFTDatasetConfig` → `DirectHFSFTDatasetBuilder` |
+| Text SFT or PEFT from current prepared data | Transitional; materialized JSONL and optional packed Parquet | [Prepared text-only](text-only-sft/README.md) | `GPTSFTDatasetConfig` → `GPTSFTDatasetBuilder` |
+| Text SFT or PEFT from prepared `.bin`/`.idx` | Planned Issue #4664 workflow; not available yet | Follow Issue #4664 | Future prepared-SFT builder |
+| Multimodal SFT or PEFT from Hugging Face | Recommended for hosted vision, video, audio, and omni data or local JSON/JSONL loaded through Hugging Face datasets | [Hugging Face multimodal](hf-multimodal/README.md) | `HFDatasetSourceConfig` → `DirectHFSFTDatasetConfig` → `DirectHFSFTDatasetBuilder` |
+| Large sharded multimodal training | Recommended for WebDataset/Energon data | [Multimodal Energon](energon/README.md) | `EnergonDatasetConfig` → `EnergonDatasetBuilder` |
 
 ## Which SFT path should I use?
 
-- Choose [text-only SFT](text-only-sft/README.md) when you want local or Hugging Face text data normalized into reusable JSONL, need offline sequence packing, or want finite `num_epochs` semantics.
-- Choose [direct Hugging Face SFT](direct-hf-sft/README.md) when you want to consume hosted or local Hugging Face rows directly, need text or multimodal examples, or want collate-time in-batch packing.
-- Choose [Energon](valor32k-avqa/data-preparation.md) for large sharded multimodal datasets.
+- Choose [Hugging Face text-only](hf-text-only/README.md) for new on-the-fly text SFT, including hosted chat datasets, local conversation JSON/JSONL, and prompt-completion rows.
+- Choose [Hugging Face multimodal](hf-multimodal/README.md) for processor-native image, video, audio, or omni conversations. Hosted datasets and local JSON/JSONL accepted by the Hugging Face `json` loader use the same `HFDatasetSourceConfig`; there is no separate preloaded/local VLM provider.
+- Choose the current [text-only SFT](text-only-sft/README.md) path when you specifically need reusable local JSONL, finite `num_epochs`, or offline packed-Parquet behavior. This is a transitional prepared-data path until the planned `.bin`/`.idx` SFT replacement is available.
+- Choose the [Energon tutorial](energon/README.md) for large sharded multimodal datasets; [VALOR32K-AVQA](valor32k-avqa/data-preparation.md) is the production audio-video example.
 
-Both text SFT paths use serializable, declarative configuration and runtime builders. `GPTSFTDatasetBuilder` materializes Hugging Face text rows before constructing `GPTSFTDataset`; `DirectHFSFTDatasetBuilder` loads and adapts Hugging Face rows directly into `DirectSFTDataset` without intermediate JSONL materialization. The word “Direct” distinguishes that runtime lifecycle—it does not mean that the GPT SFT config cannot select a Hugging Face source. The builders own runtime objects such as tokenizers, processors, collators, and datasets.
+All current SFT paths use serializable, declarative configuration and runtime builders. `GPTSFTDatasetBuilder` materializes Hugging Face text rows before constructing `GPTSFTDataset`; `DirectHFSFTDatasetBuilder` loads rows from Hugging Face datasets directly into `DirectSFTDataset` without intermediate JSONL materialization; `EnergonDatasetBuilder` constructs the configured task encoder and WebDataset loaders. The builders own runtime objects such as tokenizers, processors, task encoders, collators, and datasets.

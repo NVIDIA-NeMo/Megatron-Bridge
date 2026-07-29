@@ -20,7 +20,7 @@ We use the following environment variables throughout this page
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import  \
+./scripts/conversion/convert.sh import  \
 --hf-model $HF_MODEL_ID  \
 --megatron-path /path/to/output/megatron/ckpt \
 --trust-remote-code
@@ -28,7 +28,7 @@ uv run python examples/conversion/convert_checkpoints.py import  \
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export  \
+./scripts/conversion/convert.sh export  \
 --hf-model $HF_MODEL_ID  \
 --megatron-path /path/to/trained/megatron/ckpt \
 --hf-path /path/to/output/hf/ckpt

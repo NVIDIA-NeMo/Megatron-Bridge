@@ -276,15 +276,6 @@ class TestGemma4BridgeRegistration:
     def test_vl_bridge_inherits_causal_bridge(self):
         assert issubclass(Gemma4VLBridge, Gemma4Bridge)
 
-    def test_initialization(self, causal_bridge):
-        assert isinstance(causal_bridge, Gemma4Bridge)
-
-    def test_has_required_methods(self, causal_bridge):
-        assert callable(getattr(causal_bridge, "provider_bridge", None))
-        assert callable(getattr(causal_bridge, "mapping_registry", None))
-        assert callable(getattr(causal_bridge, "maybe_modify_loaded_hf_weight", None))
-        assert callable(getattr(causal_bridge, "maybe_modify_converted_hf_weight", None))
-
 
 class TestGemma4BridgeProviderBridgeMoE:
     """Gemma4Bridge.provider_bridge for MoE CausalLM."""
@@ -541,6 +532,23 @@ class TestMaybeModifyConvertedHFWeightCausal:
             atol=0,
         )
 
+    def test_config_only_vl_export_drops_tied_global_v_proj(self, vl_bridge, mock_hf_config_moe):
+        vl_bridge.hf_config = mock_hf_config_moe
+        converted = {
+            "model.language_model.layers.4.self_attn.v_proj.weight": torch.randn(4, 8),
+            "model.language_model.layers.5.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.language_model.layers.5.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.language_model.layers.5.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+
+        result = vl_bridge.maybe_modify_converted_hf_weight(None, converted, {})
+
+        assert set(result) == {
+            "model.language_model.layers.4.self_attn.v_proj.weight",
+            "model.language_model.layers.5.self_attn.q_proj.weight",
+            "model.language_model.layers.5.self_attn.k_proj.weight",
+        }
+
     def test_empty_hf_state_dict_passthrough(self, causal_bridge):
         converted = {"some.weight": torch.randn(4, 4)}
         result = causal_bridge.maybe_modify_converted_hf_weight(None, converted, {})
@@ -639,15 +647,8 @@ def bridge():
 
 
 class TestGemma4VLBridgeInitialization:
-    def test_bridge_initialization(self, bridge):
-        assert isinstance(bridge, Gemma4VLBridge)
-
     def test_inherits_causal_bridge(self):
         assert issubclass(Gemma4VLBridge, Gemma4Bridge)
-
-    def test_bridge_has_required_methods(self, bridge):
-        assert callable(getattr(bridge, "provider_bridge", None))
-        assert callable(getattr(bridge, "mapping_registry", None))
 
 
 class TestGemma4VLBridgeConversionMode:
@@ -710,10 +711,12 @@ class TestGemma4VLBridgeProviderBridgeMoE:
         assert p.eos_token_id == 1
         assert p.vision_soft_tokens_per_image == 280
 
-    def test_dtype_is_fp32_for_vl(self, bridge, mock_hf_pretrained_moe):
+    def test_dtype_matches_hf_config(self, bridge, mock_hf_pretrained_moe):
         p = bridge.provider_bridge(mock_hf_pretrained_moe)
-        assert p.bf16 is False
-        assert p.params_dtype == torch.float32
+        assert p.bf16 is True
+        assert p.fp16 is False
+        assert p.params_dtype == torch.bfloat16
+        assert p.autocast_dtype == torch.bfloat16
 
     def test_global_head_config(self, bridge, mock_hf_pretrained_moe):
         p = bridge.provider_bridge(mock_hf_pretrained_moe)
@@ -792,6 +795,14 @@ def test_megatron_to_hf_config_nests_dense_architecture_fields():
     assert hf_config["vision_config"] == {"hidden_size": 1152}
     assert hf_config["audio_config"] == {"hidden_size": 512}
     assert hf_config["eos_token_id"] == [1, 106]
+
+
+def test_megatron_to_hf_config_nests_serialized_dense_window_size():
+    provider = Gemma4DenseVLProvider(window_size=[511, 0])
+
+    hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
+
+    assert hf_config["text_config"]["sliding_window"] == 512
 
 
 def test_megatron_to_hf_config_nests_moe_architecture_fields():

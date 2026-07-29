@@ -13,112 +13,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ==============================================================================
-# GLM-5 / GLM-5.1 Conversion Round-Trip Verification (Multi-Node via Slurm)
+# GLM-5 round-trip verification on 8 Slurm nodes (64 GPUs).
+# TP=1 avoids the AbsorbedMLA sequence-parallel requirement for TP > 1;
+# PP=2 evenly splits the model's 78 transformer layers.
+# Run this wrapper from a Slurm login node; convert.sh submits one job and
+# waits for it by default.
 #
-# GLM-5 and GLM-5.1 share the same GlmMoeDsaForCausalLM architecture
-# (MoE + MLA + DSA: 256 routed experts, top-8, ~800B+ params, BF16),
-# so this script handles both. Set MODEL_NAME=GLM-5.1 to run the 5.1 checkpoint.
-#
-# The full model requires multi-node — minimum 8 nodes (64 GPUs) with
-# EP >= 32.  TP does NOT reduce expert memory — increase EP instead.
-#
-# Requirements: transformers >= 5.2.0
-#
-# Usage:
-#   1. Fill in CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports
-#   2. Adjust PARALLELISM_CONFIGS if needed
-#   3. Submit:
-#        sbatch examples/models/glm/glm5/slurm_conversion.sh                  # GLM-5
-#        MODEL_NAME=GLM-5.1 sbatch examples/models/glm/glm5/slurm_conversion.sh
-# ==============================================================================
+# Required:
+#   export CONTAINER_IMAGE=/path/to/container.sqsh
+#   export SLURM_ACCOUNT=<your-account>
+# Optional:
+#   export CONTAINER_MOUNTS=/shared:/shared,/host/path:/container/path
+#   bash "$0" --srun-arg=--mpi=pmix
 
-#SBATCH --job-name=glm5-roundtrip
-#SBATCH --nodes=8
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
-#SBATCH --time=1:00:00
-#SBATCH --account=<your-account>
-#SBATCH --partition=batch
-#SBATCH --output=logs/glm5_roundtrip_%j.log
-#SBATCH --exclusive
+set -euo pipefail
 
-# ── Container ────────────────────────────────────────────────────────────
-CONTAINER_IMAGE=""
-# CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS=""
-# CONTAINER_MOUNTS="/path/to/shared/storage:/mnt/storage,/path/to/project:/opt/Megatron-Bridge"
-WORKDIR="/opt/Megatron-Bridge"
+: "${CONTAINER_IMAGE:?Set CONTAINER_IMAGE to the Megatron-Bridge container}"
+: "${SLURM_ACCOUNT:?Set SLURM_ACCOUNT to your Slurm account}"
 
-# ── Tokens / Caches ──────────────────────────────────────────────────────
-# export HF_TOKEN="hf_your_token_here"
-# export HF_HOME="/path/to/shared/HF_HOME"
-# export UV_CACHE_DIR="/path/to/shared/uv_cache"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
+CONVERT_SH="${CONVERT_SH:-${REPO_ROOT}/scripts/conversion/convert.sh}"
 
-# ── Parallelism configs: "TP,PP,EP" per entry ────────────────────────────
-# TP*PP*EP must equal total GPUs (NODES * GPUS_PER_NODE = 64).
-# EP must divide 256 (number of routed experts).
-PARALLELISM_CONFIGS=("2,1,32")
-
-# ── Model ─────────────────────────────────────────────────────────────────
-# MODEL_NAME selects between GLM-5 and GLM-5.1 (same architecture).
-MODEL_NAME="${MODEL_NAME:-GLM-5}"
-HF_MODEL_ID=zai-org/$MODEL_NAME
-
-# ── Environment ───────────────────────────────────────────────────────────
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 
-# ==============================================================================
-# Job Execution
-# ==============================================================================
-
-echo "======================================"
-echo "${MODEL_NAME} Round-Trip Conversion Sweep"
-echo "Job: $SLURM_JOB_ID | Nodes: $SLURM_JOB_NUM_NODES"
-echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
-echo "======================================"
-
-mkdir -p logs
-
-if [ -z "$CONTAINER_IMAGE" ]; then
-    echo "ERROR: CONTAINER_IMAGE must be set."
-    exit 1
-fi
-
-SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
-if [ -n "$CONTAINER_MOUNTS" ]; then
-    SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
-fi
-
-CONFIG_INDEX=0
-for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r TP PP EP <<< "$CONFIG"
-    CONFIG_INDEX=$((CONFIG_INDEX + 1))
-
-    echo ""
-    echo "======================================"
-    echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP"
-    echo "======================================"
-
-    # Sync dependencies once per node, then run the roundtrip
-    CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
-    CMD="${CMD}uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py"
-    CMD="$CMD --hf-model-id $HF_MODEL_ID"
-    CMD="$CMD --tp $TP --pp $PP --ep $EP"
-
-    echo "Executing: $CMD"
-
-    $SRUN_CMD bash -c "cd $WORKDIR && $CMD"
-    RUN_EXIT=$?
-    if [ $RUN_EXIT -ne 0 ]; then
-        echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP failed (exit $RUN_EXIT)"
-        exit $RUN_EXIT
+MOUNT_ARGS=(--mount "${REPO_ROOT}:/opt/Megatron-Bridge")
+IFS=',' read -r -a EXTRA_MOUNTS <<< "${CONTAINER_MOUNTS:-}"
+for mount in "${EXTRA_MOUNTS[@]}"; do
+    if [[ -n "${mount}" ]]; then
+        MOUNT_ARGS+=(--mount "${mount}")
     fi
-    echo "[OK] Config $CONFIG_INDEX: TP=$TP, PP=$PP, EP=$EP passed"
 done
 
-echo ""
-echo "======================================"
-echo "All ${#PARALLELISM_CONFIGS[@]} configs passed"
-echo "======================================"
+ENV_ARGS=()
+for name in HF_TOKEN HF_HOME UV_CACHE_DIR TORCH_NCCL_AVOID_RECORD_STREAMS NCCL_NVLS_ENABLE; do
+    if [[ -n "${!name:-}" ]]; then
+        ENV_ARGS+=(--env "${name}")
+    fi
+done
+
+"${CONVERT_SH}" roundtrip \
+    --executor slurm --device gpu \
+    --nodes 8 --gpus-per-node 8 \
+    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION:-batch}" --time 01:00:00 \
+    --container-image "${CONTAINER_IMAGE}" \
+    "${MOUNT_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
+    --experiment-name glm5-roundtrip \
+    --hf-model zai-org/GLM-5 \
+    --tp 1 --pp 2 --ep 32 --etp 1 \
+    "$@"

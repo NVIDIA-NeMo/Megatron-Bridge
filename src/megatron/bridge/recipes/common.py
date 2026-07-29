@@ -18,7 +18,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
+from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import (
@@ -111,6 +111,7 @@ def _pretrain_common() -> ConfigContainer:
         tokenizer=TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model=None,  # Must be set by each recipe
+            use_tokenizer_vocab_size=True,
         ),
         # Checkpoint config
         checkpoint=CheckpointConfig(
@@ -159,9 +160,9 @@ def _sft_common() -> ConfigContainer:
     # Default sequence length for SFT
     seq_length = 2048
 
-    # Packed sequence is enabled by default for training efficiency
+    # Offline packing is enabled by default for training efficiency
     # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
-    packed_sequence = True
+    enable_offline_packing = True
     pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
 
     # Optimizer and scheduler with lower LR for full SFT
@@ -196,7 +197,9 @@ def _sft_common() -> ConfigContainer:
         ),
         # Dataset config - uses SQuAD with packed sequences by default
         dataset=default_squad_config(
-            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+            seq_length=seq_length,
+            enable_offline_packing=enable_offline_packing,
+            pad_seq_to_mult=pad_seq_to_mult,
         ),
         # Logger config
         logger=LoggerConfig(
@@ -256,9 +259,9 @@ def _peft_common() -> ConfigContainer:
     # Default sequence length for PEFT
     seq_length = 2048
 
-    # Packed sequence is enabled by default for training efficiency
+    # Offline packing is enabled by default for training efficiency
     # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
-    packed_sequence = True
+    enable_offline_packing = True
     pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
 
     # Optimizer and scheduler with higher LR for PEFT (only training adapters)
@@ -293,7 +296,9 @@ def _peft_common() -> ConfigContainer:
         ),
         # Dataset config - uses SQuAD with packed sequences by default
         dataset=default_squad_config(
-            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+            seq_length=seq_length,
+            enable_offline_packing=enable_offline_packing,
+            pad_seq_to_mult=pad_seq_to_mult,
         ),
         # Logger config
         logger=LoggerConfig(
@@ -409,7 +414,7 @@ def _sft_common_vlm() -> ConfigContainer:
         hf_processor_path=None,  # Must be set by model-specific config
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
-        dataloader_type="single",
+        dataloader_type="cyclic",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
@@ -513,7 +518,7 @@ def _peft_common_vlm() -> ConfigContainer:
         hf_processor_path=None,  # Must be set by model-specific config
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
-        dataloader_type="single",
+        dataloader_type="cyclic",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,

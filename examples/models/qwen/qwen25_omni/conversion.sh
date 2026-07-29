@@ -22,12 +22,12 @@ MODEL_NAME=Qwen2.5-Omni-7B
 HF_MODEL_ID=Qwen/${MODEL_NAME}
 
 # Import HF → Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}"
 
 # Export Megatron → HF
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}/iter_0000000" \
     --hf-path "${WORKSPACE}/models/${MODEL_NAME}-hf-export"

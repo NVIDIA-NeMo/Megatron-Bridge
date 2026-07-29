@@ -19,21 +19,19 @@ This module provides pretrain, SFT, and PEFT configurations for Qwen3-VL models 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import torch
-from transformers import AutoTokenizer, Qwen3VLProcessor
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
-from megatron.bridge.data.utils import DatasetBuildContext
-from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
-from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
+from megatron.bridge.data.builders import (
+    EnergonDatasetConfig,
+    MockVLMSFTDatasetConfig,
+    QwenVLEnergonTaskEncoderConfig,
+)
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
@@ -67,7 +65,7 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -76,16 +74,18 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -114,7 +114,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -123,16 +123,18 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -147,6 +149,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
@@ -161,7 +164,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -170,65 +173,31 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.ddp.average_in_collective = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
-@dataclass(kw_only=True)
-class QwenVLEnergonProvider(EnergonProvider):
-    """EnergonProvider subclass that exposes task-encoder knobs as CLI-overridable fields.
-
-    The task encoder is constructed eagerly (same as before), but build_datasets
-    syncs these fields onto it after CLI overrides have been applied.
-    """
-
-    min_pixels: int = 200704
-    max_pixels: int = 1003520
-    max_num_images: int | None = 10
-    max_num_frames: int | None = 60
-    max_visual_tokens: int | None = 16384
-    defer_in_batch_packing_to_step: bool = True
-
-    def build_datasets(self, context: DatasetBuildContext):
-        if self.task_encoder is not None:
-            self.task_encoder.seq_len = self.seq_length
-            self.task_encoder.min_pixels = self.min_pixels
-            self.task_encoder.max_pixels = self.max_pixels
-            self.task_encoder.max_num_images = self.max_num_images
-            self.task_encoder.max_num_frames = self.max_num_frames
-            self.task_encoder.max_visual_tokens = self.max_visual_tokens
-        return super().build_datasets(context)
-
-
-def _make_energon_dataset(
-    hf_path: str, seq_length: int, micro_batch_size: int, global_batch_size: int
-) -> QwenVLEnergonProvider:
-    """Create a QwenVLEnergonProvider dataset config for Qwen3-VL recipes."""
-    tokenizer = AutoTokenizer.from_pretrained(hf_path)
-    # Use Qwen3VLProcessor to match the HF flow (which uses AutoProcessor).
-    # This processor accepts both images and videos kwargs.
-    image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
-    task_encoder = QwenVLTaskEncoder(
-        tokenizer=tokenizer,
-        image_processor=image_processor,
-        max_padding_length=seq_length,
-    )
-    return QwenVLEnergonProvider(
-        path="",  # Must be set via CLI override: dataset.path=<path>
+def _make_energon_dataset(hf_path: str, seq_length: int, micro_batch_size: int) -> EnergonDatasetConfig:
+    """Create a declarative Energon dataset config for Qwen3-VL recipes."""
+    return EnergonDatasetConfig(
+        path=None,  # Must be set via CLI override: dataset.path=<path>
         seq_length=seq_length,
         micro_batch_size=micro_batch_size,
-        global_batch_size=global_batch_size,
         num_workers=2,
-        task_encoder=task_encoder,
+        task_encoder=QwenVLEnergonTaskEncoderConfig(hf_processor_path=hf_path),
+        defer_in_batch_packing_to_step=True,
     )
 
 
@@ -365,6 +334,10 @@ def qwen3_vl_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -502,6 +475,10 @@ def qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -639,6 +616,10 @@ def qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -784,6 +765,10 @@ def qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -930,6 +915,10 @@ def qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1076,6 +1065,10 @@ def qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lo
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1085,14 +1078,16 @@ def qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lo
 def qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT (LoRA/DoRA) config for Qwen3-VL 8B with Energon dataset.
 
-    Same as qwen3_vl_8b_peft_config but uses EnergonProvider instead of HF dataset.
+    Same as qwen3_vl_8b_peft_config but uses declarative Energon data instead of HF data.
     Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
     """
     cfg = qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.dataset = _make_energon_dataset(
-        hf_path, cfg.model.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
-    )
+    cfg.dataset = _make_energon_dataset(hf_path, cfg.model.seq_length, cfg.train.micro_batch_size)
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

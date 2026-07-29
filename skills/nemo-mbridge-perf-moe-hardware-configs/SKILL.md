@@ -14,7 +14,7 @@ Card: @skills/nemo-mbridge-perf-moe-hardware-configs/card.yaml
 
 | Platform | Typical MoE strategy | What usually matters most |
 |---|---|---|
-| H100 | DeepEP + stronger PP + moderate TP | communication overlap and PP efficiency |
+| H100 | DeepEP or HybridEP + explicit EP overlap | communication overlap, dispatcher/runtime compatibility, and PP efficiency |
 | B200 | DeepEP + MXFP8 + careful PP layout | container quality and tuned comm settings |
 | GB200 | HybridEP + partial CUDA graphs + CPU cleanup | host overhead, topology-aware dispatch, memory headroom |
 | GB300 | HybridEP + newer FP8 and kernel stack | same GB200 playbook, usually with a higher ceiling |
@@ -30,6 +30,7 @@ throughput caveats:
 | DSV3 | GB200/GB300 | HybridEP | TP=1, EP=64, PP=4, VPP=4 |
 | Qwen3 235B | H100 | DeepEP | TP=2, EP=32, PP=8, VPP=4 |
 | Qwen3 235B | GB200 | HybridEP | TP=1 or 2, EP=32-64, PP=4, VPP=unspecified |
+| Qwen3 30B | 16×H100 | HybridEP | TP=1, EP=16, PP=1, plain EP overlap |
 
 For Qwen3 235B on GB200, explicitly say `VPP=unspecified`; do not invent or
 extrapolate `VPP=12` unless a measured row provides it. Include TE-scoped CUDA
@@ -51,7 +52,7 @@ moves. Treat them as planning ranges, not exact promises.
 | DSV3, large-scale | GB300 | above the GB200 band, often mid-20s MFU | TP1, EP64, PP4, HybridEP |
 | Qwen3 235B | H100 | low-300s TFLOPS/GPU, around 30% MFU | TP2, EP32, PP8, DeepEP |
 | Qwen3 235B | GB200 | high-hundreds TFLOPS/GPU in tuned runs | TP1 or TP2, EP32-64, PP4, HybridEP |
-| Qwen3 30B | H100 | low-200s TFLOPS/GPU | TP1, EP8, PP1, DeepEP |
+| Qwen3 30B | H100 | high-200s TFLOPS/GPU on the validated 16-GPU shape | TP1, EP16, PP1, HybridEP + EP overlap |
 | Qwen3-Next 80B | GB200 | low-300s TFLOPS/GPU in BF16-class runs | TP1, EP32, PP2, HybridEP |
 
 ## Representative Config Families
@@ -104,6 +105,26 @@ CUDA Graph: attn + moe_router + moe_preprocess
 Recompute: moe_act, mlp, or norm depending on memory pressure
 Priority: balance throughput against memory headroom
 ```
+
+### Qwen3 30B-A3B on 16 H100
+
+```text
+Dispatcher: HybridEP
+TP=1  EP=16  PP=1  CP=1
+Precision: BF16
+Sequence: 4096
+Batch: MBS1 GBS1024
+Routing: force balance
+EP overlap: enabled
+Delayed wgrad: disabled
+CUDA Graph: moe_router + moe_preprocess
+Measured: 20.992s/step, 287.305 model TFLOPS/GPU over iterations 41-50
+Rank-0 peak allocated memory: 62.166 GiB
+```
+
+This shape improved 17.729% over its reproduced 244.039 TFLOPS/GPU baseline
+when only plain EP overlap changed. A matched Nsight A/B increased
+communication hidden by GEMM/attention from 0.11% to 36.55%.
 
 ### Qwen3-Next 80B on GB200
 
@@ -167,3 +188,8 @@ work, not as afterthoughts.
 
 5. **Force-balance routing is the safer benchmark default**: keep routing mode
    fixed when comparing hardware or dispatcher stacks.
+
+6. **Do not treat the dispatcher table as a hard platform rule**: HybridEP was
+   the validated winner for the 16×H100 Qwen3 30B shape, while DeepEP failed
+   bring-up in that matched runtime. Benchmark backend compatibility and
+   throughput in the production container.

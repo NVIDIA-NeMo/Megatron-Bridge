@@ -28,7 +28,7 @@ Usage:
 Prerequisites:
     You need a checkpoint in Megatron format. You can either:
     1. Convert HF checkpoint to Megatron format:
-       python examples/conversion/convert_checkpoints.py import \
+       ./scripts/conversion/convert.sh import \
            --hf-model meta-llama/Llama-3.2-1B \
            --megatron-path ./checkpoints/llama32_1b
     2. Use a checkpoint from pretraining (see 00_quickstart_pretrain.py)
