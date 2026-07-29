@@ -17,7 +17,11 @@ from typing import List
 import numpy as np
 import pytest
 
-from megatron.bridge.data.datasets.packing_utils import first_fit, first_fit_decreasing
+from megatron.bridge.data.datasets.packing_utils import (
+    calculate_avg_seqlen,
+    first_fit,
+    first_fit_decreasing,
+)
 
 
 def _first_fit_linear(seqlens: List[int], pack_size: int) -> List[List[int]]:
@@ -83,3 +87,73 @@ class TestSegmentTreeMatchesLinearScan:
         seqlens = list(np.random.randint(1, 2048, size=5000))
         pack_size = 2048
         assert first_fit(seqlens, pack_size) == _first_fit_linear(seqlens, pack_size)
+
+
+# ---------------------------------------------------------------------------
+# calculate_avg_seqlen: format-aware loader (npy + parquet single/glob/dir)
+# ---------------------------------------------------------------------------
+#
+# Two hand-crafted packed rows shared by every fixture below so all formats
+# must return the same stats:
+#   row A: seq_start_id=[0, 4], input_ids len 8 -> boundaries [0,4,8]
+#          per-seq token counts = [3, 3]  (each minus 1 EOS)
+#   row B: seq_start_id=[0],    input_ids len 5 -> boundaries [0,5]
+#          per-seq token counts = [4]
+# Aggregated over both rows (gbs=1, drop_remainder=True -> count=2):
+#   seq_count_accum   = 2 + 1              = 3
+#   total_len_accum   = (3+3) + 4          = 10
+#   seqlen_sq_accum   = (9+9) + 16         = 34
+# -> (count, total, sq_individual, sq_per_row) = (3/2, 10/2, 34/3, 34/2)
+_AVG_SEQLEN_ROWS = [
+    {"input_ids": list(range(8)), "seq_start_id": [0, 4]},
+    {"input_ids": list(range(5)), "seq_start_id": [0]},
+]
+_AVG_SEQLEN_EXPECTED = (3 / 2, 10 / 2, 34 / 3, 34 / 2)
+
+
+def _write_avg_seqlen_parquet(path, rows) -> None:
+    """Write the two columns calculate_avg_seqlen reads to a parquet shard."""
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    table = pa.table(
+        {
+            "input_ids": [r["input_ids"] for r in rows],
+            "seq_start_id": [r["seq_start_id"] for r in rows],
+        }
+    )
+    pq.write_table(table, str(path))
+
+
+class TestCalculateAvgSeqlen:
+    """calculate_avg_seqlen must load npy and parquet (single/glob/dir) identically."""
+
+    def _assert_expected(self, stats):
+        assert stats == pytest.approx(_AVG_SEQLEN_EXPECTED)
+
+    def test_npy_legacy(self, tmp_path):
+        path = tmp_path / "training_4096.npy"
+        np.save(path, np.array(_AVG_SEQLEN_ROWS, dtype=object))
+        stats = calculate_avg_seqlen(str(path), gbs=1, max_seq_len=8, drop_remainder=True)
+        self._assert_expected(stats)
+
+    def test_parquet_single_file(self, tmp_path):
+        path = tmp_path / "training_4096.idx.parquet"
+        _write_avg_seqlen_parquet(path, _AVG_SEQLEN_ROWS)
+        stats = calculate_avg_seqlen(str(path), gbs=1, max_seq_len=8, drop_remainder=True)
+        self._assert_expected(stats)
+
+    def test_parquet_glob_spec_matches_single_file(self, tmp_path):
+        """A glob spec (sharded parquet) must resolve+read, not crash -- guards the
+        _packed_data_exists vs calculate_avg_seqlen input-set consistency."""
+        _write_avg_seqlen_parquet(tmp_path / "shard_000.idx.parquet", _AVG_SEQLEN_ROWS[:1])
+        _write_avg_seqlen_parquet(tmp_path / "shard_001.idx.parquet", _AVG_SEQLEN_ROWS[1:])
+        glob_spec = str(tmp_path / "shard_*.idx.parquet")
+        stats = calculate_avg_seqlen(glob_spec, gbs=1, max_seq_len=8, drop_remainder=True)
+        self._assert_expected(stats)
+
+    def test_parquet_directory_spec(self, tmp_path):
+        """A directory spec is also accepted (globs *.parquet under the dir)."""
+        _write_avg_seqlen_parquet(tmp_path / "shard_000.idx.parquet", _AVG_SEQLEN_ROWS[:1])
+        _write_avg_seqlen_parquet(tmp_path / "shard_001.idx.parquet", _AVG_SEQLEN_ROWS[1:])
+        stats = calculate_avg_seqlen(str(tmp_path), gbs=1, max_seq_len=8, drop_remainder=True)
+        self._assert_expected(stats)

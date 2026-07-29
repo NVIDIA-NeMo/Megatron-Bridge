@@ -241,6 +241,13 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--num_moe_experts",
+        type=int,
+        help="Number of experts to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--pipeline_model_parallel_layout",
         type=str,
         help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
