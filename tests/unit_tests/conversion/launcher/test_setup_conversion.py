@@ -110,6 +110,14 @@ def test_cpu_backend_rejects_distributed_parallelism():
         module._validate_args(args)
 
 
+def test_cpu_backend_rejects_low_memory_save():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--low-memory-save")
+
+    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+        module._validate_args(args)
+
+
 def test_local_executor_rejects_detach():
     module = _load_setup_conversion_module()
     args = _parse(module, "--detach")

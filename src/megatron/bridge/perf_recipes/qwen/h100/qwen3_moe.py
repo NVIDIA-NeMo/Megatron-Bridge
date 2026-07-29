@@ -37,6 +37,8 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _qwen3_30b_a3b_default_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.moe_router_force_load_balancing = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = False
 
     _benchmark_common(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

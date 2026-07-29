@@ -343,7 +343,8 @@ def calc_params_l2_norm(
                             if param.main_param is not None:
                                 sharded_params_data.append(param.main_param)
                         else:
-                            moe_params_data.append(param.main_param)
+                            main_param = param.main_param
+                            moe_params_data.append(main_param if main_param is not None else param.data.float())
                     else:
                         # Fallback to original logic of making a fp32 copy of the
                         # parameter if `.main_param` attribute is not available.
@@ -359,7 +360,8 @@ def calc_params_l2_norm(
                                 if param.main_param is not None:
                                     sharded_params_data.append(param.main_param)
                             else:
-                                params_data.append(param.main_param)
+                                main_param = param.main_param
+                                params_data.append(main_param if main_param is not None else param.data.float())
                         else:
                             # Fallback to original logic of making a fp32 copy of the
                             # parameter if `.main_param` attribute is not available.

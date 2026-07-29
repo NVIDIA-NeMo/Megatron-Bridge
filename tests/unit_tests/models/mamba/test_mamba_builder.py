@@ -61,6 +61,38 @@ class TestMambaModelBuilderCompatibility:
         assert config.mamba_stack_spec is None
         assert mock_model.call_args.kwargs["hybrid_stack_spec"] is module_spec
 
+    @pytest.mark.parametrize("factory_uses_config", [False, True])
+    @patch("megatron.training.models.hybrid.HybridModel")
+    def test_mamba_stack_spec_factory_maps_to_hybrid_model_kwarg(self, mock_model, factory_uses_config):
+        module_spec = ModuleSpec(module=object)
+        factory_calls = []
+
+        if factory_uses_config:
+
+            def stack_spec_factory(config):
+                factory_calls.append(config)
+                return module_spec
+
+        else:
+
+            def stack_spec_factory():
+                factory_calls.append(None)
+                return module_spec
+
+        config = MambaModelConfig(
+            transformer=_make_transformer(),
+            vocab_size=32000,
+            mamba_stack_spec=stack_spec_factory,
+        )
+        builder = MambaModelBuilder(config)
+        pg = Mock()
+        pg.pp = Mock()
+
+        builder.build_model(pg, pre_process=True, post_process=True)
+
+        assert factory_calls == [config if factory_uses_config else None]
+        assert mock_model.call_args.kwargs["hybrid_stack_spec"] is module_spec
+
     def test_rejects_hybrid_and_mamba_stack_spec_together(self):
         module_spec = ModuleSpec(module=object)
 
