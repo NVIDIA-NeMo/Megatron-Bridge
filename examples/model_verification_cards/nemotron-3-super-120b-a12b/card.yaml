@@ -155,7 +155,7 @@ items:
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config
+        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
         --seq_length 4096 model.cuda_graph_impl=none
         --lr 4.5e-4 --min_lr 4.5e-6 --warmup_iters 10
@@ -195,7 +195,7 @@ items:
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 2
-        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config
+        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
         --seq_length 4096 model.cuda_graph_impl=none
         --lr 4.5e-4 --min_lr 4.5e-6 --warmup_iters 10
@@ -242,7 +242,7 @@ items:
         sequence_packing: offline
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config
+        --recipe nemotron_3_super_sft_16gpu_h100_bf16_config
         --mode sft --dataset tulu3
         --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000
         --max_steps 100 --seq_length 8192
@@ -288,7 +288,7 @@ items:
         sequence_packing: offline
       command: >
         ./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4
-        --recipe nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config
+        --recipe nemotron_3_super_sft_16gpu_h100_bf16_config
         --mode sft --dataset tulu3
         --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000
         --max_steps 100 --seq_length 8192
@@ -395,7 +395,7 @@ items:
         context_parallel_size: 2
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config
+        --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config
         --mode sft --dataset tulu3
         --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000
         --max_steps 10 --seq_length 32768
@@ -443,7 +443,7 @@ items:
         context_parallel_size: 2
       command: >
         ./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4
-        --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config
+        --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config
         --mode sft --dataset tulu3
         --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000
         --max_steps 10 --seq_length 32768
@@ -555,7 +555,7 @@ items:
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config
+        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
         --seq_length 4096 model.cuda_graph_impl=none
         --lr 4.5e-4 --min_lr 4.5e-6 --warmup_iters 10
@@ -600,7 +600,7 @@ items:
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 2
-        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config
+        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
         --seq_length 4096 model.cuda_graph_impl=none
         --lr 4.5e-4 --min_lr 4.5e-6 --warmup_iters 10

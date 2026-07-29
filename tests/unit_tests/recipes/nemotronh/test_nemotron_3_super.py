@@ -32,9 +32,9 @@ import torch
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_peft_16gpu_h100_bf16_config,
-    nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
-    nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config,
-    nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_peft_config,
@@ -60,17 +60,17 @@ class TestNemotron3SuperPretrain:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
 
         # Check expert parallelism defaults
         assert config.model.expert_tensor_parallel_size == 1
-        assert config.model.expert_model_parallel_size == 8
+        assert config.model.expert_model_parallel_size == 16
 
         # Check training configuration
         assert config.train.train_iters == 39735
-        assert config.train.global_batch_size == 3072
+        assert config.train.global_batch_size == 16
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration
@@ -81,7 +81,8 @@ class TestNemotron3SuperPretrain:
         assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
         # Check precision
-        assert config.mixed_precision == "nemotron_3_super_bf16_with_nvfp4_mixed"
+        assert config.mixed_precision.bf16 is True
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
 
     def test_pretrain_config_moe_settings(self):
         """Test MoE settings for pretrain config."""
@@ -140,12 +141,12 @@ class TestNemotron3SuperSft:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check parallelism for full SFT
-        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
 
-        # Check expert parallelism (EP=8 for full SFT)
-        assert config.model.expert_model_parallel_size == 8
+        # Check expert parallelism (EP=16 for full SFT)
+        assert config.model.expert_model_parallel_size == 16
 
         # No PEFT config for full SFT
         assert config.peft is None
@@ -158,7 +159,8 @@ class TestNemotron3SuperSft:
         assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
         # Check precision
-        assert config.mixed_precision == "bf16_mixed"
+        assert config.mixed_precision.bf16 is True
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
 
     def test_sft_config_custom_parallelism(self):
         """Test SFT config with custom parallelism applied after creation."""
@@ -348,8 +350,8 @@ class TestNemotron3Super16GpuH100:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
-            nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
+            nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_config,
             nemotron_3_super_peft_16gpu_h100_bf16_config,
         ],
     )
@@ -368,9 +370,9 @@ class TestNemotron3Super16GpuH100:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
-            nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
-            nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config,
+            nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
         ],
     )
     def test_low_memory_optimizer_precision(self, recipe_fn):
@@ -388,7 +390,7 @@ class TestNemotron3Super16GpuH100:
 
     def test_long_context_parallelism_batch_size_and_sequence_length(self):
         """The 32K recipe owns its memory-bounded layout and batch size."""
-        config = nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config()
+        config = nemotron_3_super_sft_16gpu_h100_bf16_32k_config()
 
         assert config.model.tensor_model_parallel_size == 1
         assert config.model.pipeline_model_parallel_size == 8

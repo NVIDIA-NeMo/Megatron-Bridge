@@ -14,8 +14,10 @@
 
 """GB200 pretraining recipe for Nemotron 3 Super."""
 
+import torch
+
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
-    nemotron_3_super_pretrain_8gpu_h100_bf16_config,
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -34,11 +36,20 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     Returns:
         GB200 BF16 pretraining configuration.
     """
-    cfg = nemotron_3_super_pretrain_8gpu_h100_bf16_config()
+    cfg = nemotron_3_super_pretrain_16gpu_h100_bf16_config()
 
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    # The H100 base is memory-bounded for 16-GPU support runs. GB200 has the
+    # capacity for overlapped collectives and full-precision optimizer state.
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1

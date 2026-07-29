@@ -29,11 +29,11 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 NEMOTRON_3_SUPER_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
 
 
-def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
+def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron 3 Super (120B-A12B LatentMoE).
 
     This is a Latent MoE model with Multi-Token Prediction (MTP). Default parallelism:
-    - TP=4, PP=1, EP=8, SP=True
+    - TP=8, PP=1, EP=16, SP=True
 
     Returns:
         ConfigContainer: Pre-training configuration for Nemotron 3 Super.
@@ -44,14 +44,14 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
 
     # Parallelism Settings
-    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = 8192
 
@@ -71,7 +71,7 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Training Configuration
     cfg.train.train_iters = 39735
-    cfg.train.global_batch_size = 3072
+    cfg.train.global_batch_size = 16
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -100,8 +100,11 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
 
-    # Mixed Precision
-    cfg.mixed_precision = "nemotron_3_super_bf16_with_nvfp4_mixed"
+    # Mixed Precision. Gradients reduce in BF16 to bound the gradient buffer;
+    # grad_reduce_in_fp32 is a MixedPrecisionConfig field that setup() copies
+    # onto the DDP config, so it must be set here rather than on cfg.ddp alone.
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
 
     # Optimizer hyperparameters
     cfg.optimizer.lr = 4.5e-4
@@ -121,12 +124,20 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.async_save = True
 
-    # DDP Configuration
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    # DDP Configuration. Overlap stays off so full-model checkpoint saves are
+    # ordered after all DDP collectives.
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.average_in_collective = False
+
+    # Reduced-memory optimizer state.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     cfg.model.init_method_std = 0.014
     cfg.model.apply_rope_fusion = False
@@ -144,34 +155,15 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config() -> ConfigContainer:
-    """Return the 16-H100 low-memory BF16 pre-training configuration."""
-    cfg = nemotron_3_super_pretrain_8gpu_h100_bf16_config()
-    cfg.model.tensor_model_parallel_size = 8
-    cfg.model.expert_model_parallel_size = 16
-    cfg.train.global_batch_size = 16
-    cfg.mixed_precision = bf16_mixed()
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-    # Keep full-model checkpoint saves ordered after all DDP collectives.
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.ddp.overlap_param_gather = False
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_params_dtype = torch.float16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-    return cfg
-
-
 # =============================================================================
 # SFT Config
 # =============================================================================
 
 
-def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+def nemotron_3_super_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron 3 Super (120B-A12B LatentMoE).
 
-    Default parallelism: TP=1, PP=1, EP=8, SP=True
+    Default parallelism: TP=8, PP=1, EP=16, SP=True
 
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron 3 Super SFT.
@@ -182,14 +174,14 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
 
     # Parallelism settings
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = 2048
 
@@ -229,8 +221,24 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.lr_decay_style = "cosine"
 
+    # Reduced-memory optimizer state.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+    # Training Configuration
+    cfg.train.global_batch_size = 16
+    cfg.train.micro_batch_size = 1
+
+    # Mixed Precision. Gradients reduce in BF16 to bound the gradient buffer;
+    # grad_reduce_in_fp32 is a MixedPrecisionConfig field that setup() copies
+    # onto the DDP config, so it must be set here rather than on cfg.ddp alone.
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -245,11 +253,12 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # RNG config
     cfg.rng.seed = 1234
 
-    # DDP config
+    # DDP config. Overlap stays off so full-model checkpoint saves are ordered
+    # after all DDP collectives.
     cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
     # Keep the complete process environment visible on the recipe.
@@ -263,28 +272,13 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config() -> ConfigContainer:
-    """Return the 16-H100 low-memory BF16 full-SFT configuration."""
-    cfg = nemotron_3_super_sft_8gpu_h100_bf16_config()
-    cfg.model.tensor_model_parallel_size = 8
-    cfg.model.expert_model_parallel_size = 16
-    cfg.train.global_batch_size = 16
-    cfg.mixed_precision = bf16_mixed()
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-    # Keep full-model checkpoint saves ordered after all DDP collectives.
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.ddp.overlap_param_gather = False
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_params_dtype = torch.float16
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-    return cfg
+def nemotron_3_super_sft_16gpu_h100_bf16_32k_config() -> ConfigContainer:
+    """Return the 16-H100 BF16 32K full-SFT configuration.
 
-
-def nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config() -> ConfigContainer:
-    """Return the 16-H100 low-memory BF16 32K full-SFT configuration."""
-    cfg = nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config()
+    Long-context SFT uses a distinct PP8/CP2 layout rather than the default
+    SFT topology.
+    """
+    cfg = nemotron_3_super_sft_16gpu_h100_bf16_config()
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     # The final stage also owns the output projection and loss. Keep four
@@ -451,9 +445,7 @@ def nemotron_3_super_peft_16gpu_h100_bf16_config(
 __all__ = [
     "nemotron_3_super_peft_1gpu_h100_bf16_config",
     "nemotron_3_super_peft_16gpu_h100_bf16_config",
-    "nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config",
-    "nemotron_3_super_pretrain_8gpu_h100_bf16_config",
-    "nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config",
-    "nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config",
-    "nemotron_3_super_sft_8gpu_h100_bf16_config",
+    "nemotron_3_super_pretrain_16gpu_h100_bf16_config",
+    "nemotron_3_super_sft_16gpu_h100_bf16_32k_config",
+    "nemotron_3_super_sft_16gpu_h100_bf16_config",
 ]

@@ -210,6 +210,13 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
     assert training_cfg.optimizer.optimizer_cpu_offload is False
     assert training_cfg.optimizer.optimizer_offload_fraction == 0.0
 
+    # The GB200 recipe derives from the memory-bounded H100 support config, so it
+    # must restore overlapped collectives and full-precision optimizer state.
+    assert training_cfg.optimizer.use_precision_aware_optimizer is False
+    assert training_cfg.optimizer.main_params_dtype == torch.float32
+    assert training_cfg.optimizer.exp_avg_dtype == torch.float32
+    assert training_cfg.optimizer.exp_avg_sq_dtype == torch.float32
+
 
 def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     """The H100 convergence recipe keeps safety checks while using the measured fast path."""

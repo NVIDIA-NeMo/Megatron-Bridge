@@ -23,10 +23,10 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_peft_1gpu_h100_bf16_config as nemotron_3_super_peft_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
-    nemotron_3_super_pretrain_8gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
-    nemotron_3_super_sft_8gpu_h100_bf16_config as nemotron_3_super_sft_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_config as nemotron_3_super_sft_config,
 )
 
 
