@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import tempfile
+from dataclasses import fields
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -136,35 +137,64 @@ class TestLlamaBridgeConfigConverter:
         assert result.rope_scaling is True
         assert result.rope_scaling_factor == 32.0
 
-    def test_model_config_matches_provider_architecture(self, mock_pretrained_llama):
-        """The migrated path preserves representative provider-era settings."""
+    @pytest.mark.parametrize(
+        "rope_scaling",
+        [
+            None,
+            {"type": "linear", "factor": 8.0},
+            {
+                "rope_type": "llama3",
+                "factor": 32.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+            },
+        ],
+        ids=["default", "linear", "llama3"],
+    )
+    def test_model_config_matches_provider_runtime_config(self, rope_scaling):
+        """Builder and provider paths agree on every comparable runtime field."""
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            attention_bias=False,
+            attention_dropout=0.0,
+            hidden_size=64,
+            intermediate_size=128,
+            max_position_embeddings=131072,
+            mlp_bias=False,
+            num_attention_heads=8,
+            num_hidden_layers=2,
+            num_key_value_heads=4,
+            rms_norm_eps=1e-5,
+            rope_scaling=rope_scaling,
+            rope_theta=500000.0,
+            tie_word_embeddings=True,
+            torch_dtype="bfloat16",
+            vocab_size=128,
+        )
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
         bridge = LlamaBridge()
 
-        provider = bridge.provider_bridge(mock_pretrained_llama)
-        model_config = bridge.hf_config_to_model_config(mock_pretrained_llama.config)
+        mapped_kwargs = bridge.hf_config_to_model_config_kwargs(config)
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
 
-        for field_name in (
-            "num_layers",
-            "hidden_size",
-            "ffn_hidden_size",
-            "num_attention_heads",
-            "num_query_groups",
-            "seq_length",
-            "rotary_base",
-            "vocab_size",
-            "layernorm_epsilon",
-            "normalization",
-            "gated_linear_unit",
-            "hidden_dropout",
-            "position_embedding_type",
-            "rotary_percent",
-            "rope_scaling",
-            "rope_scaling_factor",
-            "params_dtype",
-            "fp16",
-            "bf16",
-        ):
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        comparable_fields = sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"})
+
+        assert set(mapped_kwargs) <= set(comparable_fields)
+        assert len(comparable_fields) > len(mapped_kwargs)
+        for field_name in comparable_fields:
             assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+        # The provider stores its model-construction callable directly; the new
+        # config intentionally delegates layer-spec selection to its builder.
+        assert model_config.transformer_layer_spec is None
+        assert callable(provider.transformer_layer_spec)
 
     def test_model_config_preserves_linear_rope_scaling(self):
         """Linear RoPE scaling maps to the builder config without provider use."""
