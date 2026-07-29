@@ -73,6 +73,16 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    # The Nemotron 3 Super base recipe is memory-bounded for 16-GPU support
+    # runs. Benchmarks measure throughput on larger systems, so restore
+    # overlapped collectives and full-precision optimizer state.
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
     cfg.model.moe_router_force_load_balancing = True
     cfg.checkpoint.async_save = False
 
