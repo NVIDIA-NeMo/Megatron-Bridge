@@ -13,7 +13,7 @@
 # limitations under the License.
 """Model-specific Qwen3.5 implementations."""
 
-from megatron.bridge.models.qwen.modeling_qwen35.h100_runtime import qwen35_h100_transformer_block_spec
+from megatron.bridge.models.qwen.modeling_qwen35.runtime_patch import qwen35_h100_transformer_block_spec
 
 
 __all__ = ["qwen35_h100_transformer_block_spec"]

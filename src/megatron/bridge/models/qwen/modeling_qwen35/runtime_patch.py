@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Model-specific Qwen3.5 runtime for the measured H100 performance path."""
+"""Model-specific Qwen3.5 runtime patches for the measured H100 performance path."""
 
 from __future__ import annotations
 

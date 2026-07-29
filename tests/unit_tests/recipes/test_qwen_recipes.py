@@ -785,7 +785,7 @@ def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
     from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
     from megatron.core.transformer.spec_utils import ModuleSpec
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     expert_builder = partial(TEGroupedMLP)
     moe_builder = partial(
@@ -823,7 +823,7 @@ def test_qwen35_h100_flash_qla_runtime_requires_exact_version(
     import sys
     from types import ModuleType
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     flash_qla = ModuleType("flash_qla")
     flash_qla.__version__ = "0.1.1"
@@ -841,7 +841,7 @@ def test_qwen35_h100_flash_qla_runtime_loads_pinned_version(
     import sys
     from types import ModuleType
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     gated_delta_rule = object()
     flash_qla = ModuleType("flash_qla")
@@ -858,7 +858,7 @@ def test_qwen35_h100_flash_qla_runtime_configures_pinned_mcore(
     """Test that pinned MCore receives the raw FlashQLA kernel."""
     from types import SimpleNamespace
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     gated_delta_rule = object()
     module = SimpleNamespace(config=SimpleNamespace(), gated_delta_rule=object())
@@ -875,7 +875,7 @@ def test_qwen35_h100_flash_qla_runtime_preserves_new_mcore_adapter(
     """Test that newer MCore keeps its keyword-compatible backend adapter."""
     from types import SimpleNamespace
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     native_adapter = object()
     module = SimpleNamespace(
@@ -895,7 +895,7 @@ def test_qwen35_h100_flash_qla_runtime_rejects_new_mcore_fla_backend(
     """Test that newer MCore cannot silently retain a different GDN backend."""
     from types import SimpleNamespace
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     module = SimpleNamespace(
         config=SimpleNamespace(gated_delta_rule_backend="fla"),
@@ -914,7 +914,7 @@ def test_qwen35_h100_fused_gated_rms_norm_requires_exact_fla_version(
     import sys
     from types import ModuleType
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     fused_norm_gate = ModuleType("fla.modules.fused_norm_gate")
     fused_norm_gate.rms_norm_gated = object()
@@ -932,7 +932,7 @@ def test_qwen35_h100_fused_gated_rms_norm_loads_pinned_fla_version(
     import sys
     from types import ModuleType
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     fused_gated_rms_norm = object()
     fused_norm_gate = ModuleType("fla.modules.fused_norm_gate")
@@ -949,7 +949,7 @@ def test_qwen35_h100_fused_gated_rms_norm_applies_measured_contract(
     """Test the fused norm's version, shape, epsilon, activation, and gamma contract."""
     from types import SimpleNamespace
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     kernel_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     result = torch.empty(2, 3)
@@ -1014,7 +1014,7 @@ def test_qwen35_h100_fused_gated_rms_norm_rejects_incompatible_contract(
     """Test that the fused norm fails closed outside the measured contract."""
     from types import SimpleNamespace
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     monkeypatch.setattr(qwen35_runtime, "_load_fused_gated_rms_norm", lambda: object())
     module = SimpleNamespace(
@@ -1037,7 +1037,7 @@ def test_qwen35_h100_weighted_swiglu_runtime_supports_mcore_api_versions(
     expected_argument_count: int,
 ):
     """Test pinned and newer MCore weighted-SwiGLU call signatures."""
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     result = object()
     applied_args: tuple[object, ...] = ()
@@ -1073,7 +1073,7 @@ def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
     """Test the static H100 rank budget without the SM100 op-fuser alignment."""
     from types import SimpleNamespace
 
-    from megatron.bridge.models.qwen.modeling_qwen35 import h100_runtime as qwen35_runtime
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
 
     manager = SimpleNamespace(
         config=SimpleNamespace(
