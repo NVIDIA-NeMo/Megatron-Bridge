@@ -3023,6 +3023,43 @@ class TestCalcParamsL2Norm:
 
         assert actual_norm == pytest.approx(2.0)
 
+    def test_real_mcore_duplicate_filter_honors_expert_tp_group(self):
+        """Guard the Bridge<->MCore contract for expert-parameter duplicate filtering.
+
+        ``calc_params_l2_norm`` calls MCore's ``param_is_not_tensor_parallel_duplicate`` with an
+        ``expert_tp_group`` so that ``allreduce=False`` expert parameters de-duplicate over expert
+        tensor parallel instead of regular TP. Every other test in this class mocks that function,
+        so they would still pass against an MCore build that dropped the ``expert_tp_group`` kwarg --
+        silently undercounting expert parameter norms. Exercise the real function here so a pinned
+        MCore that regresses below this contract fails loudly (``TypeError`` or wrong result) rather
+        than degrading the training-log norm in production.
+        """
+        from megatron.core.tensor_parallel.layers import param_is_not_tensor_parallel_duplicate
+
+        assert "expert_tp_group" in inspect.signature(param_is_not_tensor_parallel_duplicate).parameters
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        duplicate_regular_tp = _RankGroup(rank=1)  # would be dropped as a regular-TP duplicate
+        primary_expert_tp = _RankGroup(rank=0)  # but is the primary shard on expert TP
+
+        expert_param = SimpleNamespace(allreduce=False)
+        dense_param = SimpleNamespace(allreduce=True)
+
+        # Expert param must route through expert_tp_group (rank 0 -> kept), not regular TP (rank 1).
+        assert param_is_not_tensor_parallel_duplicate(
+            expert_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
+        # Dense param still de-duplicates against the regular TP group (rank 1 -> dropped).
+        assert not param_is_not_tensor_parallel_duplicate(
+            dense_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
+
     @mock.patch("megatron.bridge.training.utils.train_utils.calc_dtensor_params_l2_norm")
     def test_megatron_fsdp_path(self, mock_calc_dtensor_norm, mock_model_config_fp32):
         """Test calc_params_l2_norm with use_megatron_fsdp=True."""
