@@ -387,6 +387,7 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
 
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_aux_loss_coeff = 0.0001
 
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
