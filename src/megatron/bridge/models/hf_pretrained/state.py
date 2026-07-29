@@ -990,6 +990,33 @@ class SafeTensorsStateSource(StateSource):
         remaining_keys_by_file = {fname: set(keys) for fname, keys in files_to_save.items()}
         buffered_tensors: Dict[str, torch.Tensor] = {}
         local_saved_tensor_bytes = 0
+        local_saved_filenames: Set[str] = set()
+        local_export_error: str | None = None
+
+        def write_shard(fname: str, tensors_to_save: Dict[str, torch.Tensor]) -> bool:
+            """Write one shard while deferring saver-local failures until the generator is drained."""
+            nonlocal local_export_error, local_saved_tensor_bytes
+
+            output_file_path: Path | None = None
+            try:
+                output_file_path = _resolve_output_shard_path(output_path, fname)
+                output_file_path.parent.mkdir(parents=True, exist_ok=True)
+                save_file(tensors_to_save, output_file_path)
+            except Exception as error:
+                local_export_error = f"Rank {rank} failed to write shard '{fname}': {type(error).__name__}: {error}"
+                if output_file_path is not None:
+                    try:
+                        output_file_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                buffered_tensors.clear()
+                return False
+
+            local_saved_filenames.add(fname)
+            local_saved_tensor_bytes += sum(
+                saved_tensor.numel() * saved_tensor.element_size() for saved_tensor in tensors_to_save.values()
+            )
+            return True
 
         for name, tensor in generator:
             if name not in key_to_filename_map:
@@ -1006,31 +1033,30 @@ class SafeTensorsStateSource(StateSource):
                 fname = key_to_filename_map[name]
                 if fname not in assigned_filenames_set:
                     continue
-                buffered_tensors[name] = tensor
 
                 remaining_keys = remaining_keys_by_file.get(fname)
-                if remaining_keys is None:
-                    # The shard was already saved. Preserve the existing
-                    # duplicate-key behavior by ignoring the repeated tensor.
-                    del buffered_tensors[name]
+                if local_export_error is not None:
+                    continue
+                if remaining_keys is None or name not in remaining_keys:
+                    duplicate_message = f"Duplicate tensor '{name}' from generator."
+                    if strict:
+                        local_export_error = f"Rank {rank}: {duplicate_message}"
+                        buffered_tensors.clear()
+                    else:
+                        print(f"{duplicate_message} Skipping.", flush=True)
                     continue
 
+                buffered_tensors[name] = tensor
                 remaining_keys.discard(name)
                 if not remaining_keys:
                     keys_for_file = files_to_save[fname]
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
-                    output_file_path = _resolve_output_shard_path(output_path, fname)
-                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_file(tensors_to_save, output_file_path)
-                    local_saved_tensor_bytes += sum(
-                        saved_tensor.numel() * saved_tensor.element_size() for saved_tensor in tensors_to_save.values()
-                    )
-
-                    for key in keys_for_file:
-                        del buffered_tensors[key]
+                    if write_shard(fname, tensors_to_save):
+                        for key in keys_for_file:
+                            del buffered_tensors[key]
+                        del files_to_save[fname]
+                        del remaining_keys_by_file[fname]
                     del tensors_to_save
-                    del files_to_save[fname]
-                    del remaining_keys_by_file[fname]
 
         missing_keys = set().union(*remaining_keys_by_file.values()) if remaining_keys_by_file else set()
         if is_saver_rank and missing_keys:
@@ -1044,20 +1070,17 @@ class SafeTensorsStateSource(StateSource):
                 flush=True,
             )
 
-        if is_saver_rank and not strict:
+        if is_saver_rank and not strict and local_export_error is None:
             for fname in list(files_to_save):
                 keys_for_file = files_to_save[fname]
                 tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
                 if tensors_to_save:
-                    output_file_path = _resolve_output_shard_path(output_path, fname)
-                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_file(tensors_to_save, output_file_path)
-                    local_saved_tensor_bytes += sum(
-                        saved_tensor.numel() * saved_tensor.element_size() for saved_tensor in tensors_to_save.values()
-                    )
-                    for key in tensors_to_save:
-                        del buffered_tensors[key]
+                    if write_shard(fname, tensors_to_save):
+                        for key in tensors_to_save:
+                            del buffered_tensors[key]
                     del tensors_to_save
+                    if local_export_error is not None:
+                        break
 
         if buffered_tensors:
             print(
@@ -1087,16 +1110,32 @@ class SafeTensorsStateSource(StateSource):
         # per-rank missing counts so all ranks raise consistently (avoids hangs
         # on the trailing barriers).
         if is_distributed:
-            gathered_save_status: list[tuple[int, int] | None] = [None] * world_size
+            gathered_save_status: list[tuple[int, int, str | None, tuple[str, ...]] | None] = [None] * world_size
             torch.distributed.all_gather_object(
                 gathered_save_status,
-                (len(local_unsaved_keys), local_saved_tensor_bytes),
+                (
+                    len(local_unsaved_keys),
+                    local_saved_tensor_bytes,
+                    local_export_error,
+                    tuple(sorted(local_saved_filenames)),
+                ),
             )
             total_unsaved_count = sum(status[0] for status in gathered_save_status if status is not None)
             total_saved_tensor_bytes = sum(status[1] for status in gathered_save_status if status is not None)
+            export_errors = [status[2] for status in gathered_save_status if status is not None and status[2]]
+            saved_filenames_aggregated = {
+                fname for status in gathered_save_status if status is not None for fname in status[3]
+            }
         else:
             total_unsaved_count = len(local_unsaved_keys)
             total_saved_tensor_bytes = local_saved_tensor_bytes
+            export_errors = [local_export_error] if local_export_error else []
+            saved_filenames_aggregated = local_saved_filenames
+
+        if export_errors:
+            raise RuntimeError(
+                "Checkpoint export failed after all ranks drained the tensor generator: " + "; ".join(export_errors)
+            )
 
         if total_unsaved_count and strict:
             raise RuntimeError(
@@ -1114,7 +1153,7 @@ class SafeTensorsStateSource(StateSource):
                 from safetensors import safe_open
 
                 all_saved_keys_aggregated = set()
-                for fname in all_filenames:
+                for fname in sorted(saved_filenames_aggregated):
                     file_path = _resolve_output_shard_path(output_path, fname)
                     if not file_path.exists():
                         continue
@@ -1126,7 +1165,7 @@ class SafeTensorsStateSource(StateSource):
             from safetensors import safe_open
 
             all_saved_keys_aggregated = set()
-            for fname in all_filenames:
+            for fname in sorted(saved_filenames_aggregated):
                 file_path = _resolve_output_shard_path(output_path, fname)
                 if not file_path.exists():
                     continue
