@@ -19,6 +19,7 @@ import itertools
 import logging
 import math
 import re
+import warnings
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import (
     Any,
@@ -746,6 +747,16 @@ class MegatronModelBridge(
         """
         from megatron.bridge.models.gpt_provider import GPTModelProvider
         from megatron.bridge.models.mla_provider import MLAModelProvider
+
+        if self.MODEL_CONFIG_CLASS is not None:
+            warnings.warn(
+                f"{type(self).__name__}.provider_bridge() and AutoBridge.to_megatron_provider() "
+                "are deprecated for builder-backed models. Use AutoBridge.get_model_config() "
+                "for training recipes or AutoBridge.get_model() to construct a model. "
+                "Legacy provider support will be removed in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
 
         hf_config = hf_pretrained.config
 

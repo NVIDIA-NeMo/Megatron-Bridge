@@ -29,7 +29,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 logger = logging.getLogger(__name__)
@@ -78,43 +77,9 @@ class LlamaBridge(MegatronModelBridge):
 
         return config_kwargs
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-        """Convert HuggingFace Llama config to Megatron GPTModelProvider.
-
-        Uses base class implementation for common conversion, then sets
-        Llama-specific config and preserves supported RoPE scaling.
-
-        Args:
-            hf_pretrained: HuggingFace PreTrainedCausalLM containing the Llama config
-
-        Returns:
-            GPTModelProvider configured for Llama architecture
-        """
-        provider = super().provider_bridge(hf_pretrained)
-
-        # Llama-specific Megatron defaults
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.hidden_dropout = 0.0
-        provider.bias_activation_fusion = True
-        provider.masked_softmax_fusion = True
-        provider.persist_layer_norm = True
-        provider.bias_dropout_fusion = True
-        provider.apply_rope_fusion = True
-        provider.rotary_percent = 1.0
-
-        # Preserve supported RoPE scaling via Megatron Core's built-in implementations.
-        hf_config = hf_pretrained.config
-        hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
-        if hf_rope_scaling:
-            rope_type = hf_rope_scaling.get("rope_type", hf_rope_scaling.get("type"))
-            if rope_type == "llama3":
-                provider.rope_scaling = True
-                provider.rope_scaling_factor = hf_rope_scaling.get("factor", 8.0)
-            elif rope_type == "linear":
-                provider.seq_len_interpolation_factor = hf_rope_scaling["factor"]
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:

@@ -302,7 +302,6 @@ class AutoBridge(Generic[MegatronModelT]):
         self.hf_model_revision: str | None = revision if isinstance(revision, str) else None
         trust_remote_code = getattr(hf_pretrained, "trust_remote_code", False)
         self.trust_remote_code = trust_remote_code if isinstance(trust_remote_code, bool) else False
-        self._model_config: ModelConfig | None = None
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -1656,10 +1655,9 @@ class AutoBridge(Generic[MegatronModelT]):
         if self.hf_model_revision and hasattr(model_config, "hf_model_revision"):
             model_config.hf_model_revision = self.hf_model_revision
 
-        self._model_config = model_config
         return model_config
 
-    def get_megatron_model(
+    def get_model(
         self,
         model_config: ModelConfig | None = None,
         *,
@@ -1738,7 +1736,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 for field_name, value in original_hf_metadata.items():
                     setattr(model_config, field_name, value)
 
-        self._model_config = model_config
         return models
 
     @staticmethod

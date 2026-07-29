@@ -92,6 +92,10 @@ class TestLlamaBridgeConfigConverter:
         """Test that LlamaBridge is properly registered."""
         assert issubclass(LlamaBridge, MegatronModelBridge)
 
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        """Llama should not maintain a separate provider construction path."""
+        assert "provider_bridge" not in LlamaBridge.__dict__
+
     def test_provider_bridge_stores_rope_scaling_for_llama31(self, mock_pretrained_llama):
         """Test that provider_bridge enables rope_scaling for Llama 3.1/3.2."""
         bridge = LlamaBridge()
@@ -181,6 +185,7 @@ class TestLlamaBridgeConfigConverter:
         assert result.position_embedding_type == "rope"
         assert result.seq_len_interpolation_factor == 8.0
         assert result.rope_scaling is False
+        assert result.rope_scaling_factor == 1.0
 
     def test_provider_bridge_preserves_linear_rope_scaling(self):
         """Test that linear RoPE scaling is preserved in the Megatron provider."""
@@ -196,11 +201,13 @@ class TestLlamaBridgeConfigConverter:
             rope_scaling={"type": "linear", "factor": 8.0},
         )
 
-        provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
 
         assert provider.position_embedding_type == "rope"
         assert provider.seq_len_interpolation_factor == 8.0
         assert provider.rope_scaling is False
+        assert provider.rope_scaling_factor == 1.0
 
     def test_provider_bridge_architecture_mapping(self, mock_pretrained_llama, llama_config):
         """Test that architecture parameters are correctly mapped from HF config."""

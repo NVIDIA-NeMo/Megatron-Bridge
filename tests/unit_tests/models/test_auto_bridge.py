@@ -560,7 +560,13 @@ class TestAutoBridge:
         assert model_config.hidden_size == 64
         assert model_config.seq_length == 256
 
-    def test_get_megatron_model_executes_weight_hook_and_restores_config(self):
+    def test_builder_api_uses_concise_public_names(self):
+        """The builder path exposes get_model_config() and get_model() only."""
+        assert callable(AutoBridge.get_model_config)
+        assert callable(AutoBridge.get_model)
+        assert not hasattr(AutoBridge, "get_megatron_model")
+
+    def test_get_model_executes_weight_hook_and_restores_config(self):
         """Builder construction observes weight-loading and initialization semantics."""
         config = _make_tiny_llama_config()
         hf_pretrained = create_mock_pretrained_causal_lm()
@@ -605,7 +611,7 @@ class TestAutoBridge:
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock, return_value=mock_model_bridge),
             patch.object(BridgeGPTModelConfig, "get_builder_cls", return_value=RecordingBuilder),
         ):
-            models = bridge.get_megatron_model(model_config, pg_collection=pg_sentinel)
+            models = bridge.get_model(model_config, pg_collection=pg_sentinel)
 
         assert models == [model_sentinel]
         assert call_order == ["load", "original"]
@@ -613,7 +619,7 @@ class TestAutoBridge:
         assert model_config.transformer.perform_initialization is True
         assert model_config.pre_wrap_hooks == [original_hook]
 
-    def test_get_megatron_model_restores_source_metadata_after_build_failure(self):
+    def test_get_model_restores_source_metadata_after_build_failure(self):
         """A failed explicit-path build must not leave partial source metadata."""
         config = _make_tiny_llama_config()
         bridge = AutoBridge.from_hf_config(config)
@@ -637,7 +643,7 @@ class TestAutoBridge:
             patch.object(BridgeGPTModelConfig, "get_builder_cls", return_value=FailingBuilder),
             pytest.raises(RuntimeError, match="expected build failure"),
         ):
-            bridge.get_megatron_model(
+            bridge.get_model(
                 model_config,
                 hf_path="replacement/llama",
                 pg_collection=Mock(),
@@ -649,15 +655,15 @@ class TestAutoBridge:
         assert model_config.transformer.perform_initialization is True
         assert model_config.pre_wrap_hooks == []
 
-    def test_get_megatron_model_rejects_missing_config_only_weights(self):
+    def test_get_model_rejects_missing_config_only_weights(self):
         """Config-only construction requires an explicit random-init choice."""
         config = _make_tiny_llama_config()
         bridge = AutoBridge.from_hf_config(config)
 
         with pytest.raises(ValueError, match="does not include weights"):
-            bridge.get_megatron_model(bridge.get_model_config(), pg_collection=Mock())
+            bridge.get_model(bridge.get_model_config(), pg_collection=Mock())
 
-    def test_get_megatron_model_builds_tiny_llama_with_mcore_builder(self):
+    def test_get_model_builds_tiny_llama_with_mcore_builder(self):
         """The migrated Llama config constructs a real CPU Megatron model."""
         config = _make_tiny_llama_config()
         bridge = AutoBridge.from_hf_config(config)
@@ -673,7 +679,7 @@ class TestAutoBridge:
         model_config.cross_entropy_loss_fusion = False
 
         try:
-            models = bridge.get_megatron_model(
+            models = bridge.get_model(
                 model_config,
                 load_weights=False,
                 wrap_with_ddp=False,
