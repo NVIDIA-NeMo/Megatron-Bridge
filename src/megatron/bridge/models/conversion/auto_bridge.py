@@ -1346,6 +1346,8 @@ class AutoBridge(Generic[MegatronModelT]):
         cls,
         hf_model_id: str | Path,
         megatron_path: str | Path,
+        *,
+        low_memory_save: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -1360,6 +1362,8 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
+            low_memory_save: Reduce peak memory while saving the Megatron checkpoint.
+                This destroys the converted model during save and can increase runtime.
             **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -1379,7 +1383,8 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b",
             ...     torch_dtype=torch.float16,
-            ...     device_map="auto"
+            ...     device_map="auto",
+            ...     low_memory_save=True
             ... )
         """
         # Load the HuggingFace model
@@ -1404,7 +1409,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path,
             hf_tokenizer_path=hf_model_id,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
-            low_memory_save=True,
+            low_memory_save=low_memory_save,
         )
 
     def export_ckpt(

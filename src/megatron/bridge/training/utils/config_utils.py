@@ -101,10 +101,17 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
             result["_target_"] = f"{value.__class__.__module__}.{value.__class__.__qualname__}"
 
         if include_target and is_dataclass(value):
-            config_items = (
+            field_names = {field.name for field in dataclass_fields(value) if not field.name.startswith("_")}
+            config_items = [
                 (field.name, getattr(value, field.name))
                 for field in dataclass_fields(value)
                 if not field.name.startswith("_")
+            ]
+            # Runtime normalization may add self-aliases that are not constructor state.
+            config_items.extend(
+                (key, item)
+                for key, item in vars(value).items()
+                if not key.startswith("_") and key not in field_names and item is not value
             )
         else:
             config_items = ((key, item) for key, item in value.to_dict().items() if not key.startswith("_"))

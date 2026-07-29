@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from typing import Dict, Optional, Tuple
 
 import torch
@@ -32,9 +31,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-
-
-logger = logging.getLogger(__name__)
 
 
 def _replace_wildcards(pattern: str, captures: Tuple[str, ...]) -> str:
@@ -252,23 +248,19 @@ class NemotronHBridge(MegatronModelBridge):
     # Additional files to copy during HF export (reasoning parser utilities)
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
 
-    def __init__(self):
-        super().__init__()
-        self._mtp_layers_per_block: Optional[int] = None
+    @staticmethod
+    def _hf_mtp_config(hf_config) -> tuple[int, Optional[str]]:
+        """Return the normalized MTP depth and block pattern from an HF config."""
+        mtp_num_layers = int(getattr(hf_config, "num_nextn_predict_layers", 0) or 0)
+        if mtp_num_layers < 0:
+            raise ValueError("num_nextn_predict_layers must be non-negative.")
+        if mtp_num_layers == 0:
+            return 0, None
 
-    def build_conversion_tasks(self, hf_pretrained: PreTrainedCausalLM, megatron_model, weight_dtype=None):
-        # Cache MTP block depth (len of mtp_hybrid_override_pattern) so mapping_registry()
-        # can compute the flattened HF layer indices deterministically.
-        hf_config = getattr(hf_pretrained, "config", None)
-        if hf_config is None:
-            hf_config = hf_pretrained
         mtp_pattern = getattr(hf_config, "mtp_hybrid_override_pattern", None)
-        if mtp_pattern is not None:
-            self._mtp_layers_per_block = len(mtp_pattern)
-        else:
-            self._mtp_layers_per_block = 0
-
-        return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
+        if not mtp_pattern:
+            raise ValueError("An HF config with num_nextn_predict_layers > 0 must define mtp_hybrid_override_pattern.")
+        return mtp_num_layers, mtp_pattern
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
         """Convert HuggingFace Nemotron-H config to HybridModelProvider."""
@@ -307,12 +299,13 @@ class NemotronHBridge(MegatronModelBridge):
             provider.moe_latent_size = hf_config.moe_latent_size
         if hasattr(hf_config, "moe_shared_expert_overlap"):
             provider.moe_shared_expert_overlap = hf_config.moe_shared_expert_overlap
-        if hasattr(hf_config, "num_nextn_predict_layers"):
-            provider.mtp_num_layers = hf_config.num_nextn_predict_layers
-        if hasattr(hf_config, "mtp_hybrid_override_pattern"):
-            provider.mtp_hybrid_override_pattern = hf_config.mtp_hybrid_override_pattern
-        if hasattr(hf_config, "keep_mtp_spec_in_bf16"):
-            provider.keep_mtp_spec_in_bf16 = hf_config.keep_mtp_spec_in_bf16
+        mtp_num_layers, mtp_pattern = self._hf_mtp_config(hf_config)
+        provider.mtp_num_layers = mtp_num_layers
+        provider.mtp_hybrid_override_pattern = mtp_pattern
+        provider.mtp_use_repeated_layer = bool(mtp_num_layers and getattr(hf_config, "mtp_use_repeated_layer", True))
+        provider.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", True))
+        if mtp_num_layers:
+            provider.mtp_loss_scaling_factor = getattr(hf_config, "mtp_loss_scaling_factor", 0.3)
 
         return provider
 
@@ -380,6 +373,9 @@ class NemotronHBridge(MegatronModelBridge):
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
 
+        _, mtp_pattern = self._hf_mtp_config(self.hf_config)
+        mtp_layers_per_block = len(mtp_pattern) if mtp_pattern else 0
+
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
@@ -416,8 +412,6 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "backbone.layers.*.mixer.experts.*.up_proj.weight",
             "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "backbone.layers.*.mixer.experts.*.down_proj.weight",
         }
-
-        mtp_layers_per_block = int(self._mtp_layers_per_block or 0)
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
@@ -468,8 +462,12 @@ class NemotronHBridge(MegatronModelBridge):
                 "mtp.layers.*.mtp_model_layer.layers.*.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.*.norm.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.weight": "mtp.layers.*.mixer.gate.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.expert_bias": "mtp.layers.*.mixer.gate.e_score_correction_bias",
+                # GroupedMLP (moe_grouped_gemm=True): expert weights are stored as weight0, weight1, ...
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc1.weight*": "mtp.layers.*.mixer.experts.*.up_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc2.weight*": "mtp.layers.*.mixer.experts.*.down_proj.weight",
+                # SequentialMLP (moe_grouped_gemm=False): expert weights are stored per local_expert
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "mtp.layers.*.mixer.experts.*.up_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "mtp.layers.*.mixer.experts.*.down_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc1_latent_proj.weight": "mtp.layers.*.mixer.fc1_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc2_latent_proj.weight": "mtp.layers.*.mixer.fc2_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.shared_experts.linear_fc1.weight": "mtp.layers.*.mixer.shared_experts.up_proj.weight",
@@ -486,12 +484,6 @@ class NemotronHBridge(MegatronModelBridge):
                         inner_override=None,
                     )
                 )
-        else:
-            logger.warning(
-                "mtp_layers_per_block is not set (or 0). Skipping MTP flattening mappings. "
-                "If you are converting a model with MTP enabled, ensure hf_pretrained.config.mtp_hybrid_override_pattern is present."
-            )
-
         # Handling Mamba Mixer submodules separately for more clarity
         # Special Handling for InProj and Conv1d due to specific TP logic
         for mixer_sub_module in ["A_log", "D", "dt_bias", "norm.weight"]:

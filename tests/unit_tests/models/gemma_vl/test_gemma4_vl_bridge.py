@@ -532,6 +532,23 @@ class TestMaybeModifyConvertedHFWeightCausal:
             atol=0,
         )
 
+    def test_config_only_vl_export_drops_tied_global_v_proj(self, vl_bridge, mock_hf_config_moe):
+        vl_bridge.hf_config = mock_hf_config_moe
+        converted = {
+            "model.language_model.layers.4.self_attn.v_proj.weight": torch.randn(4, 8),
+            "model.language_model.layers.5.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.language_model.layers.5.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.language_model.layers.5.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+
+        result = vl_bridge.maybe_modify_converted_hf_weight(None, converted, {})
+
+        assert set(result) == {
+            "model.language_model.layers.4.self_attn.v_proj.weight",
+            "model.language_model.layers.5.self_attn.q_proj.weight",
+            "model.language_model.layers.5.self_attn.k_proj.weight",
+        }
+
     def test_empty_hf_state_dict_passthrough(self, causal_bridge):
         converted = {"some.weight": torch.randn(4, 4)}
         result = causal_bridge.maybe_modify_converted_hf_weight(None, converted, {})
@@ -694,10 +711,12 @@ class TestGemma4VLBridgeProviderBridgeMoE:
         assert p.eos_token_id == 1
         assert p.vision_soft_tokens_per_image == 280
 
-    def test_dtype_is_fp32_for_vl(self, bridge, mock_hf_pretrained_moe):
+    def test_dtype_matches_hf_config(self, bridge, mock_hf_pretrained_moe):
         p = bridge.provider_bridge(mock_hf_pretrained_moe)
-        assert p.bf16 is False
-        assert p.params_dtype == torch.float32
+        assert p.bf16 is True
+        assert p.fp16 is False
+        assert p.params_dtype == torch.bfloat16
+        assert p.autocast_dtype == torch.bfloat16
 
     def test_global_head_config(self, bridge, mock_hf_pretrained_moe):
         p = bridge.provider_bridge(mock_hf_pretrained_moe)

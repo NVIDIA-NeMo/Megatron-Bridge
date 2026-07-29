@@ -1541,7 +1541,7 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
-            low_memory_save=True,
+            low_memory_save=False,
         )
 
     @patch.object(AutoBridge, "save_megatron_model")
@@ -1580,6 +1580,39 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             hf_tokenizer_path="./local_model",
             hf_tokenizer_kwargs={"revision": "0123456789abcdef"},  # pragma: allowlist secret
+            low_memory_save=False,
+        )
+
+    @patch.object(AutoBridge, "save_megatron_model")
+    @patch.object(AutoBridge, "to_megatron_model")
+    @patch.object(AutoBridge, "from_hf_pretrained")
+    def test_import_ckpt_with_low_memory_save(
+        self, mock_from_hf_pretrained, mock_to_megatron_model, mock_save_megatron_model
+    ):
+        """Test import_ckpt low-memory save forwarding."""
+        mock_bridge = Mock(spec=AutoBridge)
+        mock_from_hf_pretrained.return_value = mock_bridge
+        mock_megatron_model = [Mock()]
+        mock_bridge.to_megatron_model.return_value = mock_megatron_model
+        mock_bridge.save_megatron_model = Mock()
+        mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
+
+        AutoBridge.import_ckpt(
+            "meta-llama/Meta-Llama-3-8B",
+            "./megatron_checkpoint",
+            low_memory_save=True,
+            torch_dtype=torch.bfloat16,
+        )
+
+        mock_from_hf_pretrained.assert_called_once_with(
+            "meta-llama/Meta-Llama-3-8B",
+            torch_dtype=torch.bfloat16,
+        )
+        mock_bridge.save_megatron_model.assert_called_once_with(
+            mock_megatron_model,
+            "./megatron_checkpoint",
+            hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+            hf_tokenizer_kwargs={},
             low_memory_save=True,
         )
 
