@@ -395,8 +395,8 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
-    # Temporary performance A/B switch. The default preserves the production recipe.
-    env_ab_variant = os.getenv("MB_DEEPSEEK_ENV_AB_VARIANT", "current")
+    # Dedicated A/B branch: default to the topology-disabled variant.
+    env_ab_variant = os.getenv("MB_DEEPSEEK_ENV_AB_VARIANT", "no-topology")
     if env_ab_variant not in {"current", "no-margin", "no-topology"}:
         raise ValueError(f"Unsupported MB_DEEPSEEK_ENV_AB_VARIANT: {env_ab_variant}")
 
