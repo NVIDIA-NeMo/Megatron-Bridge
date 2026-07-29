@@ -397,10 +397,12 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
 
     # Temporary performance A/B switch. The default preserves the production recipe.
     env_ab_variant = os.getenv("MB_DEEPSEEK_ENV_AB_VARIANT", "current")
-    if env_ab_variant not in {"current", "no-margin", "no-topology"}:
+    if env_ab_variant not in {"current", "no-margin", "no-nvls-disable", "no-topology"}:
         raise ValueError(f"Unsupported MB_DEEPSEEK_ENV_AB_VARIANT: {env_ab_variant}")
 
     cfg.env_vars = dict(COMMON_RECIPE_ENV_VARS)
+    if env_ab_variant == "no-nvls-disable":
+        cfg.env_vars.pop("NCCL_NVLS_ENABLE")
     if env_ab_variant != "no-margin":
         cfg.env_vars.update(
             {

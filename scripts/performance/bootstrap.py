@@ -64,6 +64,8 @@ def main() -> None:
     """Prepare process settings, then execute one training entrypoint."""
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
+    if os.getenv("MB_DEEPSEEK_ENV_AB_VARIANT") == "no-nvls-disable":
+        os.environ.pop("NCCL_NVLS_ENABLE", None)
     recipe, target_name = _prepare_recipe_and_target(args, cli_overrides)
     _apply_recipe_environment(recipe)
     _exec_training(target_name)
