@@ -29,8 +29,12 @@ tensors* account for a memory difference. PyTorch's own `memory_viz` renders a
 timeline from the same file; these scripts add cross-snapshot comparison,
 source attribution, and scriptable/JSON output.
 
-**No dependencies** — Python stdlib only. The HTML plot loads Plotly.js from a
-CDN in the browser, so it adds nothing to the Python environment.
+**No dependencies** — Python stdlib only, and they run on any `python3` back to
+3.9, so a login node or laptop system interpreter is fine (macOS ships 3.9;
+`from __future__ import annotations` keeps the newer type syntax from being
+evaluated at import). No virtualenv, no `uv sync`, no GPU. The HTML plot loads
+Plotly.js from a CDN in the browser, so it adds nothing to the Python
+environment.
 
 ## How Bridge Produces These Files
 
@@ -269,9 +273,16 @@ TensorBoard to sanity-check that the trace covers what you think it covers.
 Per-step replays seed their live set with whatever was already live when the
 step opened, so the source table accounts for memory carried into the step
 (weights, optimizer state, graph pools, activations held across the boundary)
-and not just what the step itself allocated. The remainder between the table's
-total and `absolute_peak` is `baseline_at_start` — allocations that predate the
-trace entirely and therefore have no recorded stack frames to attribute.
+and not just what the step itself allocated. On a real annotated capture this
+recovered about 3.4 GiB per step that the table previously omitted.
+
+**The table will not sum to `absolute_peak`, and the gap is not a single clean
+quantity.** The table shows allocations the trace can see and attribute to a
+stack frame; `absolute_peak` also includes memory that predates the trace and
+has no frames, and the two are related through `step_start_delta`, which nets
+frees of pre-trace memory against later allocations. Treat the table as "what
+is attributable and how it ranks", not as a decomposition of the peak. Use the
+segments numbers for total accounting.
 
 ### Unmatched frees
 

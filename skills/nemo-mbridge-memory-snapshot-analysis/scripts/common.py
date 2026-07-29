@@ -15,6 +15,11 @@
 
 """Shared utilities for CUDA memory snapshot analysis."""
 
+# Annotations are lazy so the PEP 604 `X | None` syntax below does not need to
+# evaluate at import time; these scripts stay runnable on the system python3
+# (3.9 on macOS) even though the repo itself targets 3.10+.
+from __future__ import annotations
+
 import logging
 import os
 import pickle

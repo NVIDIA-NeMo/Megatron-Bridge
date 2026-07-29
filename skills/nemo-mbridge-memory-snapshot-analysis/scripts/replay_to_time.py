@@ -15,6 +15,11 @@
 
 """Drill down into CUDA memory state at a specific point in time."""
 
+# Annotations are lazy so the PEP 604 `X | None` syntax below does not need to
+# evaluate at import time; these scripts stay runnable on the system python3
+# (3.9 on macOS) even though the repo itself targets 3.10+.
+from __future__ import annotations
+
 import argparse
 import json
 import logging
