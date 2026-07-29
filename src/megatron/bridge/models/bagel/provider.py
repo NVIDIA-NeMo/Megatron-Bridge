@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,9 @@ from megatron.bridge.models.bagel.modeling import (
     OfficialBagelVisionEncoder,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 def gelu_pytorch_tanh(value: torch.Tensor) -> torch.Tensor:
@@ -76,7 +80,7 @@ class BagelModelProvider(GPTModelProvider):
     vision_model_path: str | None = None
     vae_path: str | None = None
     latent_patch_size: int = 2
-    max_latent_size: int = 32
+    max_latent_size: int = 64
     max_num_patch_per_side: int = 70
     timestep_shift: float = 1.0
     ce_weight: float = 1.0
@@ -85,6 +89,11 @@ class BagelModelProvider(GPTModelProvider):
     recompute_vit: bool = False
     freeze_vit: bool = False
     freeze_llm: bool = False
+    native_model_checkpoint: str | None = None
+    native_model_seed: int | None = None
+    native_world_size: int | None = None
+    validate_native_checkpoint_metadata: bool = True
+    reset_reference_training_rng: bool = False
 
     def finalize(self) -> None:
         """Validate the first supported BAGEL training topology."""
@@ -95,6 +104,17 @@ class BagelModelProvider(GPTModelProvider):
         )
         if topology != (1, 1, 1):
             raise ValueError(f"BAGEL currently requires TP=PP=CP=1, got {topology}")
+        if self.native_model_checkpoint is None:
+            if self.native_model_seed is not None or self.native_world_size is not None:
+                raise ValueError("BAGEL native seed/world size require native_model_checkpoint")
+            if not self.validate_native_checkpoint_metadata:
+                raise ValueError("BAGEL metadata validation override requires native_model_checkpoint")
+            if self.reset_reference_training_rng:
+                raise ValueError("BAGEL reference RNG reset requires native_model_checkpoint")
+        elif self.native_model_seed is None or self.native_world_size is None:
+            raise ValueError("BAGEL native checkpoint requires native_model_seed and native_world_size")
+        elif self.native_model_seed <= 0 or self.native_world_size <= 0:
+            raise ValueError("BAGEL native_model_seed and native_world_size must be positive")
         self.sequence_parallel = False
         self.variable_seq_lengths = True
         super().finalize()
@@ -297,6 +317,23 @@ class BagelModelProvider(GPTModelProvider):
         torch.nn.init.zeros_(output_projection.weight)
         if output_projection.bias is not None:
             torch.nn.init.zeros_(output_projection.bias)
+        if self.native_model_checkpoint is not None:
+            from examples.mimo_bagel.utils.native_checkpoint import initialize_bagel_from_native_checkpoint
+
+            report = initialize_bagel_from_native_checkpoint(
+                model,
+                self.native_model_checkpoint,
+                expected_model_seed=self.native_model_seed,
+                expected_world_size=self.native_world_size,
+                validate_metadata=self.validate_native_checkpoint_metadata,
+                llm_config=bagel_config.llm_config,
+            )
+            logger.info(
+                "Loaded native BAGEL initialization: source=%d target=%d fp32_main=%d",
+                report.source_tensors_consumed,
+                report.target_tensors_verified,
+                report.fp32_main_tensors_preserved,
+            )
         if self.freeze_vit:
             model.modality_submodules["images"].encoders["vision_encoder"].requires_grad_(False)
         if self.freeze_llm:

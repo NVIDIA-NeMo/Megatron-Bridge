@@ -47,7 +47,7 @@ class OfficialBagelVisionEncoder(torch.nn.Module):
             )
         self.encoder.vision_model.embeddings.convert_conv2d_to_linear(bagel_config.vit_config)
         self.encoder.to(dtype)
-        self.position_embedding = PositionEmbedding(
+        self.vit_pos_embed = PositionEmbedding(
             bagel_config.vit_max_num_patch_per_side,
             bagel_config.llm_config.hidden_size,
         ).to(dtype)
@@ -87,7 +87,7 @@ class OfficialBagelVisionEncoder(torch.nn.Module):
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
             )
-        positions = self.position_embedding(packed_vit_position_ids).to(dtype=dtype)
+        positions = self.vit_pos_embed(packed_vit_position_ids).to(dtype=dtype)
         return embeddings.to(dtype=dtype), positions
 
 
@@ -113,8 +113,12 @@ class BagelDiffusionSubmodule(ModalitySubmodules):
 
     def encode(self, encoders_data_batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Encode packed timesteps and latent positions."""
+        timesteps = encoders_data_batch["shifted_timesteps"]
+        use_autocast = timesteps.is_cuda and self.dtype in (torch.float16, torch.bfloat16)
+        with torch.amp.autocast("cuda", enabled=use_autocast, dtype=self.dtype):
+            timestep_embedding = self.encoders["timestep"](timesteps)
         return {
-            "timestep": self.encoders["timestep"](encoders_data_batch["shifted_timesteps"]).to(self.dtype),
+            "timestep": timestep_embedding.to(self.dtype),
             "position": self.encoders["latent_position_ids"](encoders_data_batch["latent_position_ids"]).to(
                 self.dtype
             ),

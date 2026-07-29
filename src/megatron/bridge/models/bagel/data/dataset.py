@@ -51,6 +51,7 @@ class BagelDatasetConfig(DatasetProvider):
     max_num_tokens: int = 36864
     prefer_buffer_before: int = 16384
     max_buffer_size: int = 50
+    max_latent_size: int = 64
     text_cond_dropout_prob: float = 0.1
     vit_cond_dropout_prob: float = 0.4
     vae_cond_dropout_prob: float = 0.1
@@ -145,6 +146,7 @@ class BagelDatasetConfig(DatasetProvider):
             max_num_tokens=self.max_num_tokens,
             prefer_buffer_before=self.prefer_buffer_before,
             max_buffer_size=self.max_buffer_size,
+            max_latent_size=self.max_latent_size,
             text_cond_dropout_prob=self.text_cond_dropout_prob,
             vit_cond_dropout_prob=self.vit_cond_dropout_prob,
             vae_cond_dropout_prob=self.vae_cond_dropout_prob,

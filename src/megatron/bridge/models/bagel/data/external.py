@@ -19,6 +19,7 @@ from typing import Literal, Self
 
 import numpy as np
 import torch
+from torch.utils.data._utils.worker import _generate_state
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
@@ -32,12 +33,14 @@ def _reject_collate(_: object) -> object:
 class BagelRNGIterator:
     """Run the official packer with data-only process RNG state."""
 
-    def __init__(self, iterator: Iterator[dict[str, object]], seed: int) -> None:
-        """Initialize independent Python, NumPy, and CPU Torch RNG states."""
+    def __init__(self, iterator: Iterator[dict[str, object]], rank_seed: int) -> None:
+        """Initialize the independent RNG states of BAGEL's one DataLoader worker."""
         self.iterator = iterator
-        self.python_rng = random.Random(seed).getstate()
-        self.numpy_rng = np.random.RandomState(seed % (2**32)).get_state()
-        self.torch_rng = torch.Generator().manual_seed(seed).get_state()
+        generator = torch.Generator().manual_seed(rank_seed)
+        worker_seed = torch.empty((), dtype=torch.int64).random_(generator=generator).item()
+        self.python_rng = random.Random(worker_seed).getstate()
+        self.numpy_rng = np.random.RandomState(_generate_state(worker_seed, 0)).get_state()
+        self.torch_rng = torch.Generator().manual_seed(worker_seed).get_state()
 
     def __iter__(self) -> Self:
         """Return this stateful RNG-isolated iterator."""

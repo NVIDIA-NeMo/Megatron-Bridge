@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""BAGEL-7B-MoT pretraining recipe."""
+"""BAGEL-7B-MoT training recipes."""
 
 from megatron.bridge.models.bagel.data.dataset import BagelDatasetConfig
 from megatron.bridge.models.bagel.provider import BagelModelProvider
@@ -25,6 +25,10 @@ def bagel_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return an 8-GPU Megatron-FSDP BAGEL pretraining configuration."""
     cfg = _pretrain_common()
     cfg.model = BagelModelProvider()
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_vit = True
     cfg.dataset = BagelDatasetConfig()
     cfg.train.train_iters = 500_000
     cfg.train.global_batch_size = 8
@@ -36,6 +40,7 @@ def bagel_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         lr_decay_iters=500_000,
         adam_beta1=0.9,
         adam_beta2=0.95,
+        adam_eps=1e-15,
         weight_decay=0.0,
         max_lr=1e-4,
         min_lr=1e-4,
@@ -58,4 +63,19 @@ def bagel_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-__all__ = ["bagel_7b_pretrain_8gpu_h100_bf16_config"]
+def bagel_7b_finetune_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the official BAGEL fine-tuning overrides for the 8-GPU recipe."""
+    cfg = bagel_7b_pretrain_8gpu_h100_bf16_config()
+    cfg.dataset.expected_num_tokens = 10240
+    cfg.dataset.max_num_tokens = 11520
+    cfg.dataset.max_num_tokens_per_sample = 10240
+    cfg.optimizer.lr = 2e-5
+    cfg.optimizer.min_lr = 2e-5
+    cfg.logger.log_interval = 1
+    return cfg
+
+
+__all__ = [
+    "bagel_7b_finetune_8gpu_h100_bf16_config",
+    "bagel_7b_pretrain_8gpu_h100_bf16_config",
+]

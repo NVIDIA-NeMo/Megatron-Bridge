@@ -16,15 +16,24 @@
 
 from __future__ import annotations
 
+import random
 from collections.abc import Iterable
 from functools import partial
 
+import numpy as np
 import torch
 
 from megatron.bridge.models.bagel.data.batch import bagel_packed_batch_to_mimo
 from megatron.bridge.models.bagel.diffusion import BagelDiffusionScheduler
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
+
+
+def _seed_reference_training_rng(seed: int) -> None:
+    """Set the process RNGs used by native BAGEL immediately before training."""
+    random.seed(seed)
+    np.random.seed(seed % (2**32))
+    torch.manual_seed(seed)
 
 
 def bagel_loss(
@@ -77,6 +86,7 @@ class BagelForwardStep:
 
     def __init__(self) -> None:
         self.scheduler: BagelDiffusionScheduler | None = None
+        self.reference_rng_seeded = False
 
     def __call__(
         self,
@@ -96,6 +106,17 @@ class BagelForwardStep:
                 timestep_shift=config.timestep_shift,
                 dtype=config.params_dtype,
             )
+            self.scheduler.initialize()
+        if config.reset_reference_training_rng and not self.reference_rng_seeded:
+            if state.train_state.step == 0:
+                world_size = torch.distributed.get_world_size()
+                if config.native_world_size != world_size:
+                    raise RuntimeError("BAGEL native checkpoint world size differs from the training world size")
+                model_seed = state.cfg.rng.seed * world_size
+                if config.native_model_seed != model_seed:
+                    raise RuntimeError("BAGEL native checkpoint seed differs from the training seed")
+                _seed_reference_training_rng(model_seed + torch.distributed.get_rank())
+            self.reference_rng_seeded = True
 
         state.timers("batch-generator", log_level=2).start()
         with state.straggler_timer(bdata=True):

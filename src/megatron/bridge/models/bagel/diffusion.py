@@ -58,6 +58,10 @@ class BagelDiffusionScheduler:
         self.vae, self.vae_params = load_ae(self.vae_path)
         self.vae.requires_grad_(False).eval().cuda()
 
+    def initialize(self) -> None:
+        """Load the VAE before the reference training RNG is reset."""
+        self._ensure_vae()
+
     def shift_timesteps(self, timesteps: torch.Tensor) -> torch.Tensor:
         """Apply BAGEL's sigmoid and rational timestep shift."""
         timesteps = torch.sigmoid(timesteps)
