@@ -1,0 +1,186 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: nemotron_3_nano_omni_30b_a3b_reasoning
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. On the recorded Bridge commit, 144 focused tests passed, including
+  canonical collator-owned packing, image/video/audio insertion, and a real
+  tiny-model forward, backward, and optimizer update. Two-rank
+  context-parallel sharding passed on both ranks. The official ten-frame
+  Valor32K audio/video sample produced 1,280 video and 126 audio placeholders
+  with finite loss 11.72488499; a three-step legacy/canonical comparison had
+  maximum loss delta 0.0. These are focused implementation checks rather than
+  completed end-to-end model verification items, so the required inventory
+  remains unverified.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+  hf_revision: 24e67ea000b7c2837fc8f9488aa2008524fac8ba  # pragma: allowlist secret
+  architecture: NemotronH_Nano_Omni_Reasoning_V3
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.06
+  bridge_commit: 7dff2df3e773adf346cd6018596909760679efcd  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No full CPU import is part of this focused stack-refresh validation.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No full distributed GPU import is part of this focused stack-refresh
+      validation.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No full CPU export is part of this focused stack-refresh validation.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No full distributed GPU export is part of this focused stack-refresh
+      validation.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No full Hugging Face and Megatron logit-correlation run is part of this
+      focused stack-refresh validation.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No full-checkpoint deterministic generation run is part of this focused
+      stack-refresh validation.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        No bounded full-model pretraining run is part of this focused
+        stack-refresh validation.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Focused tiny-model optimizer coverage does not satisfy the full-model
+        SFT verification gate.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        No post-SFT export and deterministic Hugging Face generation run is
+        part of this focused stack-refresh validation.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Focused packed-sequence and context-parallel tests do not satisfy the
+        full-model long-context SFT verification gate.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        No full-model parameter-efficient finetuning run is part of this
+        focused stack-refresh validation.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: false
+      expected_result: >
+        No full-state checkpoint continuation is part of this focused
+        stack-refresh validation.
