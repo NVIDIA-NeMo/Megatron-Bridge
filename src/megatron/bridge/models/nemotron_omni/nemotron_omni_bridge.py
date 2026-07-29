@@ -245,7 +245,6 @@ class NemotronOmniBridge(NemotronVLBridge):
 
         hf_config = getattr(self, "hf_config", None)
         llm_config = getattr(hf_config, "llm_config", None)
-        mtp_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
 
         language_bridge = NemotronHBridge()
         language_bridge.hf_config = llm_config
