@@ -28,7 +28,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 44f322e24cee9417c4d7c35047223e607c3143bb  # pragma: allowlist secret
+  bridge_commit: 4ea8a2d075cc7b88f351df0f5519d3de8874e56b  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -205,15 +205,12 @@ items:
         --mode pretrain --max_steps 50
       last_verified: null
       metrics:
-        initial_loss: 12.82963
-        final_loss: 0.008182429
-        last_10_steps_step_time_ms_avg: 31751.010
-        last_10_steps_model_tflops_per_gpu_avg: 185.560
+        initial_loss: 12.82967
+        final_loss: 0.008152428
+        last_10_steps_step_time_ms_avg: 24561.870
+        last_10_steps_model_tflops_per_gpu_avg: 239.820
       expected_result: >
-        Both public runs completed successfully with finite values, skipped=0,
-        NaN=0, and exit 0:0. The 50-step run recorded loss 12.82963 to
-        0.008182429 and 185.560 model TFLOP/s/GPU over steps 41-50. The exact
-        no-override run on MCore cd4afffa648426a959dc7cb1e24b5ce7d0c3ff54
-        reached 23.340825 seconds / 252.375 model TFLOP/s/GPU over steps 5-8.
-        Verification still requires 287.305 model TFLOP/s/GPU over steps
-        41-50, so this item remains unverified.
+        The exact command completed all 50 steps with finite loss, skipped=0,
+        NaN=0, and exit 0:0. Steps 41-50 averaged 24.561870 seconds and 239.820
+        model TFLOP/s/GPU. The 287.305 gate was not met, so this item remains
+        unverified.

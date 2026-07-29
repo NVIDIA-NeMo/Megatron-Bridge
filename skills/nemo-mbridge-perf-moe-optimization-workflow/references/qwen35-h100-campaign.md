@@ -498,22 +498,17 @@ remaining acceptance gap is a model/runtime optimization gap: 261.8 remains
 8.88% below the 287.305 gate and needs about 9.74% more throughput. Do not
 invent another Bridge port solely from unmatched historical logs.
 
-Verify version compatibility through the recipe itself, not hidden command-line
-fields. Job 5719802 ran the same exact PR recipe command with no model
-overrides on both the pinned MCore and candidate commit
-`aed727d4f14202dd8dc780044f2ab046a21f82c6`. The pinned path averaged
-23.340825 seconds / 252.375 model TFLOP/s/GPU over steps 5--8; the candidate
-path averaged 22.606775 seconds / 260.575 model TFLOP/s/GPU. Both completed all
-eight iterations with finite losses, zero skipped or NaN iterations, and every
-array task and distributed step exited 0:0. Keep version branching inside the
-model-specific runtime for ABI diagnostics. The reviewable delivery retains
-the main-line MCore pin `cd4afffa648426a959dc7cb1e24b5ce7d0c3ff54` and claims
-the lower measured result, 23.340825 seconds / 252.375 model TFLOP/s/GPU.
-Candidate-only pre-GDR and backend fields require the #5361 and #5564 main
-backports before they can become part of the published version contract.
-Select those fields only when MCore exposes them, preserve the legacy
-FlashQLA adapter for the retained pin, and keep weighted-SwiGLU API branching
-inside the model runtime.
+Verify the retained dependency contract through the exact recipe, not hidden
+command-line fields or package injection. EOS job 5733823 ran the public
+50-step command from clean Bridge commit
+`4ea8a2d075cc7b88f351df0f5519d3de8874e56b` and main-line MCore pin
+`cd4afffa648426a959dc7cb1e24b5ce7d0c3ff54`. It used the existing locked FLA
+0.4.2 and TileLang 0.1.8 stack, completed all iterations with finite losses,
+zero skipped or NaN iterations, and exited 0:0. Steps 41--50 averaged
+24.561870 seconds / 239.820 model TFLOP/s/GPU. The reviewable PR therefore
+needs no `3rdparty/Megatron-LM`, `pyproject.toml`, or `uv.lock` delta.
+Candidate-only pre-GDR and FlashQLA backend fields still require the #5361 and
+#5564 main backports before they can become part of a future version contract.
 
 Audit the upstream delta before treating a newer MCore checkout as unexplored
 headroom. From candidate `aed727d4f14202dd8dc780044f2ab046a21f82c6` through
