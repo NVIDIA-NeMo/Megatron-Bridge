@@ -316,6 +316,24 @@ def test_image_forward_replaces_expanded_placeholders_without_changing_length():
     assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
 
 
+def test_image_forward_does_not_use_mcore_causal_mask_as_token_validity():
+    image_features = torch.tensor([[101.0, 102.0, 103.0], [201.0, 202.0, 203.0]])
+    model = _BoundaryModel(image_features)
+    input_ids = torch.tensor([[7, 18, 18, 9]])
+    causal_attention_mask = torch.triu(torch.ones(1, 1, 4, 4, dtype=torch.bool), diagonal=1)
+
+    output = model(
+        input_ids=input_ids,
+        attention_mask=causal_attention_mask,
+        images=torch.ones(1),
+    )
+
+    assert output.shape == (4, 1, 3)
+    assert torch.equal(output[1, 0], image_features[0])
+    assert torch.equal(output[2, 0], image_features[1])
+    assert torch.equal(model.language_model.last_kwargs["attention_mask"], causal_attention_mask)
+
+
 def test_audio_forward_replaces_expanded_placeholders_without_changing_length():
     sound_features = torch.tensor([[101.0, 102.0, 103.0], [201.0, 202.0, 203.0]])
     model = _BoundaryModel(torch.empty(0, 3), sound_features)
