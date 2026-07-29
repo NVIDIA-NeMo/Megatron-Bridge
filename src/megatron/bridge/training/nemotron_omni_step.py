@@ -84,8 +84,9 @@ def get_batch_from_iterator(
         required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
         if batch.get("padding_mask") is not None:
-            # Every decoder PP stage needs the physical THD gap mask for MoE
-            # routing. The model applies CP/SP sharding after media insertion.
+            # Preserve the physical THD gap mask through every decoder PP stage
+            # so CP/SP localization remains ready for routing after MCore #6111.
+            # The mask is deliberately not forwarded into MCore until then.
             required_device_keys.add("padding_mask")
 
     if is_first_pp_stage or is_last_pp_stage:

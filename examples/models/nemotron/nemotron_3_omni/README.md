@@ -206,8 +206,11 @@ pretrained checkpoint and enable in-batch sequence packing via
 The canonical expanded-sequence collator owns THD packing for text, image,
 video, and audio rows. The model receives the final packed tensors and global
 boundaries, inserts media without changing sequence length, and applies only
-the rank-local CP/SP shard. Alignment gaps are carried as a padding mask so
-they do not affect MoE routing statistics.
+the rank-local CP/SP shard. Alignment gaps are carried as a padding mask for
+media validation and consistent CP/SP localization, but the mask is not
+forwarded into MCore until
+[Megatron-LM #6111](https://github.com/NVIDIA/Megatron-LM/issues/6111) is fixed.
+The gaps remain loss-masked but currently count toward MoE routing statistics.
 
 Compact variable-length packs do not yet restore the original per-row batch
 dimension for `seq_aux_loss`; that requires follow-up boundary-aware
