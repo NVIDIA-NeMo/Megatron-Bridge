@@ -2333,7 +2333,7 @@ class GroupedExpertLinearAdapter(nn.Module):
 
 
 def _make_cross_ep_replicated(weight: nn.Parameter) -> None:
-    """Mark a weight as logically replicated across the intra-PP-stage group.
+    """Mark a weight as logically replicated across expert model parallelism.
 
     Megatron's DDP routes ``is_expert=True`` parameters through the expert
     data-parallel group only, which does not span the EP axis. A weight
@@ -2351,9 +2351,9 @@ def _make_cross_ep_replicated(weight: nn.Parameter) -> None:
     loss gradient over its (token, expert) subset, and the total gradient
     is the sum of those partials. AVG would train at 1/N the intended rate.
 
-    The intra-PP-stage group is ``tensor_and_data_parallel_group`` with
-    context parallel included, which by Megatron's construction equals
-    ETP × EP × EDP — all ranks within the current pipeline stage.
+    Only the EP group is reduced here. Expert tensor-parallel ranks hold
+    different weight shards, while Megatron DDP separately reduces matching
+    replicas over expert data parallelism.
 
     Args:
         weight: The parameter to keep replicated across the group. Must
@@ -2364,7 +2364,7 @@ def _make_cross_ep_replicated(weight: nn.Parameter) -> None:
     if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
         return
     try:
-        group = parallel_state.get_tensor_and_data_parallel_group(with_context_parallel=True)
+        group = parallel_state.get_expert_model_parallel_group()
     except AssertionError:
         return
     if torch.distributed.get_world_size(group=group) <= 1:
@@ -2567,10 +2567,12 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         elif model_parallel_config.fp16:
             self.half()
 
-        # The shared weight is logically replicated across EP; close the gap
-        # that Megatron's expert-DDP routing leaves open.
-        shared_weight = self.linear_in.weight if self._is_fc1 else self.linear_out.weight
-        _make_cross_ep_replicated(shared_weight)
+        # Fused accumulation writes the real wgrad directly to ``main_grad``
+        # and exposes only a dummy parameter grad, so the EP hook must use the
+        # unfused path for this shared factor.
+        shared_linear = self.linear_in if self._is_fc1 else self.linear_out
+        shared_linear.gradient_accumulation_fusion = False
+        _make_cross_ep_replicated(shared_linear.weight)
 
     def forward(self, x: torch.Tensor, m_splits=None) -> torch.Tensor:
         """Forward. ``m_splits`` is the tokens-per-expert split passed through

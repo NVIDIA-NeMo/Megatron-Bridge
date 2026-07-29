@@ -33,6 +33,7 @@ from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
+    SharedOuterGroupedExpertAdapter,
     all2all_hp2sp,
     enable_legacy_shared_expert_adapter_loading,
     get_adapter_attributes_from_linear,
@@ -1301,6 +1302,82 @@ class TestParallelLinearAdapter:
         assert sharded_weight.global_shape == (2, 2)
         assert sharded_weight.replica_id == (0, 1, 3)
         assert "adapter.linear_in._extra_state" in result
+
+
+@pytest.mark.unit
+class TestSharedOuterGroupedExpertAdapter:
+    """Tests for grouped-expert LoRA adapters with one shared outer factor."""
+
+    @pytest.mark.parametrize(
+        ("input_is_parallel", "base_linear_name", "shared_side", "per_expert_side"),
+        [
+            (False, "decoder.layers.0.mlp.experts.linear_fc1", "linear_in", "linear_out"),
+            (True, "decoder.layers.0.mlp.experts.linear_fc2", "linear_out", "linear_in"),
+        ],
+        ids=("fc1_shared_a", "fc2_shared_b"),
+    )
+    def test_shared_factor_disables_gradient_accumulation_fusion(
+        self,
+        input_is_parallel,
+        base_linear_name,
+        shared_side,
+        per_expert_side,
+    ):
+        """The EP hook must receive the real shared-factor gradient."""
+        config = MockModelParallelConfig()
+        config.gradient_accumulation_fusion = True
+        shared_linear = nn.Linear(2, 2, bias=False)
+        shared_linear.gradient_accumulation_fusion = True
+        per_expert_linear = nn.Linear(2, 2, bias=False)
+        per_expert_linear.gradient_accumulation_fusion = True
+
+        with (
+            patch.object(peft_utils, "ColumnParallelLinear", return_value=shared_linear),
+            patch.object(peft_utils, "RowParallelLinear", return_value=shared_linear),
+            patch.object(peft_utils, "PackedPerExpertLinear", return_value=per_expert_linear),
+            patch.object(peft_utils, "_make_cross_ep_replicated") as sync_weight,
+        ):
+            adapter = SharedOuterGroupedExpertAdapter(
+                in_features=2,
+                out_features=2,
+                dim=2,
+                num_local_experts=2,
+                base_linear_name=base_linear_name,
+                input_is_parallel=input_is_parallel,
+                model_parallel_config=config,
+            )
+
+        assert getattr(adapter, shared_side).gradient_accumulation_fusion is False
+        assert getattr(adapter, per_expert_side).gradient_accumulation_fusion is True
+        assert config.gradient_accumulation_fusion is True
+        sync_weight.assert_called_once_with(getattr(adapter, shared_side).weight)
+
+    def test_shared_factor_sync_uses_expert_model_parallel_group(self):
+        """Shared gradients should cross EP only; DDP handles expert-DP separately."""
+        weight = nn.Parameter(torch.ones(2, 2))
+        ep_group = Mock()
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_group",
+                return_value=ep_group,
+            ) as get_ep_group,
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_tensor_and_data_parallel_group",
+                side_effect=AssertionError("shared factors must not reduce across ETP or EDP"),
+            ),
+            patch("torch.distributed.get_world_size", return_value=2),
+            patch("torch.distributed.all_reduce") as all_reduce,
+        ):
+            peft_utils._make_cross_ep_replicated(weight)
+            weight.sum().backward()
+
+        get_ep_group.assert_called_once_with()
+        all_reduce.assert_called_once()
+        assert all_reduce.call_args.kwargs["group"] is ep_group
+        assert all_reduce.call_args.kwargs["op"] is torch.distributed.ReduceOp.SUM
 
 
 class TestGroupedExpertLinearAdapter:
