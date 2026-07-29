@@ -448,6 +448,9 @@ def nemotron_3_5_nano_sft_openmathinstruct2_packed_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.empty_unused_memory_level = 2
 
+    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.optimizer.lr = 5e-6
     cfg.optimizer.min_lr = 0.0
     cfg.optimizer.overlap_param_gather = False
