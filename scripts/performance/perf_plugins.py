@@ -277,8 +277,13 @@ class PerfEnvPlugin(Plugin):
                 """
                 cuda_device_max_connections = 1
 
-        executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
-        logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
+        if "CUDA_DEVICE_MAX_CONNECTIONS" in executor.env_vars:
+            # respect user-provided override
+            cuda_device_max_connections = executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"]
+            logger.info(f"User set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
+        else:
+            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
+            logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
 
     def _set_model_specific_environment_variables(
         self,
@@ -326,6 +331,8 @@ class PerfEnvPlugin(Plugin):
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300", "vr200"]:
+            if model_family_name == "llama" and model_recipe_name == "llama2_70b":
+                del_cudnn_ln = False
             if model_family_name == "llama" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
