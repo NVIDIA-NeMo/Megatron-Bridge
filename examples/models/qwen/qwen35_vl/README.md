@@ -105,7 +105,11 @@ Before training, ensure the following environment variables are set:
 
 ### Pretrain
 
-Pretraining is not verified for this model.
+Canonical pretraining convergence remains unverified for Qwen3.5 and Qwen3.6.
+The [Qwen3.6 35B-A3B verification card](../../../model_verification_cards/qwen3.6-35b-a3b/card.yaml)
+separately verifies a bounded, frozen-tower DataComp projection-pretraining and
+checkpoint-resume workflow; it does not claim canonical DataComp/CLIP
+convergence.
 
 ### Supervised Fine-Tuning (SFT)
 

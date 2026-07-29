@@ -139,27 +139,26 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
 def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return the shared 8-GPU pre-training config for Qwen3.5/Qwen3.6-VL 35B-A3B.
 
-    The recipe uses TP1/PP1/EP8, freezes the language and vision towers, trains
-    the vision projection, and owns the MBS1/GBS512 batch contract used by
-    image-caption pre-training datasets.
+    The recipe freezes the language and vision towers and trains the vision
+    projection. Dataset-specific batch and execution topology overrides belong
+    in the launcher command so this shared recipe preserves its convergence
+    defaults.
     """
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = None
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096
-    cfg.model.expert_model_parallel_size = 8
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
+    cfg.model.expert_model_parallel_size = 4
 
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
@@ -807,7 +806,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     Default configuration: 16 GPUs
     - TP=1, PP=2, EP=8
-    - MBS=1, GBS=512
+    - MBS=1, GBS=32
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
     """
@@ -860,16 +859,16 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = []
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
     # Training config
     cfg.train.train_iters = 300000
-    cfg.train.global_batch_size = 512
+    cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
@@ -886,11 +885,11 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     # The VLM model-chunk layout produces empty optimizer groups with optimizer-step gather overlap.
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
 
@@ -905,8 +904,8 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.ddp.average_in_collective = False
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.rerun_state_machine.check_for_nan_in_loss = True
 
@@ -921,7 +920,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
         delay_wgrad_compute=False,
     )
     cfg.mixed_precision = bf16_mixed()
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
@@ -950,6 +949,7 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config() -> ConfigContain
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
 
+    cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 2
 
     cfg.dataset.seq_length = 8192

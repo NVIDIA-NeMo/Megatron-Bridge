@@ -417,32 +417,32 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.moe_permute_fusion is True
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.peft is None
-    assert cfg.train.global_batch_size == 512
+    assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 1
-    assert cfg.model.recompute_granularity is None
-    assert cfg.model.recompute_modules == []
-    assert cfg.model.recompute_method is None
-    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     assert cfg.model.bias_activation_fusion is True
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.dataset.defer_in_batch_packing_to_step is True
-    assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.optimizer.min_lr == 2e-6
     assert cfg.ddp.check_for_nan_in_grad is True
-    assert cfg.ddp.grad_reduce_in_fp32 is False
-    assert cfg.ddp.average_in_collective is False
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.average_in_collective is True
     assert cfg.comm_overlap.tp_comm_overlap is False
     assert cfg.comm_overlap.overlap_grad_reduce is False
     assert cfg.comm_overlap.overlap_param_gather is False
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
-    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
     assert cfg.rerun_state_machine.check_for_nan_in_loss is True
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
@@ -856,13 +856,13 @@ def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatc
 
     _assert_basic_config(cfg)
 
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.pipeline_dtype is None
-    assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.sequence_parallel is False
-    assert cfg.train.global_batch_size == 512
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.pipeline_dtype is not None
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 2
 
 
 def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
