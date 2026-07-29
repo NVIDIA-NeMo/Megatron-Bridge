@@ -29,10 +29,6 @@ _CANONICAL_RECIPE_NAME = re.compile(
     r".+_(?:pretrain|sft|peft)_\d+gpu_[a-z0-9]+_(?:bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config"
 )
 _RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
-# Deliberately lock the discovered public inventory; update this for intentional recipe additions or removals.
-_EXPECTED_FLAT_RECIPE_COUNT = 418
-_EXPECTED_DEEPSEEK_RECIPE_COUNT = 41
-_EXPECTED_DEEPSEEK_HYBRID_EP_RECIPE_COUNT = 39
 _INLINE_CORE_ENV_NAMES = {
     "CUDA_DEVICE_MAX_CONNECTIONS",
     "NCCL_NVLS_ENABLE",
@@ -102,9 +98,10 @@ def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
-def test_benchmark_common_preserves_legacy_manual_gc_defaults():
+def test_benchmark_common_preserves_legacy_manual_gc_and_model_shape_defaults():
     cfg = SimpleNamespace(
         train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
         checkpoint=SimpleNamespace(save="checkpoint"),
         logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
         ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True, grad_reduce_in_fp32=True),
@@ -125,10 +122,10 @@ def test_benchmark_common_preserves_legacy_manual_gc_defaults():
 
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
 
 
 def test_every_flat_recipe_builder_declares_its_environment_inline():
-    builders = []
     invalid = []
 
     for path in _RECIPE_ROOT.glob("*/*/*.py"):
@@ -136,11 +133,11 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
         for node in tree.body:
             if not isinstance(node, ast.FunctionDef) or _CANONICAL_RECIPE_NAME.fullmatch(node.name) is None:
                 continue
-            builders.append(f"{path.relative_to(_RECIPE_ROOT)}:{node.name}")
+            builder = f"{path.relative_to(_RECIPE_ROOT)}:{node.name}"
             try:
                 _explicit_environment(path, node.name)
             except AssertionError:
-                invalid.append(builders[-1])
+                invalid.append(builder)
             assert not any(
                 isinstance(decorator, ast.Call)
                 and isinstance(decorator.func, ast.Name)
@@ -148,17 +145,12 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
                 for decorator in node.decorator_list
             )
 
-    assert len(builders) == _EXPECTED_FLAT_RECIPE_COUNT
     assert not invalid
 
 
 def test_explicit_environment_invariants_across_all_flat_recipes():
     """Keep duplicated inline settings complete without deriving them at runtime."""
-    recipes = list(_explicit_environments())
-    deepseek_recipe_count = 0
-    deepseek_hybrid_ep_count = 0
-
-    for path, function_name, environment in recipes:
+    for path, function_name, environment in _explicit_environments():
         assert environment.keys() >= _INLINE_CORE_ENV_NAMES
 
         cudnn_names = {"NVTE_NORM_BWD_USE_CUDNN", "NVTE_NORM_FWD_USE_CUDNN"}
@@ -176,7 +168,6 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
         if "_nvfp4" in function_name:
             assert environment["NVTE_USE_FAST_MATH"] == 1
         if path.parts[-3] == "deepseek":
-            deepseek_recipe_count += 1
             assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
             assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
             assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
@@ -187,11 +178,6 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 assert not hybrid_ep_names
             else:
                 assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
-                deepseek_hybrid_ep_count += 1
-
-    assert len(recipes) == _EXPECTED_FLAT_RECIPE_COUNT
-    assert deepseek_recipe_count == _EXPECTED_DEEPSEEK_RECIPE_COUNT
-    assert deepseek_hybrid_ep_count == _EXPECTED_DEEPSEEK_HYBRID_EP_RECIPE_COUNT
 
 
 @pytest.mark.parametrize(

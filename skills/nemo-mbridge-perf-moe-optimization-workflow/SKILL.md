@@ -109,6 +109,26 @@ larger EP degree than the dense layers can tolerate.
 | Host overhead | GPU gaps, launch-bound traces, Python overhead | CUDA graphs, `--manual-gc`, higher MBS, CPU affinity tuning |
 | Compute | Low SM utilization after comm and host issues are addressed | grouped GEMM, fusion work, FP8, dispatcher-specific kernel tuning |
 
+### Profile overlap without misreading it
+
+Use unprofiled steady iterations for the acceptance metric and a matched
+profile for causal explanation:
+
+1. Change one overlap or dispatcher variable at a time; keep routing, graph
+   scopes, parallelism, batch shape, and runtime fixed.
+2. Build interval unions for communication kernels and compute kernels, then
+   measure their intersection to quantify hidden communication.
+3. Do not add kernel durations and call the result wall time. Concurrent
+   kernels may run longer because of SM or bandwidth contention even while the
+   exposed GPU-active union and end-to-end step time fall.
+4. Corroborate the trace with dispatch/combine NVTX ranges, steady step time,
+   model TFLOPS/GPU, loss finiteness, skipped/NaN counts, and peak memory.
+
+On a controlled 16×H100 Qwen3 30B-A3B HybridEP run, plain EP overlap increased
+communication hidden by GEMM/attention from 0.11% to 36.55%. The unprofiled
+step fell from 24.7138s to 20.9920s and throughput rose from 244.039 to 287.305
+model TFLOPS/GPU. `delay_wgrad_compute` remained disabled.
+
 ## Dispatcher And Overlap Guidance
 
 Use dispatcher choice as a bottleneck fix, not as the first tuning knob.
@@ -119,6 +139,10 @@ Use dispatcher choice as a bottleneck fix, not as the first tuning knob.
   strong default for H100 and B200 style deployments
 - `moe_token_dispatcher_type="flex"` + `moe_flex_dispatcher_backend="hybridep"`:
   strongest starting point on GB200 or GB300 NVL72 systems
+
+Treat these as starting points, not hard platform rules. HybridEP plus plain EP
+overlap was the measured winner for the 16×H100 Qwen3 30B-A3B shape. Benchmark
+backend compatibility and throughput in the target container.
 
 If the all-to-all path is visible in profiles, combine dispatcher tuning with:
 
@@ -177,3 +201,6 @@ Related references:
 5. **Parallel Folding is not optional at large scale**: once attention and expert
    layers want clearly different layouts, a single shared TP or EP plan becomes
    a tax on both.
+
+6. **Summed kernel time is not exposed time**: use interval unions and
+   communication/compute intersection when validating overlap.

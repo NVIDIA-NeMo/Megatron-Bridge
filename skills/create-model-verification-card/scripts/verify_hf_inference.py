@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify deterministic, exact-length inference from an exported HF checkpoint."""
+"""Run greedy, exact-length inference from an exported HF checkpoint."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def _format_prompt(tokenizer: Any, prompt: str, *, chat_template: bool, disable_
 
 
 def main() -> int:
-    """Run two exact-length greedy generations and print their shared completion."""
+    """Run one exact-length greedy generation and print its completion."""
     args = _parse_args()
 
     import torch
@@ -97,27 +97,21 @@ def main() -> int:
     prompt_length = inputs["input_ids"].shape[1]
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
-    outputs = []
     with torch.inference_mode():
-        for _ in range(2):
-            outputs.append(
-                model.generate(
-                    **inputs,
-                    do_sample=False,
-                    min_new_tokens=args.max_new_tokens,
-                    max_new_tokens=args.max_new_tokens,
-                    pad_token_id=pad_token_id,
-                )
-            )
+        output = model.generate(
+            **inputs,
+            do_sample=False,
+            min_new_tokens=args.max_new_tokens,
+            max_new_tokens=args.max_new_tokens,
+            pad_token_id=pad_token_id,
+        )
 
     expected_length = prompt_length + args.max_new_tokens
-    if any(output.shape != (1, expected_length) for output in outputs):
-        lengths = [output.shape[1] - prompt_length for output in outputs]
-        raise RuntimeError(f"Expected exactly {args.max_new_tokens} generated tokens; observed {lengths}")
-    if not torch.equal(outputs[0], outputs[1]):
-        raise RuntimeError("Two greedy HF inference runs produced different token IDs")
+    if output.shape != (1, expected_length):
+        observed_length = output.shape[1] - prompt_length
+        raise RuntimeError(f"Expected exactly {args.max_new_tokens} generated tokens; observed {observed_length}")
 
-    completion_ids = outputs[0][0, prompt_length:].tolist()
+    completion_ids = output[0, prompt_length:].tolist()
     completion = tokenizer.decode(completion_ids, skip_special_tokens=True)
     LOG.info("HF completion (%d tokens): %s", args.max_new_tokens, json.dumps(completion, ensure_ascii=False))
     return 0

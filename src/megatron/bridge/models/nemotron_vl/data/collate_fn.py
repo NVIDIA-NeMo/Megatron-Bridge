@@ -14,18 +14,34 @@
 
 """Nemotron VL collator implementations."""
 
+from typing import Any
+
 import torch
 
 from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
 from megatron.bridge.data.conversation_processing import (
+    AssistantMaskBoundaryConfig,
+    assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
-    infer_assistant_mask_boundary_config,
     shared_chat_template_kwargs_from_examples,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
+
+
+NEMOTRON_VL_ASSISTANT_START = "<SPECIAL_11>Assistant\n"
+NEMOTRON_VL_ASSISTANT_END = "<SPECIAL_12>"
+
+
+def _nemotron_vl_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig:
+    """Build assistant loss boundaries for the Nemotron VL chat template."""
+    return assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=NEMOTRON_VL_ASSISTANT_START,
+        assistant_end=NEMOTRON_VL_ASSISTANT_END,
+    )
 
 
 def nemotron_nano_v2_vl_collate_fn(
@@ -57,7 +73,7 @@ def nemotron_nano_v2_vl_collate_fn(
         )
 
     skipped_tokens = extract_skipped_token_ids(processor)
-    boundary_config = infer_assistant_mask_boundary_config(processor)
+    boundary_config = _nemotron_vl_assistant_mask_boundary_config(processor)
     if is_video:
         from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
             maybe_path_or_url_to_data_urls,
@@ -71,26 +87,28 @@ def nemotron_nano_v2_vl_collate_fn(
         video_nframe_max = -1
 
         for example in examples:
-            video_path = example["conversation"][0]["content"][0]["path"]
-            image_urls, metadata = maybe_path_or_url_to_data_urls(
-                video_path,
-                fps=max(0, int(video_fps)),
-                nframe=max(0, int(video_nframe)),
-                nframe_max=int(video_nframe_max),
-            )
-            frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
+            video_part = example["conversation"][0]["content"][0]
+            video_payload = video_part.get("video")
+            metadata = None
+            if video_payload is not None and not isinstance(video_payload, str):
+                frames.append(video_payload)
+            else:
+                video_path = video_payload if isinstance(video_payload, str) else video_part["path"]
+                image_urls, metadata = maybe_path_or_url_to_data_urls(
+                    video_path,
+                    fps=max(0, int(video_fps)),
+                    nframe=max(0, int(video_nframe)),
+                    nframe_max=int(video_nframe_max),
+                )
+                frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
 
         prompt = processor.apply_chat_template(
             [example["conversation"] for example in examples],
             tokenize=False,
             **shared_chat_template_kwargs_from_examples(examples),
         )
-        batch = processor(
-            text=prompt,
-            videos=frames,
-            videos_kwargs={"video_metadata": metadata},
-            return_tensors="pt",
-        )
+        processor_kwargs = {"videos_kwargs": {"video_metadata": metadata}} if metadata is not None else {}
+        batch = processor(text=prompt, videos=frames, return_tensors="pt", **processor_kwargs)
     else:
         # Ensure a pad_token is set so padding can produce uniform-length tensors.
         if processor.tokenizer.pad_token is None:
@@ -146,6 +164,14 @@ def nemotron_nano_v2_vl_collate_fn(
     loss_mask = adjusted_batch["loss_mask"]
     if "attention_mask" in adjusted_batch:
         batch["attention_mask"] = adjusted_batch["attention_mask"]
+
+    # ``adjust_image_tokens`` expands each image region to one placeholder per
+    # processor tile. LLaVAModel therefore needs one tile-count entry per
+    # expanded placeholder, rather than the processor's original per-image
+    # counts (for example, ``[7]`` becomes seven entries of ``1``).
+    batch["num_patches"] = torch.ones_like(batch["num_patches"], dtype=torch.int).repeat_interleave(
+        batch["num_patches"]
+    )
 
     batch_size, seq_len = batch["input_ids"].shape
     batch["position_ids"] = torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)

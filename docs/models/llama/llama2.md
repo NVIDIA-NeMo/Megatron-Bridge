@@ -1,5 +1,9 @@
 # Llama 2
 
+> **Deprecation notice:** Llama 2 support is no longer actively maintained or
+> tested against current upstream checkpoints and will be removed in Megatron
+> Bridge 0.7.0. The shared Llama bridge remains supported for Llama 3 variants.
+
 [Llama 2](https://huggingface.co/meta-llama/Llama-2-7b-hf) is Meta's decoder-only transformer model family. Megatron Bridge supports Llama 2 through the shared Llama bridge for the Hugging Face `LlamaForCausalLM` architecture.
 
 ## Supported Variants
@@ -41,4 +45,3 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 ## Related Implementation
 
 - Bridge implementation: [`src/megatron/bridge/models/llama/llama_bridge.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py)
-

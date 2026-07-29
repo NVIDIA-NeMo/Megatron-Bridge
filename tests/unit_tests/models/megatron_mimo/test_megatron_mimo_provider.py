@@ -835,12 +835,15 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         assert pgc.ep == mock_ep
         assert pgc.expt_tp == mock_expt_tp
         assert pgc.expt_dp == mock_expt_dp
+        assert pgc.expt_dp_gtp_remat == mock_expt_dp
         assert pgc.dp_cp == mock_dp_cp
+        assert pgc.dp_cp_gtp_remat == mock_dp_cp
         assert pgc.intra_dp_cp == mock_dp_cp
         assert pgc.tp_cp == mock_tp_cp
         assert pgc.tp_dp_cp == mock_tp_dp_cp
         assert pgc.mp == mock_mp
         assert pgc.tp_ep == mock_tp_ep
         assert pgc.tp_ep_pp == mock_tp_ep_pp
+        assert pgc.tp_ep_pp_with_egtp_remat == mock_tp_ep_pp
         assert pgc.intra_expt_dp == mock_expt_dp
         assert pgc.intra_dist_opt == mock_intra_dist_opt

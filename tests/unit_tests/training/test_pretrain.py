@@ -90,6 +90,33 @@ class TestPretrainProcessGroupOwnership:
         mock_dist.barrier.assert_not_called()
         mock_dist.destroy_process_group.assert_called_once_with()
 
+    def test_framework_owned_async_worker_is_aborted_before_process_group_destroyed(self):
+        """Test failed setup aborts its async checkpoint worker before distributed cleanup."""
+        state = MagicMock()
+        async_queue = MagicMock()
+        cleanup_order = []
+
+        def setup_then_fail(*_args, **_kwargs):
+            state._async_calls_queue = async_queue
+            raise RuntimeError("setup failed after async worker initialization")
+
+        async_queue.close.side_effect = lambda *, abort: cleanup_order.append(("async_queue", abort))
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch("megatron.bridge.training.pretrain.destroy_global_state"),
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch("megatron.bridge.training.pretrain.setup", side_effect=setup_then_fail),
+        ):
+            mock_dist.is_initialized.side_effect = [False, True]
+            mock_dist.destroy_process_group.side_effect = lambda: cleanup_order.append(("process_group", None))
+
+            with pytest.raises(RuntimeError, match="setup failed after async worker initialization"):
+                _pretrain(state, MagicMock())
+
+        assert cleanup_order == [("async_queue", True), ("process_group", None)]
+        assert state._async_calls_queue is None
+
     def test_caller_owned_process_group_is_preserved_when_setup_raises(self):
         """Test Bridge preserves a process group that existed before setup."""
         state = MagicMock()

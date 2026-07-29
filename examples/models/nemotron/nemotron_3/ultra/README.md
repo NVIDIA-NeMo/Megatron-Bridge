@@ -142,8 +142,11 @@ Pre-pack OpenMath data before training:
 sbatch pack_data_job.sh
 ```
 
-Use the same `SEQ_LENGTH`, `HF_MODEL_PATH`, and `NEMO_HOME` for packing and
-training. `NEMO_HOME` must point at a shared filesystem visible on all nodes.
+Packing uses the Hugging Face model and 4096-token sequence length defined by
+the recipe; `pack_data_job.sh` does not accept `HF_MODEL_PATH` or `SEQ_LENGTH`
+overrides. Keep the training launchers at those recipe defaults when consuming
+the packed artifacts. `NEMO_HOME` must be the same shared filesystem location
+for packing and training.
 
 ## Training
 

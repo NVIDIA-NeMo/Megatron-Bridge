@@ -40,12 +40,65 @@ class TestVLMEngine:
             engine.scheduler.completed_request_pool = {"req_id": "result"}
             engine.run_engine = MagicMock()
 
-            results = engine.generate(["prompt"], ["image"])
+            results = engine.generate(["prompt 1", "prompt 2"], ["image 1", "image 2"])
 
-            assert results == ["result"]
-            engine.scheduler.add_request.assert_called()
-            engine.run_engine.assert_called()
+            assert results == ["result", "result"]
+            assert engine.scheduler.add_request.call_count == 2
+            engine.run_engine.assert_called_once()
             assert not InferenceMode.is_active()
+        finally:
+            InferenceMode.unset_active()
+
+    def test_generate_keeps_variable_length_visual_contexts_consistent(self):
+        InferenceMode.unset_active()
+        mock_controller = MagicMock()
+        mock_controller.tokenize_prompt.side_effect = [
+            ([1], None),
+            ([10, 11, 151655, 151655], {"pixel_values": "complete-image"}),
+        ]
+        mock_controller.inference_wrapped_model.inference_context = StaticInferenceContext(
+            max_batch_size=4, max_sequence_length=8192
+        )
+        mock_controller.inference_wrapped_model.inference_wrapper_config = MagicMock(inference_max_requests=4)
+
+        try:
+            engine = VLMEngine(mock_controller, max_batch_size=4, legacy=True)
+            pending_requests = {}
+            completed_requests = {}
+
+            def add_request(*, prompt, prompt_tokens, encoder_prompt, sampling_params):
+                request_id = str(len(pending_requests) + len(completed_requests))
+                pending_requests[request_id] = {
+                    "prompt": prompt,
+                    "prompt_tokens": prompt_tokens,
+                    "encoder_prompt": encoder_prompt,
+                }
+                return request_id
+
+            engine.scheduler = MagicMock()
+            engine.scheduler.add_request.side_effect = add_request
+            engine.scheduler.completed_request_pool = completed_requests
+
+            def run_engine():
+                first_context_length = min(len(request["prompt_tokens"]) for request in pending_requests.values())
+                inconsistent_requests = [
+                    request
+                    for request in pending_requests.values()
+                    if request["encoder_prompt"] is not None and len(request["prompt_tokens"]) > first_context_length
+                ]
+                assert not inconsistent_requests, (
+                    "a truncated first context window would receive the complete visual payload"
+                )
+                completed_requests.update(
+                    {request_id: request["prompt"] for request_id, request in pending_requests.items()}
+                )
+                pending_requests.clear()
+
+            engine.run_engine = run_engine
+
+            results = engine.generate(["short", "long image prompt"], [None, "image"])
+
+            assert results == ["short", "long image prompt"]
         finally:
             InferenceMode.unset_active()
 
