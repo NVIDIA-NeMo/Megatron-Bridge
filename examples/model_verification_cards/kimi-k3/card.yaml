@@ -87,10 +87,19 @@ items:
       source KDA A_log tensors were audited: each stores 96 active heads plus
       32 zero-valued inactive entries, for 2,208 checked padding values.
       Import validation drops only this zero padding, and export unit tests
-      restore it with zeros. A strict full-checkpoint export over 497,220
-      source tensors did not complete within a one-hour 96x GB200 validation
-      allocation, so strict reload and exact key, shape, dtype, and value audit
-      remain required.
+      restore it with zeros. A four-layer diagnostic proxy completed
+      low-memory GPU import and distributed streaming export. Its seven
+      safetensors shards and index, totaling 58,482,941,904 bytes, were
+      byte-identical to an export from the previous default-save import; this
+      validates the low-memory I/O behavior, not full-model parity. Against the
+      published proxy source, all 16,402 keys and shapes matched and A_log
+      padding was valid. Three o_norm tensors changed from FP32 to BF16, and
+      16,128 value mismatches were concentrated in MXFP4 expert packed weights
+      and scales because import dequantizes them to BF16 before export
+      requantizes them. Full verification therefore still requires the pinned
+      complete model to export and strictly reload, exact comparison of
+      lossless tensors, and a declared numerical criterion for lossy MXFP4
+      reconstruction.
 
   manual_forward_pass:
     status: unverified
