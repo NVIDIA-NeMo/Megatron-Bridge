@@ -673,41 +673,47 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 9b0c2dff42e6175e91d34cd2a504529f803ebde9  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config
         --max_steps 50
-      last_verified: 2026-07-23
+      last_verified: 2026-07-28
       metrics:
-        initial_loss: 12.16177
-        final_loss: 0.008181423
-        last_10_steps_step_time_ms_avg: 41557.690
-        last_10_steps_model_tflops_per_gpu_avg: 355.100
+        initial_loss: 12.16155
+        final_loss: 0.01361997
+        last_10_steps_step_time_ms_avg: 20826.370
+        last_10_steps_model_tflops_per_gpu_avg: 354.300
+        peak_allocated_memory_gib: 71.949
+        peak_reserved_memory_gib: 74.631
       expected_result: >
-        On 16x H100, the exact mock-data BF16 performance recipe completes 50
-        finite-loss steps with no skipped or NaN iterations. LM loss is
-        12.16177 -> 0.008181423; MTP-1 and MTP-2 losses remain finite on all 50
-        steps. Steps 41-50 average 41,557.690 ms and 355.100 model TFLOP/s/GPU,
-        with all four metrics recorded.
+        On 16x H100, the exact mock-data BF16 performance recipe completes
+        exactly 50 steps with finite LM/MTP-1/MTP-2 losses and no skipped or
+        NaN iterations. Transformer Engine CUDA graphs cover attention and
+        Mamba scopes. Steps 41-50 average 20,826.370 ms and 354.300 model
+        TFLOP/s/GPU; peak rank-0 allocated/reserved memory is 71.949/74.631
+        GiB.
 
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: 9b0c2dff42e6175e91d34cd2a504529f803ebde9  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --recipe nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config
         --max_steps 50
-      last_verified: 2026-07-23
+      last_verified: 2026-07-28
       metrics:
         initial_loss: 12.18250
-        final_loss: 0.02966032
-        last_10_steps_step_time_ms_avg: 18373.760
-        last_10_steps_model_tflops_per_gpu_avg: 803.180
+        final_loss: 0.03325584
+        last_10_steps_step_time_ms_avg: 18236.060
+        last_10_steps_model_tflops_per_gpu_avg: 809.220
+        peak_allocated_memory_gib: 156.850
+        peak_reserved_memory_gib: 161.260
       expected_result: >
         On 8x GB200, the exact mock-data BF16 performance recipe completes
         exactly 50 steps with finite LM/MTP-1/MTP-2 losses and no skipped or NaN
         iterations. Transformer Engine CUDA graphs cover attention, Mamba,
-        MoE-router, and MoE-preprocess scopes. Steps 41-50 average at most 20
-        seconds per step and at least 780 model TFLOP/s/GPU. This result should
-        not be compared with pretrain_performance.H100 because the hardware
-        recipes use GBS/MBS 512/2 and 1024/1, respectively.
+        MoE-router, and MoE-preprocess scopes. Steps 41-50 average 18,236.060 ms
+        and 809.220 model TFLOP/s/GPU; peak rank-0 allocated/reserved memory is
+        156.850/161.260 GiB.
