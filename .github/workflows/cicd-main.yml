@@ -83,6 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pre-flight]
     outputs:
+      docs_only:         ${{ steps.configure.outputs.docs_only }}
       needs_more_tests:  ${{ steps.configure.outputs.needs_more_tests }}
       full_test_suite:   ${{ steps.configure.outputs.full_test_suite }}
       expect_l0:         ${{ steps.configure.outputs.expect_l0 }}
@@ -114,7 +115,9 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         env:
           GH_TOKEN:      ${{ github.token }}
-          DOCS_ONLY:     ${{ needs.pre-flight.outputs.docs_only }}
+          # An MCore-triggered run tests a different dependency revision even
+          # when the checked-out MBridge commit contains documentation only.
+          DOCS_ONLY:     ${{ needs.pre-flight.outputs.docs_only == 'true' && github.event.inputs.mcore_ref == '' }}
           IS_DEPLOYMENT: ${{ needs.pre-flight.outputs.is_deployment_workflow }}
           EVENT_NAME:    ${{ github.event_name }}
           REF:           ${{ github.ref }}
@@ -167,6 +170,7 @@ jobs:
             EXPECT_L2=true
           fi
 
+          echo "docs_only=$DOCS_ONLY"               | tee -a "$GITHUB_OUTPUT"
           echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
           echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
           echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
@@ -275,7 +279,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
-      || needs.pre-flight.outputs.docs_only == 'true'
+      || needs.configure.outputs.docs_only == 'true'
       || needs.configure.outputs.perf_scripts_only == 'true')
       && github.event_name != 'merge_group'
     steps:
@@ -1110,7 +1114,7 @@ jobs:
       && !cancelled()
       && needs.pre-flight.outputs.is_ci_workload == 'false'
       && (
-        needs.pre-flight.outputs.docs_only == 'true'
+        needs.configure.outputs.docs_only == 'true'
         || needs.pre-flight.outputs.is_deployment_workflow == 'true'
         || needs.configure.outputs.perf_scripts_only == 'true'
       )
@@ -1134,7 +1138,7 @@ jobs:
     needs: [Nemo_CICD_Test, pre-flight, configure]
     if: |
       needs.Nemo_CICD_Test.result == 'success'
-      && needs.pre-flight.outputs.docs_only == 'false'
+      && needs.configure.outputs.docs_only == 'false'
       && needs.pre-flight.outputs.is_deployment_workflow == 'false'
       && needs.configure.outputs.perf_scripts_only == 'false'
       && github.event.inputs.mcore_ref == ''
