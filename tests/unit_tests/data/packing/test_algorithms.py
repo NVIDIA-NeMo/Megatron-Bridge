@@ -218,3 +218,62 @@ class TestFirstFitItemLengths:
         """Guards against the lengths being passed positionally by mistake."""
         with pytest.raises(TypeError):
             first_fit([1, 2, 3], 10, [1, 2, 3])
+
+
+class TestFirstFitDecreasingItemLengths:
+    """first_fit_decreasing packs opaque objects when item_lengths is supplied.
+
+    This is the exact contract the diffusion task encoder relies on: it orders live
+    sample objects by (padded) query sequence length, longest first, and needs the
+    original objects back in the bins.
+    """
+
+    def test_defaults_to_entries_as_their_own_lengths(self):
+        """Omitting item_lengths must behave exactly like passing seqlens twice."""
+        seqlens = [5, 3, 2, 7, 4]
+        assert first_fit_decreasing(seqlens, 10) == first_fit_decreasing(seqlens, 10, item_lengths=seqlens)
+
+    def test_packs_objects_in_decreasing_length_order(self):
+        items = ["a", "b", "c", "d", "e"]
+        lengths = [5, 3, 2, 7, 4]
+
+        result = first_fit_decreasing(items, 10, item_lengths=lengths)
+
+        # Sorted by length desc -> d(7), a(5), e(4), b(3), c(2); first-fit-decreasing
+        # then packs [d, b], [a, e], [c], carrying the original objects.
+        assert result == [["d", "b"], ["a", "e"], ["c"]]
+
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_object_packing_matches_integer_packing(self, seed):
+        """Bin structure must depend only on the lengths, not on what the items are."""
+        np.random.seed(seed)
+        lengths = [int(x) for x in np.random.randint(1, 2048, size=500)]
+        items = [object() for _ in lengths]
+
+        by_object = first_fit_decreasing(items, 2048, item_lengths=lengths)
+        by_length = first_fit_decreasing(lengths, 2048)
+
+        index = {id(o): i for i, o in enumerate(items)}
+        assert [[lengths[index[id(o)]] for o in b] for b in by_object] == by_length
+
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_object_packing_matches_linear_scan_reference(self, seed):
+        """Assignments must match the original O(N^2) linear scan on the sorted order."""
+        np.random.seed(seed)
+        lengths = [int(x) for x in np.random.randint(0, 2248, size=400)]
+        items = [object() for _ in lengths]
+
+        by_object = first_fit_decreasing(items, 2048, item_lengths=lengths)
+
+        index = {id(o): i for i, o in enumerate(items)}
+        packed_lengths = [[lengths[index[id(o)]] for o in b] for b in by_object]
+        assert packed_lengths == _first_fit_linear(sorted(lengths, reverse=True), 2048)
+
+    def test_mismatched_lengths_raise(self):
+        with pytest.raises(ValueError, match="same number of entries"):
+            first_fit_decreasing([1, 2, 3], 10, item_lengths=[1, 2])
+
+    def test_item_lengths_is_keyword_only(self):
+        """Guards against the lengths being passed positionally by mistake."""
+        with pytest.raises(TypeError):
+            first_fit_decreasing([1, 2, 3], 10, [1, 2, 3])
