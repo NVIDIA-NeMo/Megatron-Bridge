@@ -556,7 +556,7 @@ class TestAutoBridge:
         model_config = AutoBridge.from_hf_config(config).get_model_config()
 
         assert isinstance(model_config, BridgeGPTModelConfig)
-        assert model_config.hf_model_id == "local/llama"
+        assert model_config.extra_checkpoint_metadata["hf_model_id"] == "local/llama"
         assert model_config.hidden_size == 64
         assert model_config.seq_length == 256
 
@@ -625,8 +625,10 @@ class TestAutoBridge:
         bridge = AutoBridge.from_hf_config(config)
         bridge.trust_remote_code = True
         model_config = bridge.get_model_config()
-        model_config.hf_model_id = "original/llama"
-        model_config.hf_model_revision = "original-revision"
+        model_config.extra_checkpoint_metadata = {
+            "hf_model_id": "original/llama",
+            "hf_model_revision": "original-revision",
+        }
         loaded_pretrained = create_mock_pretrained_causal_lm()
 
         class FailingBuilder:
@@ -634,8 +636,8 @@ class TestAutoBridge:
                 self.config = config
 
             def build_distributed_models(self, **kwargs):
-                assert self.config.hf_model_id == "replacement/llama"
-                assert self.config.hf_model_revision is None
+                assert self.config.extra_checkpoint_metadata["hf_model_id"] == "replacement/llama"
+                assert "hf_model_revision" not in self.config.extra_checkpoint_metadata
                 raise RuntimeError("expected build failure")
 
         with (
@@ -650,8 +652,8 @@ class TestAutoBridge:
             )
 
         from_pretrained.assert_called_once_with("replacement/llama", trust_remote_code=True)
-        assert model_config.hf_model_id == "original/llama"
-        assert model_config.hf_model_revision == "original-revision"
+        assert model_config.extra_checkpoint_metadata["hf_model_id"] == "original/llama"
+        assert model_config.extra_checkpoint_metadata["hf_model_revision"] == "original-revision"
         assert model_config.transformer.perform_initialization is True
         assert model_config.pre_wrap_hooks == []
 

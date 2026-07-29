@@ -1650,12 +1650,40 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
         if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
             hf_name_or_path = getattr(self.hf_pretrained, "name_or_path", None)
-        if hf_name_or_path and hasattr(model_config, "hf_model_id"):
-            model_config.hf_model_id = str(hf_name_or_path)
-        if self.hf_model_revision and hasattr(model_config, "hf_model_revision"):
-            model_config.hf_model_revision = self.hf_model_revision
+        self._set_source_metadata(model_config, hf_model_id=hf_name_or_path, hf_model_revision=self.hf_model_revision)
 
         return model_config
+
+    @staticmethod
+    def _set_source_metadata(
+        model_config: ModelConfig,
+        *,
+        hf_model_id: str | Path | None,
+        hf_model_revision: str | None,
+    ) -> None:
+        """Record Hugging Face source provenance in the config's checkpoint metadata.
+
+        The source ``hf_model_id`` and ``hf_model_revision`` are stored under the
+        inherited serializable ``extra_checkpoint_metadata`` mapping rather than as
+        dedicated config fields, so they round-trip through ``run_config.yaml``
+        without adding model-specific fields to builder-backed configs.
+
+        Args:
+            model_config: Builder-backed config to annotate in place.
+            hf_model_id: Source model id or path. Ignored when falsy.
+            hf_model_revision: Source revision. When falsy, any recorded revision
+                is removed so it does not leak from a previous source.
+        """
+        metadata = model_config.extra_checkpoint_metadata
+        if metadata is None:
+            metadata = {}
+            model_config.extra_checkpoint_metadata = metadata
+        if hf_model_id:
+            metadata["hf_model_id"] = str(hf_model_id)
+        if hf_model_revision:
+            metadata["hf_model_revision"] = hf_model_revision
+        else:
+            metadata.pop("hf_model_revision", None)
 
     def get_model(
         self,
@@ -1697,11 +1725,10 @@ class AutoBridge(Generic[MegatronModelT]):
 
         original_perform_initialization = transformer_config.perform_initialization
         original_pre_wrap_hooks = list(model_config.pre_wrap_hooks)
-        original_hf_metadata = {
-            field_name: getattr(model_config, field_name)
-            for field_name in ("hf_model_id", "hf_model_revision")
-            if hasattr(model_config, field_name)
-        }
+        original_extra_metadata = model_config.extra_checkpoint_metadata
+        original_extra_metadata_snapshot = (
+            dict(original_extra_metadata) if original_extra_metadata is not None else None
+        )
         succeeded = False
         try:
             if load_weights:
@@ -1713,10 +1740,7 @@ class AutoBridge(Generic[MegatronModelT]):
                         hf_path,
                         trust_remote_code=self.trust_remote_code,
                     )
-                    if hasattr(model_config, "hf_model_id"):
-                        model_config.hf_model_id = str(hf_path)
-                    if hasattr(model_config, "hf_model_revision"):
-                        model_config.hf_model_revision = None
+                    self._set_source_metadata(model_config, hf_model_id=hf_path, hf_model_revision=None)
                 model_config.pre_wrap_hooks[:] = [
                     partial(self._model_bridge.load_weights_hf_to_megatron, pretrained),
                     *original_pre_wrap_hooks,
@@ -1733,8 +1757,9 @@ class AutoBridge(Generic[MegatronModelT]):
             transformer_config.perform_initialization = original_perform_initialization
             model_config.pre_wrap_hooks[:] = original_pre_wrap_hooks
             if not succeeded:
-                for field_name, value in original_hf_metadata.items():
-                    setattr(model_config, field_name, value)
+                model_config.extra_checkpoint_metadata = (
+                    dict(original_extra_metadata_snapshot) if original_extra_metadata_snapshot is not None else None
+                )
 
         return models
 

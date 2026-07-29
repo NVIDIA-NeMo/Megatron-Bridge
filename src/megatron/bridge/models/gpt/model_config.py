@@ -31,10 +31,12 @@ class BridgeGPTModelConfig(GPTModelConfig):
     Outer GPT build fields and nested transformer fields keep one declared
     owner. Flat assignment remains convenient, but unknown names fail instead
     of silently creating phantom configuration.
-    """
 
-    hf_model_id: str | None = None
-    hf_model_revision: str | None = None
+    Hugging Face source provenance (model id and revision) is not declared as a
+    dedicated field here. It is recorded in the inherited serializable
+    ``extra_checkpoint_metadata`` mapping so it round-trips through
+    ``run_config.yaml`` without adding model-specific config fields.
+    """
 
     def __setattr__(self, name: str, value: Any, /) -> None:
         """Assign a declared outer or nested field and reject phantom fields."""
