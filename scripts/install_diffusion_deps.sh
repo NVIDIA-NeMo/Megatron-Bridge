@@ -13,11 +13,10 @@
 # limitations under the License.
 
 #!/usr/bin/env bash
-# Install the WAN diffusion codecs (imageio, imageio-ffmpeg, av) into the active
-# environment at test time. All three carry CVEs and are excluded from the shipped
-# container via [tool.uv] override-dependencies (each marked `sys_platform == 'never'`),
-# so neither the build nor `uv sync` installs them and they appear only as `never`-marked
-# edges in uv.lock.
+# Install the WAN diffusion codecs (imageio, imageio-ffmpeg, av) into an opt-in
+# environment. All three carry CVEs and are excluded from the default project sync via
+# [tool.uv] override-dependencies (each marked `sys_platform == 'never'`). The CI image
+# installs them explicitly so offline diffusion tests do not need this helper.
 #
 # Install them directly with `uv pip install --no-config`: --no-config ignores the
 # project's [tool.uv] config, so the `sys_platform == 'never'` override does not
