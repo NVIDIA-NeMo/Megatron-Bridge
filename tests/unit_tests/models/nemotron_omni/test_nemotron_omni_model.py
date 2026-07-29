@@ -578,7 +578,7 @@ def test_real_radio_image_forward_with_collator_owned_cp1_packing(
     with torch.no_grad():
         output = model(
             input_ids=input_ids,
-            padding_mask=torch.zeros_like(attention_mask),
+            padding_mask=torch.zeros_like(input_ids, dtype=torch.bool),
             packed_seq_params=caller_packed_seq_params,
             pixel_values=torch.randn(1, 3, 32, 32, device="cuda"),
             imgs_sizes=torch.tensor([[32, 32]], dtype=torch.int32, device="cuda"),

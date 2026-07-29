@@ -649,6 +649,8 @@ def test_energon_llava_temporal_video_refuses_unsafe_sequence_truncation(monkeyp
 
     with pytest.raises(ValueError, match="cannot fit the rectangular multimodal batch"):
         encoder.batch([encoded])
+
+
 def test_energon_canonical_collator_owns_complete_thd_packing(monkeypatch):
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
     encoder = NemotronOmniTaskEncoder(

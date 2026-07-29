@@ -2479,6 +2479,8 @@ def test_nemotron_omni_llava_collate_checks_temporal_model_expansion_before_trun
             use_temporal_video_embedder=True,
             patch_dim=16,
         )
+
+
 def test_nemotron_omni_expanded_collate_emits_one_placeholder_per_temporal_feature(monkeypatch):
     processor = _NemotronOmniProcessor()
     input_ids = torch.tensor([[10, NEMO_IMG_START_TOKEN_ID, NEMO_IMAGE_TOKEN_ID, NEMO_IMG_END_TOKEN_ID, 11]])
