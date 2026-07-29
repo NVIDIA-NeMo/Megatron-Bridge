@@ -66,6 +66,9 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_router_pre_softmax = True
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "seq_aux_loss"
+        # The released V3 configs omit this training-only hyperparameter, but V3 uses a
+        # small complementary sequence-wise loss alongside expert-bias load balancing.
+        provider.moe_aux_loss_coeff = getattr(hf_config, "aux_loss_alpha", 0.0001)
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
