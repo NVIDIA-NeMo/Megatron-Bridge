@@ -69,8 +69,8 @@ class TestNemotron3SuperPretrain:
         assert config.model.expert_model_parallel_size == 16
 
         # Check training configuration
-        assert config.train.train_iters == 39735
-        assert config.train.global_batch_size == 16
+        assert config.train.train_iters == 100
+        assert config.train.global_batch_size == 1024
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration
@@ -117,7 +117,7 @@ class TestNemotron3SuperPretrain:
         assert config.optimizer.lr == 4.5e-4
         assert config.optimizer.weight_decay == 0.1
         assert config.optimizer.min_lr == 4.5e-6
-        assert config.scheduler.lr_warmup_iters == 333
+        assert config.scheduler.lr_warmup_iters == 40
 
     def test_pretrain_config_checkpoint_settings(self):
         """Test checkpoint settings for pretrain config."""
@@ -348,21 +348,23 @@ class TestNemotron3Super16GpuH100:
     """Test the 16-H100 support-verification recipes."""
 
     @pytest.mark.parametrize(
-        "recipe_fn",
+        ("recipe_fn", "expected_global_batch_size"),
         [
-            nemotron_3_super_pretrain_16gpu_h100_bf16_config,
-            nemotron_3_super_sft_16gpu_h100_bf16_config,
-            nemotron_3_super_peft_16gpu_h100_bf16_config,
+            # Bounded cohort batch sizes shared with the other H100 verification
+            # recipes: pretrain GBS 1024, full SFT GBS 32.
+            (nemotron_3_super_pretrain_16gpu_h100_bf16_config, 1024),
+            (nemotron_3_super_sft_16gpu_h100_bf16_config, 32),
+            (nemotron_3_super_peft_16gpu_h100_bf16_config, 16),
         ],
     )
-    def test_parallelism_batch_size_and_checkpoint_safe_ddp(self, recipe_fn):
+    def test_parallelism_batch_size_and_checkpoint_safe_ddp(self, recipe_fn, expected_global_batch_size):
         """The verification recipes own their 16-GPU layout and checkpoint-safe DDP settings."""
         config = recipe_fn()
 
         assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.expert_model_parallel_size == 16
-        assert config.train.global_batch_size == 16
+        assert config.train.global_batch_size == expected_global_batch_size
         assert config.train.micro_batch_size == 1
         assert config.ddp.overlap_grad_reduce is False
         assert config.ddp.overlap_param_gather is False

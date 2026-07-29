@@ -22,11 +22,11 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [pretrain, sft, sft_long_context]
-      unverified: [sft_export_inference, peft, checkpoint_resume]
+      verified: [sft_long_context]
+      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
     GB200:
-      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
-      unverified: [sft_long_context]
+      verified: [peft]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
   performance:
     GB200: verified
 model:
@@ -149,9 +149,8 @@ items:
 
   pretrain:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 44f3031a2e77ff455eb128efbaa19322ad6397a6  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
@@ -174,23 +173,25 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-reference
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: null
       metrics:
-        initial_loss: 12.16744
-        final_loss: 6.465527
-        last_10_steps_step_time_ms_avg: 26522.440
-        last_10_steps_model_tflops_per_gpu_avg: 12.930
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        On 16 H100s, the BF16 low-memory support run completes exactly 100
-        bounded RP2 optimizer steps at TP8/PP1/CP1/EP16/ETP1 and GBS/MBS 16/1.
-        Full activation recompute, 75% optimizer CPU offload, and eager
-        execution keep the 120B model and complete optimizer checkpoint within
-        memory. Loss is finite from 12.16744 to 6.465527, no iteration is
-        skipped or NaN, all four metrics and the resolved configuration are
-        recorded, and complete iter_0000050 and iter_0000100 checkpoints save.
+        On 16 H100s, the BF16 support run must complete exactly 100 bounded RP2
+        optimizer steps at TP8/PP1/CP1/EP16/ETP1 and the recipe's cohort
+        GBS/MBS 1024/1. Full activation recompute, 75% optimizer CPU offload,
+        and eager execution keep the 120B model and complete optimizer
+        checkpoint within memory. Loss must stay finite with no skipped or NaN
+        iteration, all four metrics and the resolved configuration must be
+        recorded, and complete iter_0000050 and iter_0000100 checkpoints must
+        save. The recipe moved from GBS 16 to the cohort GBS 1024, so the
+        earlier metrics no longer describe this command and it needs a rerun.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features: {}
       command: >
@@ -214,30 +215,26 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-pretrain-reference
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: null
       metrics:
-        initial_loss: 12.19400
-        final_loss: 6.398375
-        last_10_steps_step_time_ms_avg: 20633.260
-        last_10_steps_model_tflops_per_gpu_avg: 16.680
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        On 16 GB200s, the BF16 support run completes exactly 100 bounded RP2
-        optimizer steps at TP8/PP1/CP1/EP16/ETP1 and GBS/MBS 16/1. Full
-        activation recompute, 40% optimizer CPU offload, and two ranks per node
-        leave enough host and device memory to materialize complete optimizer
-        checkpoints. Loss is finite from 12.19400 to 6.398375, no iteration is
-        skipped or NaN,
-        all four metrics and the resolved configuration are recorded, and
-        complete approximately 1.7-TB iter_0000050 and iter_0000100
-        checkpoints save. The executor enabled expandable allocator segments
-        only to reduce save-time fragmentation; training arithmetic is
-        unchanged.
+        On 16 GB200s, the BF16 support run must complete exactly 100 bounded RP2
+        optimizer steps at TP8/PP1/CP1/EP16/ETP1 and the recipe's cohort
+        GBS/MBS 1024/1. Full activation recompute, 40% optimizer CPU offload,
+        and eager execution keep the model and optimizer checkpoint within
+        memory. Loss must stay finite with no skipped or NaN iteration, and
+        complete iter_0000050 and iter_0000100 checkpoints must save. The
+        recipe moved from GBS 16 to the cohort GBS 1024, so the earlier metrics
+        no longer describe this command and it needs a rerun.
 
   sft:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 44f3031a2e77ff455eb128efbaa19322ad6397a6  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
@@ -267,22 +264,23 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-sft
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: null
       metrics:
-        initial_loss: 1.239003
-        final_loss: 0.7293159
-        last_10_steps_step_time_ms_avg: 26379.490
-        last_10_steps_model_tflops_per_gpu_avg: 25.750
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The immutable-revision Tulu3 run completes exactly 100 full-SFT steps
-        on 16 H100s at sequence length 8192, TP8/EP16, GBS/MBS 16/1, and pad-8
-        offline packing. Loss is finite from 1.239003 to 0.7293159 with no
-        skipped or NaN iterations. All four metrics and the resolved
-        configuration are recorded, and the final sixteen-shard full-model
-        checkpoint saves successfully.
+        The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps
+        on 16 H100s at sequence length 8192, TP8/EP16, the recipe's cohort
+        GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no
+        skipped or NaN iteration, and the step-100 checkpoint must save
+        completely for export. The recipe moved from GBS 16 to the cohort
+        GBS 32, so the earlier metrics no longer describe this command and it
+        needs a rerun.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -313,20 +311,19 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-sft
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: null
       metrics:
-        initial_loss: 1.238424
-        final_loss: 0.7246578
-        last_10_steps_step_time_ms_avg: 27185.510
-        last_10_steps_model_tflops_per_gpu_avg: 25.010
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The immutable-revision Tulu3 run completes exactly 100 full-SFT steps
-        on 16 GB200s at sequence length 8192, TP8/EP16, GBS/MBS 16/1, and
-        pad-8 offline packing. The 440-row packed artifact has SHA-256
-        f858b0e3aa08783a9fc3829084f11451cec67435b9fb9366daef1804676a56da.
-        Loss is finite from 1.238424 to 0.7246578 with no skipped or NaN
-        iterations. All four metrics and the resolved configuration are
-        recorded, and the final sixteen-shard full-model checkpoint saves.
+        The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps
+        on 16 GB200s at sequence length 8192, TP8/EP16, the recipe's cohort
+        GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no
+        skipped or NaN iteration, and the step-100 checkpoint must save
+        completely. The recipe moved from GBS 16 to the cohort GBS 32, so the
+        earlier metrics no longer describe this command and it needs a rerun.
 
   sft_export_inference:
     H100:
@@ -356,7 +353,7 @@ items:
         pinned deterministic 45-token greedy inference before promotion.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: sft
       commands:
@@ -375,7 +372,7 @@ items:
           --hf-model work/model-verification/nemotron-3-super-120b-a12b/gb200-sft-hf
           --prompt "Name the capital of France and explain its role in one sentence."
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-07-24
+      last_verified: null
       expected_result: >
         The GB200 step-100 full-SFT checkpoint exports as 50 indexed BF16
         safetensor shards and reloads natively as NemotronHForCausalLM with 88
@@ -576,18 +573,18 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-resumed
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
         A direct H100 continuation must restore model, optimizer, scheduler,
         data-order, and RNG state from iter_0000050, execute exactly steps
@@ -595,7 +592,7 @@ items:
         record all four metrics, and save a complete iter_0000100 checkpoint.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: pretrain
       command: >
@@ -621,28 +618,26 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-pretrain-resumed
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
-      metrics:
-        initial_loss: 7.022207
-        final_loss: 6.406034
-        last_10_steps_step_time_ms_avg: 21544.740
-        last_10_steps_model_tflops_per_gpu_avg: 15.930
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: true
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The direct GB200 continuation restores full model, optimizer, scheduler,
-        data-order, and RNG state from iter_0000050 and executes exactly steps
-        51-100 into a distinct output root on the same 8-node, 16-GPU layout.
-        Step 51 is 7.022207 versus 7.022206 in the reference, an absolute
-        difference of 0.000001. Step 100 is 6.406034 versus 6.398375, an
-        absolute difference of 0.007659. Both pass the declared one-percent
-        plus 1e-6 tolerance. All 50 resumed rows are finite with zero skipped
-        or NaN iterations, all four metrics are recorded, and the complete
-        approximately 1.7-TB iter_0000100 checkpoint saves successfully.
+        The direct GB200 continuation must restore full model, optimizer,
+        scheduler, data-order, and RNG state from iter_0000050 and execute
+        exactly steps 51-100 into a distinct output root. Each declared loss
+        sentinel must satisfy abs(resumed - reference) <= 1e-6 + 0.01 *
+        abs(reference) against the uninterrupted reference. Its pretrain
+        reference moved to the cohort GBS 1024, so both runs need redoing
+        before this item can be verified.
 
   pretrain_performance:
     GB200:

@@ -69,9 +69,10 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
 
-    # Training Configuration
-    cfg.train.train_iters = 39735
-    cfg.train.global_batch_size = 16
+    # Training Configuration. Bounded 100-step cohort schedule, matching the
+    # other H100 verification recipes (GBS 1024 / MBS 1 / 100 steps).
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
@@ -113,7 +114,8 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
     cfg.optimizer.adam_eps = 1e-8
-    cfg.scheduler.lr_warmup_iters = 333
+    cfg.scheduler.lr_warmup_iters = 40
+    cfg.scheduler.lr_decay_iters = 100
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.lr_decay_style = "WSD"
@@ -230,8 +232,10 @@ def nemotron_3_super_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
-    # Training Configuration
-    cfg.train.global_batch_size = 16
+    # Training Configuration. Bounded 100-step cohort schedule, matching the
+    # other H100 SFT verification recipes (GBS 32 / MBS 1 / 100 steps).
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
 
     # Mixed Precision. Gradients reduce in BF16 to bound the gradient buffer;

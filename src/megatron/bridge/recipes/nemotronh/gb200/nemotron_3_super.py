@@ -61,6 +61,13 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
+    # The H100 base carries the bounded 100-step verification schedule. This
+    # GB200 recipe is the convergence counterpart of the 64-GPU performance
+    # recipe and owns its own full-length schedule.
+    cfg.train.train_iters = 39735
+    cfg.scheduler.lr_warmup_iters = 333
+    cfg.scheduler.lr_decay_iters = None
+
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
