@@ -332,7 +332,8 @@ def calc_params_l2_norm(
     for model_chunk in model:
         for param in model_chunk.parameters():
             data_parallel_group = get_data_parallel_group_if_dtensor(param, data_parallel_group)
-            is_expert = not getattr(param, "allreduce", True)
+            # MCore uses allreduce=False to mark parameters that use expert-parallel process groups.
+            uses_expert_parallel_groups = not getattr(param, "allreduce", True)
             is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(
                 param,
                 tp_group=pg_collection.tp,
@@ -341,7 +342,7 @@ def calc_params_l2_norm(
             if not is_not_tp_duplicate:
                 continue
             assert is_not_tp_duplicate
-            if is_expert:
+            if uses_expert_parallel_groups:
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
                 if model_config.bf16:
