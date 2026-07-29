@@ -15,7 +15,7 @@
 
 from typing import Any, List
 
-from megatron.bridge.data.packing.algorithms import first_fit_by_length
+from megatron.bridge.data.packing.algorithms import first_fit as _shared_first_fit
 
 
 def packing_length(item: Any) -> int:
@@ -74,7 +74,7 @@ def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
       A list of lists, where each inner list represents a bin and contains the
         entries assigned to that bin.
     """
-    return first_fit_by_length(seqlens, [packing_length(item) for item in seqlens], pack_size)
+    return _shared_first_fit(seqlens, pack_size, item_lengths=[packing_length(item) for item in seqlens])
 
 
 def first_fit_decreasing(seqlens: List[int], pack_size: int) -> List[List[int]]:

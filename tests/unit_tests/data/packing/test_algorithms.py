@@ -174,3 +174,47 @@ class TestCalculateAvgSeqlen:
         _write_avg_seqlen_parquet(tmp_path / "shard_001.idx.parquet", _AVG_SEQLEN_ROWS[1:])
         stats = calculate_avg_seqlen(str(tmp_path), gbs=1, max_seq_len=8, drop_remainder=True)
         self._assert_expected(stats)
+
+
+class TestFirstFitItemLengths:
+    """first_fit can pack opaque objects when item_lengths is supplied.
+
+    This is the contract the diffusion task encoder relies on: it packs sample
+    objects keyed on padded query sequence length and needs the objects back.
+    """
+
+    def test_defaults_to_entries_as_their_own_lengths(self):
+        """Omitting item_lengths must behave exactly like passing seqlens twice."""
+        seqlens = [5, 3, 2, 7, 4]
+        assert first_fit(seqlens, 10) == first_fit(seqlens, 10, item_lengths=seqlens)
+
+    def test_packs_objects_and_returns_them(self):
+        items = ["a", "b", "c", "d"]
+        lengths = [5, 3, 2, 7]
+
+        result = first_fit(items, 10, item_lengths=lengths)
+
+        # Same bin structure as the equivalent integer packing, carrying the objects.
+        assert result == [["a", "b", "c"], ["d"]]
+
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_object_packing_matches_integer_packing(self, seed):
+        """Bin structure must depend only on the lengths, not on what the items are."""
+        np.random.seed(seed)
+        lengths = [int(x) for x in np.random.randint(1, 2048, size=500)]
+        items = [object() for _ in lengths]
+
+        by_object = first_fit(items, 2048, item_lengths=lengths)
+        by_length = first_fit(lengths, 2048)
+
+        index = {id(o): i for i, o in enumerate(items)}
+        assert [[lengths[index[id(o)]] for o in b] for b in by_object] == by_length
+
+    def test_mismatched_lengths_raise(self):
+        with pytest.raises(ValueError, match="same number of entries"):
+            first_fit([1, 2, 3], 10, item_lengths=[1, 2])
+
+    def test_item_lengths_is_keyword_only(self):
+        """Guards against the lengths being passed positionally by mistake."""
+        with pytest.raises(TypeError):
+            first_fit([1, 2, 3], 10, [1, 2, 3])

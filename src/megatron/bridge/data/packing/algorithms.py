@@ -68,42 +68,54 @@ class _SegmentTree:
         return self._query(1, 0, self._n - 1, need)
 
 
-def first_fit_by_length(items: Sequence[_ItemT], item_lengths: Sequence[int], pack_size: int) -> list[list[_ItemT]]:
+def first_fit(
+    seqlens: Sequence[_ItemT],
+    pack_size: int,
+    *,
+    item_lengths: Sequence[int] | None = None,
+) -> list[list[_ItemT]]:
     """
-    Packs arbitrary items into bins using First-Fit, driven by precomputed lengths.
+    Packs sequences of varying lengths into bins using the First-Fit algorithm
+    with a segment-tree index for O(N log N) performance.
 
     A segment-tree index over per-bin remaining capacity makes each placement O(log N)
-    instead of a scan over every open bin, giving O(N log N) overall.
+    instead of a scan over every open bin.
 
-    This is the shared core behind :func:`first_fit`. Callers that pack objects rather
-    than raw integers (for example diffusion samples keyed on padded query sequence
-    length) pass the lengths separately and get their original objects back in the bins.
+    By default the entries of `seqlens` are themselves the lengths. Callers that pack
+    objects rather than raw integers (for example diffusion samples keyed on padded
+    query sequence length) pass `item_lengths` separately and get their original
+    objects back in the bins.
 
     Args:
-      items: The objects to pack, in the order they should be considered.
-      item_lengths: Length of each entry in `items`, in the same order.
+      seqlens: The entries to pack, in the order they should be considered. Integer
+        lengths unless `item_lengths` is given, in which case these may be any objects.
       pack_size: The maximum capacity of each bin.
+      item_lengths: Optional length of each entry in `seqlens`, in the same order. When
+        omitted, each entry is used as its own length.
 
     Returns:
       A list of lists, where each inner list represents a bin and contains the
-        items assigned to that bin.
+        entries assigned to that bin.
 
     Raises:
-      ValueError: If `items` and `item_lengths` do not have the same number of entries.
+      ValueError: If `item_lengths` is given and does not have the same number of
+        entries as `seqlens`.
     """
-    if len(items) != len(item_lengths):
+    lengths: Sequence[int] = seqlens if item_lengths is None else item_lengths  # type: ignore[assignment]
+    if item_lengths is not None and len(seqlens) != len(item_lengths):
         raise ValueError(
-            f"items and item_lengths must have the same number of entries, got {len(items)} and {len(item_lengths)}"
+            f"seqlens and item_lengths must have the same number of entries, "
+            f"got {len(seqlens)} and {len(item_lengths)}"
         )
-    if not items:
+    if not seqlens:
         return []
 
-    n = len(items)
+    n = len(seqlens)
     tree = _SegmentTree(n)
     res: list[list[_ItemT]] = []
     remaining: list[int] = []
 
-    for item, length in zip(items, item_lengths):
+    for item, length in zip(seqlens, lengths):
         first_bin = tree.query_first_fit(length)
         # An unopened bin still reads as 0 remaining capacity, so a zero-length item can
         # match an index past the end of `res`; that case must open a bin, not index it.
@@ -117,23 +129,6 @@ def first_fit_by_length(items: Sequence[_ItemT], item_lengths: Sequence[int], pa
             remaining[first_bin] -= length
             tree.update(first_bin, remaining[first_bin])
     return res
-
-
-def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
-    """
-    Packs sequences of varying lengths into bins using the First-Fit algorithm
-    with a segment-tree index for O(N log N) performance.
-
-    Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
-      pack_size: The maximum capacity of each bin.
-
-    Returns:
-      A list of lists, where each inner list represents a bin and contains the
-        lengths of the sequences assigned to that bin.
-    """
-    # The items being packed are themselves the lengths.
-    return first_fit_by_length(seqlens, seqlens, pack_size)
 
 
 def first_fit_decreasing(seqlens: List[int], pack_size: int) -> List[List[int]]:
