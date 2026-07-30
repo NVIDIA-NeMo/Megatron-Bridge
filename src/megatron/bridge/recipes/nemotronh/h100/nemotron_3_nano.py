@@ -255,6 +255,14 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
     """Return the Nemotron 3.5 Nano BF16 pretraining config."""
     cfg = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
+    cfg.train.global_batch_size = 512
+    # Split the 8K sequence across two ranks so each MTP head materializes only
+    # half of its vocabulary-loss workspace on an 80-GiB H100. P2P retains the
+    # fused-attention path for this model's grouped-query layout.
+    cfg.model.context_parallel_size = 2
+    cfg.model.cp_comm_type = "p2p"
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn"]
+    set_cuda_graph_modules(cfg.model, ["mamba"])
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
@@ -440,6 +448,9 @@ def nemotron_3_5_nano_sft_openmathinstruct2_packed_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
     cfg.train.empty_unused_memory_level = 2
 
+    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.optimizer.lr = 5e-6
     cfg.optimizer.min_lr = 0.0
     cfg.optimizer.overlap_param_gather = False
