@@ -343,7 +343,7 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.dataset.seq_length = 8192
     cfg.dataset.sequence_length = 8192
     cfg.dataset.sequence_parallel_size = 0
-    also_save_hf_checkpoint: False
+    cfg.checkpoint.also_save_hf_checkpoint = False
     cfg.checkpoint.async_ckpt_cpu_priority = 10
     cfg.checkpoint.async_ckpt_io_priority = 3
     cfg.checkpoint.async_ckpt_use_cpu_shm = False
@@ -474,6 +474,7 @@ def llama31_8b_pretrain_config_gb300(
         cfg.mixed_precision.fp8_dot_product_attention = True
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters = 64
+        cfg.train.eval_iters = 64
         cfg.scheduler.lr_decay_iters = 1199984
         cfg.scheduler.lr_decay_steps = 19199744
         cfg.scheduler.lr_warmup_iters = 16
@@ -489,6 +490,7 @@ def llama31_8b_pretrain_config_gb300(
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.validation.eval_interval = 171
         cfg.validation.eval_iters = 15
+        cfg.train.eval_iters = 15
         cfg.scheduler.lr_decay_iters = 1199936
         cfg.scheduler.lr_decay_steps = 86395392
         cfg.scheduler.lr_warmup_iters = 64
@@ -503,6 +505,7 @@ def llama31_8b_pretrain_config_gb300(
         cfg.model.tp_comm_overlap = True
         cfg.validation.eval_interval = 192
         cfg.validation.eval_iters = 16
+        cfg.train.eval_iters = 16
         cfg.scheduler.lr_decay_iters = 1199936
         cfg.scheduler.lr_decay_steps = 76795904
         cfg.scheduler.lr_warmup_iters = 64
@@ -546,6 +549,7 @@ def llama31_8b_pretrain_config_gb200(
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters = 64
+        cfg.train.eval_iters = 64
         cfg.scheduler.lr_decay_iters = 1199984
         cfg.scheduler.lr_decay_steps = 19199744
         cfg.scheduler.lr_warmup_iters = 16
@@ -561,6 +565,7 @@ def llama31_8b_pretrain_config_gb200(
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.validation.eval_interval = 171
         cfg.validation.eval_iters = 15
+        cfg.train.eval_iters = 15
         cfg.scheduler.lr_decay_iters = 1199936
         cfg.scheduler.lr_decay_steps = 86395392
         cfg.scheduler.lr_warmup_iters = 64
@@ -575,6 +580,7 @@ def llama31_8b_pretrain_config_gb200(
         cfg.model.tp_comm_overlap = True
         cfg.validation.eval_interval = 192
         cfg.validation.eval_iters = 16
+        cfg.train.eval_iters = 16
         cfg.scheduler.lr_decay_iters = 1199936
         cfg.scheduler.lr_decay_steps = 76795904
         cfg.scheduler.lr_warmup_iters = 64
