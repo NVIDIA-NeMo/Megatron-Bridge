@@ -137,14 +137,15 @@ items:
       --megatron_model_path work/model-verification/glm5-2/gpu-megatron
       --prompt "Write one concise sentence explaining why deterministic tests matter:"
       --apply-chat-template --thinking-mode disabled --max_new_tokens 16
-      --no-kv-cache --tp 1 --pp 13 --ep 8 --etp 1
+      --legacy-full-prefix --tp 1 --pp 13 --ep 8 --etp 1
     last_verified: null
     expected_result: >
       The command must use greedy legacy full-prefix decoding, emit exactly 16
       new tokens, and complete without constructing an MCore inference context.
-      The --no-kv-cache path recomputes the accumulated prefix for every token
-      because cached inference is not yet supported for AbsorbedMLA. A
-      clean-commit rerun is required before restoring verified status.
+      The --legacy-full-prefix path uses non-cached autoregressive generation
+      and recomputes the accumulated prefix at every decoding step because
+      cached inference is not yet supported for AbsorbedMLA. A clean-commit
+      rerun is required before restoring verified status.
 
   pretrain:
     H100:

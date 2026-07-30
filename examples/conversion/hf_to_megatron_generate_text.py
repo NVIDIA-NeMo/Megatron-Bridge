@@ -71,10 +71,10 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
 def _build_inference_context(
     input_ids: torch.Tensor,
     *,
-    no_kv_cache: bool,
+    legacy_full_prefix: bool,
 ) -> StaticInferenceContext | None:
     """Build a static inference context unless legacy full-prefix decoding is requested."""
-    if no_kv_cache:
+    if legacy_full_prefix:
         return None
     return StaticInferenceContext(
         max_batch_size=input_ids.size(0),
@@ -300,7 +300,7 @@ def main(args) -> None:
             fwd_bwd_function = get_forward_backward_func()
             inference_context = _build_inference_context(
                 input_ids,
-                no_kv_cache=args.no_kv_cache,
+                legacy_full_prefix=args.legacy_full_prefix,
             )
             iterator = SingleBatchIterator(input_ids, position_ids, inference_context)
 
@@ -390,12 +390,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of new tokens to generate.",
     )
     parser.add_argument(
-        "--no-kv-cache",
+        "--legacy-full-prefix",
         action="store_true",
         help=(
-            "Disable the MCore inference context and recompute the full accumulated prefix for every token. "
-            "This slower legacy path supports models such as GLM-5 whose AbsorbedMLA attention does not yet "
-            "support cached inference."
+            "Use non-cached autoregressive generation by disabling the MCore inference context and recomputing "
+            "the full accumulated prefix at every decoding step. This slower legacy path supports models such "
+            "as GLM-5 whose AbsorbedMLA attention does not yet support cached inference."
         ),
     )
     parser.add_argument(

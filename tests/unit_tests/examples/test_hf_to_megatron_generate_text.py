@@ -87,15 +87,15 @@ def test_hf_revision_is_parsed_and_forwarded() -> None:
 
 
 @pytest.mark.unit
-def test_no_kv_cache_uses_legacy_full_prefix_decoding() -> None:
+def test_legacy_full_prefix_disables_inference_context() -> None:
     input_ids = torch.ones((2, 3), dtype=torch.long)
 
     default_args = _build_parser().parse_args(["--hf_model_path", "org/model"])
-    legacy_args = _build_parser().parse_args(["--hf_model_path", "org/model", "--no-kv-cache"])
+    legacy_args = _build_parser().parse_args(["--hf_model_path", "org/model", "--legacy-full-prefix"])
 
-    assert default_args.no_kv_cache is False
-    assert legacy_args.no_kv_cache is True
-    assert _build_inference_context(input_ids, no_kv_cache=True) is None
+    assert default_args.legacy_full_prefix is False
+    assert legacy_args.legacy_full_prefix is True
+    assert _build_inference_context(input_ids, legacy_full_prefix=True) is None
 
 
 @pytest.mark.unit
@@ -108,7 +108,7 @@ def test_kv_cache_builds_static_inference_context() -> None:
         _build_inference_context.__globals__,
         {"StaticInferenceContext": context_factory},
     ):
-        result = _build_inference_context(input_ids, no_kv_cache=False)
+        result = _build_inference_context(input_ids, legacy_full_prefix=False)
 
     assert result is inference_context
     context_factory.assert_called_once_with(max_batch_size=2, max_sequence_length=3)
