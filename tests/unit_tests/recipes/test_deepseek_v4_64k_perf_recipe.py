@@ -5,6 +5,7 @@ import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.training.config import MockVarlenDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -97,3 +98,41 @@ def test_deepseek_v4_pro_64k_thd_recipe() -> None:
     assert cfg.model.apply_dsa_kernel_fusion is True
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
+
+
+def test_deepseek_v4_pro_full_model_uses_64k_thd_recipe() -> None:
+    cfg = deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config()
+
+    assert cfg.model.num_layers == 61
+    assert cfg.model.moe_layer_freq == [1] * 61
+    assert cfg.model.csa_compress_ratios == [128, 128, 4, *([128, 4] * 29), 0]
+    assert cfg.model.moe_n_hash_layers == 3
+    assert cfg.model.activation_func_clamp_value == 10.0
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 4
+    assert cfg.model.context_parallel_size == 16
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.pipeline_model_parallel_layout == "Et*4|(t*4|)*14tmL"
+
+    assert cfg.model.seq_length == 65_536
+    assert isinstance(cfg.dataset, MockVarlenDatasetConfig)
+    assert cfg.dataset.seq_length == 65_536
+    assert cfg.dataset.context_parallel_size == 16
+    assert cfg.dataset.data_parallel_size == 4
+    assert cfg.model.sequence_packing_scheduler == "dp_balanced"
+    assert cfg.model.max_seqlen_per_dp_cp_rank == 4096
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.moe_paged_stash is False
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
+    assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
+    assert cfg.optimizer.optimizer == "muon"
+    assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
