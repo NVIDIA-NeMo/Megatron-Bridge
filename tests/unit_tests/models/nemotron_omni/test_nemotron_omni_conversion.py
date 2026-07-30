@@ -148,6 +148,17 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.vision_class_token_len == 8
 
 
+def test_nemotron_omni_provider_bridge_defaults_class_token_len_when_absent():
+    hf_config = _mock_omni_hf_config()
+    del hf_config.vision_config.class_token_len
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    provider = NemotronOmniBridge().provider_bridge(hf_pretrained)
+
+    assert provider.vision_class_token_len == 10
+
+
 def test_nemotron_omni_provider_rejects_static_resolution():
     provider = NemotronOmniModelProvider()
     provider.dynamic_resolution = False

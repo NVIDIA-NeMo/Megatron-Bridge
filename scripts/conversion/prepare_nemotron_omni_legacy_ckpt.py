@@ -139,15 +139,11 @@ def _load_common_pt(src_path: Path) -> dict:
 def _generate_run_config(common: dict, hf_ref: str, output_iter_dir: Path, *, trust_remote_code: bool) -> None:
     """Generate run_config.yaml from the HF reference + common.pt overrides."""
     from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-    from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+    from megatron.bridge.training.config import ConfigContainer
+    from megatron.bridge.utils.yaml_utils import dump_dataclass_to_yaml
 
     log.info("Loading HF reference config from %s ...", hf_ref)
-    hf_pretrained = PreTrainedCausalLM.from_pretrained(
-        hf_ref,
-        load_weights=False,
-        trust_remote_code=trust_remote_code,
-    )
-    bridge = AutoBridge.from_hf_pretrained(hf_pretrained)
+    bridge = AutoBridge.from_hf_pretrained(hf_ref, trust_remote_code=trust_remote_code)
     provider = bridge.to_megatron_provider(load_weights=False)
 
     # Override settings that differ between the HF reference and this checkpoint.
@@ -181,7 +177,21 @@ def _generate_run_config(common: dict, hf_ref: str, output_iter_dir: Path, *, tr
 
     run_config_path = output_iter_dir / "run_config.yaml"
     provider.finalize()
-    provider.save_run_config(run_config_path)
+
+    # Bridge has no provider-level "save run config" API: ``run_config.yaml`` is
+    # normally written by ``ConfigContainer.to_yaml()`` during training, and read
+    # back by ``load_model_config()``, which only consumes the top-level ``model``
+    # key and rebuilds the provider via ``instantiate()``. Emitting just that key
+    # is therefore sufficient, and avoids fabricating optimizer/dataset/train
+    # sections we do not have.
+    #
+    # The conversion MUST go through ``ConfigContainer._convert_value_to_dict``.
+    # Handing the provider straight to the YAML representers looks like it works
+    # but silently emits only ``_target_``/``_call_`` with no field values, so
+    # ``instantiate()`` returns a default-constructed provider (num_layers=None,
+    # hidden_size=0) and every checkpoint-specific override is lost.
+    model_dict = ConfigContainer._convert_value_to_dict(provider)
+    dump_dataclass_to_yaml({"model": model_dict}, str(run_config_path))
     log.info("Wrote run_config.yaml → %s", run_config_path)
 
 
