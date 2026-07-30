@@ -12,19 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility shim for Megatron-Core releases without ``megatron.training.models.gpt``.
+"""Fallback for Megatron-Core releases without ``megatron.training.models.gpt``.
 
 ``megatron.training.models.gpt`` (``GPTModelConfig``, ``GPTModelBuilder`` and
 ``mtp_block_spec``) was added to Megatron-Core *after* the 0.18.x release line was cut.
 Megatron Bridge supports every Megatron-Core version from the previous minor release
 (N-1) up to the commit pinned in ``3rdparty/Megatron-LM``, so on 0.18.x this vendored
-copy is used instead. ``megatron.bridge.models.gpt.gpt_builder`` prefers the upstream
-module whenever it is importable and only falls back to this one.
+copy is used instead. ``megatron.bridge.compat.mcore_gpt`` is the stable facade that
+prefers the upstream module and falls back to this implementation only when necessary.
 
-Vendored verbatim (imports normalized only) from NVIDIA/Megatron-LM commit ``cd4afffa6``
-(``megatron-core`` 0.19.0), file ``megatron/training/models/gpt.py``. Every Megatron-Core
-symbol it imports is present in 0.18.0. ``tests/unit_tests/models/gpt/test_mcore_gpt_compat.py``
-fails if the upstream module drifts away from this copy.
+Derived from NVIDIA/Megatron-LM commit ``cd4afffa6`` (``megatron-core`` 0.19.0),
+file ``megatron/training/models/gpt.py``. Import ordering, formatting, unused imports,
+and the builder target are normalized for Bridge. Every Megatron-Core symbol it imports
+is present in the released 0.18.0 wheel. ``tests/unit_tests/compat/test_mcore_gpt.py``
+fails if the upstream module drifts away from this fallback.
 """
 
 import inspect
@@ -172,7 +173,7 @@ class GPTModelConfig(ModelConfig):
         ``vocab_size`` must be set before passing this config to ``GPTModelBuilder``.
     """
 
-    builder: ClassVar[str] = "megatron.training.models.gpt.GPTModelBuilder"
+    builder: ClassVar[str] = "megatron.bridge.compat.mcore_gpt.GPTModelBuilder"
     transformer: TransformerConfig
     transformer_layer_spec: ModuleSpec | Callable[["GPTModelConfig"], ModuleSpec] | None = None
 

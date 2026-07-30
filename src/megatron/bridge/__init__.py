@@ -13,6 +13,12 @@
 # limitations under the License.
 """Megatron Bridge - A component of the Megatron ecosystem."""
 
+from megatron.bridge.compat.mcore_version import check_mcore_version
+
+
+# Warn before dependency-sensitive Bridge registrations are imported.
+check_mcore_version()
+
 import megatron.bridge.diffusion.models  # noqa: F401 — registers diffusion bridges
 import megatron.bridge.models  # noqa: F401 — triggers all bridge and HF Auto class registrations
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -25,11 +31,6 @@ from megatron.bridge.package_info import (
     __repository_url__,
     __version__,
 )
-from megatron.bridge.utils.mcore_version import check_mcore_version
-
-
-# Warn once when the installed megatron-core is outside the supported window.
-check_mcore_version()
 
 
 __all__ = [

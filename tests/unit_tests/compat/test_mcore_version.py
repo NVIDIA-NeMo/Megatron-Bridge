@@ -19,10 +19,14 @@ import pytest
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from megatron.bridge.utils import mcore_version
+from megatron.bridge.compat import mcore_version
 
 
+pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[3]
+PIN_VERSION = Version(mcore_version.MCORE_PIN_VERSION)
+MIN_SUPPORTED_VERSION = mcore_version.min_supported_mcore_version()
+MAX_SUPPORTED_VERSION = mcore_version.max_supported_mcore_version_exclusive()
 
 
 def test_window_is_derived_from_the_pin():
@@ -36,22 +40,28 @@ def test_window_is_derived_from_the_pin():
 @pytest.mark.parametrize(
     "version,supported",
     [
-        ("0.17.9", False),
-        ("0.18.0", True),
-        ("0.18.2", True),
-        ("0.19.0", True),
-        ("0.20.0", False),
+        (Version(f"{MIN_SUPPORTED_VERSION}rc1"), False),
+        (MIN_SUPPORTED_VERSION, True),
+        (Version(f"{PIN_VERSION}rc1"), True),
+        (PIN_VERSION, True),
+        (Version(f"{MAX_SUPPORTED_VERSION}rc1"), False),
+        (MAX_SUPPORTED_VERSION, False),
     ],
 )
 def test_is_mcore_version_supported_boundaries(version, supported):
-    # The parametrization is written against a 0.19.0 pin; skip if the pin has moved.
-    if mcore_version.MCORE_PIN_VERSION != "0.19.0":
-        pytest.skip("boundary cases are pinned to a 0.19.0 window")
-    assert mcore_version.is_mcore_version_supported(Version(version)) is supported
+    assert mcore_version.is_mcore_version_supported(version) is supported
 
 
-def test_unknown_version_is_treated_as_supported():
-    assert mcore_version.is_mcore_version_supported(None) is True
+def test_get_mcore_version_preserves_prerelease(monkeypatch):
+    monkeypatch.setattr(mcore_version.metadata, "version", lambda _: "0.18.0rc1")
+
+    assert mcore_version.get_mcore_version() == Version("0.18.0rc1")
+
+
+def test_unknown_version_is_treated_as_supported(monkeypatch):
+    monkeypatch.setattr(mcore_version, "get_mcore_version", lambda: None)
+
+    assert mcore_version.is_mcore_version_supported() is True
 
 
 def test_check_mcore_version_can_raise(monkeypatch):
@@ -75,7 +85,7 @@ def test_pin_matches_megatron_lm_submodule():
     submodule_version = Version(".".join(match.group(1) for match in parts.values()))
     pin = Version(mcore_version.MCORE_PIN_VERSION)
     assert (pin.major, pin.minor) == (submodule_version.major, submodule_version.minor), (
-        "MCORE_PIN_VERSION is stale: update megatron.bridge.utils.mcore_version (and the "
+        "MCORE_PIN_VERSION is stale: update megatron.bridge.compat.mcore_version (and the "
         "megatron-core bound in pyproject.toml) when the Megatron-LM pin moves."
     )
 

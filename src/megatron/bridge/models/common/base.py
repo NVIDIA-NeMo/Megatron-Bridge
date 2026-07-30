@@ -43,6 +43,9 @@ class ModelConfig(_MegatronModelConfig):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelConfig":
         """Deserialize config from dictionary with Bridge target validation."""
+        from megatron.bridge.compat.mcore_gpt import normalize_gpt_config_targets
+
+        data = normalize_gpt_config_targets(data)
 
         def _from_dict(subdata: dict[str, Any], full_key: str) -> Any:
             target = subdata.get("_target_")

@@ -18,13 +18,7 @@ import logging
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.transformer import ModuleSpec
 
-
-try:
-    from megatron.training.models.gpt import GPTModelBuilder, GPTModelConfig, mtp_block_spec
-except ImportError:
-    # Megatron-Core 0.18.x predates megatron.training.models.gpt; use the vendored copy.
-    from megatron.bridge.models.gpt.mcore_gpt_compat import GPTModelBuilder, GPTModelConfig, mtp_block_spec
-
+from megatron.bridge.compat.mcore_gpt import GPTModelBuilder, GPTModelConfig, mtp_block_spec
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 

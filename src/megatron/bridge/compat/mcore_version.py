@@ -22,15 +22,17 @@ relative to the pin rather than a hardcoded pair of versions:
     previous minor release (N-1) of the pin  <=  megatron-core  <  next minor of the pin
 
 With the pin at 0.19.0 that resolves to ``>=0.18.0,<0.20`` — the released 0.18.x
-line through the current dev pin. When the pin moves to 0.20.x the window moves
-with it; only :data:`MCORE_PIN_VERSION` needs updating, and
-``tests/unit_tests/utils/test_mcore_version.py`` fails if it drifts from the
-submodule or from the bound declared in ``pyproject.toml``.
+line and the whole 0.19.x minor line. When the pin moves to 0.20.x the window moves
+with it; :data:`MCORE_PIN_VERSION` and the bound in ``pyproject.toml`` must be
+updated together. ``tests/unit_tests/compat/test_mcore_version.py`` fails if
+they drift from the submodule or from each other.
 """
 
 import logging
+from importlib import metadata
 
-from packaging.version import Version
+from packaging.specifiers import SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 
 logger = logging.getLogger(__name__)
@@ -68,10 +70,17 @@ def supported_mcore_specifier() -> str:
 def get_mcore_version() -> Version | None:
     """Return the installed Megatron-Core version, or ``None`` if it cannot be parsed."""
     try:
-        import megatron.core
+        installed_version = metadata.version("megatron-core")
+    except metadata.PackageNotFoundError:
+        try:
+            import megatron.core
 
-        return Version(Version(megatron.core.__version__).base_version)
-    except Exception:  # noqa: BLE001 — version reporting must never break imports
+            installed_version = megatron.core.__version__
+        except (AttributeError, ImportError):
+            return None
+    try:
+        return Version(installed_version)
+    except InvalidVersion:
         return None
 
 
@@ -87,7 +96,7 @@ def is_mcore_version_supported(version: Version | None = None) -> bool:
     version = version if version is not None else get_mcore_version()
     if version is None:
         return True
-    return min_supported_mcore_version() <= version < max_supported_mcore_version_exclusive()
+    return version in SpecifierSet(supported_mcore_specifier())
 
 
 def check_mcore_version(*, raise_on_mismatch: bool = False) -> bool:

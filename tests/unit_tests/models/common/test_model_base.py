@@ -17,7 +17,9 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 import pytest
+from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.compat.mcore_gpt import GPTModelBuilder, GPTModelConfig
 from megatron.bridge.models.common.base import ModelBuilder, ModelConfig, compose_hooks
 from megatron.bridge.utils.instantiate_utils import (
     _ALLOWED_TARGET_PREFIXES,
@@ -100,6 +102,19 @@ def test_model_config_from_dict_round_trips_nested_config() -> None:
     assert isinstance(cfg.sub, DummySubConfig)
     assert cfg.sub.x == 7
     assert cfg.sub.y == "nested"
+
+
+def test_model_config_from_dict_migrates_legacy_mcore_gpt_targets() -> None:
+    config = GPTModelConfig(
+        transformer=TransformerConfig(num_layers=1, hidden_size=16, num_attention_heads=1)
+    ).as_dict()
+    config["_target_"] = "megatron.training.models.gpt.GPTModelConfig"
+    config["_builder_"] = "megatron.training.models.gpt.GPTModelBuilder"
+
+    restored = ModelConfig.from_dict(config)
+
+    assert type(restored) is GPTModelConfig
+    assert restored.get_builder_cls() is GPTModelBuilder
 
 
 def test_model_config_from_dict_rejects_disallowed_target() -> None:

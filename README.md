@@ -113,15 +113,15 @@ window is a rule relative to the pin rather than a fixed pair of versions:
 > **previous minor release (N-1) of the pin** ≤ `megatron-core` < **next minor of the pin**
 
 With the pin at Megatron-Core `0.19.0`, that resolves to `megatron-core>=0.18.0,<0.20` — the
-released 0.18.x line through the current dev pin. Installing Megatron Bridge alongside a
+released 0.18.x line and the whole 0.19.x minor line. Installing Megatron Bridge alongside a
 Megatron-Core already inside that window leaves it in place; anything outside it fails at
-install time, and `megatron.bridge.utils.mcore_version.check_mcore_version()` logs a warning at
+install time, and `megatron.bridge.compat.mcore_version.check_mcore_version()` logs a warning at
 import time. When the submodule pin moves to a new minor release, the window moves with it.
 
 Where an API used by Bridge exists only in the pinned commit, Bridge ships a compatibility
 shim so the older release keeps working — for example `megatron.training.models.gpt`, which was
 added after 0.18.x was cut, falls back to
-`megatron.bridge.models.gpt.mcore_gpt_compat`.
+`megatron.bridge.compat.mcore_gpt`.
 
 ## ⚡ Quickstart
 

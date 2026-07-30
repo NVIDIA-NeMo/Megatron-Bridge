@@ -291,7 +291,9 @@ def load_model_config(
 
     if mbridge_ckpt:
         if "_builder_" in run_config["model"]:
-            model_cfg = ModelConfig.from_dict(run_config["model"])
+            from megatron.bridge.compat.mcore_gpt import normalize_gpt_config_targets
+
+            model_cfg = ModelConfig.from_dict(normalize_gpt_config_targets(run_config["model"]))
         else:
             model_cfg = instantiate(run_config["model"])
     else:
