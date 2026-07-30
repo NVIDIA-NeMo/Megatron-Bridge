@@ -713,6 +713,8 @@ class TestSaveCheckpoint:
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""
         old_checkpoint = tmp_path / "iter_0000500"
+        current_checkpoint = tmp_path / "iter_0001000"
+        future_incomplete_checkpoint = tmp_path / "iter_0001500"
         old_checkpoint.mkdir()
         torch.save({"step": torch.tensor(500)}, old_checkpoint / "train_state.pt")
         latest_train_state = tmp_path / "latest_train_state.pt"
@@ -743,7 +745,7 @@ class TestSaveCheckpoint:
         async_request.add_finalize_fn.side_effect = add_finalize_fn
 
         def start_async_save(*args, **kwargs):
-            (tmp_path / "iter_0001000").mkdir(exist_ok=True)
+            current_checkpoint.mkdir(exist_ok=True)
             return async_request
 
         def run_cleanup_immediately(*, target, args):
@@ -793,12 +795,17 @@ class TestSaveCheckpoint:
 
             assert call_order == ["register_cleanup", "schedule"]
             assert old_checkpoint.is_dir()
+            assert current_checkpoint.is_dir()
             assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
 
+            # A later save can create its directory before this request finalizes.
+            future_incomplete_checkpoint.mkdir()
             for finalize_fn in finalize_fns:
                 finalize_fn()
 
         assert not old_checkpoint.exists()
+        assert current_checkpoint.is_dir()
+        assert future_incomplete_checkpoint.is_dir()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
 
     @pytest.mark.parametrize("most_recent_k", [0, 1])
@@ -2428,13 +2435,18 @@ class TestLoadModelWeightsFromCheckpoint:
         # Call the function
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
 
-        _load_model_weights_from_checkpoint(
-            checkpoint_path="/test/checkpoint",
-            model=mock_model,
-            fully_parallel_load=False,
-            dist_ckpt_strictness="assume_ok_unexpected",
-            strict=True,
-        )
+        with (
+            patch("megatron.bridge.training.checkpointing.gc.collect") as mock_gc_collect,
+            patch("megatron.bridge.training.checkpointing.torch.cuda.is_available", return_value=True),
+            patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache") as mock_empty_cache,
+        ):
+            _load_model_weights_from_checkpoint(
+                checkpoint_path="/test/checkpoint",
+                model=mock_model,
+                fully_parallel_load=False,
+                dist_ckpt_strictness="assume_ok_unexpected",
+                strict=True,
+            )
 
         # Verify calls
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
@@ -2445,6 +2457,8 @@ class TestLoadModelWeightsFromCheckpoint:
         assert call_args[0][1] == {"metadata": mock_metadata}
         mock_strategy_cls.assert_called_once_with()
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
+        mock_gc_collect.assert_called_once_with()
+        mock_empty_cache.assert_called_once_with()
 
     @patch("megatron.bridge.training.checkpointing.delete_extra_state")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
