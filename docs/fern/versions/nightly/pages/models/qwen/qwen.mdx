@@ -515,15 +515,15 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 ```python
 from megatron.bridge.recipes.qwen import qwen25_7b_pretrain_config
 
-config = qwen25_7b_pretrain_config(
-    name="qwen25_7b_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/qwen25_7b",
-    train_iters=500_000,
-    global_batch_size=2048,
-    seq_length=4096,
-    # Uses TP=2, PP=1 (16 GPUs) automatically
-)
+config = qwen25_7b_pretrain_config()
+config.dataset.data_path = "/path/to/dataset_text_document"
+config.checkpoint.save = "/results/qwen25_7b/checkpoints"
+config.logger.tensorboard_dir = "/results/qwen25_7b/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 2048
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=2, PP=1 (2 model-parallel GPUs); additional GPUs become data parallel
 ```
 
 #### Finetuning Examples
@@ -533,14 +533,13 @@ config = qwen25_7b_pretrain_config(
 ```python
 from megatron.bridge.recipes.qwen import qwen25_7b_sft_config
 
-config = qwen25_7b_sft_config(
-    name="qwen25_7b_full_sft",
-    pretrained_checkpoint="/results/qwen25_7b/checkpoints/iter_0500000",
-    train_iters=1000,
-    global_batch_size=64,
-    finetune_lr=5e-6,
-    # Uses TP=2, PP=1 (16 GPUs) automatically
-)
+config = qwen25_7b_sft_config()
+config.checkpoint.pretrained_checkpoint = "/results/qwen25_7b/checkpoints/iter_0500000"
+config.train.train_iters = 1000
+config.train.global_batch_size = 64
+config.scheduler.lr_decay_iters = 1000
+config.optimizer.lr = 5e-6
+# Uses TP=2, PP=1 (2 model-parallel GPUs); additional GPUs become data parallel
 ```
 
 **LoRA Finetuning (7B):**
@@ -548,15 +547,13 @@ config = qwen25_7b_sft_config(
 ```python
 from megatron.bridge.recipes.qwen import qwen25_7b_peft_config
 
-config = qwen25_7b_peft_config(
-    name="qwen25_7b_lora",
-    pretrained_checkpoint="/results/qwen25_7b/checkpoints/iter_0500000",
-    peft_scheme="lora",  # or "dora"
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=1e-4,
-    # Uses TP=1, PP=1 (8 GPUs) automatically
-)
+config = qwen25_7b_peft_config(peft_scheme="lora")  # or "dora"
+config.checkpoint.pretrained_checkpoint = "/results/qwen25_7b/checkpoints/iter_0500000"
+config.train.train_iters = 1000
+config.train.global_batch_size = 128
+config.scheduler.lr_decay_iters = 1000
+config.optimizer.lr = 1e-4
+# Uses TP=1, PP=1 (1 model-parallel GPU); additional GPUs become data parallel
 ```
 
 ### Hugging Face Model Cards

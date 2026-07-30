@@ -57,26 +57,28 @@ class _FakeAutoBridge:
         return self.provider
 
 
-def _load_gemma4_recipe_module():
+def _load_gemma4_recipe_module(monkeypatch):
     """Load the Gemma4 recipe without importing the umbrella recipes package."""
     bridge_root = Path(__file__).resolve().parents[3]
     recipes_root = bridge_root / "src" / "megatron" / "bridge" / "recipes"
 
     recipes_pkg = types.ModuleType("megatron.bridge.recipes")
     recipes_pkg.__path__ = [str(recipes_root)]
-    sys.modules.setdefault("megatron.bridge.recipes", recipes_pkg)
+    if "megatron.bridge.recipes" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "megatron.bridge.recipes", recipes_pkg)
 
     common_mod = types.ModuleType("megatron.bridge.recipes.common")
     common_mod._pretrain_common = _minimal_pretrain_common
-    sys.modules["megatron.bridge.recipes.common"] = common_mod
+    monkeypatch.setitem(sys.modules, "megatron.bridge.recipes.common", common_mod)
 
     utils_pkg = types.ModuleType("megatron.bridge.recipes.utils")
     utils_pkg.__path__ = [str(recipes_root / "utils")]
-    sys.modules.setdefault("megatron.bridge.recipes.utils", utils_pkg)
+    if "megatron.bridge.recipes.utils" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "megatron.bridge.recipes.utils", utils_pkg)
 
     tokenizer_mod = types.ModuleType("megatron.bridge.recipes.utils.tokenizer_utils")
     tokenizer_mod.DEFAULT_NULL_TOKENIZER_VOCAB_SIZE = 32000
-    sys.modules["megatron.bridge.recipes.utils.tokenizer_utils"] = tokenizer_mod
+    monkeypatch.setitem(sys.modules, "megatron.bridge.recipes.utils.tokenizer_utils", tokenizer_mod)
 
     recipe_path = recipes_root / "gemma" / "gemma4.py"
     spec = importlib.util.spec_from_file_location("_gemma4_recipe_under_test", recipe_path)
@@ -124,8 +126,8 @@ def bridge_provider(hf_config_e4b):
 
 
 @pytest.fixture
-def recipe_module():
-    return _load_gemma4_recipe_module()
+def recipe_module(monkeypatch):
+    return _load_gemma4_recipe_module(monkeypatch)
 
 
 @pytest.fixture

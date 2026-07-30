@@ -70,6 +70,23 @@ For export, add `--hf-path`. Distributed Hugging Face saving is enabled by
 default for the GPU backend to avoid gathering the full model on rank zero.
 Use `--no-distributed-save` only when the model fits comfortably on rank zero.
 
+GPU import uses the faster checkpoint save path by default. For models that
+would otherwise run out of GPU memory while saving the imported checkpoint,
+add `--low-memory-save`. This releases model shards as they are saved, but can
+increase conversion time, so enable it only when the default path does not fit:
+
+```bash
+./scripts/conversion/convert.sh import \
+  --executor slurm \
+  --device gpu \
+  --nodes 1 \
+  --gpus-per-node 8 \
+  --hf-model MODEL \
+  --megatron-path /workspace/models/large-model \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --low-memory-save
+```
+
 No cluster-specific `srun` flags are added by default. If the target cluster
 requires extra flags, repeat `--srun-arg=ARG`. For example, a Pyxis/Enroot
 cluster may use:
