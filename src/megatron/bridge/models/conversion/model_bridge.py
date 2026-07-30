@@ -432,8 +432,9 @@ class MegatronModelBridge(
     # provider, such as one implementing MLA.
     PROVIDER_CLASS = None
 
-    # Override these only when the standard GPT or Transformer config cannot represent the model.
-    # Set MODEL_CONFIG_CLASS to None only when builder-backed construction is unsupported.
+    # Builder-backed construction is rolling out incrementally by model family. Override these
+    # when the standard GPT or Transformer config cannot represent the model, and set
+    # MODEL_CONFIG_CLASS to None for families that have not yet migrated.
     MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
     TRANSFORMER_CONFIG_CLASS: ClassVar[type[BridgeTransformerConfig]] = BridgeTransformerConfig
 

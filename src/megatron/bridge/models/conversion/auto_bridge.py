@@ -1635,6 +1635,11 @@ class AutoBridge(Generic[MegatronModelT]):
     def get_model_config(self) -> ModelConfig:
         """Convert the Hugging Face architecture to a builder-backed config.
 
+        Builder-backed config support is being rolled out incrementally by
+        model family. This API is available only for families that have
+        migrated to a compatible ``ModelConfig``. Continue to use
+        :meth:`to_megatron_provider` for families that have not yet migrated.
+
         This method performs configuration conversion only. It does not load
         weights, initialize distributed state, finalize the config, or build a
         model.
@@ -1702,6 +1707,11 @@ class AutoBridge(Generic[MegatronModelT]):
     ) -> list[MegatronModelT]:
         """Build a Megatron model through its configured ``ModelBuilder``.
 
+        Like :meth:`get_model_config`, this builder-backed API is being rolled
+        out incrementally and supports only migrated model families. Continue
+        to use :meth:`to_megatron_model` for families that have not yet
+        migrated.
+
         Args:
             model_config: Optional config with user overrides already applied.
                 When omitted, :meth:`get_model_config` supplies the defaults.
@@ -1714,6 +1724,10 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Returns:
             Distributed model stages created by the configured builder.
+
+        Raises:
+            ModelConfigNotSupportedError: If defaults are requested for a model
+                family that has not migrated to builder-backed configs.
         """
         if model_config is None:
             model_config = self.get_model_config()
