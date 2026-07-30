@@ -25,6 +25,11 @@ from megatron.bridge.package_info import (
     __repository_url__,
     __version__,
 )
+from megatron.bridge.utils.mcore_version import check_mcore_version
+
+
+# Warn once when the installed megatron-core is outside the supported window.
+check_mcore_version()
 
 
 __all__ = [

@@ -105,6 +105,24 @@ The submodule committed to the repo always points to the **main** commit. Use th
 
 The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://github.com/NVIDIA/Megatron-LM/tree/dev) — features are experimental, follow a streamlined review process, and must graduate to stable within 6 months or be deprecated.
 
+### Supported Megatron-Core versions
+
+A pip-installed Megatron Bridge is not restricted to the exact submodule pin. The supported
+window is a rule relative to the pin rather than a fixed pair of versions:
+
+> **previous minor release (N-1) of the pin** ≤ `megatron-core` < **next minor of the pin**
+
+With the pin at Megatron-Core `0.19.0`, that resolves to `megatron-core>=0.18.0,<0.20` — the
+released 0.18.x line through the current dev pin. Installing Megatron Bridge alongside a
+Megatron-Core already inside that window leaves it in place; anything outside it fails at
+install time, and `megatron.bridge.utils.mcore_version.check_mcore_version()` logs a warning at
+import time. When the submodule pin moves to a new minor release, the window moves with it.
+
+Where an API used by Bridge exists only in the pinned commit, Bridge ships a compatibility
+shim so the older release keeps working — for example `megatron.training.models.gpt`, which was
+added after 0.18.x was cut, falls back to
+`megatron.bridge.models.gpt.mcore_gpt_compat`.
+
 ## ⚡ Quickstart
 
 To get started, install Megatron Bridge or download a NeMo Framework container as described [above](#-installation).
