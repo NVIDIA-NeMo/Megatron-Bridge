@@ -250,7 +250,7 @@ def _apply_flat_cli_environment_compatibility(
     if connection_override:
         moe_a2a_overlap = args.moe_a2a_overlap if args.moe_a2a_overlap is not None else base_moe_a2a_overlap
         max_connections = 32 if base_dispatcher_backend in {"deepep", "hybridep"} else 8
-        if gpu in {"b200", "b300", "gb200", "gb300"}:
+        if gpu in {"b200", "b300", "gb200", "gb300", "vr200"}:
             max_connections = 32
         elif (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
             max_connections = 1

@@ -18,17 +18,34 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
+    deepseek_v3_pretrain_128gpu_vr200_fp8mx_config,
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_vr200_fp8mx_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+)
+from megatron.bridge.perf_recipes.gpt_oss import (
+    gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config,
+    gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config,
+    gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config,
+    gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config,
+)
+from megatron.bridge.perf_recipes.kimi import kimi_k2_pretrain_256gpu_vr200_fp8mx_config
+from megatron.bridge.perf_recipes.llama import (
+    llama3_70b_pretrain_64gpu_vr200_bf16_config,
+    llama31_405b_pretrain_256gpu_vr200_bf16_config,
+    llama31_405b_pretrain_256gpu_vr200_fp8mx_config,
+    llama31_405b_pretrain_256gpu_vr200_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.qwen import (
     qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_large_scale_config,
     qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config,
+    qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config,
 )
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -70,8 +87,10 @@ def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: boo
     ("recipe", "expected_vpp"),
     [
         (qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config, None),
+        (qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config, None),
         (qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config, 3),
         (qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config, 3),
+        (qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config, 12),
     ],
 )
 def test_qwen_mxfp8_recipes_match_r050_full_iteration_settings(recipe, expected_vpp) -> None:
@@ -84,6 +103,49 @@ def test_qwen_mxfp8_recipes_match_r050_full_iteration_settings(recipe, expected_
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
+
+
+def test_gpt_oss_120b_vr200_mxfp8_matches_r050_full_iteration_settings() -> None:
+    cfg = gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config()
+
+    _assert_full_iteration_hybridep_mxfp8(cfg)
+    assert cfg.model.fp8_output_proj is True
+    assert cfg.model.cuda_graph_warmup_steps == 2
+
+
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config,
+        gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config,
+        gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config,
+        deepseek_v3_pretrain_128gpu_vr200_fp8mx_config,
+        deepseek_v3_pretrain_256gpu_vr200_fp8mx_config,
+        kimi_k2_pretrain_256gpu_vr200_fp8mx_config,
+        llama3_70b_pretrain_64gpu_vr200_bf16_config,
+    ],
+)
+def test_vr200_recipes_keep_r050_cudnn_layernorm_settings(recipe) -> None:
+    cfg = recipe()
+
+    assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+
+
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config,
+        gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config,
+        llama31_405b_pretrain_256gpu_vr200_bf16_config,
+        llama31_405b_pretrain_256gpu_vr200_fp8mx_config,
+        llama31_405b_pretrain_256gpu_vr200_nvfp4_config,
+    ],
+)
+def test_vr200_recipes_use_sm100_cuda_connection_count(recipe) -> None:
+    cfg = recipe()
+
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
 
 
 @pytest.mark.parametrize(
