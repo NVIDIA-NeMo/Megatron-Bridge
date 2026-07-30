@@ -27,6 +27,7 @@ from megatron.bridge.training.train import (
     _handle_mxfp8_param_buffer_copy,
     _maybe_register_fsdp_buffers,
     _should_skip_and_handle_iteration,
+    _wrap_sequence_packing_data_iterator,
     checkpoint_and_decide_exit,
     force_param_sync,
     maybe_check_weight_hash_across_dp_replicas,
@@ -40,6 +41,26 @@ from megatron.bridge.training.utils.train_utils import maybe_inject_state
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_wrap_sequence_packing_data_iterator_delegates_to_mcore(monkeypatch):
+    expected = (iter(()), 8, 1024.0, 4096.0)
+    mcore_wrap = Mock(return_value=expected)
+    monkeypatch.setattr("megatron.core.datasets.data_schedule.wrap_data_iterator", mcore_wrap)
+
+    data_iterator = iter(())
+    model_config = SimpleNamespace(sequence_packing_scheduler="dp_balanced")
+    pg_collection = Mock()
+
+    result = _wrap_sequence_packing_data_iterator(data_iterator, model_config, 4, pg_collection)
+
+    assert result == expected
+    mcore_wrap.assert_called_once_with(
+        data_iterator,
+        model_config,
+        4,
+        pg_collection=pg_collection,
+    )
 
 
 class TestFSDPRegistration:
@@ -440,6 +461,16 @@ class TestShouldDisableForwardPreHook:
             use_megatron_fsdp=False, use_distributed_optimizer=False, overlap_param_gather=True
         )
         assert result is False
+
+    def test_disable_with_layer_wise_distributed_optimizer_and_overlap(self):
+        """Muon's layer-wise distributed optimizer needs the same first-iteration guard."""
+        result = should_disable_forward_pre_hook(
+            use_megatron_fsdp=False,
+            use_distributed_optimizer=False,
+            overlap_param_gather=True,
+            use_layer_wise_distributed_optimizer=True,
+        )
+        assert result is True
 
     def test_keep_enabled_without_overlap_param_gather(self):
         """Test that pre-hook stays enabled when not overlapping parameter gathering."""

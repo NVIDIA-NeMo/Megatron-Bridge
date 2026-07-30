@@ -1456,8 +1456,79 @@ class TestTrainingLog:
             model=None,
         )
 
-        # Verify MTP tracking was called
-        mock_mtp_helper.track_mtp_metrics.assert_called_once()
+        # The tracker is already token-normalized across ranks and microbatches.
+        mock_mtp_helper.track_mtp_metrics.assert_called_once_with(
+            1.0,
+            mock_global_state.train_state.step,
+            mock.ANY,
+            mock_global_state.wandb_logger,
+            total_loss_dict,
+        )
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.DSAIndexerLossLoggingHelper")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_dsa_indexer_logging(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_indexer_helper,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test sparse DSA indexer loss logging when enabled."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_config.model.num_moe_experts = None
+        mock_config.model.mtp_num_layers = None
+        mock_config.model.dsa_indexer_loss_coeff = 0.01
+        mock_config.model.num_layers = 3
+        mock_config.model.csa_compress_ratios = [128, 128, 4]
+        mock_config.model.cuda_graph_impl = "none"
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_indexer_helper.track_indexer_metrics.assert_called_once_with(
+            loss_scale=0.125,
+            iteration=mock_global_state.train_state.step,
+            writer=mock.ANY,
+            wandb_writer=mock_global_state.wandb_logger,
+            total_loss_dict=total_loss_dict,
+            num_layers=3,
+            csa_compress_ratios=[128, 128, 4],
+            preserve_groups=False,
+        )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")

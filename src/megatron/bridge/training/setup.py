@@ -28,7 +28,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
-from megatron.training.models.base import ModelConfig
+from megatron.training.models.base import ModelConfig, compose_hooks
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
@@ -113,9 +113,7 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
-    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
-        cfg.checkpoint.load, cfg.checkpoint
-    )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
 
     if cfg.peft is not None:
         load_checkpoint_exists = cfg.checkpoint.load is not None and (
@@ -313,9 +311,7 @@ def setup(
                 checkpoint_path = cfg.checkpoint.pretrained_checkpoint
                 ckpt_step = None
             else:
-                raise RuntimeError(
-                    "No checkpoint source is available for ModelOpt state restoration"
-                )
+                raise RuntimeError("No checkpoint source is available for ModelOpt state restoration")
 
             if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
                 raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
@@ -475,12 +471,97 @@ def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
         model_cfg.register_pre_wrap_hook(hook)
 
 
+def _wrap_model_chunks_with_layer_wise_ddp(
+    cfg: ConfigContainer,
+    model: list[MegatronModule],
+    pg_collection: ProcessGroupCollection,
+) -> list[MegatronModule]:
+    """Wrap prepared model chunks with MCore's layer-wise optimizer DDP layout."""
+    from megatron.training.training import resolve_ddp_bucket_size, wrap_model_chunks_with_ddp
+
+    if cfg.dist.use_megatron_fsdp or cfg.dist.use_torch_fsdp2:
+        raise ValueError("Layer-wise distributed optimizer is only supported with Megatron DDP")
+
+    num_parameters = sum(sum(parameter.nelement() for parameter in model_chunk.parameters()) for model_chunk in model)
+    cfg.ddp.bucket_size = resolve_ddp_bucket_size(
+        cfg.ddp,
+        pg_collection.dp_cp,
+        cfg.ddp.overlap_grad_reduce,
+        num_parameters,
+    )
+
+    disable_bucketing_per_chunk = [
+        (chunk_idx > 0) or cfg.optimizer.overlap_param_gather_with_optimizer_step for chunk_idx in range(len(model))
+    ]
+    pp_rank = pg_collection.pp.rank()
+    bucket_sizes = [
+        None if (disable_bucketing or pp_rank > 0) else cfg.ddp.bucket_size
+        for disable_bucketing in disable_bucketing_per_chunk
+    ]
+
+    ddp_stream = torch.cuda.Stream()
+    ddp_stream.wait_stream(torch.cuda.current_stream())
+    cfg.ddp.use_layer_wise_param_layout = cfg.optimizer.use_layer_wise_param_layout
+    wrap_kwargs = {
+        "use_layer_wise_distributed_optimizer": True,
+        "pg_collection": pg_collection if cfg.dist.use_decentralized_pg else None,
+        "bucket_sizes": bucket_sizes,
+        "disable_bucketing_per_chunk": disable_bucketing_per_chunk,
+    }
+    # Support MCore versions that expose this setting as a helper argument.
+    if "use_layer_wise_param_layout" in inspect.signature(wrap_model_chunks_with_ddp).parameters:
+        wrap_kwargs["use_layer_wise_param_layout"] = cfg.optimizer.use_layer_wise_param_layout
+    transformer_config = cfg.model.transformer if isinstance(cfg.model, ModelConfig) else cfg.model
+    with torch.cuda.stream(ddp_stream):
+        model = wrap_model_chunks_with_ddp(
+            model,
+            transformer_config,
+            cfg.ddp,
+            **wrap_kwargs,
+        )
+    torch.cuda.current_stream().wait_stream(ddp_stream)
+
+    if cfg.rng.data_parallel_random_init:
+        for model_chunk in model:
+            model_chunk.broadcast_params()
+
+    return model
+
+
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build distributed model from either ModelConfig or ModelProviderMixin."""
     model_config = cfg.model
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
+        if cfg.optimizer.use_layer_wise_distributed_optimizer:
+            # ModelBuilder's default DDP path computes a conventional distributed-
+            # optimizer layout. Build through mixed precision without DDP, then use
+            # the same layer-wise DDP wrapper as MCore's direct training entrypoint.
+            post_wrap_hooks = list(model_config.post_wrap_hooks)
+            model_config.post_wrap_hooks.clear()
+            try:
+                model = builder.build_distributed_models(
+                    pg_collection=pg_collection,
+                    ddp_config=cfg.ddp,
+                    overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+                    use_megatron_fsdp=False,
+                    use_torch_fsdp2=False,
+                    wrap_with_ddp=False,
+                    data_parallel_random_init=False,
+                )
+            finally:
+                model_config.post_wrap_hooks.extend(post_wrap_hooks)
+
+            model = _wrap_model_chunks_with_layer_wise_ddp(cfg, model, pg_collection)
+            post_wrap_hook = compose_hooks(post_wrap_hooks)
+            hooked_model = post_wrap_hook(model)
+            if hooked_model is not None:
+                model = hooked_model
+            else:
+                logging.getLogger(__name__).warning("Final post wrap hook returned None, skipping post wrap hooks.")
+            return model
+
         return builder.build_distributed_models(
             pg_collection=pg_collection,
             ddp_config=cfg.ddp,
@@ -490,14 +571,36 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
         )
     else:
-        return model_config.provide_distributed_model(
+        if not cfg.optimizer.use_layer_wise_distributed_optimizer:
+            return model_config.provide_distributed_model(
+                ddp_config=cfg.ddp,
+                use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+                use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+                overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+                data_parallel_random_init=cfg.rng.data_parallel_random_init,
+                pg_collection=pg_collection,
+            )
+
+        # The deprecated provider path has the same conventional-DDP limitation
+        # as ModelBuilder. Override its post hook with an identity until after
+        # the layer-wise DDP wrapper has been applied.
+        post_wrap_hook = model_config.post_wrap_hook
+        model = model_config.provide_distributed_model(
             ddp_config=cfg.ddp,
-            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
-            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+            use_megatron_fsdp=False,
+            use_torch_fsdp2=False,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
-            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            wrap_with_ddp=False,
+            data_parallel_random_init=False,
+            post_wrap_hook=lambda model: model,
             pg_collection=pg_collection,
         )
+        model = _wrap_model_chunks_with_layer_wise_ddp(cfg, model, pg_collection)
+        if post_wrap_hook is not None:
+            hooked_model = post_wrap_hook(model)
+            if hooked_model is not None:
+                model = hooked_model
+        return model
 
 
 def _update_model_config_funcs(

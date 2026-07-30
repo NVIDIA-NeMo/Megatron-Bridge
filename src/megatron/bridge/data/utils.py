@@ -35,27 +35,45 @@ from megatron.bridge.data.builders.mock_vlm_sft import (
     mock_vlm_sft_train_valid_test_datasets_provider,
 )
 from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
-from megatron.bridge.training.config import GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig
+from megatron.bridge.training.config import (
+    GPTDatasetConfig,
+    GPTFIMDatasetConfig,
+    MockGPTDatasetConfig,
+    MockVarlenDatasetConfig,
+)
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-def is_dataset_built_on_rank(pg_collection: ProcessGroupCollection) -> bool:
+def is_dataset_built_on_rank(
+    pg_collection: ProcessGroupCollection, *, include_middle_pipeline_stages: bool = False
+) -> bool:
     """Determines whether the dataset should be built on the current rank.
 
     Datasets are typically built only on the first and last pipeline stages
     and the first tensor parallel rank to save memory and avoid redundancy.
+    Sequence-packing schedulers additionally require metadata on middle
+    pipeline stages, so those datasets are built on TP rank zero of every
+    pipeline stage.
+
+    Args:
+        pg_collection: Model-parallel process groups for the current rank.
+        include_middle_pipeline_stages: Build on every pipeline stage when
+            true, while still restricting construction to TP rank zero.
 
     Returns:
         True if the dataset should be built on the current rank, False otherwise.
     """
-    return (is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)) and (
-        pg_collection.tp.rank() == 0
+    pipeline_stage_owns_data = include_middle_pipeline_stages or (
+        is_pp_first_stage(pg_collection.pp) or is_pp_last_stage(pg_collection.pp)
     )
+    return pipeline_stage_owns_data and pg_collection.tp.rank() == 0
 
 
 def pretrain_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: BlendedMegatronDatasetConfig
+    train_val_test_num_samples: list[int],
+    dataset_config: BlendedMegatronDatasetConfig,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> tuple[GPTDataset, GPTDataset, GPTDataset]:
     """Build pretraining train, validation, and test datasets.
 
@@ -70,7 +88,16 @@ def pretrain_train_valid_test_datasets_provider(
         A tuple containing the train, validation, and test datasets.
     """
 
-    if dataset_config.mock:
+    if isinstance(dataset_config, MockVarlenDatasetConfig):
+        try:
+            from megatron.training.datasets.varlen_dataset import MockVarlenDataset
+        except ImportError as error:
+            raise RuntimeError(
+                "MockVarlenDatasetConfig requires a Megatron-Core version that provides "
+                "megatron.training.datasets.varlen_dataset.MockVarlenDataset."
+            ) from error
+        dataset_type = MockVarlenDataset
+    elif dataset_config.mock:
         dataset_type = MockGPTDataset
     elif hasattr(dataset_config, "fim_data"):
         dataset_type = GPTFIMDataset
@@ -79,9 +106,17 @@ def pretrain_train_valid_test_datasets_provider(
 
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
-    # Build the dataset on all ranks for TP-replicated loading
+    if isinstance(dataset_config, MockVarlenDatasetConfig):
+        if pg_collection is None:
+            raise ValueError("MockVarlenDatasetConfig requires pg_collection to select TP-rank dataset ownership.")
+        is_dataset_built = lambda: is_dataset_built_on_rank(  # noqa: E731
+            pg_collection, include_middle_pipeline_stages=True
+        )
+    else:
+        is_dataset_built = lambda: True  # noqa: E731
+
     train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
-        dataset_type, train_val_test_num_samples, lambda: True, dataset_config
+        dataset_type, train_val_test_num_samples, is_dataset_built, dataset_config
     ).build()
 
     print_rank_0("> finished creating GPT datasets ...")
