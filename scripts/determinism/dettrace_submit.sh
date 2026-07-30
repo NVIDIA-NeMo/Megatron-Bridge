@@ -66,7 +66,11 @@ MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
 
 # Submit one arm; echo ONLY its Slurm job id on stdout (submit log goes to stderr).
 submit_arm() {
-  local arm="$1" streams="${STREAMS_ROOT}/${arm}" logf jid
+  # Separate declarations: a single `local arm="$1" streams=".../${arm}"` expands ${arm}
+  # while parsing the line (before arm is assigned) -> "unbound variable" under `set -u`.
+  local arm="$1"
+  local streams="${STREAMS_ROOT}/${arm}"
+  local logf jid
   mkdir -p "$streams"
   logf=$(mktemp)
   if ! "${PYTHON}" scripts/performance/setup_experiment.py \
