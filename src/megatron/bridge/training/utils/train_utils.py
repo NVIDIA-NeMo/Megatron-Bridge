@@ -821,14 +821,21 @@ def training_log(
     # Tensorboard values.
     # Timer requires all the ranks to call.
     if logger_config.log_timers_to_tensorboard and (iteration % logger_config.tensorboard_log_interval == 0):
-        reset_in_tb = False if hasattr(timers, "write_to_wandb") else True
-        timers.write(timers_to_log, writer, iteration, normalizer=total_iterations, reset=reset_in_tb)
-        if hasattr(timers, "write_to_wandb"):
-            timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
-        if hasattr(timers, "write_to_mlflow"):
-            timers.write_to_mlflow(timers_to_log, mlflow_logger, iteration, normalizer=total_iterations, reset=True)
-        if hasattr(timers, "write_to_comet"):
-            timers.write_to_comet(timers_to_log, comet_logger, iteration, normalizer=total_iterations, reset=True)
+        timer_backends = [
+            (getattr(timers, "write_to_wandb", None), wandb_writer),
+            (getattr(timers, "write_to_mlflow", None), mlflow_logger),
+            (getattr(timers, "write_to_comet", None), comet_logger),
+        ]
+        timer_backends = [(write_fn, backend) for write_fn, backend in timer_backends if write_fn is not None]
+        timers.write(timers_to_log, writer, iteration, normalizer=total_iterations, reset=not timer_backends)
+        for index, (write_fn, backend) in enumerate(timer_backends):
+            write_fn(
+                timers_to_log,
+                backend,
+                iteration,
+                normalizer=total_iterations,
+                reset=index == len(timer_backends) - 1,
+            )
 
     if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
         rank = get_rank_safe()

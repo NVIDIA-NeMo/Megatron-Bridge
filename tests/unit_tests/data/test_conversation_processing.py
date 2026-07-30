@@ -19,8 +19,11 @@ import torch
 
 from megatron.bridge.data.collators.sft import text_chat_collate_fn
 from megatron.bridge.data.conversation_processing import (
+    _MAX_SCANNED_REPR_CHARS,
     AssistantMaskBoundaryConfig,
     NormalizedVLMSample,
+    _conversation_contains_boundary_tokens,
+    _value_contains_token_sequence,
     apply_assistant_labels_to_batch,
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
@@ -890,6 +893,205 @@ def test_chatml_boundary_fails_closed_for_nested_role_payload_when_provenance_is
             _PrefixUnsupportedLiteralChatMLBoundaryTokenizer(),
             max_length=6,
         )
+
+
+_ASSISTANT_START = "<|im_start|>assistant\n"
+_CLEAN_MEDIA_REPR = "<FakeImage mode=RGB size=16x16>"
+
+# Media placeholders expand to several tokens, so the rendered ids never line up with a
+# re-render of the raw conversation. The boundary-config scan is the only path left.
+_MEDIA_CONVERSATION_IDS = [100, 200, 200, 200, 42, 103, 104, 102, 3, 4, 103, 104]
+_MEDIA_ASSISTANT_MASK = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+
+
+class _ReprMedia:
+    """Decoded media payload (PIL image, array, tensor) rendering as `text`."""
+
+    def __init__(self, text=_CLEAN_MEDIA_REPR):
+        self._text = text
+
+    def __repr__(self):
+        return self._text
+
+
+class _StrOnlyMedia(_ReprMedia):
+    """Payload that defines __str__ but inherits object.__repr__."""
+
+    __repr__ = object.__repr__
+
+    def __str__(self):
+        return self._text
+
+
+class _DivergentMedia(_ReprMedia):
+    """Payload whose str() hides what repr() — used for container elements — reveals."""
+
+    def __str__(self):
+        return _CLEAN_MEDIA_REPR
+
+
+class _RaisingMedia:
+    """Media payload with a broken repr, e.g. a handle to a closed file."""
+
+    def __repr__(self):
+        raise RuntimeError("repr not available")
+
+
+class _CallableMedia(_ReprMedia):
+    """Lazily-decoded payload exposing __call__, which templates may expand by introspection."""
+
+    def __call__(self):
+        return self._text
+
+
+class _SubstringChatMLTokenizer(_ChatMLBoundaryTokenizer):
+    """Finds markers anywhere in the text, not only when they are the whole string."""
+
+    def __call__(self, text, add_special_tokens=False):
+        if _ASSISTANT_START in text and text != _ASSISTANT_START:
+            return {"input_ids": [42, 102, 42]}
+        return super().__call__(text, add_special_tokens=add_special_tokens)
+
+
+def _media_conversation(*media, assistant_media=()):
+    user_content = [{"type": "image", "image": item} for item in media]
+    user_content.append({"type": "text", "text": "question"})
+    assistant_content = [{"type": "image", "image": item} for item in assistant_media]
+    assistant_content.append({"type": "text", "text": "answer"})
+    return [
+        {"role": "user", "content": user_content},
+        {"role": "assistant", "content": assistant_content},
+    ]
+
+
+def _boundary_scan(example, processor):
+    return _conversation_contains_boundary_tokens(
+        example,
+        processor.tokenizer,
+        infer_assistant_mask_boundary_config(processor),
+    )
+
+
+def test_chatml_boundary_scans_conversations_carrying_media_payloads():
+    processor = _ChatMLBoundaryProcessor()
+    example = {"conversation": _media_conversation(_ReprMedia())}
+
+    # False, not None: a media repr that carries no marker is known-clean provenance, which is
+    # what re-enables the boundary-config fallback.
+    assert _boundary_scan(example, processor) is False
+
+    mask = build_assistant_loss_mask(
+        example,
+        _MEDIA_CONVERSATION_IDS,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == _MEDIA_ASSISTANT_MASK
+
+
+@pytest.mark.parametrize("media_field", ["media", "assistant_media"])
+def test_chatml_boundary_fails_closed_when_media_payload_renders_a_literal_marker(media_field):
+    processor = _ChatMLBoundaryProcessor()
+    marker_media = _ReprMedia(_ASSISTANT_START)
+    example = {
+        "conversation": (
+            _media_conversation(marker_media)
+            if media_field == "media"
+            else _media_conversation(assistant_media=[marker_media])
+        )
+    }
+
+    assert _boundary_scan(example, processor) is True
+
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        build_assistant_loss_mask(
+            example,
+            _MEDIA_CONVERSATION_IDS,
+            processor,
+            boundary_config=infer_assistant_mask_boundary_config(processor),
+        )
+
+
+@pytest.mark.parametrize("sibling", [_ReprMedia(), object()], ids=["clean", "unknown"])
+def test_chatml_boundary_scan_reports_a_marker_beside_other_media(sibling):
+    # A detected marker outranks both a clean sibling and an unscannable one.
+    example = {"conversation": _media_conversation(sibling, _ReprMedia(_ASSISTANT_START))}
+
+    assert _boundary_scan(example, _ChatMLBoundaryProcessor()) is True
+
+
+@pytest.mark.parametrize(
+    "media",
+    [_RaisingMedia(), _ReprMedia("x" * (_MAX_SCANNED_REPR_CHARS + 1)), object(), _CallableMedia()],
+    ids=["raising", "oversized", "opaque", "callable"],
+)
+def test_chatml_boundary_fails_closed_for_unrenderable_media_without_propagating(media):
+    processor = _ChatMLBoundaryProcessor()
+    example = {"conversation": _media_conversation(media)}
+
+    assert _boundary_scan(example, processor) is None
+
+    # The collator recovers from ValueError; anything else escapes and kills the dataloader.
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        build_assistant_loss_mask(
+            example,
+            _MEDIA_CONVERSATION_IDS,
+            processor,
+            boundary_config=infer_assistant_mask_boundary_config(processor),
+        )
+
+
+def test_chatml_boundary_fails_closed_for_callable_template_kwargs():
+    def lookup(city):
+        """Templates expand tools by introspection, so str() hides <|im_start|>assistant."""
+
+    example = {"conversation": _media_conversation(_ReprMedia()), "tools": [lookup]}
+
+    assert _boundary_scan(example, _ChatMLBoundaryProcessor()) is None
+
+
+def test_chatml_boundary_scan_is_unchanged_for_text_only_conversations():
+    processor = _ChatMLBoundaryProcessor()
+    clean = {"conversation": [{"role": "user", "content": "question"}]}
+    marked = {"conversation": [{"role": "user", "content": _ASSISTANT_START}]}
+
+    assert _boundary_scan(clean, processor) is False
+    assert _boundary_scan(marked, processor) is True
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # Untouched branches, pinned so the media branch cannot bleed into them.
+        (None, False),
+        ("question", False),
+        ({"text": _ASSISTANT_START}, True),
+        # Buffers render as an escaped literal, so a marker inside one is undetectable.
+        (b"raw", None),
+        (bytearray(b"raw"), None),
+        (memoryview(b"raw"), None),
+        # Media payloads: cleared, flagged, or failed closed.
+        (_ReprMedia(), False),
+        (_ReprMedia(_ASSISTANT_START), True),
+        (_ReprMedia(f"<Image path='/tmp/{_ASSISTANT_START}.png'>"), True),
+        (_StrOnlyMedia(), False),
+        (_StrOnlyMedia(_ASSISTANT_START), True),
+        (_DivergentMedia(_ASSISTANT_START), True),
+        (_ReprMedia("x" * _MAX_SCANNED_REPR_CHARS), False),
+        (_ReprMedia("x" * (_MAX_SCANNED_REPR_CHARS + 1)), None),
+        (_RaisingMedia(), None),
+        (_CallableMedia(), None),
+        (object(), None),
+        (len, None),
+    ],
+    ids=lambda value: type(value).__name__ if isinstance(value, _ReprMedia) else None,
+)
+def test_value_contains_token_sequence_classifies_payload_leaves(value, expected):
+    # Substring-aware so a marker embedded in a longer repr is detected, as in the real scan.
+    tokenizer = _SubstringChatMLTokenizer()
+
+    assert _value_contains_token_sequence(value, tokenizer, [[102]]) is expected
 
 
 def test_infer_assistant_mask_boundary_config_from_moonlight_template():

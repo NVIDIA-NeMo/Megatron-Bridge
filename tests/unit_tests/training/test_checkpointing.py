@@ -713,6 +713,8 @@ class TestSaveCheckpoint:
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""
         old_checkpoint = tmp_path / "iter_0000500"
+        current_checkpoint = tmp_path / "iter_0001000"
+        future_incomplete_checkpoint = tmp_path / "iter_0001500"
         old_checkpoint.mkdir()
         torch.save({"step": torch.tensor(500)}, old_checkpoint / "train_state.pt")
         latest_train_state = tmp_path / "latest_train_state.pt"
@@ -743,7 +745,7 @@ class TestSaveCheckpoint:
         async_request.add_finalize_fn.side_effect = add_finalize_fn
 
         def start_async_save(*args, **kwargs):
-            (tmp_path / "iter_0001000").mkdir(exist_ok=True)
+            current_checkpoint.mkdir(exist_ok=True)
             return async_request
 
         def run_cleanup_immediately(*, target, args):
@@ -793,12 +795,17 @@ class TestSaveCheckpoint:
 
             assert call_order == ["register_cleanup", "schedule"]
             assert old_checkpoint.is_dir()
+            assert current_checkpoint.is_dir()
             assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
 
+            # A later save can create its directory before this request finalizes.
+            future_incomplete_checkpoint.mkdir()
             for finalize_fn in finalize_fns:
                 finalize_fn()
 
         assert not old_checkpoint.exists()
+        assert current_checkpoint.is_dir()
+        assert future_incomplete_checkpoint.is_dir()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
 
     @pytest.mark.parametrize("most_recent_k", [0, 1])

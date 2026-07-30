@@ -33,6 +33,10 @@ from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 CHATML_ASSISTANT_ROLE = "assistant"
 _LEGACY_CHAT_ROLE_ALIASES = {"human": "user", "gpt": CHATML_ASSISTANT_ROLE}
+# Upper bound on the rendered form of a non-tokenizable payload that the boundary-token scan
+# will tokenize. Sized to admit payloads that print themselves in full — a few hundred frame
+# reprs, or a float array below numpy's summarization threshold — and reject the rest.
+_MAX_SCANNED_REPR_CHARS = 65536
 
 
 @dataclass(frozen=True)
@@ -1289,6 +1293,11 @@ def _value_contains_token_sequence(
     token_sequences: Sequence[Sequence[int]],
 ) -> bool | None:
     """Check recursively tokenizable payload values for configured boundary sequences."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        # A raw buffer reaches the prompt only as an escaped repr literal, so escaping hides
+        # any marker inside it and this scan can never clear one. Stringifying a decoded image
+        # would also cost megabytes per example.
+        return None
     if isinstance(value, str):
         try:
             token_ids = tokenize_text_without_special_tokens(tokenizer, value)
@@ -1302,7 +1311,34 @@ def _value_contains_token_sequence(
     elif value is None or isinstance(value, (bool, int, float)):
         return False
     else:
-        return None
+        # Leaves we cannot tokenize directly — PIL images, arrays, tensors, paths. Reporting
+        # unknown here would disable the boundary-config fallback for every multimodal example,
+        # so scan the text the payload renders as instead. Jinja emits an object through str()
+        # standalone but repr() inside a container, so both forms must look clean to report
+        # clean. This is a heuristic: a payload whose rendered text its own str()/repr() does
+        # not reveal can still slip through — an array that abbreviates its printout, or an
+        # opaque container whose repr escapes the newline inside a marker, the same escaping
+        # that makes raw buffers above undetectable. Reaching either needs a template that
+        # iterates or attribute-accesses the payload rather than rendering it whole.
+        try:
+            if callable(value) or (type(value).__str__ is object.__str__ and type(value).__repr__ is object.__repr__):
+                # Templates expand callables by introspection (HF renders `tools` entries through
+                # get_json_schema, pulling in names and docstrings), and an object with neither
+                # hook has no rendered text at all. Neither can be cleared by stringifying it.
+                return None
+            rendered = {str(value), repr(value)}
+            # str.__len__ rather than len(): __str__ may return a str subclass with its own.
+            oversized = any(str.__len__(form) > _MAX_SCANNED_REPR_CHARS for form in rendered)
+        except Exception:
+            # Rendering an arbitrary payload can raise anything, and callers rely on None to
+            # fail closed — tokenize_chat_example only recovers from ValueError, so anything
+            # escaping here kills the dataloader worker instead.
+            return None
+        if oversized:
+            # A payload that prints itself in full can run to megabytes; tokenizing that once
+            # per example would stall the dataloader. Treat it as unknown provenance instead.
+            return None
+        results = [_value_contains_token_sequence(form, tokenizer, token_sequences) for form in rendered]
     if any(result is True for result in results):
         return True
     return None if any(result is None for result in results) else False
