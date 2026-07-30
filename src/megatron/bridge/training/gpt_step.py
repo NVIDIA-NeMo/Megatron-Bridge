@@ -51,24 +51,10 @@ logger = logging.getLogger(__name__)
 
 _CURRENT_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
 _CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
-_CURRENT_PACKED_SEQ_PARAM_KEYS = (
-    *_CURRENT_PACKED_SEQ_DEVICE_KEYS,
-    *_CURRENT_PACKED_SEQ_HOST_KEYS,
-    "total_tokens",
-    "cp_partition_mode",
-    "cp_group",
-    "local_cp_size",
-)
+_CURRENT_PACKED_SEQ_PARAM_KEYS = (*_CURRENT_PACKED_SEQ_DEVICE_KEYS, *_CURRENT_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
-_LEGACY_PACKED_SEQ_PARAM_KEYS = (
-    *_LEGACY_PACKED_SEQ_DEVICE_KEYS,
-    *_LEGACY_PACKED_SEQ_HOST_KEYS,
-    "total_tokens",
-    "cp_partition_mode",
-    "cp_group",
-    "local_cp_size",
-)
+_LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _PackedMetadataValue = torch.Tensor | int | None
 
 
