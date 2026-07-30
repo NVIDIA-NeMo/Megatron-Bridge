@@ -14,9 +14,9 @@
 
 """Targeted MoE-layer probe for the determinism tracer.
 
-Emits three ordered fingerprint records per MoE layer so the offline diff can localize the
-first divergence to a specific sub-op of the MoE forward — in particular to distinguish the
-expert GEMM (e.g. the CuteDSL fused grouped MLP) from the token *combine*:
+Emits ordered fingerprint records per MoE layer so the offline diff can localize the first
+divergence to a specific sub-op of the MoE forward — in particular to distinguish the expert
+GEMM (e.g. the CuteDSL fused grouped MLP) from the token *combine*:
 
   1. ``expert_input``    — post-dispatch tokens entering the experts (grouped MLP)
   2. ``expert_gemm_out`` — the experts' output, BEFORE combine (grouped-MLP result)
@@ -25,16 +25,15 @@ expert GEMM (e.g. the CuteDSL fused grouped MLP) from the token *combine*:
 Motivation: the flex/HybridEP combine runs in a custom CUDA/RDMA extension that is neither a
 ``torch.distributed`` call nor an ATen op, so ``collective_trace``/``op_trace`` cannot see it
 (a divergence there only surfaces one ATen op later, on the tensor that consumes the combined
-output). These three points bracket it with plain ``nn.Module`` forward hooks on the experts
-module and its parent MoE layer, so the combine's *output tensor* — an ordinary tensor — is
+output). These points bracket it with plain ``nn.Module`` forward hooks on the experts module
+and its parent MoE layer, so the combine's *output tensor* — an ordinary tensor — is
 fingerprinted directly. The probe is dispatcher-agnostic (works for ``alltoall`` too).
 
-Records enter the same ordered per-rank stream as every other record (group ``"moe"``) and
-flush at the step boundary via ``collective_trace.flush_pending``. They are emitted output-only
-(``input=[]``), so ``diff_streams`` reads ``input_match=True`` and returns the FIRST probe point
-whose output diverges — everything earlier in the ordered stream having matched. Thus:
-``expert_gemm_out`` diverging (``expert_input`` matched) implicates the grouped MLP;
-``combine_out`` diverging (``expert_gemm_out`` matched) implicates the combine.
+The two post-combine points also record their *input* (the tensor the hook received), so
+``diff_streams``' per-record ``input_match`` is meaningful: a record whose input matched but
+whose output diverged is the local root cause (``expert_gemm_out`` -> the grouped MLP;
+``combine_out`` -> the combine). Records enter the same ordered per-rank stream as every other
+record (group ``"moe"``) and flush at the step boundary via ``collective_trace.flush_pending``.
 
 Registered entirely from the Bridge side — it never edits ``3rdparty/Megatron-LM``. Gated by
 ``DET_TRACE_MOE``; inert otherwise. See docs/determinism-debug-tool.md.
@@ -59,43 +58,31 @@ def _primary_tensor(x):
     return x if isinstance(x, torch.Tensor) else None
 
 
-def _emit(op_name: str, value) -> None:
-    """Stash one output-only ``moe`` record for ``value``'s primary tensor.
+def _emit(op_name: str, in_value, out_value) -> None:
+    """Stash one ``moe`` record with fingerprints of ``in_value`` (input) and ``out_value``.
 
-    No-op unless the tracer is actively capturing this iteration (mirrors the guard in
-    ``collective_trace``'s wrappers), and unless ``value`` carries a tensor.
+    No-op unless the tracer is actively capturing this iteration. Either value may be ``None``
+    (or carry no tensor) -> an empty signature list for that side.
     """
-    if not (ct._S.enabled and ct._S.active) or ct._S.suspend:
+    if not ct._capturing():
         return
-    t = _primary_tensor(value)
-    if t is None:
-        return
-    ct._stash_named(op_name, "moe", [], ct._staged_sig_list(t))
+    ti = _primary_tensor(in_value)
+    to = _primary_tensor(out_value)
+    ct._stash_named(
+        op_name,
+        "moe",
+        ct._staged_sig_list(ti) if ti is not None else [],
+        ct._staged_sig_list(to) if to is not None else [],
+    )
 
 
-def _pre_hook(op_name: str):
-    def hook(module, args):
-        _emit(op_name, args[0] if args else None)
-
-    return hook
-
-
-def _post_hook(op_name: str):
-    def hook(module, args, output):
-        _emit(op_name, output)
-
-    return hook
-
-
-def register(model, prefix: str = "", experts_suffix: str = "experts") -> int:
+def register(model, experts_suffix: str = "experts") -> int:
     """Attach probe hooks to every experts module and its parent MoE layer.
 
     Args:
         model: the (unwrapped) model chunk to instrument.
-        prefix: informational per-chunk prefix (VPP/multi-chunk); the record's layer identity
-            comes from ``align_idx`` + the ``module_scope`` tag, so this is not embedded in
-            the key — accepted for call-site symmetry with ``module_scope.register``.
-        experts_suffix: submodule name of the grouped-MLP experts container to match.
+        experts_suffix: submodule name of the grouped-MLP experts container to match. The
+            leading-dot anchor means ``.shared_experts`` is deliberately NOT matched.
 
     Returns:
         The number of MoE layers instrumented.
@@ -106,20 +93,21 @@ def register(model, prefix: str = "", experts_suffix: str = "experts") -> int:
         if not (name == experts_suffix or name.endswith("." + experts_suffix)):
             continue
         # experts (grouped MLP): post-dispatch input (pre-hook) + pre-combine output (post-hook).
-        _handles.append(module.register_forward_pre_hook(_pre_hook("expert_input")))
-        _handles.append(module.register_forward_hook(_post_hook("expert_gemm_out")))
+        _handles.append(
+            module.register_forward_pre_hook(lambda m, a: _emit("expert_input", None, a[0] if a else None))
+        )
+        _handles.append(
+            module.register_forward_hook(lambda m, a, out: _emit("expert_gemm_out", a[0] if a else None, out))
+        )
         # Parent MoE layer: post-combine output (its forward returns after the combine).
         parent_name = name.rsplit(".", 1)[0] if "." in name else ""
         parent = mods.get(parent_name)
         if parent is not None:
-            _handles.append(parent.register_forward_hook(_post_hook("combine_out")))
+            _handles.append(
+                parent.register_forward_hook(lambda m, a, out: _emit("combine_out", a[0] if a else None, out))
+            )
         count += 1
-    logger.info(
-        "moe_probe: instrumented %d MoE layer(s) (prefix=%r, experts_suffix=%r)",
-        count,
-        prefix,
-        experts_suffix,
-    )
+    logger.info("moe_probe: instrumented %d MoE layer(s) (experts_suffix=%r)", count, experts_suffix)
     return count
 
 

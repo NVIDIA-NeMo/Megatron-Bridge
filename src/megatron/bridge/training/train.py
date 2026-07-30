@@ -431,11 +431,8 @@ def train(
         if os.environ.get("DET_TRACE_MOE"):
             from megatron.bridge.training.utils.determinism import moe_probe as det_moe_probe
 
-            for _i, _chunk in enumerate(model):
-                _prefix = f"chunk{_i}." if _multi_chunk else ""
-                det_moe_probe.register(
-                    _chunk.module if hasattr(_chunk, "module") else _chunk, prefix=_prefix
-                )
+            for _chunk in model:
+                det_moe_probe.register(_chunk.module if hasattr(_chunk, "module") else _chunk)
         print_rank_0(
             f"[det-trace] enabled -> {det_trace_out_dir}; "
             f"iters={'all' if det_trace_iters is None else sorted(det_trace_iters)}; per-layer ON"

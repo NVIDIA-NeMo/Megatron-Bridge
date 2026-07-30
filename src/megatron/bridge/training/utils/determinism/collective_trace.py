@@ -376,12 +376,21 @@ def _extract_group(args, kwargs):
     return None
 
 
+def _capturing() -> bool:
+    """True iff the tracer is actively recording this iteration (enabled, active, not suspended).
+
+    The single source of the capture predicate — the collective wrappers, op_trace, and
+    moe_probe all gate on this, so a new gating field only has to be added here.
+    """
+    return _S.enabled and _S.active and not _S.suspend
+
+
 def _wrap_all_reduce(orig):
     def wrapper(tensor, *args, **kwargs):
         # Skip when suspended: a deprecated alias (e.g. _reduce_scatter_base) delegates to a
         # public name we also patched; running orig() under _suspended (below) makes that
         # nested wrapper hit this guard and NOT re-record — one physical collective, one record.
-        if not (_S.enabled and _S.active) or _S.suspend:
+        if not _capturing():
             return orig(tensor, *args, **kwargs)
         group = _extract_group(args, kwargs)
         # all_reduce is IN-PLACE: the collective overwrites ``tensor`` (possibly on the NCCL
@@ -412,7 +421,7 @@ def _wrap_out_in(op_name):
             # Skip when suspended so a deprecated alias delegating to a public name we also
             # patched (e.g. _reduce_scatter_base -> reduce_scatter_tensor) does not double-record.
             # Guard first (like _wrap_all_reduce) so the disabled path stays free of extra work.
-            if not (_S.enabled and _S.active) or _S.suspend:
+            if not _capturing():
                 return orig(*args, **kwargs)
             # Accept both positional and keyword forms. torch collective signatures differ:
             # all_gather_into_tensor/_all_gather_base name their args (output_tensor,

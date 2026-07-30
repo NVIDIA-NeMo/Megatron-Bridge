@@ -173,8 +173,7 @@ class OpTraceMode(TorchDispatchMode):
         # IN-PLACE ops ARE recorded (they can be the actual non-determinism seed); their
         # output is cloned and the fingerprint runs under no_grad so it never touches an
         # autograd-saved buffer's version counter.
-        S = ct._S
-        if not (S.enabled and S.active and not S.suspend):
+        if not ct._capturing():
             return func(*args, **kwargs)
         name, skip, inplace = _op_meta(func)  # memoized per distinct op
         record = not skip
