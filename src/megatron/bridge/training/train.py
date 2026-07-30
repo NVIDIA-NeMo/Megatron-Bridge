@@ -376,6 +376,7 @@ def train(
     det_trace = None
     det_op_trace = None
     det_module_scope = None
+    det_moe_probe = None
     # None means "all steps"; otherwise a set of step indices to capture.
     det_trace_iters: set[int] | None = set()
     det_trace_out_dir = os.environ.get("DET_TRACE_OUT_DIR")
@@ -423,10 +424,23 @@ def train(
             from megatron.bridge.training.utils.determinism import op_trace as det_op_trace
 
             det_op_trace.enable()
+        # DET_TRACE_MOE: three ordered records per MoE layer (expert_input / expert_gemm_out /
+        # combine_out) bracketing the flex/HybridEP combine, which op_trace/collective_trace
+        # cannot see. Lets the diff pin the first divergence to the grouped MLP vs the combine.
+        # Independent of DET_TRACE_OPS (works even with op-level tracing off).
+        if os.environ.get("DET_TRACE_MOE"):
+            from megatron.bridge.training.utils.determinism import moe_probe as det_moe_probe
+
+            for _i, _chunk in enumerate(model):
+                _prefix = f"chunk{_i}." if _multi_chunk else ""
+                det_moe_probe.register(
+                    _chunk.module if hasattr(_chunk, "module") else _chunk, prefix=_prefix
+                )
         print_rank_0(
             f"[det-trace] enabled -> {det_trace_out_dir}; "
             f"iters={'all' if det_trace_iters is None else sorted(det_trace_iters)}; per-layer ON"
             f"{'; op-level ON' if det_op_trace is not None else ''}"
+            f"{'; moe-probe ON' if det_moe_probe is not None else ''}"
         )
 
     # Run training iterations till done.

@@ -353,7 +353,10 @@ def _await_async(work) -> None:
     HybridEP), so the staged reduction reads the finished output. A synchronous collective is
     already stream-ordered by PyTorch and returns ``None`` here → this is a no-op.
     """
-    if work is not None and hasattr(work, "wait"):
+    # torch returns an ``_IllegalWork`` sentinel (a Work-like object whose ``.wait()`` raises
+    # "Illegal to call wait on IllegalWork object") for some synchronous collectives — treat it
+    # like ``None`` (already stream-ordered, nothing to wait on).
+    if work is not None and hasattr(work, "wait") and type(work).__name__ != "_IllegalWork":
         work.wait()
 
 

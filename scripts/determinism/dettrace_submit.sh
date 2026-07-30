@@ -35,6 +35,7 @@ NGPUS="${NGPUS:-64}"
 MAX_STEPS="${MAX_STEPS:-5}"
 DET_TRACE_ITERS="${DET_TRACE_ITERS:-1-3}"
 DET_TRACE_OPS="${DET_TRACE_OPS:-1}"
+DET_TRACE_MOE="${DET_TRACE_MOE:-0}"
 HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
 GRES="${GRES:-gpu:4}"
 STATE_FILE="${STATE_FILE:-./dettrace-state.env}"
@@ -59,6 +60,8 @@ SLURM_EXTRA_ARG=()
 [ -n "$ADDITIONAL_SLURM_PARAMS" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$ADDITIONAL_SLURM_PARAMS")
 OPS_ARG=()
 [ "$DET_TRACE_OPS" = "1" ] && OPS_ARG=(-E DET_TRACE_OPS=1)
+MOE_ARG=()
+[ "$DET_TRACE_MOE" = "1" ] && MOE_ARG=(-E DET_TRACE_MOE=1)
 MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
 
 # Submit one arm; echo ONLY its Slurm job id on stdout (submit log goes to stderr).
@@ -80,7 +83,7 @@ submit_arm() {
       -E TRANSFORMERS_CACHE="${HF_CACHE}" \
       -E HF_HUB_OFFLINE="${HF_HUB_OFFLINE}" -E TRANSFORMERS_OFFLINE="${HF_HUB_OFFLINE}" \
       -E DET_TRACE_OUT_DIR="${streams}" -E DET_TRACE_ITERS="${DET_TRACE_ITERS}" \
-      "${OPS_ARG[@]}" >"$logf" 2>&1; then
+      "${OPS_ARG[@]}" "${MOE_ARG[@]}" >"$logf" 2>&1; then
     echo "ERROR: submit failed for arm ${arm}:" >&2; cat "$logf" >&2; rm -f "$logf"; return 1
   fi
   cat "$logf" >&2

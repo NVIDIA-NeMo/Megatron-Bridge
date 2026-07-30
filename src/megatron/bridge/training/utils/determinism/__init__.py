@@ -17,12 +17,14 @@
 Prototype scope (cross-process / "reference" mode):
 - :mod:`signature` — stable cross-process tensor signatures.
 - :mod:`collective_trace` — fingerprint stream of ``torch.distributed`` collectives.
+- :mod:`moe_probe` — MoE-layer output fingerprints bracketing the (op-trace-invisible)
+  flex/HybridEP combine.
 - :mod:`diff_streams` — offline first-divergence diff of two jobs' streams.
 
 See ``scripts/performance/perf_leaderboard/design_determinism_debug_tool.md``.
 """
 
-from megatron.bridge.training.utils.determinism import collective_trace, module_scope, op_trace
+from megatron.bridge.training.utils.determinism import collective_trace, module_scope, moe_probe, op_trace
 from megatron.bridge.training.utils.determinism.signature import TensorSignature, tensor_signature
 
 
@@ -30,6 +32,7 @@ __all__ = [
     "collective_trace",
     "op_trace",
     "module_scope",
+    "moe_probe",
     "TensorSignature",
     "tensor_signature",
 ]

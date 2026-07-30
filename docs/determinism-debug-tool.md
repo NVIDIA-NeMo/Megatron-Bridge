@@ -70,6 +70,7 @@ unset, it does nothing.
 | `DET_TRACE_OUT_DIR` | Directory for per-rank `.fp` streams (use a **shared FS** for multi-node). Setting it enables the tracer. | unset (off) |
 | `DET_TRACE_ITERS` | Iterations to capture: `all`, a range `a-b`, and/or a list `1,5,40-44`. | `1` |
 | `DET_TRACE_OPS` | Also fingerprint every ATen op output (heavier; pinpoints the exact compute op). | off |
+| `DET_TRACE_MOE` | Also emit three ordered records per MoE layer — `expert_input` (post-dispatch), `expert_gemm_out` (pre-combine grouped-MLP result), `combine_out` (post-combine) — bracketing the flex/HybridEP combine that op-level tracing can't see. The first of the three whose output diverges pins the break to the grouped MLP vs. the combine. Independent of `DET_TRACE_OPS`. | off |
 | `DET_TRACE_BWD_SCOPE` | Add `[bwd]` layer labels. **PP-incompatible** (backward hooks alias outputs → break pipeline deallocation) — TP-only debugging. | off |
 
 Workflow:
@@ -112,6 +113,9 @@ the compute of the divergent layer.
   so it is not captured directly (a divergence there surfaces one hop later, at
   the first ATen op that consumes the dispatched tokens). The plain `alltoall`
   dispatcher is fully covered (its exchange is `all_to_all_single`).
+  **Workaround:** `DET_TRACE_MOE=1` brackets the combine with `nn.Module` forward
+  hooks (`expert_gemm_out` before it, `combine_out` after), so the combine's
+  *output tensor* is fingerprinted directly even though the kernel itself is opaque.
 - `DET_TRACE_BWD_SCOPE` cannot be used with pipeline parallelism.
 - `force_sync` trades throughput for complete value capture — this is a debug
   tool, not a training-time feature.
