@@ -1302,7 +1302,10 @@ def _value_contains_token_sequence(
     elif value is None or isinstance(value, (bool, int, float)):
         return False
     else:
-        return None
+        # Media payloads (PIL images, arrays, tensors, file handles) are never rendered
+        # verbatim into the prompt, so scan their textual form instead of giving up. Bailing
+        # out here would disable the boundary-config fallback for every multimodal example.
+        return _value_contains_token_sequence(str(value), tokenizer, token_sequences)
     if any(result is True for result in results):
         return True
     return None if any(result is None for result in results) else False

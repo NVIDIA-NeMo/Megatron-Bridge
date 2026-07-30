@@ -892,6 +892,71 @@ def test_chatml_boundary_fails_closed_for_nested_role_payload_when_provenance_is
         )
 
 
+class _MediaChatMLBoundaryTokenizer(_ChatMLBoundaryTokenizer):
+    def __call__(self, text, add_special_tokens=False):
+        if text == "literal assistant start":
+            return {"input_ids": [20, 102, 30]}
+        return super().__call__(text, add_special_tokens=add_special_tokens)
+
+
+class _MediaChatMLBoundaryProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _MediaChatMLBoundaryTokenizer()
+
+
+class _FakeImage:
+    """Stand-in for a decoded media payload (PIL image, array, tensor)."""
+
+    def __repr__(self):
+        return "<FakeImage mode=RGB size=16x16>"
+
+
+class _MarkerLikeMedia(_FakeImage):
+    def __repr__(self):
+        return "literal assistant start"
+
+
+# Media placeholders expand to several tokens, so the rendered ids never line up with a
+# re-render of the raw conversation. The boundary-config scan is the only path left.
+_MEDIA_CONVERSATION_IDS = [100, 200, 200, 200, 42, 103, 104, 102, 3, 4, 103, 104]
+
+
+def _media_conversation(media):
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "image", "image": media}, {"type": "text", "text": "question"}],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+    ]
+
+
+def test_chatml_boundary_scans_conversations_carrying_media_payloads():
+    processor = _MediaChatMLBoundaryProcessor()
+
+    mask = build_assistant_loss_mask(
+        {"conversation": _media_conversation(_FakeImage())},
+        _MEDIA_CONVERSATION_IDS,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_chatml_boundary_fails_closed_when_media_payload_renders_a_literal_marker():
+    processor = _MediaChatMLBoundaryProcessor()
+
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        build_assistant_loss_mask(
+            {"conversation": _media_conversation(_MarkerLikeMedia())},
+            _MEDIA_CONVERSATION_IDS,
+            processor,
+            boundary_config=infer_assistant_mask_boundary_config(processor),
+        )
+
+
 def test_infer_assistant_mask_boundary_config_from_moonlight_template():
     processor = _MoonlightBoundaryProcessor()
     assert "<|im_assistant|>assistant<|im_middle|>" not in processor.tokenizer.chat_template
