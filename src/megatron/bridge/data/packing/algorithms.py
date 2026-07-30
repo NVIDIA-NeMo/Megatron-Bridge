@@ -16,7 +16,7 @@
 
 import collections
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple, TypeVar
 
 import numpy as np
 from tqdm import tqdm
@@ -27,6 +27,8 @@ from megatron.bridge.utils.safe_pickle import safe_load_npy
 PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 
 logger = logging.getLogger(__name__)
+
+_ItemT = TypeVar("_ItemT")
 
 
 class _SegmentTree:
@@ -66,37 +68,65 @@ class _SegmentTree:
         return self._query(1, 0, self._n - 1, need)
 
 
-def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
+def first_fit(
+    seqlens: Sequence[_ItemT],
+    pack_size: int,
+    *,
+    item_lengths: Sequence[int] | None = None,
+) -> list[list[_ItemT]]:
     """
     Packs sequences of varying lengths into bins using the First-Fit algorithm
     with a segment-tree index for O(N log N) performance.
 
+    A segment-tree index over per-bin remaining capacity makes each placement O(log N)
+    instead of a scan over every open bin.
+
+    By default the entries of `seqlens` are themselves the lengths. Callers that pack
+    objects rather than raw integers (for example diffusion samples keyed on padded
+    query sequence length) pass `item_lengths` separately and get their original
+    objects back in the bins.
+
     Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
+      seqlens: The entries to pack, in the order they should be considered. Integer
+        lengths unless `item_lengths` is given, in which case these may be any objects.
       pack_size: The maximum capacity of each bin.
+      item_lengths: Optional length of each entry in `seqlens`, in the same order. When
+        omitted, each entry is used as its own length.
 
     Returns:
       A list of lists, where each inner list represents a bin and contains the
-        lengths of the sequences assigned to that bin.
+        entries assigned to that bin.
+
+    Raises:
+      ValueError: If `item_lengths` is given and does not have the same number of
+        entries as `seqlens`.
     """
+    lengths: Sequence[int] = seqlens if item_lengths is None else item_lengths  # type: ignore[assignment]
+    if item_lengths is not None and len(seqlens) != len(item_lengths):
+        raise ValueError(
+            f"seqlens and item_lengths must have the same number of entries, "
+            f"got {len(seqlens)} and {len(item_lengths)}"
+        )
     if not seqlens:
         return []
 
     n = len(seqlens)
     tree = _SegmentTree(n)
-    res = []
-    remaining = []
+    res: list[list[_ItemT]] = []
+    remaining: list[int] = []
 
-    for s in seqlens:
-        first_bin = tree.query_first_fit(s)
+    for item, length in zip(seqlens, lengths):
+        first_bin = tree.query_first_fit(length)
+        # An unopened bin still reads as 0 remaining capacity, so a zero-length item can
+        # match an index past the end of `res`; that case must open a bin, not index it.
         if first_bin == -1 or first_bin >= len(res):
             new_idx = len(res)
-            res.append([s])
-            remaining.append(pack_size - s)
+            res.append([item])
+            remaining.append(pack_size - length)
             tree.update(new_idx, remaining[new_idx])
         else:
-            res[first_bin].append(s)
-            remaining[first_bin] -= s
+            res[first_bin].append(item)
+            remaining[first_bin] -= length
             tree.update(first_bin, remaining[first_bin])
     return res
 

@@ -14,6 +14,7 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
@@ -444,6 +445,101 @@ class TestGetModel:
 
         # Assertions
         assert model_provider.fp16
+
+    @pytest.mark.parametrize(
+        ("initial_fp16", "initial_bf16", "fp16_override", "bf16_override", "expected_dtype"),
+        [
+            (True, False, False, True, torch.bfloat16),
+            (False, True, True, False, torch.float16),
+            (False, True, None, None, torch.bfloat16),
+            (True, False, False, False, torch.float32),
+            (True, False, False, None, torch.float32),
+            (False, True, None, False, torch.float32),
+        ],
+    )
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
+    def test_get_model_applies_precision_switch_overrides(
+        self,
+        mock_get_model_config,
+        mock_fix_float8,
+        mock_print_params,
+        mock_create_model,
+        initial_fp16,
+        initial_bf16,
+        fp16_override,
+        bf16_override,
+        expected_dtype,
+    ):
+        """Test that explicit precision overrides replace the provider precision."""
+        model_provider = create_test_config()
+        initial_dtype = torch.float16 if initial_fp16 else torch.bfloat16
+        model_provider.fp16 = initial_fp16
+        model_provider.bf16 = initial_bf16
+        model_provider.params_dtype = initial_dtype
+        model_provider.pipeline_dtype = initial_dtype
+        model_provider.autocast_dtype = initial_dtype
+
+        model = MockMegatronModule(model_provider)
+        mock_create_model.return_value = [model]
+        mock_get_model_config.return_value = model_provider
+        mock_fix_float8.return_value = [model]
+        observed_precision = []
+
+        def record_precision(config, model_module):
+            observed_precision.append(
+                (
+                    config.fp16,
+                    config.bf16,
+                    config.params_dtype,
+                    config.pipeline_dtype,
+                    config.autocast_dtype,
+                )
+            )
+            return model_module
+
+        get_model(
+            model_provider,
+            DistributedDataParallelConfig(),
+            fp16=fp16_override,
+            bf16=bf16_override,
+            wrap_with_ddp=False,
+            use_cpu_initialization=True,
+            mixed_precision_wrapper=record_precision,
+            pg_collection=_PG(),
+        )
+
+        expected_precision = (
+            expected_dtype == torch.float16,
+            expected_dtype == torch.bfloat16,
+            expected_dtype,
+            expected_dtype,
+            expected_dtype,
+        )
+        assert (
+            model_provider.fp16,
+            model_provider.bf16,
+            model_provider.params_dtype,
+            model_provider.pipeline_dtype,
+            model_provider.autocast_dtype,
+        ) == expected_precision
+        assert observed_precision == ([] if expected_dtype == torch.float32 else [expected_precision])
+
+    @patch("megatron.bridge.models.model_provider._create_model")
+    def test_get_model_rejects_conflicting_precision_overrides(self, mock_create_model):
+        """Test that FP16 and BF16 cannot be enabled together."""
+        with pytest.raises(ValueError, match="Only one of fp16 and bf16"):
+            get_model(
+                MockModelProvider(),
+                DistributedDataParallelConfig(),
+                fp16=True,
+                bf16=True,
+                pg_collection=_PG(),
+            )
+
+        mock_create_model.assert_not_called()
 
     @patch("megatron.bridge.models.model_provider._create_model")
     @patch("megatron.bridge.models.model_provider._print_num_params")

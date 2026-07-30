@@ -15,6 +15,7 @@
 """Input/output checkpointing."""
 
 import contextlib
+import gc
 import os
 import random
 import shutil
@@ -1594,7 +1595,10 @@ def save_checkpoint(
 
         def cleanup_old_checkpoints_finalize_fn() -> None:
             cleanup_old_non_persistent_checkpoint(
-                save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
+                save_dir,
+                leave_ckpt_num=ckpt_cfg.most_recent_k,
+                do_async=ckpt_cfg.async_save,
+                max_iteration=checkpoint_step,
             )
 
         assert async_save_request is not None
@@ -2248,6 +2252,16 @@ def _load_model_weights_from_checkpoint(
             if model_key not in state_dict:
                 continue
             _load_model_state_dict(model[i], state_dict[model_key], strict)
+
+    # The loaded state dict can own checkpoint staging tensors distinct from
+    # the model parameters. Release both state-dict structures before the
+    # synchronization below so cached allocations cannot starve NCCL or the
+    # conversion collectives that follow.
+    del state_dict
+    del sharded_state_dict
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()

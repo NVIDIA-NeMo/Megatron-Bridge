@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,14 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""GB200 recipes for DeepSeek V4 Flash."""
 
-#!/bin/bash
-set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
+)
 
-export CUDA_VISIBLE_DEVICES="0,1"
 
-uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
-  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/models/llama_nemotron
-coverage combine -q
-
+__all__ = [
+    "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config",
+]

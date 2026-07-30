@@ -91,7 +91,8 @@ def get_batch_from_iterator(
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
         if "num_image_tiles" in batch:
-            # LLaVA expands labels around image placeholders on the last stage.
+            # Retained only for the deprecated LLaVA compatibility model,
+            # which expands labels around compact image placeholders.
             required_device_keys.add("num_image_tiles")
 
     _batch_required_keys = {}
@@ -126,7 +127,7 @@ def _resolve_images(batch: dict) -> torch.Tensor | None:
     return None
 
 
-# Matches nemotron_omni_provider.py: patch_dim is hardcoded to 16 when building LLaVAModel.
+# Matches the canonical model and deprecated LLaVA compatibility provider.
 _VISION_PATCH_DIM = 16
 
 
@@ -191,10 +192,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
     num_frames = batch.get("num_frames")
     num_image_tiles = batch.get("num_image_tiles")
 
-    # LLaVAModel._process_embedding_token_parallel does the LM-side CP split *after*
-    # vision/text embedding merge. Pre-splitting input_ids/labels here would break
-    # the image-token merge (num_image_tiles count would not match the CP-local
-    # image-token count in input_ids), so leave the LM tensors full-sequence.
+    # Leave language tensors in their complete collator-owned layout. The model
+    # inserts media first, then applies one shared CP index to embeddings,
+    # labels, and the loss mask.
     if images is not None:
         batch["images"] = images
 

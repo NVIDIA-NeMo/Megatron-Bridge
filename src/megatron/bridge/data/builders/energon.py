@@ -22,7 +22,6 @@ from typing import Any, Literal
 from transformers import AutoProcessor, AutoTokenizer, Qwen3VLProcessor
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
-from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
@@ -289,6 +288,8 @@ class EnergonDatasetBuilder:
 
     def build(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, None]:
         """Build requested Energon train and validation iterators."""
+        from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
+
         assert self.config.path is not None
         build_train = context.train_samples > 0
         build_validation = self.config.do_validation and context.valid_samples > 0

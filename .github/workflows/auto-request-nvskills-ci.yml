@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Comment /nvskills-ci for catalog skill changes
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           NVSKILLS_SIGNATURE_COMMIT_TITLE: ${{ vars.NVSKILLS_SIGNATURE_COMMIT_TITLE }}
           NVSKILLS_SIGNATURE_PUSH_ACTOR: ${{ vars.NVSKILLS_SIGNATURE_PUSH_ACTOR }}
