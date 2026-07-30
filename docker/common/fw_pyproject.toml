@@ -67,9 +67,9 @@ override-dependencies = [
     "packaging>=25.0",
     "nvidia-pytriton>=0.7.0",
     "urllib3>=2.0.7",
-    "sh==2.2.2",
+    "sh==2.2.4",
     "jupyter-core==5.8.1",
-    "pillow==12.2.0",
+    "pillow==12.3.0",
     "protobuf==6.33.5",
     "cuda-python>=13.0.0",
     "multi-storage-client!=0.36.0",
@@ -122,5 +122,8 @@ override-dependencies = [
     "decord; sys_platform == 'never'",                   # Optional dependency. Resolves CVE
     "av; sys_platform == 'never'",                       # Optional dependency. Resolves CVE
     "opencv-python-headless; sys_platform == 'never'",   # Optional dependency. Resolves CVE
-    "fastapi<0.139.2"                                    # 0.139.2 fails with ray 2.55.1 at least
+    "ray>=2.56.0",
+    "starlette==1.3.1",
+    "prometheus-fastapi-instrumentator>=8.0.0",          # 7.x requires starlette<1.0.0
+    "fastapi<0.139.2"                                    # 0.139.2 fails with ray serve
 ]
