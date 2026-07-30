@@ -122,9 +122,9 @@ Worked example of a two-launch cross-process trace on a Megatron-FSDP + flex/Hyb
 MXFP8 MoE recipe. The pattern generalizes; the point is the ordered checklist, since
 each step below is one that silently wasted a run when skipped.
 
-A ready-to-run launcher that submits both arms (with these gotchas already handled)
-is [`scripts/performance/launch_nemotron_3_ultra_dettrace.sh`](../scripts/performance/launch_nemotron_3_ultra_dettrace.sh);
-the steps below are what it does.
+A ready-to-run e2e pipeline that submits both arms, waits, and diffs (with these
+gotchas already handled) lives under [`scripts/determinism/`](../scripts/determinism/):
+`dettrace_submit.sh` → `dettrace_wait.sh` → `dettrace_diff.sh`. The steps below are what it does.
 
 1. **Make the environment consistent *before* launching.** Sync the Megatron-LM
    submodule to the branch pin (`git submodule update --init --recursive`) — a stale
