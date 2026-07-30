@@ -142,7 +142,7 @@ class Gemma3ModelProvider(GPTModelProvider):
 
 def gemma3_layer_spec(config) -> ModuleSpec:
     """Gemma3 custom layer spec."""
-    attn_mask_type = AttnMaskType.arbitrary if config.is_vision_language else AttnMaskType.causal
+    attn_mask_type = AttnMaskType.no_mask if config.is_vision_language else AttnMaskType.causal
     return ModuleSpec(
         module=TransformerLayer,
         submodules=TransformerLayerSubmodules(
@@ -187,7 +187,7 @@ class Gemma3SelfAttention(SelfAttention):
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
         rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
-        attention_bias: Optional[Tensor] = None,
+        attention_bias: Optional[Tensor | tuple[Tensor, Tensor]] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
         *,
@@ -199,8 +199,14 @@ class Gemma3SelfAttention(SelfAttention):
 
         if _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern):
             final_rotary_pos_emb = rotary_pos_emb[0]
+            # Gemma3VLModel supplies (local, global) biases because TE cannot
+            # combine a finite sliding window with post-scale bias.
+            if isinstance(attention_bias, tuple):
+                attention_bias = attention_bias[0]
         else:
             final_rotary_pos_emb = rotary_pos_emb[1]
+            if isinstance(attention_bias, tuple):
+                attention_bias = attention_bias[1]
         return super().forward(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -235,19 +241,23 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         # Overwrite config.window_size based on layer_number
         config = copy.deepcopy(config)
         if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
-            # local attention, (q, k)
-            window_size = config.window_size - 1
-            # The VL mask already blocks future text tokens. Keep the right
-            # window open so image tokens in the same block stay bidirectional.
-            right_window_size = window_size if config.is_vision_language else 0
-            config.window_size = (window_size, right_window_size)
+            if config.is_vision_language:
+                # Transformer Engine cannot combine a finite sliding window
+                # with post-scale bias. The VL model encodes both constraints
+                # in its local-layer attention bias instead.
+                config.window_size = None
+            else:
+                # local attention, (q, k)
+                window_size = config.window_size - 1
+                config.window_size = (window_size, 0)
         else:
             # global attention
             config.window_size = None
 
-        # The VL model calculates mask manually
+        # The VL model supplies the full causal/image visibility pattern as an
+        # attention bias so Transformer Engine can use FusedAttention.
         if config.is_vision_language:
-            attn_mask_type = AttnMaskType.arbitrary
+            attn_mask_type = AttnMaskType.no_mask
 
         super().__init__(
             config=config,
