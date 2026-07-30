@@ -1595,7 +1595,10 @@ def save_checkpoint(
 
         def cleanup_old_checkpoints_finalize_fn() -> None:
             cleanup_old_non_persistent_checkpoint(
-                save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
+                save_dir,
+                leave_ckpt_num=ckpt_cfg.most_recent_k,
+                do_async=ckpt_cfg.async_save,
+                max_iteration=checkpoint_step,
             )
 
         assert async_save_request is not None
