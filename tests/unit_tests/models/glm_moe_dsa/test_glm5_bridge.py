@@ -25,6 +25,14 @@ from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
 pytestmark = pytest.mark.unit
 
+_DSA_INDEXER_SUFFIXES = {
+    "linear_wq_b.weight": "wq_b.weight",
+    "linear_wk.weight": "wk.weight",
+    "k_norm.weight": "k_norm.weight",
+    "k_norm.bias": "k_norm.bias",
+    "linear_weights_proj.weight": "weights_proj.weight",
+}
+
 
 @pytest.fixture
 def glm5_bridge() -> GLM5Bridge:
@@ -169,6 +177,34 @@ def test_mapping_registry_includes_mtp_attention_and_dense_mlp_mappings(
         "gate": "model.layers.4.mlp.gate_proj.weight",
         "up": "model.layers.4.mlp.up_proj.weight",
     }
+
+
+def test_mapping_registry_includes_dsa_indexer_mappings(glm5_bridge: GLM5Bridge) -> None:
+    """Every tensor on a full GLM-5.2 DSA indexer maps to its HF peer."""
+    mappings = _mapping_by_megatron_param(glm5_bridge)
+    registry = glm5_bridge.mapping_registry()
+
+    for megatron_suffix, hf_suffix in _DSA_INDEXER_SUFFIXES.items():
+        megatron_param = f"decoder.layers.*.self_attention.core_attention.indexer.{megatron_suffix}"
+        mapping = mappings[megatron_param]
+        assert isinstance(mapping, AutoMapping)
+        assert mapping.hf_param == f"model.layers.*.self_attn.indexer.{hf_suffix}"
+
+        resolved_mapping = registry.megatron_to_hf_lookup(megatron_param.replace("*", "2"))
+        assert resolved_mapping is not None
+        assert resolved_mapping.hf_param == f"model.layers.2.self_attn.indexer.{hf_suffix}"
+
+
+@pytest.mark.parametrize("layer_prefix", ["transformer_layer", "mtp_model_layer"])
+def test_mapping_registry_includes_mtp_dsa_indexer_mappings(glm5_bridge: GLM5Bridge, layer_prefix: str) -> None:
+    """A full GLM-5.2 MTP layer maps every DSA indexer tensor."""
+    mappings = _mapping_by_megatron_param(glm5_bridge)
+
+    for megatron_suffix, hf_suffix in _DSA_INDEXER_SUFFIXES.items():
+        megatron_param = f"mtp.layers.0.{layer_prefix}.self_attention.core_attention.indexer.{megatron_suffix}"
+        mapping = mappings[megatron_param]
+        assert isinstance(mapping, AutoMapping)
+        assert mapping.hf_param == f"model.layers.4.self_attn.indexer.{hf_suffix}"
 
 
 def test_mapping_registry_includes_mtp_standalone_weights(glm5_bridge: GLM5Bridge) -> None:
