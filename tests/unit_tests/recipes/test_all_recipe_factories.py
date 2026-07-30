@@ -20,6 +20,7 @@ from collections.abc import Callable
 
 import pytest
 
+from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
@@ -63,6 +64,11 @@ def test_all_recipe_factories_are_exported() -> None:
     assert {recipe_factory_key(factory) for factory in _UNSUPPORTED_RECIPE_FACTORIES} == _UNSUPPORTED_FACTORY_KEYS
     for factory in _RECIPE_FACTORIES:
         assert getattr(_RECIPES_PACKAGE, factory.__name__) is factory
+
+
+def test_common_pretrain_uses_runtime_tokenizer_vocabulary() -> None:
+    """From-scratch pretraining derives the model vocabulary from its tokenizer."""
+    assert _pretrain_common().tokenizer.use_tokenizer_vocab_size is True
 
 
 @pytest.mark.parametrize("recipe_factory", _RUNNABLE_RECIPE_FACTORIES, ids=recipe_factory_id)

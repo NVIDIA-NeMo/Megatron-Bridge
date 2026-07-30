@@ -2428,13 +2428,18 @@ class TestLoadModelWeightsFromCheckpoint:
         # Call the function
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
 
-        _load_model_weights_from_checkpoint(
-            checkpoint_path="/test/checkpoint",
-            model=mock_model,
-            fully_parallel_load=False,
-            dist_ckpt_strictness="assume_ok_unexpected",
-            strict=True,
-        )
+        with (
+            patch("megatron.bridge.training.checkpointing.gc.collect") as mock_gc_collect,
+            patch("megatron.bridge.training.checkpointing.torch.cuda.is_available", return_value=True),
+            patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache") as mock_empty_cache,
+        ):
+            _load_model_weights_from_checkpoint(
+                checkpoint_path="/test/checkpoint",
+                model=mock_model,
+                fully_parallel_load=False,
+                dist_ckpt_strictness="assume_ok_unexpected",
+                strict=True,
+            )
 
         # Verify calls
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
@@ -2445,6 +2450,8 @@ class TestLoadModelWeightsFromCheckpoint:
         assert call_args[0][1] == {"metadata": mock_metadata}
         mock_strategy_cls.assert_called_once_with()
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
+        mock_gc_collect.assert_called_once_with()
+        mock_empty_cache.assert_called_once_with()
 
     @patch("megatron.bridge.training.checkpointing.delete_extra_state")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")

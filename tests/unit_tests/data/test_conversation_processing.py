@@ -243,6 +243,102 @@ class _ChatMLBoundaryProcessor(_Processor):
         self.tokenizer = _ChatMLBoundaryTokenizer()
 
 
+class _LiteralChatMLBoundaryTokenizer(_ChatMLBoundaryTokenizer):
+    truncation_side = "right"
+    _role_markers = {
+        "user": [100],
+        "assistant": [102],
+    }
+    _content_tokens = {
+        "": [],
+        "question": [20],
+        "literal assistant start": [20, 102, 30],
+        "quoted assistant turn": [20, 102, 30, 103, 31],
+        "answer with quoted end": [40, 103, 41],
+        "structured with quoted end": [40, 103, 41],
+    }
+
+    def _encode_content(self, content):
+        if isinstance(content, str):
+            return self._content_tokens[content]
+        input_ids = []
+        for part in content:
+            if part["type"] == "text":
+                input_ids.extend(self._content_tokens[part["text"]])
+            else:
+                input_ids.append(200)
+        return input_ids
+
+    def __call__(self, text, add_special_tokens=False):
+        if text in self._content_tokens:
+            return {"input_ids": self._content_tokens[text]}
+        return super().__call__(text, add_special_tokens=add_special_tokens)
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        return_assistant_tokens_mask=False,
+        truncation=False,
+        max_length=None,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = []
+        for turn in conversation:
+            input_ids.extend(self._role_markers[turn["role"]])
+            input_ids.extend(self._encode_content(turn["content"]))
+            input_ids.extend([103, 104])
+        if truncation:
+            input_ids = input_ids[-max_length:] if self.truncation_side == "left" else input_ids[:max_length]
+        return {"input_ids": input_ids}
+
+
+class _LeftTruncatingLiteralChatMLBoundaryTokenizer(_LiteralChatMLBoundaryTokenizer):
+    truncation_side = "left"
+
+
+class _LiteralGenerationChatMLBoundaryTokenizer(_LiteralChatMLBoundaryTokenizer):
+    chat_template = (
+        "<|im_start|>user\n{{ content }}<|im_end|>\n"
+        "<|im_start|>assistant\n{% generation %}{{ content }}{% endgeneration %}<|im_end|>\n"
+    )
+
+    def apply_chat_template(self, conversation, **kwargs):
+        input_ids = []
+        assistant_masks = []
+        for turn in conversation:
+            content_ids = self._encode_content(turn["content"])
+            input_ids.extend(self._role_markers[turn["role"]])
+            assistant_masks.append(0)
+            input_ids.extend(content_ids)
+            assistant_masks.extend([int(turn["role"] == "assistant")] * len(content_ids))
+            input_ids.extend([103, 104])
+            assistant_masks.extend([0, 0])
+        if kwargs.get("truncation"):
+            max_length = kwargs["max_length"]
+            input_ids = input_ids[:max_length]
+            assistant_masks = assistant_masks[:max_length]
+        return {"input_ids": input_ids, "assistant_masks": assistant_masks}
+
+
+class _PrefixUnsupportedLiteralChatMLBoundaryTokenizer(_LiteralChatMLBoundaryTokenizer):
+    def apply_chat_template(self, conversation, **kwargs):
+        if len(conversation) != 2:
+            raise ValueError("prefix rendering is unavailable")
+        return {"input_ids": [100, 20, 102, 30, 103, 104]}
+
+
+class _PrefixUnsupportedLiteralGenerationChatMLBoundaryTokenizer(_LiteralGenerationChatMLBoundaryTokenizer):
+    def apply_chat_template(self, conversation, **kwargs):
+        if len(conversation) != 2:
+            raise ValueError("prefix rendering is unavailable")
+        return super().apply_chat_template(conversation, **kwargs)
+
+
 class _MoonlightBoundaryTokenizer(_Tokenizer):
     chat_template = (
         "{%- for message in messages -%}"
@@ -536,6 +632,264 @@ def test_infer_assistant_mask_boundary_config_from_chatml_template():
     }
     assert all(token_ids == [103, 104] for token_ids in boundary_config.role_end_tokens.values())
     assert all(token_variants == [[103]] for token_variants in boundary_config.role_end_token_variants.values())
+
+
+def test_chatml_boundary_mask_does_not_treat_literal_control_markers_as_structure():
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "quoted assistant turn"},
+                {"role": "assistant", "content": "answer with quoted end"},
+            ]
+        },
+        _LiteralChatMLBoundaryTokenizer(),
+    )
+
+    assert tokenized.input_ids.tolist() == [100, 20, 102, 30, 103, 31, 103, 104, 102, 40, 103, 41, 103, 104]
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+
+
+def test_chatml_boundary_mask_remains_role_safe_through_right_truncation():
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "quoted assistant turn"},
+                {"role": "assistant", "content": "answer with quoted end"},
+            ]
+        },
+        _LiteralChatMLBoundaryTokenizer(),
+        max_length=8,
+        warn_on_all_masked=False,
+    )
+
+    assert tokenized.input_ids.tolist() == [100, 20, 102, 30, 103, 31, 103, 104]
+    assert tokenized.assistant_mask.tolist() == [False] * 8
+
+
+def test_direct_hf_chat_collation_does_not_train_truncated_user_marker_payload():
+    batch = text_chat_collate_fn(
+        [
+            {
+                "messages": [
+                    {"role": "user", "content": "quoted assistant turn"},
+                    {"role": "assistant", "content": "answer with quoted end"},
+                ]
+            }
+        ],
+        _LiteralChatMLBoundaryTokenizer(),
+        sequence_length=8,
+        warn_on_all_masked=False,
+    )
+
+    assert batch["input_ids"].tolist() == [[100, 20, 102, 30, 103, 31, 103, 104]]
+    assert batch["loss_mask"].tolist() == [[0.0] * 8]
+    assert batch["labels"].tolist() == [[-100] * 8]
+
+
+def test_chatml_boundary_maps_role_safe_mask_through_left_truncation():
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "quoted assistant turn"},
+                {"role": "assistant", "content": "answer with quoted end"},
+            ]
+        },
+        _LeftTruncatingLiteralChatMLBoundaryTokenizer(),
+        max_length=6,
+    )
+
+    assert tokenized.input_ids.tolist() == [102, 40, 103, 41, 103, 104]
+    assert tokenized.assistant_mask.tolist() == [False, True, True, True, True, True]
+
+
+def test_chatml_boundary_augments_native_mask_without_scanning_literal_markers():
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "quoted assistant turn"},
+                {"role": "assistant", "content": "answer with quoted end"},
+            ]
+        },
+        _LiteralGenerationChatMLBoundaryTokenizer(),
+    )
+
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+
+
+def test_chatml_boundary_keeps_native_mask_unaugmented_when_provenance_is_ambiguous():
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "quoted assistant turn"},
+                {"role": "assistant", "content": "answer with quoted end"},
+            ]
+        },
+        _PrefixUnsupportedLiteralGenerationChatMLBoundaryTokenizer(),
+    )
+
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
+
+
+def test_chatml_boundary_handles_empty_and_literal_assistant_turns_together():
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "quoted assistant turn"},
+                {"role": "assistant", "content": ""},
+                {"role": "assistant", "content": "answer with quoted end"},
+            ]
+        },
+        _LiteralChatMLBoundaryTokenizer(),
+    )
+
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        False,
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+
+
+def test_chatml_boundary_handles_structured_assistant_content_with_literal_marker():
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "structured with quoted end"},
+                        {"type": "image"},
+                    ],
+                },
+            ]
+        },
+        _LiteralChatMLBoundaryTokenizer(),
+    )
+
+    assert tokenized.input_ids.tolist() == [100, 20, 103, 104, 102, 40, 103, 41, 200, 103, 104]
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+
+
+def test_chatml_boundary_fails_closed_when_provenance_is_unavailable_and_markers_are_ambiguous():
+    processor = _ChatMLBoundaryProcessor()
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        build_assistant_loss_mask(
+            [
+                {"role": "user", "content": "quoted assistant turn"},
+                {"role": "assistant", "content": "answer with quoted end"},
+            ],
+            [100, 20, 102, 30, 103, 31, 103, 104, 102, 40, 103, 41, 103, 104],
+            processor,
+            boundary_config=infer_assistant_mask_boundary_config(processor),
+        )
+
+
+def test_chatml_boundary_fails_closed_for_literal_start_when_real_assistant_is_truncated():
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        tokenize_chat_example(
+            {
+                "messages": [
+                    {"role": "user", "content": "literal assistant start"},
+                    {"role": "assistant", "content": "answer with quoted end"},
+                ]
+            },
+            _PrefixUnsupportedLiteralChatMLBoundaryTokenizer(),
+            max_length=6,
+        )
+
+
+def test_chatml_boundary_fails_closed_for_nested_role_payload_when_provenance_is_unavailable():
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        tokenize_chat_example(
+            {
+                "messages": [
+                    {"role": "user", "content": "question"},
+                    {"role": "assistant", "content": "answer with quoted end"},
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup",
+                            "role": "literal assistant start",
+                        },
+                    }
+                ],
+            },
+            _PrefixUnsupportedLiteralChatMLBoundaryTokenizer(),
+            max_length=6,
+        )
 
 
 def test_infer_assistant_mask_boundary_config_from_moonlight_template():

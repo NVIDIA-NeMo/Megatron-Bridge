@@ -462,8 +462,12 @@ class NemotronHBridge(MegatronModelBridge):
                 "mtp.layers.*.mtp_model_layer.layers.*.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.*.norm.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.weight": "mtp.layers.*.mixer.gate.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.expert_bias": "mtp.layers.*.mixer.gate.e_score_correction_bias",
+                # GroupedMLP (moe_grouped_gemm=True): expert weights are stored as weight0, weight1, ...
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc1.weight*": "mtp.layers.*.mixer.experts.*.up_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc2.weight*": "mtp.layers.*.mixer.experts.*.down_proj.weight",
+                # SequentialMLP (moe_grouped_gemm=False): expert weights are stored per local_expert
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "mtp.layers.*.mixer.experts.*.up_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "mtp.layers.*.mixer.experts.*.down_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc1_latent_proj.weight": "mtp.layers.*.mixer.fc1_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc2_latent_proj.weight": "mtp.layers.*.mixer.fc2_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.shared_experts.linear_fc1.weight": "mtp.layers.*.mixer.shared_experts.up_proj.weight",

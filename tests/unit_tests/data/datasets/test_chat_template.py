@@ -151,10 +151,13 @@ class TestChatPreprocess:
                 mapping = {
                     "<|im_start|>assistant\n": [101],
                     "<|im_start|>user\n": [100],
+                    "<|im_start|>system\n": [110],
+                    "<|im_start|>developer\n": [111],
+                    "<|im_start|>tool\n": [112],
                     "<|im_end|>": [102],
                     "<|im_end|>\n": [102, 103],
                 }
-                return {"input_ids": mapping.get(text, [100, 10, 102, 103, 101, 21, 22, 102, 103])}
+                return {"input_ids": mapping.get(text, [42])}
 
             def apply_chat_template(self, chat, tools=None, tokenize=True, return_dict=True, **kwargs):
                 del chat, tools, tokenize, return_dict
@@ -194,6 +197,9 @@ class TestChatPreprocess:
                 mapping = {
                     "<|im_start|>assistant\n": [101],
                     "<|im_start|>user\n": [100],
+                    "<|im_start|>system\n": [110],
+                    "<|im_start|>developer\n": [111],
+                    "<|im_start|>tool\n": [112],
                     "<|im_end|>": [102],
                     "<|im_end|>\n": [102, 103],
                 }

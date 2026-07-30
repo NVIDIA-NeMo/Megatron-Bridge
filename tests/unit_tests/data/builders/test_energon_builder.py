@@ -28,6 +28,7 @@ from megatron.bridge.data.builders.energon import (
     QwenVLEnergonTaskEncoderConfig,
     build_energon_task_encoder,
 )
+from megatron.bridge.data.energon import base_energon_datamodule
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
@@ -226,7 +227,7 @@ def test_builder_honors_requested_splits_and_reuses_runtime_encoder(monkeypatch:
     datamodule.val_dataloader.return_value = ["validation"]
     datamodule_cls = MagicMock(return_value=datamodule)
     monkeypatch.setattr("megatron.bridge.data.builders.energon.build_energon_task_encoder", build_encoder)
-    monkeypatch.setattr("megatron.bridge.data.builders.energon.EnergonMultiModalDataModule", datamodule_cls)
+    monkeypatch.setattr(base_energon_datamodule, "EnergonMultiModalDataModule", datamodule_cls)
 
     train, validation, test = EnergonDatasetBuilder(config).build(
         DatasetBuildContext(train_samples=10, valid_samples=5, test_samples=3)
@@ -248,7 +249,8 @@ def test_builder_skips_unrequested_validation(monkeypatch: pytest.MonkeyPatch):
     datamodule.train_dataloader.return_value = []
     monkeypatch.setattr("megatron.bridge.data.builders.energon.build_energon_task_encoder", lambda _: object())
     monkeypatch.setattr(
-        "megatron.bridge.data.builders.energon.EnergonMultiModalDataModule",
+        base_energon_datamodule,
+        "EnergonMultiModalDataModule",
         MagicMock(return_value=datamodule),
     )
 

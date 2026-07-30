@@ -14,6 +14,7 @@
 
 """Unit tests for megatron.bridge.models.transformer_config."""
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -255,6 +256,16 @@ class TestHeterogeneousTransformerConfigFinalize:
         defaults.update(kwargs)
         return HeterogeneousTransformerConfig(**defaults)
 
+    def _make_valid_hetero(self, **kwargs) -> HeterogeneousTransformerConfig:
+        block = {
+            "attention": {"no_op": False, "replace_with_linear": False, "num_query_groups": 4},
+            "mlp": {"no_op": False, "replace_with_linear": False, "ffn_hidden_size": 256},
+        }
+        return self._make_hetero(
+            heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block, block]}),
+            **kwargs,
+        )
+
     def test_finalize_calls_mcore_hetero_post_init(self):
         cfg = self._make_hetero()
         with patch(_HETERO_FINALIZE_PATCH) as mock_post_init:
@@ -287,3 +298,25 @@ class TestHeterogeneousTransformerConfigFinalize:
         with patch(_HETERO_FINALIZE_PATCH):
             cfg.finalize()
         assert cfg.sequence_parallel is True
+
+    def test_pipeline_dtype_propagated_from_params_dtype_when_pp_gt1(self):
+        cfg = self._make_valid_hetero(
+            params_dtype=torch.bfloat16,
+            pipeline_dtype=None,
+            pipeline_model_parallel_size=2,
+        )
+
+        cfg.finalize()
+
+        assert cfg.pipeline_dtype is torch.bfloat16
+
+    def test_explicit_pipeline_dtype_is_preserved_when_pp_gt1(self):
+        cfg = self._make_valid_hetero(
+            params_dtype=torch.bfloat16,
+            pipeline_dtype=torch.float16,
+            pipeline_model_parallel_size=2,
+        )
+
+        cfg.finalize()
+
+        assert cfg.pipeline_dtype is torch.float16

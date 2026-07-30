@@ -76,7 +76,13 @@ class _DummyProcessor:
                 "<|im_end|>": [103],
                 "<|im_end|>\n": [103, 104],
             }
-            return {"input_ids": mapping.get(text, [1])}
+            if text in mapping:
+                return {"input_ids": mapping[text]}
+            # Non-assistant role markers must tokenize to distinct ids so that content
+            # (default) never collides with a role-boundary token in the safety check.
+            if isinstance(text, str) and text.startswith("<|im_start|>"):
+                return {"input_ids": [199]}
+            return {"input_ids": [1]}
 
     def __init__(self):
         self.tokenizer = self._Tok()
@@ -590,6 +596,8 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
             def __call__(self, text, add_special_tokens=False):
+                if isinstance(text, str) and text.startswith("<|im_start|>"):
+                    return {"input_ids": [199]}
                 return {"input_ids": [1]}
 
         def __init__(self):
@@ -669,7 +677,11 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
                     "<|im_end|>": [103],
                     "<|im_end|>\n": [103, 104],
                 }
-                return {"input_ids": mapping.get(text, [42])}
+                if text in mapping:
+                    return {"input_ids": mapping[text]}
+                if isinstance(text, str) and text.startswith("<|im_start|>"):
+                    return {"input_ids": [199]}
+                return {"input_ids": [42]}
 
         def __init__(self):
             self.tokenizer = self._Tok()
@@ -710,6 +722,8 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
             def __call__(self, text, add_special_tokens=False):
+                if isinstance(text, str) and text.startswith("<|im_start|>"):
+                    return {"input_ids": [199]}
                 return {"input_ids": [1]}
 
         def __init__(self):
@@ -1781,7 +1795,11 @@ class _NemotronOmniTokenizer:
                 "<|im_end|>": [102],
                 "<|im_end|>\n": [102, 103],
             }
-            return {"input_ids": marker_tokens.get(texts, [1])}
+            if texts in marker_tokens:
+                return {"input_ids": marker_tokens[texts]}
+            if texts.startswith("<|im_start|>"):
+                return {"input_ids": [199]}
+            return {"input_ids": [1]}
         self.tokenized_texts = list(texts)
         max_len = max(len(row) for row in self.tokenized_rows)
         out = torch.full((len(self.tokenized_rows), max_len), self.pad_token_id, dtype=torch.long)

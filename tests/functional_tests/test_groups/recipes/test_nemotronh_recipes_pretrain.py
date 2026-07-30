@@ -36,6 +36,7 @@ NEMOTRON_3_NANO_PRETRAIN_RECIPES = [
             "num_moe_experts": 16,
             "moe_token_dispatcher_type": "alltoall",
             "moe_shared_expert_overlap": True,
+            "sequence_parallel": True,
         },
     ),
 ]
