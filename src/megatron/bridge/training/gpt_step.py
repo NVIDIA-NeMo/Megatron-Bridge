@@ -29,7 +29,6 @@ from megatron.core.pipeline_parallel.utils import (
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
-    get_attr_wrapped_model,
     get_batch_on_this_cp_rank,
     get_model_config,
     get_pg_rank,
@@ -41,7 +40,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params, get_thd_cp_partition_indices
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -172,27 +171,17 @@ def _current_stage_needs_mtp_inputs_from_layout(
     return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection, vp_stage=vp_stage)
 
 
-def _model_chunk_vp_stage(model: GPTModel) -> int | None:
-    """Return the virtual pipeline stage owned by the current model chunk."""
-    try:
-        vp_stage = get_attr_wrapped_model(model, "vp_stage", allow_none=False)
-    except RuntimeError:
-        return None
-    return vp_stage if isinstance(vp_stage, int) else None
-
-
 def _partition_packed_batch_for_cp(
-    batch: dict[str, torch.Tensor],
-    cp_group: torch.distributed.ProcessGroup,
+    batch: dict[str, torch.Tensor], cp_group: torch.distributed.ProcessGroup
 ) -> dict[str, torch.Tensor]:
-    """Partition THD/packed batches across context-parallel ranks using zigzag mode.
+    """Partition THD/packed batches across context-parallel ranks.
 
-    Uses Bridge's get_thd_cp_partition_indices for load-balanced interleaved partitioning.
-    Suitable for standard causal transformers (GPT, LLaMA, etc.).
-    For DSv4 contiguous CP partitioning, use deepseek_v4_step.py instead.
+    Uses MCore's packed-sequence partitioning to slice sequence dimensions
+    aligned with packed cu_seqlens.
     """
     cu_seqlens = _cu_seqlens_for_cp_partition(batch)
-    seqlen_keys = {
+
+    skip_keys = {
         "cu_seqlens",
         "cu_seqlens_unpadded",
         "cu_seqlens_argmin",
@@ -205,11 +194,15 @@ def _partition_packed_batch_for_cp(
         "max_seqlen_q",
         "max_seqlen_kv",
         "token_count",
+        # THD/packed attention is driven by cu_seqlens (PackedSeqParams), so the dense
+        # attention_mask is unused here. It is also not sequence-partitionable: it is
+        # either None or a degenerate placeholder without a slice-able seq dim at index 1.
         "attention_mask",
     }
+
     indices: dict[tuple[int, torch.device], torch.Tensor] = {}
     for key, val in batch.items():
-        if val is None or key in seqlen_keys:
+        if val is None or key in skip_keys:
             continue
         index_key = (val.size(1), val.device)
         if index_key not in indices:
@@ -220,6 +213,7 @@ def _partition_packed_batch_for_cp(
                 device=val.device,
             )
         batch[key] = val.index_select(1, indices[index_key])
+
     return batch
 
 
@@ -378,7 +372,7 @@ def _forward_step_common(
     config = get_model_config(model)
     pg_collection = get_pg_collection(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
-    vp_stage = _model_chunk_vp_stage(model)
+    vp_stage = get_model_chunk_vp_stage(model)
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
