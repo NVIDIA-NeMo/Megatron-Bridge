@@ -33,8 +33,8 @@ from tests.functional_tests.fixture_utils import get_test_data_root
 
 DEFAULT_REPO_NAME = "NVIDIA/Megatron-LM"
 STAGED_RELEASE_ASSETS = (
-    Path("megatron_bridge/release-assets/megatron-lm/v2.5/datasets.zip"),
-    Path("megatron_bridge/release-assets/megatron-lm/v2.5/tokenizers.zip"),
+    Path("megatron-lm/release-assets/v2.5/datasets.zip"),
+    Path("megatron-lm/release-assets/v2.5/tokenizers.zip"),
 )
 
 
