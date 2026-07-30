@@ -197,7 +197,7 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap.overlap_param_gather = True
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.comm_overlap.delay_wgrad_compute = False
-    cfg.optimizer.optimizer_offload_fraction = 1.0
+    cfg.optimizer.optimizer_offload_fraction = 0.0
     cfg.optimizer.barrier_with_L1_time = True
 
     cfg.env_vars = {

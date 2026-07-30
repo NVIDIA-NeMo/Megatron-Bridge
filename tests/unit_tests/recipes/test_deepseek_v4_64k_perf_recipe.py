@@ -74,7 +74,7 @@ def test_deepseek_v4_pro_64k_thd_recipe() -> None:
     assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
     assert cfg.optimizer.use_layer_wise_param_layout is False
     assert cfg.optimizer.overlap_param_gather is True
-    assert cfg.optimizer.optimizer_offload_fraction == 1.0
+    assert cfg.optimizer.optimizer_offload_fraction == 0.0
     assert cfg.optimizer.barrier_with_L1_time is True
     assert cfg.scheduler.lr_decay_iters is None
     assert cfg.scheduler.lr_decay_samples == 584_765_624
@@ -134,5 +134,7 @@ def test_deepseek_v4_pro_full_model_uses_64k_thd_recipe() -> None:
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
     assert cfg.optimizer.optimizer == "muon"
     assert cfg.optimizer.use_layer_wise_distributed_optimizer is True
+    assert cfg.optimizer.optimizer_cpu_offload is False
+    assert cfg.optimizer.optimizer_offload_fraction == 0.0
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
