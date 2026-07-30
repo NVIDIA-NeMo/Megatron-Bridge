@@ -198,42 +198,47 @@ def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module._validate_args(args, [target])
 
     command = module.build_command(args, target)
+    environment = module.build_environment(args)
 
     assert command[0].endswith("scripts/training/train.sh")
     assert command[command.index("--nodes") + 1] == "2"
     assert command[command.index("--gpus-per-node") + 1] == "8"
-    assert command[command.index("--dataset") + 1] == "dclm"
-    assert command[command.index("--max-steps") + 1] == "100"
-    assert command[command.index("--global-batch-size") + 1] == "128"
-    assert command[command.index("--log-interval") + 1] == "1"
-    assert command[command.index("--cp") + 1] == "1"
-    assert command[command.index("--vp") + 1] == "none"
-    assert command[command.index("--etp") + 1] == "1"
-    assert command[command.index("--wandb-project") + 1] == "megatron-bridge-text-pretrain-validation"
-    assert "WANDB_RUN_GROUP=mb747-text-pretrain-dclm-20260710" in command  # pragma: allowlist secret
-    assert "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in command
+    assert command[command.index("--dataset") + 1] == "megatron-indexed"
+    assert command[command.index("--max_steps") + 1] == "100"
+    assert command[command.index("--global_batch_size") + 1] == "128"
+    assert command[command.index("-cp") + 1] == "1"
+    assert command[command.index("-etp") + 1] == "1"
+    assert f"dataset.data_path={tmp_path / 'data' / 'dclm_text_document'}" in command
+    assert f"dataset.path_to_cache={tmp_path / 'cache'}" in command
+    assert "logger.log_interval=1" in command
+    assert "logger.wandb_project=megatron-bridge-text-pretrain-validation" in command
+    assert "model.virtual_pipeline_model_parallel_size=null" in command
+    assert environment["WANDB_RUN_GROUP"] == "mb747-text-pretrain-dclm-20260710"  # pragma: allowlist secret
+    assert environment["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert f"{tmp_path / '.netrc'}:/root/.netrc" in command
-    assert f"VIRTUAL_ENV={tmp_path / 'venv'}" in command
-    assert any(value.startswith(f"PATH={tmp_path / 'venv' / 'bin'}:") for value in command)
+    assert "VIRTUAL_ENV" in command
+    assert environment["VIRTUAL_ENV"] == str(tmp_path / "venv")
+    assert environment["PATH"].startswith(f"{tmp_path / 'venv' / 'bin'}:")
+    assert all("=" not in command[index + 1] for index, value in enumerate(command[:-1]) if value == "--env")
     assert "checkpoint.load=null" in command
 
 
 def test_command_can_select_whole_node_implicit_gpu_allocation(tmp_path):
     module = _load_module()
     target = module.load_manifest(module.DEFAULT_MANIFEST)[0]
-    args = _parse_required_args(module, tmp_path, "--implicit-gpu-allocation")
+    args = _parse_required_args(module, tmp_path, "--no-gpu-resource-request")
 
     command = module.build_command(args, target)
 
-    assert "--implicit-gpu-allocation" in command
+    assert "--no-gpu-resource-request" in command
 
 
-def test_sensitive_environment_values_must_be_inherited_by_name(tmp_path):
+def test_environment_values_must_be_inherited_by_name(tmp_path):
     module = _load_module()
     target = module.load_manifest(module.DEFAULT_MANIFEST)[0]
     args = _parse_required_args(module, tmp_path, "--env", "HF_TOKEN=literal")
 
-    with pytest.raises(ValueError, match="by name"):
+    with pytest.raises(ValueError, match="accepts NAME only"):
         module._validate_args(args, [target])
 
 

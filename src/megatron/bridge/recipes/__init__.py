@@ -58,10 +58,10 @@ from megatron.bridge.recipes.mimo import *
 from megatron.bridge.recipes.mimo.h100 import *
 from megatron.bridge.recipes.mimo_v2_flash import *
 from megatron.bridge.recipes.mimo_v2_flash.h100 import *
-from megatron.bridge.recipes.minimax_m2 import *
-from megatron.bridge.recipes.minimax_m2.h100 import *
 from megatron.bridge.recipes.minimax import *
 from megatron.bridge.recipes.minimax.h100 import *
+from megatron.bridge.recipes.minimax_m2 import *
+from megatron.bridge.recipes.minimax_m2.h100 import *
 from megatron.bridge.recipes.ministral3 import *
 from megatron.bridge.recipes.ministral3.h100 import *
 from megatron.bridge.recipes.mistral import *

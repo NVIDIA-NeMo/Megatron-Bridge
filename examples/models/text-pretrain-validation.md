@@ -35,7 +35,7 @@ uv run --extra recipes python scripts/training/submit_text_pretrain_validation.p
 ```
 
 Clusters such as EOS that allocate GPUs implicitly with exclusive whole nodes
-must add `--implicit-gpu-allocation`. Other Slurm clusters use the default,
+must add `--no-gpu-resource-request`. Other Slurm clusters use the default,
 which emits an explicit `--gpus-per-node` resource request.
 
 Omit `--model` to select all rows, or repeat it to submit a size-aware batch.

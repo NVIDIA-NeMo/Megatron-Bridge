@@ -1275,7 +1275,7 @@ def llama33_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.mixed_precision = bf16_mixed()
 
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 

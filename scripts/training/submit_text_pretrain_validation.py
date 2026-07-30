@@ -31,7 +31,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 DEFAULT_MANIFEST = SCRIPT_DIR / "text_pretrain_validation.json"
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
-SENSITIVE_NAME = re.compile(r"(^|_)(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)(_|$)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -108,7 +107,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nodes", type=int, default=2)
     parser.add_argument("--gpus-per-node", type=int, default=8)
     parser.add_argument(
-        "--implicit-gpu-allocation",
+        "--no-gpu-resource-request",
         action="store_true",
         help="Use whole-node implicit GPUs instead of emitting a Slurm GPU request.",
     )
@@ -145,10 +144,11 @@ def _validate_args(args: argparse.Namespace, targets: list[ValidationTarget]) ->
                 f"{target.id} parallelism requires a world size divisible by {target.minimum_world_size}, "
                 f"got {world_size}."
             )
-    for env_value in args.env:
-        name, separator, _value = env_value.partition("=")
-        if separator and SENSITIVE_NAME.search(name):
-            raise ValueError(f"Pass sensitive environment variable {name!r} by name, not as NAME=VALUE.")
+    for name in args.env:
+        if "=" in name:
+            raise ValueError("--env accepts NAME only; export the value before launching.")
+        if name not in os.environ:
+            raise ValueError(f"Environment variable {name!r} is not set.")
 
 
 def _select_targets(targets: list[ValidationTarget], selected_ids: list[str]) -> list[ValidationTarget]:
@@ -166,6 +166,40 @@ def _append_mount(command: list[str], mounts: list[str], value: str) -> None:
     if value not in mounts:
         mounts.append(value)
         command.extend(["--mount", value])
+
+
+def _append_env(command: list[str], env_names: list[str], name: str) -> None:
+    if name not in env_names:
+        env_names.append(name)
+        command.extend(["--env", name])
+
+
+def _runtime_path(runtime_venv: Path) -> str:
+    return ":".join(
+        [
+            str(runtime_venv / "bin"),
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+    )
+
+
+def build_environment(args: argparse.Namespace) -> dict[str, str]:
+    """Build the launcher environment without serializing values in the command."""
+    environment = os.environ.copy()
+    if args.hf_home:
+        environment["HF_HOME"] = str(args.hf_home)
+    if args.runtime_venv:
+        environment["VIRTUAL_ENV"] = str(args.runtime_venv)
+        environment["PATH"] = _runtime_path(args.runtime_venv)
+    environment["WANDB_RUN_GROUP"] = args.wandb_group
+    environment["WANDB_JOB_TYPE"] = "pretrain-validation"
+    environment["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    return environment
 
 
 def build_command(args: argparse.Namespace, target: ValidationTarget) -> list[str]:
@@ -188,104 +222,79 @@ def build_command(args: argparse.Namespace, target: ValidationTarget) -> list[st
         "--experiment-name",
         f"mb747-{target.id}",
     ]
-    if args.implicit_gpu_allocation:
-        command.append("--implicit-gpu-allocation")
+    if args.no_gpu_resource_request:
+        command.append("--no-gpu-resource-request")
     mounts: list[str] = []
+    env_names: list[str] = []
     _append_mount(command, mounts, f"{REPO_ROOT}:{CONTAINER_REPO_ROOT}")
     for path in (args.dataset_path.parent, args.dataset_cache, args.output_root):
         _append_mount(command, mounts, str(path))
     if args.hf_home:
         _append_mount(command, mounts, str(args.hf_home))
-        command.extend(["--env", f"HF_HOME={args.hf_home}"])
+        _append_env(command, env_names, "HF_HOME")
     if args.runtime_venv:
         _append_mount(command, mounts, str(args.runtime_venv))
-        runtime_path = ":".join(
-            [
-                str(args.runtime_venv / "bin"),
-                "/usr/local/sbin",
-                "/usr/local/bin",
-                "/usr/sbin",
-                "/usr/bin",
-                "/sbin",
-                "/bin",
-            ]
-        )
-        command.extend(["--env", f"VIRTUAL_ENV={args.runtime_venv}", "--env", f"PATH={runtime_path}"])
+        _append_env(command, env_names, "VIRTUAL_ENV")
+        _append_env(command, env_names, "PATH")
     if args.wandb_netrc:
         _append_mount(command, mounts, f"{args.wandb_netrc}:/root/.netrc")
     for mount in args.mount:
         _append_mount(command, mounts, mount)
-    for env_value in args.env:
-        command.extend(["--env", env_value])
+    for name in args.env:
+        _append_env(command, env_names, name)
+    for name in ("WANDB_RUN_GROUP", "WANDB_JOB_TYPE", "PYTORCH_CUDA_ALLOC_CONF"):
+        _append_env(command, env_names, name)
     command.extend(
         [
-            "--env",
-            f"WANDB_RUN_GROUP={args.wandb_group}",
-            "--env",
-            "WANDB_JOB_TYPE=pretrain-validation",  # pragma: allowlist secret
-            "--env",
-            "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
             "--recipe",
             target.recipe,
             "--mode",
             "pretrain",
             "--dataset",
-            "dclm",
-            "--dataset-path",
-            str(args.dataset_path),
-            "--dataset-cache",
-            str(args.dataset_cache),
-            "--tokenizer-type",
-            "HuggingFaceTokenizer",
-            "--tokenizer-model",
-            args.tokenizer_model,
-            "--seq-length",
+            "megatron-indexed",
+            "--seq_length",
             "4096",
-            "--max-steps",
+            "--max_steps",
             "100",
-            "--global-batch-size",
+            "--global_batch_size",
             "128",
-            "--micro-batch-size",
+            "--micro_batch_size",
             "1",
-            "--eval-interval",
-            "100",
-            "--eval-iters",
-            "1",
-            "--warmup-iters",
+            "--warmup_iters",
             "10",
-            "--lr-decay-iters",
-            "100",
-            "--log-interval",
-            "1",
-            "--save-dir",
+            "--save_dir",
             str(output_dir / "checkpoints"),
-            "--save-interval",
+            "--save_interval",
             "100",
-            "--wandb-project",
-            args.wandb_project,
-            "--wandb-name",
-            f"mb747-{target.id}-dclm-100steps",
-            "--wandb-dir",
-            str(output_dir / "wandb"),
-            "--tp",
+            "-tp",
             str(target.tp),
-            "--pp",
+            "-pp",
             str(target.pp),
-            "--cp",
+            "-cp",
             "1",
-            "--vp",
-            "none",
-            "--ep",
+            "-ep",
             str(target.ep),
-            "--etp",
+            "-etp",
             "1",
+            f"dataset.data_path={args.dataset_path}",
+            f"dataset.path_to_cache={args.dataset_cache}",
+            "tokenizer.tokenizer_type=HuggingFaceTokenizer",
+            f"tokenizer.tokenizer_model={args.tokenizer_model}",
+            "train.eval_interval=100",
+            "train.eval_iters=1",
+            "scheduler.lr_decay_iters=100",
+            "logger.log_interval=1",
+            f"logger.wandb_project={args.wandb_project}",
+            f"logger.wandb_exp_name=mb747-{target.id}-dclm-100steps",
+            f"logger.wandb_save_dir={output_dir / 'wandb'}",
+            "model.virtual_pipeline_model_parallel_size=null",
             "checkpoint.load=null",
             f"logger.tensorboard_dir={output_dir / 'tensorboard'}",
             *target.overrides,
         ]
     )
     if args.wandb_entity:
-        command.extend(["--wandb-entity", args.wandb_entity])
+        command.append(f"logger.wandb_entity={args.wandb_entity}")
     if args.submission_dry_run:
         command.append("--submission-dry-run")
     return command
@@ -307,7 +316,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir = args.output_root / target.id
             (output_dir / "wandb").mkdir(parents=True, exist_ok=True)
             (output_dir / "tensorboard").mkdir(parents=True, exist_ok=True)
-            subprocess.run(command, check=True)
+            subprocess.run(command, check=True, env=build_environment(args))
 
 
 if __name__ == "__main__":
