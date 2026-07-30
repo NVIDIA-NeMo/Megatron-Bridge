@@ -20,6 +20,11 @@ DEFAULT_TEST_DATA_ROOT = Path("/home/TestData")
 TEST_DATA_ROOT_ENV = "NEMO_TEST_DATA_ROOT"
 
 
+def get_test_data_root() -> Path:
+    """Return the configured shared TestData root."""
+    return Path(os.environ.get(TEST_DATA_ROOT_ENV) or DEFAULT_TEST_DATA_ROOT)
+
+
 def resolve_test_data_file(relative_path: str | Path, fallback: str) -> str:
     """Resolve a staged TestData file before using its egress fallback.
 
@@ -30,6 +35,5 @@ def resolve_test_data_file(relative_path: str | Path, fallback: str) -> str:
     Returns:
         The staged file path when it exists, otherwise ``fallback``.
     """
-    test_data_root = Path(os.environ.get(TEST_DATA_ROOT_ENV) or DEFAULT_TEST_DATA_ROOT)
-    staged_path = test_data_root / relative_path
+    staged_path = get_test_data_root() / relative_path
     return str(staged_path) if staged_path.is_file() else fallback
