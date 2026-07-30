@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, MockVarlenDatasetConfig
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -104,6 +104,20 @@ def cyclic_iter(iter: Iterable) -> Iterator:
     while True:
         for x in iter:
             yield x
+
+
+def _identity_collate(batch: list[Any]) -> list[Any]:
+    """Keep variable-length samples as a list for MCore's packing scheduler."""
+    return batch
+
+
+def _get_collate_fn(dataset: Any, cfg: ConfigContainer) -> Callable | None:
+    """Resolve the dataset collate function for a Bridge data loader."""
+    if hasattr(dataset, "collate_fn"):
+        return dataset.collate_fn
+    if isinstance(cfg.dataset, MockVarlenDatasetConfig):
+        return _identity_collate
+    return None
 
 
 def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, int]:
@@ -326,7 +340,7 @@ def build_train_valid_test_data_loaders(
         cfg.dataset.num_workers,
         cfg.dataset.data_sharding,
         worker_init_fn=maybe_worker_init_fn,
-        collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
+        collate_fn=_get_collate_fn(train_ds, cfg),
         pin_memory=cfg.dataset.pin_memory,
         persistent_workers=cfg.dataset.persistent_workers,
         data_parallel_rank=dp_rank,
@@ -354,7 +368,7 @@ def build_train_valid_test_data_loaders(
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
-            collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
+            collate_fn=_get_collate_fn(valid_ds, cfg),
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=eval_dp_rank,
@@ -372,7 +386,7 @@ def build_train_valid_test_data_loaders(
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
-            collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
+            collate_fn=_get_collate_fn(valid_ds, cfg),
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=eval_dp_rank,
@@ -390,7 +404,7 @@ def build_train_valid_test_data_loaders(
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
-            collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
+            collate_fn=_get_collate_fn(test_ds, cfg),
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=eval_dp_rank,

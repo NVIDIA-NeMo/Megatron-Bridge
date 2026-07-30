@@ -30,6 +30,7 @@ from megatron.bridge.training.setup import (
     _should_load_checkpoint,
     _update_model_config_funcs,
     _validate_and_set_vocab_size,
+    _wrap_model_chunks_with_layer_wise_ddp,
     maybe_log_and_save_config,
 )
 from megatron.bridge.training.state import GlobalState
@@ -303,8 +304,10 @@ class TestBuildDistributedModel:
         cfg.model = model_cfg
         cfg.ddp = MagicMock()
         cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        cfg.optimizer.use_layer_wise_distributed_optimizer = False
         cfg.dist.use_megatron_fsdp = False
         cfg.dist.use_torch_fsdp2 = False
+        cfg.dist.use_decentralized_pg = False
         cfg.rng.data_parallel_random_init = False
         return cfg, model_cfg
 
@@ -326,6 +329,41 @@ class TestBuildDistributedModel:
         mock_builder.build_distributed_models.assert_called_once()
         assert result == mock_dist_model
 
+    @patch("megatron.bridge.training.setup._wrap_model_chunks_with_layer_wise_ddp")
+    def test_build_with_layer_wise_ddp_optimizer(self, mock_layer_wise_wrap):
+        """Layer-wise Muon must not reuse ModelBuilder's conventional DDP layout."""
+        cfg, model_cfg = self._make_cfg_with_model_config()
+        cfg.optimizer.use_layer_wise_distributed_optimizer = True
+
+        post_wrap_hook = MagicMock(side_effect=lambda model: [*model, "post-wrapped"])
+        model_cfg.post_wrap_hooks.append(post_wrap_hook)
+
+        mock_builder_cls = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        prepared_model = [MagicMock()]
+        layer_wise_model = [MagicMock()]
+        mock_builder.build_distributed_models.return_value = prepared_model
+        mock_layer_wise_wrap.return_value = layer_wise_model
+
+        pg_collection = MagicMock()
+        with patch.object(type(model_cfg), "get_builder_cls", return_value=mock_builder_cls):
+            result = _build_distributed_model(cfg, pg_collection)
+
+        mock_builder.build_distributed_models.assert_called_once_with(
+            pg_collection=pg_collection,
+            ddp_config=cfg.ddp,
+            overlap_param_gather_with_optimizer_step=False,
+            use_megatron_fsdp=False,
+            use_torch_fsdp2=False,
+            wrap_with_ddp=False,
+            data_parallel_random_init=False,
+        )
+        mock_layer_wise_wrap.assert_called_once_with(cfg, prepared_model, pg_collection)
+        post_wrap_hook.assert_called_once_with(layer_wise_model)
+        assert model_cfg.post_wrap_hooks == [post_wrap_hook]
+        assert result == [*layer_wise_model, "post-wrapped"]
+
     def test_build_with_provider(self):
         """Test that provide_distributed_model is called for providers."""
         mock_provider = MagicMock()
@@ -339,6 +377,7 @@ class TestBuildDistributedModel:
         cfg.model = mock_provider
         cfg.ddp = MagicMock()
         cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        cfg.optimizer.use_layer_wise_distributed_optimizer = False
         cfg.dist.use_megatron_fsdp = False
         cfg.dist.use_torch_fsdp2 = False
         cfg.rng.data_parallel_random_init = False
@@ -347,6 +386,106 @@ class TestBuildDistributedModel:
 
         mock_provider.provide_distributed_model.assert_called_once()
         assert result == mock_dist_model
+
+    @patch("megatron.bridge.training.setup._wrap_model_chunks_with_layer_wise_ddp")
+    def test_build_provider_with_layer_wise_ddp_optimizer(self, mock_layer_wise_wrap):
+        """Provider models must also bypass their conventional DDP wrapper for layer-wise Muon."""
+        mock_provider = MagicMock()
+        mock_provider.__class__ = type("FakeProvider", (), {})
+        post_wrap_hook = MagicMock(side_effect=lambda model: [*model, "post-wrapped"])
+        mock_provider.post_wrap_hook = post_wrap_hook
+
+        prepared_model = [MagicMock()]
+        layer_wise_model = [MagicMock()]
+        mock_provider.provide_distributed_model.return_value = prepared_model
+        mock_layer_wise_wrap.return_value = layer_wise_model
+
+        cfg = MagicMock()
+        cfg.model = mock_provider
+        cfg.ddp = MagicMock()
+        cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        cfg.optimizer.use_layer_wise_distributed_optimizer = True
+        cfg.dist.use_megatron_fsdp = False
+        cfg.dist.use_torch_fsdp2 = False
+        cfg.rng.data_parallel_random_init = False
+        pg_collection = MagicMock()
+
+        result = _build_distributed_model(cfg, pg_collection)
+
+        mock_provider.provide_distributed_model.assert_called_once()
+        provider_kwargs = mock_provider.provide_distributed_model.call_args.kwargs
+        assert provider_kwargs["wrap_with_ddp"] is False
+        assert provider_kwargs["data_parallel_random_init"] is False
+        assert provider_kwargs["use_megatron_fsdp"] is False
+        assert provider_kwargs["use_torch_fsdp2"] is False
+        assert provider_kwargs["post_wrap_hook"](prepared_model) is prepared_model
+        mock_layer_wise_wrap.assert_called_once_with(cfg, prepared_model, pg_collection)
+        post_wrap_hook.assert_called_once_with(layer_wise_model)
+        assert result == [*layer_wise_model, "post-wrapped"]
+
+
+def test_wrap_model_chunks_with_layer_wise_ddp_uses_mcore_layout_and_broadcasts():
+    """The MBridge adapter must preserve MCore's layer-wise DDP arguments and ordering."""
+    first_chunk = MagicMock()
+    first_chunk.parameters.return_value = [SimpleNamespace(nelement=lambda: 3)]
+    second_chunk = MagicMock()
+    second_chunk.parameters.return_value = [SimpleNamespace(nelement=lambda: 5)]
+    wrapped_chunks = [MagicMock(), MagicMock()]
+
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(transformer=MagicMock()),
+        ddp=SimpleNamespace(bucket_size=None, overlap_grad_reduce=True),
+        optimizer=SimpleNamespace(
+            overlap_param_gather_with_optimizer_step=False,
+            use_layer_wise_param_layout=False,
+        ),
+        dist=SimpleNamespace(
+            use_megatron_fsdp=False,
+            use_torch_fsdp2=False,
+            use_decentralized_pg=True,
+        ),
+        rng=SimpleNamespace(data_parallel_random_init=True),
+    )
+    pg_collection = MagicMock()
+    pg_collection.pp.rank.return_value = 0
+    ddp_stream = MagicMock()
+    current_stream = MagicMock()
+
+    with (
+        patch(
+            "megatron.training.training.resolve_ddp_bucket_size",
+            return_value=123,
+        ) as mock_resolve_bucket_size,
+        patch(
+            "megatron.training.training.wrap_model_chunks_with_ddp",
+            return_value=wrapped_chunks,
+        ) as mock_wrap,
+        patch("megatron.bridge.training.setup.torch.cuda.Stream", return_value=ddp_stream),
+        patch("megatron.bridge.training.setup.torch.cuda.current_stream", return_value=current_stream),
+        patch("megatron.bridge.training.setup.torch.cuda.stream"),
+    ):
+        result = _wrap_model_chunks_with_layer_wise_ddp(
+            cfg,
+            [first_chunk, second_chunk],
+            pg_collection,
+        )
+
+    mock_resolve_bucket_size.assert_called_once_with(cfg.ddp, pg_collection.dp_cp, True, 8)
+    mock_wrap.assert_called_once_with(
+        [first_chunk, second_chunk],
+        cfg.model,
+        cfg.ddp,
+        use_layer_wise_distributed_optimizer=True,
+        pg_collection=pg_collection,
+        bucket_sizes=[123, None],
+        disable_bucketing_per_chunk=[False, True],
+    )
+    assert cfg.ddp.use_layer_wise_param_layout is False
+    ddp_stream.wait_stream.assert_called_once_with(current_stream)
+    current_stream.wait_stream.assert_called_once_with(ddp_stream)
+    for wrapped_chunk in wrapped_chunks:
+        wrapped_chunk.broadcast_params.assert_called_once_with()
+    assert result == wrapped_chunks
 
 
 def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():

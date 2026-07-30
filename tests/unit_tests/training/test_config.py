@@ -3413,6 +3413,29 @@ class TestRuntimeConfigUpdate:
 class TestDistributedOptimizerValidation:
     """Tests for the _validate_and_sync_distributed_optimizer_settings function."""
 
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_decoupled_layer_wise_optimizer_preserves_split_ddp_setting(self, mock_warn_rank_0):
+        """Layer-wise Muon uses distributed DDP buffers without the conventional distributed optimizer."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            ddp_config=create_test_ddp_config(use_distributed_optimizer=True),
+            optimizer_config=create_test_optimizer_config(
+                use_distributed_optimizer=False,
+                use_layer_wise_distributed_optimizer=True,
+                use_layer_wise_param_layout=False,
+            ),
+        )
+
+        try:
+            _validate_and_sync_distributed_optimizer_settings(container)
+
+            assert container.ddp.use_distributed_optimizer is True
+            assert container.optimizer.use_distributed_optimizer is False
+            mock_warn_rank_0.assert_not_called()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize(
         "ddp_setting, optimizer_setting, expected_final_state, should_print_message, expected_message_parts",
         [

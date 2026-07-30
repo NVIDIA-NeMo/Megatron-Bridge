@@ -20,6 +20,7 @@ import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -285,7 +286,8 @@ def get_batch(
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
-    dict[str, _PackedMetadataValue] | None,
+    dict[str, _PackedMetadataValue] | PackedSeqParams | None,
+    torch.Tensor | None,
 ]:
     """Generate a batch.
 
@@ -297,7 +299,8 @@ def get_batch(
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask,
-        position_ids, and optional packed-sequence metadata.
+        position_ids, optional packed-sequence metadata, and an optional
+        padding mask.
     """
     # Determine pipeline stage role via process group collection
     model_cfg = getattr(cfg, "model", None)
@@ -313,8 +316,30 @@ def get_batch(
     include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
         cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
     )
+
+    if getattr(model_cfg, "sequence_packing_scheduler", None) is not None:
+        try:
+            from megatron.core.datasets.data_schedule import get_batch_on_this_rank_for_sequence_packing
+        except ImportError as error:
+            raise RuntimeError(
+                "Sequence-packing schedulers require a Megatron-Core version that provides "
+                "get_batch_on_this_rank_for_sequence_packing."
+            ) from error
+
+        tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask = (
+            get_batch_on_this_rank_for_sequence_packing(
+                data_iterator,
+                vpp_size=vp_size,
+                mtp_on_this_rank=include_mtp_inputs,
+                vp_stage=vp_stage,
+                pg_collection=pg_collection,
+                config=model_cfg,
+            )
+        )
+        return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask
+
     if is_middle and not include_full_batch_fields and not include_mtp_inputs:
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -344,6 +369,7 @@ def get_batch(
         ),  # Attention_mask is optional for pre-training as a casual mask is generated automatically.
         batch["position_ids"],
         _packed_metadata_for_forward(batch),
+        None,
     )
 
 
@@ -378,6 +404,7 @@ def _forward_step_common(
             attention_mask,
             position_ids,
             packed_seq_metadata,
+            padding_mask,
         ) = get_batch(
             data_iterator,
             state.cfg,
@@ -402,7 +429,7 @@ def _forward_step_common(
     cu_seqlens_argmin = None
     cu_seqlens_unpadded = None
     cu_seqlens_unpadded_argmin = None
-    if packed_seq_metadata is not None:
+    if isinstance(packed_seq_metadata, dict):
         if packed_seq_metadata.get("cu_seqlens_q") is not None:
             cu_seqlens_q = packed_seq_metadata.get("cu_seqlens_q")
             cu_seqlens_q_padded = packed_seq_metadata.get("cu_seqlens_q_padded")
@@ -432,7 +459,7 @@ def _forward_step_common(
     }
 
     # Add packed sequence support
-    if packed_seq_metadata is not None:
+    if isinstance(packed_seq_metadata, dict):
         # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
@@ -444,6 +471,10 @@ def _forward_step_common(
             else:
                 packed_seq_metadata["total_tokens"] = getattr(config, "seq_length", None)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
+    elif packed_seq_metadata is not None:
+        forward_args["packed_seq_params"] = packed_seq_metadata
+    if padding_mask is not None:
+        forward_args["padding_mask"] = padding_mask
 
     with straggler_timer:
         if return_schedule_plan:

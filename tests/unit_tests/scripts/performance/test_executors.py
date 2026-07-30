@@ -147,6 +147,25 @@ def test_build_nemorun_script_wraps_only_enabled_kubeflow_tasks():
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_build_nemorun_script_preserves_custom_pythonpath():
+    task = _build_nemorun_script(
+        script_path="/opt/Megatron-Bridge/scripts/performance/run_recipe.py",
+        script_dir="/opt/Megatron-Bridge/scripts/performance",
+        args=[],
+        kubeflow_namespace=None,
+        custom_env_vars={"PYTHONPATH": "/workspace/Megatron-LM"},
+    )
+
+    assert task.env == {
+        "PYTHONPATH": (
+            "/opt/Megatron-Bridge/scripts/performance:"
+            "/opt/Megatron-Bridge/src:"
+            "/workspace/Megatron-LM"
+        )
+    }
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 def test_kubeflow_numa_binding_is_disabled_by_default():
     """Normal Kubeflow jobs must retain the unmodified Torchrun launcher."""
     assert not _kubeflow_numa_binding_enabled({})

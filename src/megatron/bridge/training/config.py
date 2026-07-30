@@ -387,6 +387,33 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
         return super().finalize()
 
 
+@dataclass
+class MockVarlenDatasetConfig(MockGPTDatasetConfig):
+    """Configuration for MCore's mock variable-length THD dataset.
+
+    This dataset emits one unpacked variable-length sample at a time. A
+    Megatron-Core sequence-packing scheduler packs those samples into THD
+    microbatches at training time.
+    """
+
+    varlen_mock_dataset_config_json: str | None = None
+    """JSON string or path describing the mock sequence-length distribution."""
+
+    varlen_sbhd_validation: bool = False
+    """Whether to emit the fixed-width SBHD validation format instead of THD."""
+
+    def __init__(
+        self,
+        seq_length: int,
+        varlen_mock_dataset_config_json: str | None = None,
+        varlen_sbhd_validation: bool = False,
+        **kwargs,
+    ):
+        super().__init__(seq_length=seq_length, **kwargs)
+        self.varlen_mock_dataset_config_json = varlen_mock_dataset_config_json
+        self.varlen_sbhd_validation = varlen_sbhd_validation
+
+
 @dataclass(kw_only=True)
 class SchedulerConfig(MTrainSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
@@ -1913,15 +1940,20 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
 
     This function ensures that distributed optimizer settings are consistent across
     DDP and optimizer configurations. If either setting is enabled, both will be
-    enabled to maintain consistency.
+    enabled to maintain consistency. Decoupled layer-wise optimizers are the one
+    intentional exception: DDP uses distributed parameter and gradient buffers,
+    while the conventional distributed optimizer remains disabled.
 
     Args:
         config: The configuration container to validate and potentially modify.
     """
     ddp_setting = config.ddp.use_distributed_optimizer
     optimizer_setting = config.optimizer.use_distributed_optimizer
+    uses_decoupled_layer_wise_optimizer = (
+        config.optimizer.use_layer_wise_distributed_optimizer and ddp_setting and not optimizer_setting
+    )
 
-    if ddp_setting or optimizer_setting:
+    if not uses_decoupled_layer_wise_optimizer and (ddp_setting or optimizer_setting):
         if ddp_setting != optimizer_setting:
             warn_rank_0(
                 f"Distributed optimizer settings were not in sync: "

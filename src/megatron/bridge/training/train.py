@@ -256,6 +256,7 @@ def train(
         config.ddp.use_megatron_fsdp,
         config.optimizer.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
+        config.optimizer.use_layer_wise_distributed_optimizer,
     )
     # Also, check weight hash across DP replicas to be very pedantic.
     if train_config.check_weight_hash_across_dp_replicas_interval is not None:
@@ -807,6 +808,29 @@ def train(
         )
 
 
+def _wrap_sequence_packing_data_iterator(
+    data_iterator,
+    model_config,
+    num_microbatches: int,
+    pg_collection: ProcessGroupCollection,
+):
+    """Run MCore's per-global-batch THD sequence-packing scheduler."""
+    try:
+        from megatron.core.datasets.data_schedule import wrap_data_iterator
+    except ImportError as error:
+        raise RuntimeError(
+            "Sequence-packing schedulers require a Megatron-Core version that provides "
+            "megatron.core.datasets.data_schedule.wrap_data_iterator."
+        ) from error
+
+    return wrap_data_iterator(
+        data_iterator,
+        model_config,
+        num_microbatches,
+        pg_collection=pg_collection,
+    )
+
+
 @nvtx_decorator()
 def train_step(
     forward_step_func: ForwardStepCallable,
@@ -849,7 +873,11 @@ def train_step(
     optim_config = cfg.optimizer
 
     rerun_state_machine = get_rerun_state_machine()
-    while rerun_state_machine.should_run_forward_backward(data_iterator):
+    packed_data_iterator = None
+    packed_num_microbatches = None
+    has_wrapped_data_iterator = False
+    rerun_data_iterator = data_iterator
+    while rerun_state_machine.should_run_forward_backward(rerun_data_iterator):
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -887,6 +915,25 @@ def train_step(
                 data_iterator=forward_backward_data_iterator,
             )
 
+        num_microbatches = get_num_microbatches()
+        if getattr(model_config, "sequence_packing_scheduler", None) is not None:
+            if not has_wrapped_data_iterator:
+                (
+                    packed_data_iterator,
+                    packed_num_microbatches,
+                    _seqlen_sum_this_global_batch,
+                    _seqlen_squared_sum_this_global_batch,
+                ) = _wrap_sequence_packing_data_iterator(
+                    forward_backward_data_iterator,
+                    model_config,
+                    num_microbatches,
+                    pg_collection,
+                )
+                has_wrapped_data_iterator = True
+                rerun_data_iterator = packed_data_iterator
+            forward_backward_data_iterator = packed_data_iterator
+            num_microbatches = packed_num_microbatches
+
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
         if not cfg.dist.use_decentralized_pg:
             adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
@@ -903,7 +950,7 @@ def train_step(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
             model=model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_microbatches,
             seq_length=seq_length,
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=seq_length,
@@ -1096,7 +1143,10 @@ def maybe_run_manual_gc(manual_gc_enabled: bool, manual_gc_interval: int, iterat
 
 
 def should_disable_forward_pre_hook(
-    use_megatron_fsdp: bool, use_distributed_optimizer: bool, overlap_param_gather: bool
+    use_megatron_fsdp: bool,
+    use_distributed_optimizer: bool,
+    overlap_param_gather: bool,
+    use_layer_wise_distributed_optimizer: bool = False,
 ) -> bool:
     """Determine if forward pre-hooks should be disabled during checkpointing.
 
@@ -1107,6 +1157,8 @@ def should_disable_forward_pre_hook(
         use_megatron_fsdp: Whether Megatron FSDP is enabled.
         use_distributed_optimizer: Whether distributed optimizer is enabled.
         overlap_param_gather: Whether parameter gathering is overlapped.
+        use_layer_wise_distributed_optimizer: Whether the layer-wise distributed
+            optimizer is enabled.
 
     Returns:
         True if forward pre-hooks should be disabled, False otherwise.
@@ -1115,7 +1167,8 @@ def should_disable_forward_pre_hook(
         This is needed to prevent autograd issues during checkpoint saving
         when using distributed optimizer with parameter gathering overlap.
     """
-    return not use_megatron_fsdp and use_distributed_optimizer and overlap_param_gather
+    uses_distributed_optimizer = use_distributed_optimizer or use_layer_wise_distributed_optimizer
+    return not use_megatron_fsdp and uses_distributed_optimizer and overlap_param_gather
 
 
 def enable_forward_pre_hook(model: list[DDP]) -> None:
@@ -1303,6 +1356,7 @@ def save_checkpoint_and_time(
         state.cfg.ddp.use_megatron_fsdp,
         state.cfg.optimizer.use_distributed_optimizer,
         state.cfg.ddp.overlap_param_gather,
+        state.cfg.optimizer.use_layer_wise_distributed_optimizer,
     )
     if should_force_param_sync:
         force_param_sync(model, optimizer=optimizer)

@@ -88,6 +88,7 @@ def _make_cfg(
     pipeline_model_parallel_size=1,
     virtual_pipeline_model_parallel_size=None,
     mtp_num_layers=0,
+    sequence_packing_scheduler=None,
 ):
     cfg = type("Cfg", (), {})()
     cfg.dataset = type(
@@ -107,6 +108,7 @@ def _make_cfg(
             "pipeline_model_parallel_size": pipeline_model_parallel_size,
             "virtual_pipeline_model_parallel_size": virtual_pipeline_model_parallel_size,
             "mtp_num_layers": mtp_num_layers,
+            "sequence_packing_scheduler": sequence_packing_scheduler,
         },
     )()
     return cfg
@@ -165,6 +167,39 @@ class _VpStageWrapper:
 
 class TestGetBatch:
     """Tests for the get_batch helper."""
+
+    def test_sequence_packing_scheduler_uses_mcore_thd_batch_path(self, monkeypatch):
+        packed_seq_params = Mock(spec=PackedSeqParams)
+        expected = (
+            torch.tensor([[1, 2]]),
+            torch.tensor([[2, 3]]),
+            torch.ones(1, 2),
+            None,
+            torch.tensor([[0, 1]]),
+            packed_seq_params,
+            torch.ones(1, 2, dtype=torch.bool),
+        )
+        mcore_get_batch = Mock(return_value=expected)
+        monkeypatch.setattr(
+            "megatron.core.datasets.data_schedule.get_batch_on_this_rank_for_sequence_packing",
+            mcore_get_batch,
+        )
+
+        cfg = _make_cfg(sequence_packing_scheduler="dp_balanced")
+        pg_collection = _MockPGCollection()
+        data_iterator = MagicMock()
+
+        result = get_batch(data_iterator, cfg, use_mtp=False, pg_collection=pg_collection)
+
+        assert result == expected
+        mcore_get_batch.assert_called_once_with(
+            data_iterator,
+            vpp_size=None,
+            mtp_on_this_rank=False,
+            vp_stage=None,
+            pg_collection=pg_collection,
+            config=cfg.model,
+        )
 
     @pytest.mark.parametrize("metadata_key", ["cu_seqlens_q", "cu_seqlens"])
     def test_packed_cp_partition_rejects_multiple_physical_thd_rows(self, metadata_key):
@@ -319,6 +354,7 @@ class TestGetBatch:
             attention_mask,
             position_ids,
             packed_seq_metadata,
+            padding_mask,
         ) = get_batch(
             _Iterator(batch),
             _make_cfg(enable_offline_packing=True, offline_packing_specs=object()),
@@ -332,6 +368,7 @@ class TestGetBatch:
         assert torch.equal(attention_mask, batch["attention_mask"])
         assert torch.equal(position_ids, batch["position_ids"])
         assert packed_seq_metadata is not None
+        assert padding_mask is None
         assert torch.equal(packed_seq_metadata["cu_seqlens_q"], cu_seqlens_q)
         assert torch.equal(packed_seq_metadata["cu_seqlens_kv"], cu_seqlens_kv)
         assert torch.equal(packed_seq_metadata["cu_seqlens_q_padded"], cu_seqlens_q_padded)
@@ -353,7 +390,7 @@ class TestGetBatch:
             pg_collection=_MockPGCollection(),
         )
 
-        assert result == (None, None, None, None, None, None)
+        assert result == (None, None, None, None, None, None, None)
         data_iterator.__next__.assert_not_called()
 
     def test_middle_pp_stage_without_mtp_keeps_fast_path_when_mtp_enabled(self, monkeypatch):
@@ -373,7 +410,7 @@ class TestGetBatch:
             pg_collection=_MockPGCollection(pp_rank=1, pp_size=4),
         )
 
-        assert result == (None, None, None, None, None, None)
+        assert result == (None, None, None, None, None, None, None)
         data_iterator.__next__.assert_not_called()
 
     def test_standalone_mtp_middle_pp_stage_loads_tokens_and_position_ids(self, monkeypatch):
@@ -408,6 +445,7 @@ class TestGetBatch:
             out_attention_mask,
             out_position_ids,
             packed_seq_metadata,
+            padding_mask,
         ) = get_batch(
             _Iterator(batch),
             _make_cfg(
@@ -425,6 +463,7 @@ class TestGetBatch:
         assert out_attention_mask is None
         assert torch.equal(out_position_ids, position_ids)
         assert packed_seq_metadata is None
+        assert padding_mask is None
 
     def test_standalone_mtp_loss_stage_skips_mtp_inputs(self, monkeypatch):
         """The loss-only final PP stage does not load token ids for standalone MTP."""
@@ -639,6 +678,7 @@ class TestGetBatch:
                 None,
                 position_ids,
                 packed_seq_metadata,
+                None,
             ),
         )
         get_packed_seq_params_mock = Mock(return_value=sentinel_packed_seq_params)
@@ -658,6 +698,60 @@ class TestGetBatch:
         get_packed_seq_params_mock.assert_called_once_with(packed_seq_metadata)
         assert "cu_seqlens" not in get_packed_seq_params_mock.call_args.args[0]
         assert "cu_seqlens_argmin" not in get_packed_seq_params_mock.call_args.args[0]
+
+    def test_forward_common_passes_mcore_sequence_packing_params_directly(self, monkeypatch):
+        """Scheduler-produced PackedSeqParams must bypass Bridge metadata conversion."""
+        tokens = torch.tensor([[1, 2, 3, 4]])
+        labels = torch.tensor([[2, 3, 4, 5]])
+        loss_mask = torch.ones(1, 4)
+        position_ids = torch.arange(4).unsqueeze(0)
+        packed_seq_params = PackedSeqParams(qkv_format="thd")
+        padding_mask = torch.tensor([[False, False, False, True]])
+        model = Mock(return_value=torch.tensor(1.0))
+        state = Mock()
+        state.cfg = _make_cfg(sequence_packing_scheduler="dp_balanced")
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": False,
+                "mtp_num_layers": 0,
+                "overlap_moe_expert_parallel_comm": False,
+            },
+        )()
+
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_batch",
+            lambda data_iterator, cfg, use_mtp, *, pg_collection, vp_stage=None: (
+                tokens,
+                labels,
+                loss_mask,
+                None,
+                position_ids,
+                packed_seq_params,
+                padding_mask,
+            ),
+        )
+        get_packed_seq_params_mock = Mock()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_packed_seq_params", get_packed_seq_params_mock)
+
+        output, returned_loss_mask = _forward_step_common(state, _Iterator({}), model)
+
+        assert torch.equal(output, torch.tensor(1.0))
+        assert torch.equal(returned_loss_mask, loss_mask)
+        model.assert_called_once_with(
+            input_ids=tokens,
+            position_ids=position_ids,
+            attention_mask=None,
+            labels=labels,
+            packed_seq_params=packed_seq_params,
+            padding_mask=padding_mask,
+        )
+        get_packed_seq_params_mock.assert_not_called()
 
 
 class _FakePackedPartitioner:

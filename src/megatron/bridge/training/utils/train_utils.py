@@ -28,6 +28,7 @@ import torch.nn as nn
 from megatron.core import tensor_parallel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
+from megatron.core.transformer.experimental_attention_variant.dsa import DSAIndexerLossLoggingHelper
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
@@ -1101,10 +1102,26 @@ def training_log(
             pg_collection=pg_collection,
         )
     if getattr(config.model, "mtp_num_layers", None) is not None:
-        mtp_loss_scale = 1 / get_num_microbatches()
+        # MCore already normalizes the reduced MTP metric by token count across
+        # ranks and microbatches.
+        mtp_loss_scale = 1.0
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
+        )
+
+    if (getattr(config.model, "dsa_indexer_loss_coeff", None) or 0) > 0:
+        indexer_loss_scale = 1 / get_num_microbatches()
+        indexer_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
+        DSAIndexerLossLoggingHelper.track_indexer_metrics(
+            loss_scale=indexer_loss_scale,
+            iteration=iteration,
+            writer=indexer_metric_writer,
+            wandb_writer=wandb_writer,
+            total_loss_dict=total_loss_dict,
+            num_layers=getattr(config.model, "num_layers", 0) + (getattr(config.model, "mtp_num_layers", None) or 0),
+            csa_compress_ratios=getattr(config.model, "csa_compress_ratios", None),
+            preserve_groups=getattr(config.model, "cuda_graph_impl", "none") != "none",
         )
 
     if iteration % logger_config.log_interval == 0:
