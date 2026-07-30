@@ -43,14 +43,14 @@ if [[ ${expect_executor_value} == true ]]; then
 fi
 
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    UV_ARGS=(--no-project --active --with nemo-run==0.10.0)
+    UV_ARGS=(--no-project --active)
 elif [[ ${executor} == slurm ]]; then
     # The Slurm head-node launcher only needs NeMo Run; model dependencies live
     # in the submitted container.
-    UV_ARGS=(--no-project --with nemo-run==0.10.0)
+    UV_ARGS=(--no-project --with nemo-run)
 else
     # Local execution runs the conversion worker in the project environment.
-    UV_ARGS=(--with nemo-run==0.10.0)
+    UV_ARGS=(--with nemo-run)
 fi
 
 exec uv run "${UV_ARGS[@]}" python "${SCRIPT_DIR}/setup_conversion.py" "$@"
