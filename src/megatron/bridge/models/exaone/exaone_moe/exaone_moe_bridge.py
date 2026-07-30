@@ -47,18 +47,28 @@ class ExaoneMoeBridge(MegatronModelBridge):
         rope_scaling = rope_scaling_factor is not None
 
         mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
-        if mlp_layer_types is None:
-            raise ValueError("EXAONE config must define mlp_layer_types.")
-        mlp_layer_types = list(mlp_layer_types)
-        if len(mlp_layer_types) != hf_config.num_hidden_layers:
+        if mlp_layer_types is not None:
+            mlp_layer_types = list(mlp_layer_types)
+            invalid_mlp_layer_types = set(mlp_layer_types) - {"dense", "sparse"}
+            if invalid_mlp_layer_types:
+                raise ValueError(f"Unsupported EXAONE MLP layer types: {sorted(invalid_mlp_layer_types)}.")
+            moe_layer_freq = [int(layer_type == "sparse") for layer_type in mlp_layer_types]
+        else:
+            is_moe_layer = getattr(hf_config, "is_moe_layer", None)
+            first_k_dense_replace = getattr(hf_config, "first_k_dense_replace", None)
+            if is_moe_layer is not None:
+                moe_layer_freq = [int(value) for value in is_moe_layer]
+            elif first_k_dense_replace is not None:
+                moe_layer_freq = [0] * first_k_dense_replace + [1] * (
+                    hf_config.num_hidden_layers - first_k_dense_replace
+                )
+            else:
+                raise ValueError("EXAONE config must define mlp_layer_types, is_moe_layer, or first_k_dense_replace.")
+        if len(moe_layer_freq) != hf_config.num_hidden_layers:
             raise ValueError(
-                "EXAONE mlp_layer_types must contain one entry per decoder layer: "
-                f"got {len(mlp_layer_types)}, expected {hf_config.num_hidden_layers}."
+                "EXAONE MoE layer schedule must contain one entry per decoder layer: "
+                f"got {len(moe_layer_freq)}, expected {hf_config.num_hidden_layers}."
             )
-        invalid_mlp_layer_types = set(mlp_layer_types) - {"dense", "sparse"}
-        if invalid_mlp_layer_types:
-            raise ValueError(f"Unsupported EXAONE MLP layer types: {sorted(invalid_mlp_layer_types)}.")
-        moe_layer_freq = [int(layer_type == "sparse") for layer_type in mlp_layer_types]
 
         layer_types = getattr(hf_config, "layer_types", None)
         sliding_windows = getattr(hf_config, "sliding_windows", None)

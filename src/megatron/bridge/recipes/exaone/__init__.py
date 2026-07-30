@@ -28,6 +28,9 @@ from megatron.bridge.recipes.exaone.exaone_moe import (
     exaone_moe_236b_a23b_peft_config,
     exaone_moe_236b_a23b_pretrain_config,
     exaone_moe_236b_a23b_sft_config,
+    exaone_moe_peft_config,
+    exaone_moe_pretrain_config,
+    exaone_moe_sft_config,
 )
 
 
@@ -43,4 +46,7 @@ __all__ = [
     "exaone_moe_236b_a23b_peft_config",
     "exaone_moe_236b_a23b_pretrain_config",
     "exaone_moe_236b_a23b_sft_config",
+    "exaone_moe_peft_config",
+    "exaone_moe_pretrain_config",
+    "exaone_moe_sft_config",
 ]

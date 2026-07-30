@@ -74,3 +74,27 @@ def test_k_exaone_2_0_public_aliases() -> None:
         recipe_module.exaone_moe_2_0_750b_a37_peft_config
         is h100_module.exaone_moe_2_0_750b_a37_peft_128gpu_h100_bf16_config
     )
+
+
+@pytest.mark.parametrize(
+    ("alias_name", "target_name"),
+    [
+        (
+            "exaone_moe_pretrain_config",
+            "exaone_moe_2_0_750b_a37_pretrain_512gpu_h100_bf16_config",
+        ),
+        (
+            "exaone_moe_sft_config",
+            "exaone_moe_2_0_750b_a37_sft_512gpu_h100_bf16_config",
+        ),
+        (
+            "exaone_moe_peft_config",
+            "exaone_moe_2_0_750b_a37_peft_128gpu_h100_bf16_config",
+        ),
+    ],
+)
+def test_k_exaone_2_0_short_aliases_resolve(alias_name: str, target_name: str) -> None:
+    recipes = importlib.import_module("megatron.bridge.recipes")
+    h100_module = importlib.import_module("megatron.bridge.recipes.exaone.h100.exaone_moe")
+
+    assert getattr(recipes, alias_name) is getattr(h100_module, target_name)

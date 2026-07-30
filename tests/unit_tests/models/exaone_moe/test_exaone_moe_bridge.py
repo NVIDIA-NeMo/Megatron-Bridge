@@ -121,11 +121,38 @@ class TestExaoneMoeBridge:
             _make_pretrained(
                 _make_config(
                     mlp_layer_types=["dense", "sparse", "sparse", "dense"],
+                    is_moe_layer=[True, False, True, False],
+                    first_k_dense_replace=2,
                 )
             )
         )
 
         assert provider.moe_layer_freq == [0, 1, 1, 0]
+
+    @pytest.mark.parametrize(
+        ("config_overrides", "expected"),
+        [
+            (
+                {
+                    "mlp_layer_types": None,
+                    "is_moe_layer": [False, True, False, True],
+                    "first_k_dense_replace": 2,
+                },
+                [0, 1, 0, 1],
+            ),
+            (
+                {
+                    "mlp_layer_types": None,
+                    "first_k_dense_replace": 2,
+                },
+                [0, 0, 1, 1],
+            ),
+        ],
+    )
+    def test_provider_bridge_supports_legacy_moe_layer_schedules(self, config_overrides, expected):
+        provider = ExaoneMoeBridge().provider_bridge(_make_pretrained(_make_config(**config_overrides)))
+
+        assert provider.moe_layer_freq == expected
 
     def test_provider_bridge_uses_sliding_window_fallback(self):
         provider = ExaoneMoeBridge().provider_bridge(
@@ -246,8 +273,8 @@ class TestExaoneMoeBridge:
     @pytest.mark.parametrize(
         ("config_overrides", "message"),
         [
-            ({"mlp_layer_types": None}, "mlp_layer_types"),
-            ({"mlp_layer_types": ["dense"]}, "mlp_layer_types"),
+            ({"mlp_layer_types": None}, "mlp_layer_types, is_moe_layer, or first_k_dense_replace"),
+            ({"mlp_layer_types": ["dense"]}, "MoE layer schedule"),
             ({"sliding_window": None}, "sliding_windows or sliding_window"),
             ({"sliding_windows": [128]}, "sliding_windows"),
             ({"swiglu_limits": [7.0]}, "swiglu_limits"),
