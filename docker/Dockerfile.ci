@@ -16,7 +16,10 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
+ARG APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH=True
+
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
+    if [ "$APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH" != "True" ]; then exit 0; fi; \
     TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
     patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
     python - <<'PY'

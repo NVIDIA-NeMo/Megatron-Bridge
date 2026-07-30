@@ -43,6 +43,7 @@ def test_cpu_local_import_defaults():
     assert args.device == "cpu"
     assert args.srun_args == []
     assert (args.tp, args.pp, args.ep, args.etp) == (1, 1, 1, 1)
+    assert args.low_memory_save is False
 
 
 def test_srun_args_are_repeatable():
@@ -203,6 +204,27 @@ def test_import_worker_args_forward_hf_revision():
     worker_args = module.conversion_worker_args(args)
 
     assert worker_args[worker_args.index("--hf-revision") + 1] == "0123456789abcdef"
+    assert "--low-memory-save" not in worker_args
+
+
+def test_import_worker_args_forward_low_memory_save():
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "import",
+            "--device",
+            "gpu",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/checkpoint",
+            "--low-memory-save",
+        ]
+    )
+
+    worker_args = module.conversion_worker_args(args)
+
+    assert "--low-memory-save" in worker_args
 
 
 def test_roundtrip_worker_parser_accepts_serialized_args():

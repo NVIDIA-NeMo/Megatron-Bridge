@@ -163,6 +163,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         self._sync_standard_provider_language_parallelism()
 
         # MIMO conversion does not import/export MTP routes yet.
+        # TODO: Remove this override once Megatron-LM's MegatronMIMO path supports MTP.
         if hasattr(standard_provider, "mtp_num_layers"):
             setattr(standard_provider, "mtp_num_layers", None)
 

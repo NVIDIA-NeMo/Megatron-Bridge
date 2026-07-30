@@ -99,6 +99,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Round-trip validation requires the GPU backend.")
     if args.command == "compare-hf" and args.device != "cpu":
         raise ValueError("Persisted Hugging Face checkpoint comparison requires the CPU backend.")
+    if args.command == "import" and args.device == "cpu" and args.low_memory_save:
+        raise ValueError("--low-memory-save is only supported by the GPU backend.")
 
     if args.device == "cpu":
         if args.nodes != 1:

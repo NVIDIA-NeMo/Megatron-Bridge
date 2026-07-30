@@ -137,6 +137,7 @@ docker build \
 | Argument | Description |
 |---|---|
 | `BASE_IMAGE` | Base container; set to the fw-base image when building the full stack |
+| `APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH` | Set to `True` to apply the torch.library finalizer patch; `False` for base images it does not apply against (e.g. Rubin) |
 | `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
 | `DEEPEP_COMMIT` | DeepEP git commit SHA |
 | `REINSTALL_NVSHMEM` | Set to `True` to reinstall nvshmem (`nvidia-nvshmem-cu13`) over the base image version; only applied when `INSTALL_DEEPEP=True` |
