@@ -120,6 +120,29 @@ def test_parser_forwards_model_checkpoint_prompt_and_engine_args():
     ]
 
 
+@pytest.mark.parametrize(
+    ("task_name", "expected_path"),
+    [
+        ("text-generation", "/opt/Megatron-Bridge/scripts/inference/text_generation.py"),
+        ("vlm-generation", "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_vlm.py"),
+        (
+            "model-comparison",
+            "/opt/Megatron-Bridge/examples/conversion/compare_hf_and_megatron/compare.py",
+        ),
+    ],
+)
+def test_parser_selects_repository_inference_task(task_name, expected_path):
+    module = _load_setup_inference_module()
+    scripts = []
+    module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
+
+    args, inference_args = module.parse_args(["--task", task_name, "--prompt", "hello"])
+    module._build_task(args.task, inference_args)
+
+    assert scripts[0].path == expected_path
+    assert scripts[0].args == ["--prompt", "hello"]
+
+
 def test_parser_consumes_repeatable_srun_args():
     module = _load_setup_inference_module()
 
@@ -274,7 +297,7 @@ def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
     module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
     sentinel = "benign; echo should-not-run"
 
-    module._build_task(["--prompt", sentinel])
+    module._build_task("text-generation", ["--prompt", sentinel])
 
     assert scripts[0].path == "/opt/Megatron-Bridge/scripts/inference/text_generation.py"
     assert scripts[0].entrypoint == "python"

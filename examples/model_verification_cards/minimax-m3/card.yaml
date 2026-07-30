@@ -7,23 +7,26 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. Model-level verification covers the complete MiniMax-M3
   vision-language checkpoint, including the language model, vision tower,
-  projector paths, and lightning-indexer state. The pinned 32-H100 GPU import,
-  GPU export, and one deterministic multimodal Megatron generation completed
-  their verification gates. All 59 exported safetensors shards are
-  byte-for-byte identical to the pinned source, and Transformers 5.12.1
-  natively reloads the export without loading errors. CPU import and export
-  remain unverified because the CPU-only attempt exited during CUDA-dependent
-  model initialization before producing a checkpoint. Full-VLM manual Hugging
+  projector paths, and lightning-indexer state. The pinned 32-H100 GPU import
+  and GPU export completed their verification gates. The previous deterministic
+  multimodal Megatron generation evidence is no longer claimed until the run is
+  reproduced on a current clean Bridge/runtime pairing and the literal
+  completion is checked. All 59 exported safetensors shards are byte-for-byte
+  identical to the pinned source, and Transformers 5.12.1 natively reloads the
+  export without loading errors. CPU import and export remain unverified
+  because the CPU-only attempt exited during CUDA-dependent model
+  initialization before producing a checkpoint. Full-VLM manual Hugging
   Face/Megatron forward correlation also remains unverified. Training entries
   cover only the language-model backbone and do not claim vision or projector
   training; post-SFT full-VLM export therefore remains unsupported.
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
+    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu]
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - manual_forward_pass
+      - inference
   training:
     H100:
       unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
@@ -133,33 +136,17 @@ items:
       absolute logit differences as non-gating diagnostics.
 
   inference:
-    status: verified
+    status: unverified
     precision: bf16
-    command: >
-      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
-      --task vlm-generation
-      --hf_model_path MiniMaxAI/MiniMax-M3
-      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
-      --megatron_model_path
-      work/model-verification/minimax-m3/imported-megatron/iter_0000000
-      --tp 1 --pp 1 --ep 32 --etp 1
-      --image_path docs/images/tp1.png
-      --prompt "Read the green caption near the top of the image. Answer immediately
-      with only the exact quoted term, including capitalization and hyphen; do not
-      explain or reason."
-      --max_new_tokens 64
-      --trust_remote_code
-    last_verified: 2026-07-23
-    expected_result: >-
-      One deterministic greedy generation on 32 H100s reloaded the persisted
-      full-VLM checkpoint at TP1/PP1/EP32/ETP1, processed docs/images/tp1.png,
-      generated 33 tokens under a 64-token maximum, reached EOS naturally, and
-      exited successfully. The exact completion, represented with JSON Unicode
-      escapes for the model tags and quotes, was
-      "\u003cmm:think\u003eThe user wants me to read the green caption near the
-      top of the image and respond with only the exact quoted
-      term.\u003c\u002fmm:think\u003e\u0022Pre-LayerNorm\u0022". The completion
-      contained the image-only OCR target "pre-layernorm".
+    command: null
+    last_verified: null
+    expected_result: >
+      No current deterministic full-VLM Megatron generation result is claimed.
+      Future verification must reload the pinned full-VLM checkpoint on a clean
+      Bridge commit and public base container, process docs/images/tp1.png,
+      run greedy decoding with an exact new-token limit, require the run to
+      stop on EOS or document exact-limit stopping, and check the literal
+      completion against the image-only OCR target "Pre-LayerNorm".
 
   pretrain:
     H100:
