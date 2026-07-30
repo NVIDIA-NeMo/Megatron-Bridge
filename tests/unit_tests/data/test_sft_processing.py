@@ -1,8 +1,22 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
-import pytest
+import base64
+import json
+from types import SimpleNamespace
 
+import pytest
+import sentencepiece
+from megatron.core.tokenizers.megatron_tokenizer import MegatronTokenizer
+
+from megatron.bridge.data.base import DatasetBuildContext
+from megatron.bridge.data.builders import direct_hf_sft as direct_hf_builder_module
+from megatron.bridge.data.builders.direct_hf_sft import (
+    DirectHFSFTDatasetBuilder,
+    DirectHFSFTDatasetConfig,
+    load_direct_hf_sft_processor,
+)
 from megatron.bridge.data.collators.sft import text_prompt_completion_collate_fn
+from megatron.bridge.data.conversation_processing import get_processor_tokenizer
 from megatron.bridge.data.datasets.gpt_sft import GPTSFTDataset
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.sft_processing import (
@@ -11,6 +25,7 @@ from megatron.bridge.data.sft_processing import (
     normalize_sft_example,
     tokenize_prompt_completion_example,
 )
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 from megatron.bridge.data.sources.hf_adapters import adapt_hf_dataset
 
 
@@ -35,6 +50,130 @@ class _Tokenizer:
 
     def apply_chat_template(self, *args, **kwargs):
         pytest.fail("prompt-completion preprocessing must not call apply_chat_template")
+
+
+class _MCoreHuggingFaceTokenizer:
+    library = "huggingface"
+
+    def __init__(self):
+        self._tokenizer = _Tokenizer()
+
+    def tokenize(self, text):
+        pytest.fail("prompt-completion preprocessing must preserve raw Hugging Face encoding")
+
+
+def _build_mcore_text_tokenizer(tmp_path, library):
+    if library == "sentencepiece":
+        corpus_path = tmp_path / "corpus.txt"
+        corpus_path.write_text("question answer\nQ A\nprompt completion\n", encoding="utf-8")
+        model_prefix = tmp_path / "tokenizer"
+        sentencepiece.SentencePieceTrainer.train(
+            input=str(corpus_path),
+            model_prefix=str(model_prefix),
+            vocab_size=32,
+            hard_vocab_limit=False,
+            pad_id=0,
+            bos_id=1,
+            eos_id=2,
+            unk_id=3,
+        )
+        return MegatronTokenizer.from_pretrained(
+            str(model_prefix.with_suffix(".model")),
+            {"library": "sentencepiece"},
+        )
+
+    vocab_path = tmp_path / "tokenizer.json"
+    vocab_path.write_text(
+        json.dumps(
+            [
+                {
+                    "rank": rank,
+                    "token_bytes": base64.b64encode(bytes([rank])).decode(),
+                    "token_str": bytes([rank]).decode("utf-8", errors="replace"),
+                }
+                for rank in range(256)
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return MegatronTokenizer.from_pretrained(
+        str(vocab_path),
+        {"library": "tiktoken"},
+        num_special_tokens=7,
+        vocab_size=263,
+        pattern="v1",
+    )
+
+
+def _build_direct_hf_prompt_dataset(monkeypatch, tokenizer, *, collate_impl=None):
+    monkeypatch.setattr(
+        direct_hf_builder_module,
+        "load_and_adapt_hf_dataset",
+        lambda _source: [{"prompt": "Q", "completion": "A"}],
+    )
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/paired"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        pad_to_multiple_of=1,
+        do_validation=False,
+        do_test=False,
+    )
+    train, _, _ = DirectHFSFTDatasetBuilder(config, collate_impl=collate_impl).build(
+        DatasetBuildContext(1, 0, 0, tokenizer=tokenizer)
+    )
+    assert train is not None
+    return train
+
+
+@pytest.mark.parametrize("library", ["sentencepiece", "tiktoken"])
+@pytest.mark.parametrize("runtime_path", ["gpt_sft", "direct_hf"])
+def test_prompt_completion_supports_mcore_text_tokenizers(tmp_path, monkeypatch, library, runtime_path):
+    tokenizer = _build_mcore_text_tokenizer(tmp_path, library)
+    if runtime_path == "direct_hf":
+        train = _build_direct_hf_prompt_dataset(monkeypatch, tokenizer)
+        batch = train.collate_fn([train[0]])
+    else:
+        batch = text_prompt_completion_collate_fn(
+            [{"prompt": "Q", "completion": "A"}],
+            tokenizer,
+            preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        )
+
+    expected_tokens = tokenizer.tokenize("Q") + tokenizer.tokenize(" A") + [tokenizer.eos_id]
+    assert batch["tokens"][0, : len(expected_tokens)].tolist() == expected_tokens
+
+
+@pytest.mark.parametrize("library", ["sentencepiece", "tiktoken"])
+def test_direct_hf_custom_collate_preserves_mcore_tokenizer_backend(tmp_path, monkeypatch, library):
+    tokenizer = _build_mcore_text_tokenizer(tmp_path, library)
+    observed = {}
+
+    def _collate(_examples, processor):
+        observed["processor"] = processor
+        return {}
+
+    train = _build_direct_hf_prompt_dataset(monkeypatch, tokenizer, collate_impl=_collate)
+
+    assert train.collate_fn([train[0]]) == {}
+    assert observed["processor"] is get_processor_tokenizer(tokenizer)
+
+
+def test_prompt_completion_preserves_mcore_huggingface_encoding():
+    tokenizer = _MCoreHuggingFaceTokenizer()
+    processor = load_direct_hf_sft_processor(
+        SimpleNamespace(hf_processor_path=None),
+        tokenizer,
+    )
+
+    tokenize_prompt_completion_example(
+        {"prompt": "Q", "completion": "A"},
+        tokenizer,
+        PromptCompletionSFTPreprocessingConfig(),
+    )
+
+    assert processor is tokenizer._tokenizer
+    assert tokenizer._tokenizer.encoded == ["Q", "A"]
 
 
 def test_chat_preprocessing_promotes_canonical_pair():
