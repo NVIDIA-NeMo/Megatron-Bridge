@@ -155,10 +155,11 @@ def _build_nemorun_script(
 ) -> run.Script:
     """Build the rank-local task and apply optional Kubeflow NUMA binding."""
     in_container_repo_root = Path(script_dir).parents[1]
+    base_pythonpath = custom_env_vars.get("PYTHONPATH", "$PYTHONPATH")
     task = run.Script(
         path=script_path,
         entrypoint="python",
-        env={"PYTHONPATH": f"{script_dir}:{in_container_repo_root / 'src'}:$PYTHONPATH"},
+        env={"PYTHONPATH": f"{script_dir}:{in_container_repo_root / 'src'}:{base_pythonpath}"},
         args=args,
     )
     if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):

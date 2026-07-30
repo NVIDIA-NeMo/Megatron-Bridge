@@ -23,7 +23,7 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipelin
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.comm_overlap import *
-from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.config import ConfigContainer, MockVarlenDatasetConfig, TokenizerConfig
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -510,10 +510,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
 
     # Create dataset configuration based on type
     if args.data == "mock":
-        if args.domain == "llm":
+        if args.domain == "llm" and not isinstance(recipe.dataset, MockVarlenDatasetConfig):
             # Override the dataset configuration for LLM models.
             # For vlm models, use the default dataset configuration in model recipe,
-            # becuase preprocess of dataset is different for each vlm model.
+            # because preprocessing is different for each VLM model. Preserve
+            # specialized mock datasets, such as the variable-length THD dataset.
             recipe.dataset = create_mock_dataset_config(
                 seq_length=recipe.model.seq_length,
                 num_workers=recipe.dataset.num_workers,

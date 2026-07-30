@@ -26,6 +26,7 @@ from argument_parser import parse_cli_args
 from utils.overrides import set_user_overrides
 
 from megatron.bridge.recipes.gpt.h100.vanilla_gpt import vanilla_gpt_pretrain_1gpu_h100_bf16_config
+from megatron.bridge.training.config import MockVarlenDatasetConfig
 
 
 def _parse_args(tmp_path: Path, *extra_args: str):
@@ -56,3 +57,22 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
 
     assert updated.model.seq_length == 128
     assert updated.dataset.seq_length == 128
+
+
+def test_default_mock_data_preserves_recipe_varlen_dataset(tmp_path):
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    varlen_config = '{"format": "thd", "min_seq_len": 126, "max_seq_len": 126}'
+    varlen_dataset = MockVarlenDatasetConfig(
+        seq_length=128,
+        varlen_mock_dataset_config_json=varlen_config,
+        num_workers=recipe.dataset.num_workers,
+        pin_memory=recipe.dataset.pin_memory,
+        persistent_workers=recipe.dataset.persistent_workers,
+    )
+    recipe.dataset = varlen_dataset
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path))
+
+    assert updated.dataset is varlen_dataset
+    assert isinstance(updated.dataset, MockVarlenDatasetConfig)
+    assert updated.dataset.varlen_mock_dataset_config_json == varlen_config
