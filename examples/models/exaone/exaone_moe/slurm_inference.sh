@@ -51,7 +51,7 @@ WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
 # -- Model / Parallelism -----------------------------------------------------
 HF_MODEL_ID="${HF_MODEL_ID:-LGAI-EXAONE/K-EXAONE-236B-A23B}"
 case "$HF_MODEL_ID" in
-    LGAI-EXAONE/K-EXAONE-2.0-750B-A37) NUM_EXPERTS="${NUM_EXPERTS:-256}" ;;
+    LGAI-EXAONE/K-EXAONE-2.0-750B-A37B) NUM_EXPERTS="${NUM_EXPERTS:-256}" ;;
     *) NUM_EXPERTS="${NUM_EXPERTS:-128}" ;;
 esac
 TP="${TP:-1}"

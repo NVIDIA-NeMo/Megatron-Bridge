@@ -26,7 +26,7 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 _HF_PATH = "LGAI-EXAONE/K-EXAONE-236B-A23B"
-_HF_PATH_2_0 = "LGAI-EXAONE/K-EXAONE-2.0-750B-A37"
+_HF_PATH_2_0 = "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B"
 _K_EXAONE_2_0_NUM_LAYERS = 78
 _K_EXAONE_2_0_MTP_NUM_LAYERS = 4
 

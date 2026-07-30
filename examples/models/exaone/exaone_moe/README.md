@@ -3,7 +3,7 @@
 Scripts for [K-EXAONE-236B-A23B](https://huggingface.co/LGAI-EXAONE/K-EXAONE-236B-A23B), a large BF16 sparse MoE language model from LG AI Research.
 
 The scripts also accept the planned K-EXAONE 2.0 checkpoint through
-`HF_MODEL_ID=LGAI-EXAONE/K-EXAONE-2.0-750B-A37`. They automatically validate
+`HF_MODEL_ID=LGAI-EXAONE/K-EXAONE-2.0-750B-A37B`. They automatically validate
 expert parallelism against its 256 routed experts. Set `NUM_EXPERTS` explicitly
 when using another compatible checkpoint.
 
@@ -32,7 +32,7 @@ Key constraints:
 
 ## K-EXAONE 2.0 Training Recipes
 
-The short model name selects `LGAI-EXAONE/K-EXAONE-2.0-750B-A37`:
+The short model name selects `LGAI-EXAONE/K-EXAONE-2.0-750B-A37B`:
 
 ```bash
 uv run python scripts/training/run_recipe.py --model exaone_moe --mode pretrain --dataset mock

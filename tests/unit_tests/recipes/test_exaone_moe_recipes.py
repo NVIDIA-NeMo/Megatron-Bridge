@@ -21,7 +21,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 
 pytestmark = pytest.mark.unit
 
-_HF_PATH = "LGAI-EXAONE/K-EXAONE-2.0-750B-A37"
+_HF_PATH = "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B"
 
 
 @pytest.fixture(autouse=True)
