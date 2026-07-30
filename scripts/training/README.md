@@ -254,13 +254,17 @@ target cluster. For example, a Pyxis/Enroot cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
+Pass target-specific sbatch settings through
+`--additional-slurm-params 'KEY=VALUE;OTHER_KEY=OTHER_VALUE'`. These values
+populate the executor's `additional_parameters` and are not forwarded to the
+training command or its srun step.
+
 Use `-lmc FREQ`, `--peak-mem-clk FREQ`, or `--peak_mem_clk FREQ` to lock the GPU memory clock to a fixed frequency in
 MHz once per node before training. VR200 benchmark recipes default to `4752`; other recipes leave the memory clock
 unlocked. Pass `-lmc -1` to disable the VR200 default explicitly.
 
-The compact launcher does not add rank-command prefixes or extra sbatch parameters such as `segment`. Configure those
-through the target cluster integration, or use `scripts/performance/setup_experiment.py` when its compatibility NUMA
-and segment policies are required.
+The compact launcher does not add rank-command prefixes or infer target-specific
+allocation and NUMA policies. Configure those explicitly for the target.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.

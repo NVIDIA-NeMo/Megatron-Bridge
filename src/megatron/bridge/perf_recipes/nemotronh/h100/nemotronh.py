@@ -175,6 +175,10 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3.5 Nano pretrain: 16× H100, BF16."""
     cfg = nemotron_3_nano_pretrain_16gpu_h100_bf16_config()
+    # Keep the benchmark workload aligned with the GB200 BF16 recipe. The
+    # hardware recipes may tune execution-only knobs such as microbatch size,
+    # recompute, and CUDA graph coverage independently.
+    cfg.train.global_batch_size = 512
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
