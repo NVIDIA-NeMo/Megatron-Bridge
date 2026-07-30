@@ -254,6 +254,8 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         It can be called multiple times safely.
         """
         _resolve_string_fields(self)
+        if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
+            self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)

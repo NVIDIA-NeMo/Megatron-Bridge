@@ -31,8 +31,13 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge
-from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
+from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+    _TRANSFORMERS_HAS_QWEN3_5,
+    _TRANSFORMERS_HAS_QWEN3_5_MOE,
+    Qwen35VLModelProvider,
+    Qwen35VLMoEModelProvider,
+)
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
@@ -74,20 +79,36 @@ def _patch_language_spec(monkeypatch, language_provider: Qwen35VLModelProvider) 
     )
 
 
-def _get_qwen35_conversion_spec():
+def _make_moe_language_provider() -> Qwen35VLMoEModelProvider:
+    """Small Qwen35VLMoEModelProvider; see ``_make_language_provider`` for the vision-config note."""
+    provider = Qwen35VLMoEModelProvider(
+        num_layers=4,
+        hidden_size=256,
+        num_attention_heads=8,
+        vocab_size=128,
+        num_moe_experts=8,
+        moe_router_topk=2,
+        moe_ffn_hidden_size=128,
+    )
+    provider.vision_config.deepstack_visual_indexes = []
+    return provider
+
+
+def _get_qwen35_conversion_spec(bridge_cls: type = Qwen35VLBridge):
     _reset_registry_for_tests()
-    return get_mimo_conversion_spec(Qwen35VLBridge)
+    return get_mimo_conversion_spec(bridge_cls)
 
 
 def _run_qwen35_conversion_spec(
     monkeypatch,
-    language_provider: Qwen35VLModelProvider,
+    language_provider: Qwen35VLModelProvider | Qwen35VLMoEModelProvider,
     parallelism_config: MegatronMIMOParallelismConfig,
+    bridge_cls: type = Qwen35VLBridge,
 ) -> tuple[MegatronMIMOProvider, list[MIMOComponent], Qwen35VLBridge, object]:
-    source_bridge = Qwen35VLBridge()
+    source_bridge = bridge_cls()
     monkeypatch.setattr(source_bridge, "provider_bridge", MagicMock(return_value=language_provider))
     hf_pretrained = object()
-    provider, routes = _get_qwen35_conversion_spec()(source_bridge, hf_pretrained, parallelism_config)
+    provider, routes = _get_qwen35_conversion_spec(bridge_cls)(source_bridge, hf_pretrained, parallelism_config)
     return provider, routes, source_bridge, hf_pretrained
 
 
@@ -164,3 +185,90 @@ class TestQwen35VLDefaultMIMOConversion:
         _, routes, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, parallelism_config)
 
         validate_route_table(routes, parallelism_config=parallelism_config)
+
+
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+class TestQwen35VLMoEDefaultMIMOConversion:
+    """MoE variants resolve the same default MIMO conversion spec as the dense bridge.
+
+    The MoE mapping registry uses the same Megatron-side ``language_model.`` /
+    ``vision_model.`` prefixes as the dense one, so declaring
+    ``mimo_source_prefixes`` is all that is needed to reach the default route
+    builder — no MoE-specific conversion spec.
+    """
+
+    def test_default_conversion_spec_available_for_moe_bridge(self):
+        conversion_spec = _get_qwen35_conversion_spec(Qwen35VLMoEBridge)
+
+        assert callable(conversion_spec)
+        assert supports_mimo_conversion(Qwen35VLMoEBridge)
+
+    def test_returns_provider_and_routes(self, monkeypatch):
+        language_provider = _make_moe_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        parallelism_config = _make_parallelism_config()
+
+        provider, routes, source_bridge, hf_pretrained = _run_qwen35_conversion_spec(
+            monkeypatch,
+            language_provider,
+            parallelism_config,
+            bridge_cls=Qwen35VLMoEBridge,
+        )
+
+        source_bridge.provider_bridge.assert_called_once_with(hf_pretrained)
+        assert isinstance(provider, MegatronMIMOProvider)
+        assert provider.language_model_spec.params["config"] is language_provider
+        assert provider.megatron_mimo_parallelism_config is parallelism_config
+        assert len(routes) == 2
+
+    def test_route_table_contents(self, monkeypatch):
+        """MoE routes must resolve to the same prefixes/targets as the dense bridge."""
+        language_provider = _make_moe_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        _, routes, _, _ = _run_qwen35_conversion_spec(
+            monkeypatch,
+            language_provider,
+            _make_parallelism_config(),
+            bridge_cls=Qwen35VLMoEBridge,
+        )
+
+        names = {route.name: route for route in routes}
+        assert set(names.keys()) == {"language", "images"}
+
+        assert names["language"].source_prefix == "language_model."
+        assert names["language"].target_module_path == "language_model"
+
+        assert names["images"].source_prefix == "vision_model."
+        assert names["images"].target_module_path == "modality_submodules.images.encoders.qwen_visual"
+
+    def test_forces_mtp_off(self, monkeypatch):
+        """MoE variants ship MTP layers; MIMO conversion does not import/export them."""
+        language_provider = _make_moe_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        language_provider.mtp_num_layers = 1
+
+        _run_qwen35_conversion_spec(
+            monkeypatch,
+            language_provider,
+            _make_parallelism_config(),
+            bridge_cls=Qwen35VLMoEBridge,
+        )
+
+        assert language_provider.mtp_num_layers is None
+
+    def test_route_table_validates_against_parallelism_config(self, monkeypatch):
+        parallelism_config = _make_parallelism_config()
+        language_provider = _make_moe_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        provider, routes, _, _ = _run_qwen35_conversion_spec(
+            monkeypatch,
+            language_provider,
+            parallelism_config,
+            bridge_cls=Qwen35VLMoEBridge,
+        )
+
+        validate_route_table(
+            routes,
+            parallelism_config=parallelism_config,
+            modality_submodules_spec=provider.modality_submodules_spec,
+        )

@@ -50,7 +50,7 @@ class LlamaBridge(MegatronModelBridge):
         """Convert HuggingFace Llama config to Megatron GPTModelProvider.
 
         Uses base class implementation for common conversion, then sets
-        Llama-specific config and enables RoPE scaling for Llama 3.1/3.2 models.
+        Llama-specific config and preserves supported RoPE scaling.
 
         Args:
             hf_pretrained: HuggingFace PreTrainedCausalLM containing the Llama config
@@ -71,12 +71,16 @@ class LlamaBridge(MegatronModelBridge):
         provider.apply_rope_fusion = True
         provider.rotary_percent = 1.0
 
-        # Enable RoPE scaling for Llama 3.1/3.2 models via Megatron Core's built-in support
+        # Preserve supported RoPE scaling via Megatron Core's built-in implementations.
         hf_config = hf_pretrained.config
         hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
-        if hf_rope_scaling is not None and hf_rope_scaling.get("rope_type") == "llama3":
-            provider.rope_scaling = True
-            provider.rope_scaling_factor = hf_rope_scaling.get("factor", 8.0)
+        if hf_rope_scaling:
+            rope_type = hf_rope_scaling.get("rope_type", hf_rope_scaling.get("type"))
+            if rope_type == "llama3":
+                provider.rope_scaling = True
+                provider.rope_scaling_factor = hf_rope_scaling.get("factor", 8.0)
+            elif rope_type == "linear":
+                provider.seq_len_interpolation_factor = hf_rope_scaling["factor"]
 
         return provider
 
@@ -84,7 +88,7 @@ class LlamaBridge(MegatronModelBridge):
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
         """Convert Megatron GPTModelProvider config to HuggingFace Llama config dict.
 
-        Uses base class implementation, then adds RoPE scaling for Llama 3.1/3.2.
+        Uses base class implementation, then adds supported Llama RoPE scaling.
 
         Args:
             provider: GPTModelProvider with Llama configuration
@@ -103,6 +107,11 @@ class LlamaBridge(MegatronModelBridge):
                 "low_freq_factor": 1.0,
                 "high_freq_factor": 4.0,
                 "original_max_position_embeddings": 8192,
+            }
+        elif provider.seq_len_interpolation_factor is not None:
+            hf_config["rope_scaling"] = {
+                "rope_type": "linear",
+                "factor": provider.seq_len_interpolation_factor,
             }
 
         return hf_config

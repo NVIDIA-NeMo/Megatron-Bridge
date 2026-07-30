@@ -40,8 +40,6 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 _deepseek_module = importlib.import_module("megatron.bridge.recipes.deepseek")
 _DEEPSEEK_RECIPE_NAMES = frozenset(
     {
-        "deepseek_v2_pretrain_config",
-        "deepseek_v2_lite_pretrain_config",
         "deepseek_v3_pretrain_config",
         "deepseek_v3_pretrain_config_32nodes",
         "deepseek_v4_flash_pretrain_config",
