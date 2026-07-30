@@ -1316,7 +1316,10 @@ def _value_contains_token_sequence(
         # so scan the text the payload renders as instead. Jinja emits an object through str()
         # standalone but repr() inside a container, so both forms must look clean to report
         # clean. This is a heuristic: a payload whose rendered text its own str()/repr() does
-        # not reveal (an array that abbreviates its printout) can still slip through.
+        # not reveal can still slip through — an array that abbreviates its printout, or an
+        # opaque container whose repr escapes the newline inside a marker, the same escaping
+        # that makes raw buffers above undetectable. Reaching either needs a template that
+        # iterates or attribute-accesses the payload rather than rendering it whole.
         try:
             if callable(value) or (type(value).__str__ is object.__str__ and type(value).__repr__ is object.__repr__):
                 # Templates expand callables by introspection (HF renders `tools` entries through

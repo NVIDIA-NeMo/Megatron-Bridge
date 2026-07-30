@@ -19,6 +19,7 @@ import torch
 
 from megatron.bridge.data.collators.sft import text_chat_collate_fn
 from megatron.bridge.data.conversation_processing import (
+    _MAX_SCANNED_REPR_CHARS,
     AssistantMaskBoundaryConfig,
     NormalizedVLMSample,
     _conversation_contains_boundary_tokens,
@@ -1022,7 +1023,7 @@ def test_chatml_boundary_scan_reports_a_marker_beside_other_media(sibling):
 
 @pytest.mark.parametrize(
     "media",
-    [_RaisingMedia(), _ReprMedia("x" * 65537), object(), _CallableMedia()],
+    [_RaisingMedia(), _ReprMedia("x" * (_MAX_SCANNED_REPR_CHARS + 1)), object(), _CallableMedia()],
     ids=["raising", "oversized", "opaque", "callable"],
 )
 def test_chatml_boundary_fails_closed_for_unrenderable_media_without_propagating(media):
@@ -1077,8 +1078,8 @@ def test_chatml_boundary_scan_is_unchanged_for_text_only_conversations():
         (_StrOnlyMedia(), False),
         (_StrOnlyMedia(_ASSISTANT_START), True),
         (_DivergentMedia(_ASSISTANT_START), True),
-        (_ReprMedia("x" * 65536), False),
-        (_ReprMedia("x" * 65537), None),
+        (_ReprMedia("x" * _MAX_SCANNED_REPR_CHARS), False),
+        (_ReprMedia("x" * (_MAX_SCANNED_REPR_CHARS + 1)), None),
         (_RaisingMedia(), None),
         (_CallableMedia(), None),
         (object(), None),
