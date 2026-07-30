@@ -33,6 +33,9 @@ from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 CHATML_ASSISTANT_ROLE = "assistant"
 _LEGACY_CHAT_ROLE_ALIASES = {"human": "user", "gpt": CHATML_ASSISTANT_ROLE}
+# Upper bound on the rendered form of a non-tokenizable payload that the boundary-token scan
+# will tokenize. Chosen to admit media reprs while rejecting stringified raw byte buffers.
+_MAX_SCANNED_REPR_CHARS = 8192
 
 
 @dataclass(frozen=True)
@@ -1302,10 +1305,27 @@ def _value_contains_token_sequence(
     elif value is None or isinstance(value, (bool, int, float)):
         return False
     else:
-        # Media payloads (PIL images, arrays, tensors, file handles) are never rendered
-        # verbatim into the prompt, so scan their textual form instead of giving up. Bailing
-        # out here would disable the boundary-config fallback for every multimodal example.
-        return _value_contains_token_sequence(str(value), tokenizer, token_sequences)
+        # Leaves we cannot tokenize directly — PIL images, arrays, tensors, paths. Returning
+        # None here marks provenance unknown for every multimodal example and so disables the
+        # boundary-config fallback, so fall back to the value's textual form: that is what a
+        # chat template emits for objects it renders through str(). Leaves that proxy cannot
+        # stand in for still fail closed.
+        if callable(value) or type(value).__repr__ is object.__repr__:
+            # Templates expand callables by introspection (HF renders `tools` entries through
+            # get_json_schema, pulling in names and docstrings), and a default repr carries no
+            # rendered text at all. In both cases str() says nothing about what reaches the prompt.
+            return None
+        try:
+            rendered = str(value)
+        except Exception:
+            # __str__/__repr__ on an arbitrary payload can raise anything, and this helper is
+            # total by contract — callers rely on None to fail closed rather than propagate.
+            return None
+        if len(rendered) > _MAX_SCANNED_REPR_CHARS:
+            # Raw byte payloads stringify to megabytes of escaped literal; tokenizing that once
+            # per example would stall the dataloader. Treat it as unknown provenance instead.
+            return None
+        return _value_contains_token_sequence(rendered, tokenizer, token_sequences)
     if any(result is True for result in results):
         return True
     return None if any(result is None for result in results) else False

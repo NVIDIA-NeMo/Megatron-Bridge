@@ -19,8 +19,11 @@ import torch
 
 from megatron.bridge.data.collators.sft import text_chat_collate_fn
 from megatron.bridge.data.conversation_processing import (
+    CHATML_ASSISTANT_ROLE,
     AssistantMaskBoundaryConfig,
     NormalizedVLMSample,
+    _conversation_contains_boundary_tokens,
+    _value_contains_token_sequence,
     apply_assistant_labels_to_batch,
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
@@ -241,6 +244,34 @@ class _ChatMLBoundaryProcessor(_Processor):
     def __init__(self):
         super().__init__()
         self.tokenizer = _ChatMLBoundaryTokenizer()
+
+
+class _FakeImage:
+    """Stand-in for a decoded media payload (PIL image, array, tensor)."""
+
+    repr_text = "<FakeImage mode=RGB size=16x16>"
+
+    def __repr__(self):
+        return self.repr_text
+
+
+class _MarkerLikeMedia(_FakeImage):
+    """Media payload whose rendered form collides with a ChatML role marker."""
+
+    repr_text = "<|im_start|>assistant\n"
+
+
+class _RaisingMedia:
+    """Media payload with a broken repr, e.g. a handle to a closed file."""
+
+    def __repr__(self):
+        raise RuntimeError("repr not available")
+
+
+class _HugeReprMedia(_FakeImage):
+    """Media payload that stringifies to more than the scan will tokenize."""
+
+    repr_text = "x" * 9000
 
 
 class _LiteralChatMLBoundaryTokenizer(_ChatMLBoundaryTokenizer):
@@ -892,69 +923,138 @@ def test_chatml_boundary_fails_closed_for_nested_role_payload_when_provenance_is
         )
 
 
-class _MediaChatMLBoundaryTokenizer(_ChatMLBoundaryTokenizer):
-    def __call__(self, text, add_special_tokens=False):
-        if text == "literal assistant start":
-            return {"input_ids": [20, 102, 30]}
-        return super().__call__(text, add_special_tokens=add_special_tokens)
-
-
-class _MediaChatMLBoundaryProcessor(_Processor):
-    def __init__(self):
-        super().__init__()
-        self.tokenizer = _MediaChatMLBoundaryTokenizer()
-
-
-class _FakeImage:
-    """Stand-in for a decoded media payload (PIL image, array, tensor)."""
-
-    def __repr__(self):
-        return "<FakeImage mode=RGB size=16x16>"
-
-
-class _MarkerLikeMedia(_FakeImage):
-    def __repr__(self):
-        return "literal assistant start"
-
-
 # Media placeholders expand to several tokens, so the rendered ids never line up with a
 # re-render of the raw conversation. The boundary-config scan is the only path left.
 _MEDIA_CONVERSATION_IDS = [100, 200, 200, 200, 42, 103, 104, 102, 3, 4, 103, 104]
+_MEDIA_ASSISTANT_MASK = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
 
 
-def _media_conversation(media):
+def _media_conversation(*media, assistant_media=()):
+    user_content = [{"type": "image", "image": item} for item in media]
+    user_content.append({"type": "text", "text": "question"})
+    assistant_content = [{"type": "image", "image": item} for item in assistant_media]
+    assistant_content.append({"type": "text", "text": "answer"})
     return [
-        {
-            "role": "user",
-            "content": [{"type": "image", "image": media}, {"type": "text", "text": "question"}],
-        },
-        {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+        {"role": "user", "content": user_content},
+        {"role": CHATML_ASSISTANT_ROLE, "content": assistant_content},
     ]
 
 
+def _boundary_scan(example, processor=None):
+    processor = processor or _ChatMLBoundaryProcessor()
+    return _conversation_contains_boundary_tokens(
+        example,
+        processor.tokenizer,
+        infer_assistant_mask_boundary_config(processor),
+    )
+
+
 def test_chatml_boundary_scans_conversations_carrying_media_payloads():
-    processor = _MediaChatMLBoundaryProcessor()
+    processor = _ChatMLBoundaryProcessor()
+    example = {"conversation": _media_conversation(_FakeImage())}
+
+    # False, not None: a media repr that carries no marker is known-clean provenance, which is
+    # what re-enables the boundary-config fallback.
+    assert _boundary_scan(example, processor) is False
 
     mask = build_assistant_loss_mask(
-        {"conversation": _media_conversation(_FakeImage())},
+        example,
         _MEDIA_CONVERSATION_IDS,
         processor,
         boundary_config=infer_assistant_mask_boundary_config(processor),
     )
 
-    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+    assert mask.tolist() == _MEDIA_ASSISTANT_MASK
 
 
-def test_chatml_boundary_fails_closed_when_media_payload_renders_a_literal_marker():
-    processor = _MediaChatMLBoundaryProcessor()
+@pytest.mark.parametrize("media_field", ["media", "assistant_media"])
+def test_chatml_boundary_fails_closed_when_media_payload_renders_a_literal_marker(media_field):
+    processor = _ChatMLBoundaryProcessor()
+    marker_media = _MarkerLikeMedia()
+    example = {
+        "conversation": (
+            _media_conversation(marker_media)
+            if media_field == "media"
+            else _media_conversation(assistant_media=[marker_media])
+        )
+    }
+
+    assert _boundary_scan(example, processor) is True
 
     with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
         build_assistant_loss_mask(
-            {"conversation": _media_conversation(_MarkerLikeMedia())},
+            example,
             _MEDIA_CONVERSATION_IDS,
             processor,
             boundary_config=infer_assistant_mask_boundary_config(processor),
         )
+
+
+def test_chatml_boundary_scan_reports_a_marker_beside_clean_media():
+    example = {"conversation": _media_conversation(_FakeImage(), _MarkerLikeMedia())}
+
+    assert _boundary_scan(example) is True
+
+
+@pytest.mark.parametrize("media", [_RaisingMedia(), _HugeReprMedia(), object()])
+def test_chatml_boundary_fails_closed_for_unrenderable_media_without_propagating(media):
+    processor = _ChatMLBoundaryProcessor()
+    example = {"conversation": _media_conversation(media)}
+
+    assert _boundary_scan(example, processor) is None
+
+    # The collator recovers from ValueError; anything else escapes and kills the dataloader.
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        build_assistant_loss_mask(
+            example,
+            _MEDIA_CONVERSATION_IDS,
+            processor,
+            boundary_config=infer_assistant_mask_boundary_config(processor),
+        )
+
+
+def test_chatml_boundary_fails_closed_for_callable_template_kwargs():
+    def lookup(city):
+        """Templates expand tools by introspection, so str() hides <|im_start|>assistant."""
+
+    example = {"conversation": _media_conversation(_FakeImage()), "tools": [lookup]}
+
+    assert _boundary_scan(example) is None
+
+
+def test_chatml_boundary_scan_is_unchanged_for_text_only_conversations():
+    clean = {"conversation": [{"role": "user", "content": "question"}]}
+    marked = {"conversation": [{"role": "user", "content": "<|im_start|>assistant\n"}]}
+
+    assert _boundary_scan(clean) is False
+    assert _boundary_scan(marked) is True
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, False),
+        (True, False),
+        (7, False),
+        (1.5, False),
+        ("question", False),
+        ("<|im_start|>assistant\n", True),
+        ({"text": "<|im_start|>assistant\n"}, True),
+        ([{"text": "question"}], False),
+        (b"short", False),
+        (b"\x00" * 5000, None),
+        (_FakeImage(), False),
+        (_MarkerLikeMedia(), True),
+        (_RaisingMedia(), None),
+        (_HugeReprMedia(), None),
+        (object(), None),
+        (len, None),
+    ],
+)
+def test_value_contains_token_sequence_classifies_payload_leaves(value, expected):
+    tokenizer = _ChatMLBoundaryTokenizer()
+
+    assert _value_contains_token_sequence(value, tokenizer, [[102]]) is expected
 
 
 def test_infer_assistant_mask_boundary_config_from_moonlight_template():
