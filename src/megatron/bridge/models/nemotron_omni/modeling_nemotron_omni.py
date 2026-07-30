@@ -292,7 +292,19 @@ class NemotronOmniModel(MegatronModule):
 
         media_mask = input_ids == media_token_id
         if attention_mask is not None:
-            media_mask = media_mask & attention_mask.bool()
+            if attention_mask.ndim == input_ids.ndim:
+                if attention_mask.shape != input_ids.shape:
+                    raise ValueError(
+                        "A token-validity attention mask must match input_ids; "
+                        f"got {tuple(attention_mask.shape)} and {tuple(input_ids.shape)}."
+                    )
+                media_mask = media_mask & attention_mask.bool()
+            elif attention_mask.ndim != 4:
+                raise ValueError(
+                    "Nemotron Omni expects either a token-validity mask with the "
+                    "same rank as input_ids or a four-dimensional decoder mask; "
+                    f"got attention_mask.ndim={attention_mask.ndim}."
+                )
 
         expected_features = int(media_mask.sum().item())
         actual_features = media_embeddings.shape[0]
