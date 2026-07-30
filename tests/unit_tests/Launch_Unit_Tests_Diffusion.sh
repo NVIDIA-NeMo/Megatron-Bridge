@@ -25,6 +25,10 @@ if [ -f "/opt/Megatron-Bridge/.mcore_commit_sha" ]; then
 fi
 echo ""
 
+# The 'diffusion' codecs (imageio/imageio-ffmpeg/av) are excluded from the shipped image;
+# install them so the WAN video-caching unit test runs instead of skips.
+bash /opt/Megatron-Bridge/scripts/install_diffusion_deps.sh
+
 CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
     -o log_cli=true \
     -o log_cli_level=INFO \
