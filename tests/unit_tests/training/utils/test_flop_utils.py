@@ -21,7 +21,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.utils.flop_utils import (
+    _lora_seq_stats_cache,
+    _packed_data_exists,
     accumulate_flops_metadata,
     num_floating_point_operations,
     resolve_global_flops_seqlen_stats,
@@ -105,6 +108,11 @@ class MockModelConfig:
     linear_value_head_dim: int = 128
     linear_num_key_heads: int = 16
     linear_num_value_heads: int = 48
+    # Kimi K3 KDA (Kimi Delta Attention) settings
+    kimi_kda_layers: tuple[int, ...] = ()
+    kimi_linear_num_heads: int = 96
+    kimi_linear_head_dim: int = 128
+    kimi_linear_conv_kernel_size: int = 4
     # Optional ViT vision config (for VLM FLOPS tests)
     vision_config: object | None = None
 
@@ -2115,6 +2123,159 @@ class TestMLAFlops:
 
 
 @pytest.mark.unit
+class TestKimiK3KdaFlops:
+    """Tests for Kimi K3's KDA (Kimi Delta Attention) hybrid attention schedule.
+
+    The K3 provider subclasses ``MLAModelProvider``, so the MLA branch costs every
+    layer as full multi-latent attention. Layers listed in ``kimi_kda_layers`` are
+    linear-attention blocks and must be re-costed with the KDA per-layer formula.
+    """
+
+    @staticmethod
+    def _kda_per_layer(
+        hidden: int,
+        num_kda_heads: int,
+        head_dim: int,
+        conv_kernel_dim: int,
+    ) -> float:
+        """Mirror the KDA per-layer formula in flop_utils.py — regression coverage."""
+        projection_size = num_kda_heads * head_dim
+        return (
+            3
+            * 2
+            * (
+                hidden * projection_size * 5
+                + hidden * num_kda_heads
+                + hidden * head_dim
+                + head_dim * projection_size
+                + conv_kernel_dim * 3 * projection_size
+                + num_kda_heads * (head_dim**2) * 4
+            )
+        )
+
+    def _base_kwargs(self, **overrides):
+        """Small K3-shaped MLA config (dense, no MoE/MTP) so the math stays checkable."""
+        defaults = dict(
+            num_layers=4,
+            hidden_size=256,
+            seq_length=128,
+            ffn_hidden_size=512,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=32,
+            vocab_size=32000,  # already divisible by 128 → padded == vocab
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,  # ffn_expansion_factor = 2, simpler MLP math
+            multi_latent_attention=True,
+            q_lora_rank=64,
+            kv_lora_rank=32,
+            qk_head_dim=32,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=32,
+            kimi_linear_num_heads=8,
+            kimi_linear_head_dim=32,
+            kimi_linear_conv_kernel_size=4,
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_kda_layers_change_flops(self):
+        """Marking layers as KDA must not leave the pure-MLA total unchanged."""
+        mla_only = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs())), batch_size=1
+        )
+        hybrid = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(kimi_kda_layers=(1, 2, 3)))),
+            batch_size=1,
+        )
+        assert hybrid != mla_only
+        assert hybrid > 0
+
+    def test_kda_exact_self_attn_term(self):
+        """Hybrid MLA/KDA self_attn_term is the exact per-layer weighted sum."""
+        batch_size = 1
+        kw = self._base_kwargs(kimi_kda_layers=(1, 3))
+        cfg = MockConfigContainer(model=MockModelConfig(**kw))
+        actual = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        mla_per_layer = (
+            3
+            * 2
+            * TestMLAFlops._mla_inner(
+                hidden=kw["hidden_size"],
+                n_heads=kw["num_attention_heads"],
+                seq_length=kw["seq_length"],
+                q_lora_rank=kw["q_lora_rank"],
+                kv_lora_rank=kw["kv_lora_rank"],
+                qk_head_dim=kw["qk_head_dim"],
+                qk_pos_emb_head_dim=kw["qk_pos_emb_head_dim"],
+                v_head_dim=kw["v_head_dim"],
+            )
+        )
+        kda_per_layer = self._kda_per_layer(
+            hidden=kw["hidden_size"],
+            num_kda_heads=kw["kimi_linear_num_heads"],
+            head_dim=kw["kimi_linear_head_dim"],
+            conv_kernel_dim=kw["kimi_linear_conv_kernel_size"],
+        )
+        # 4 layers total, 2 of them KDA.
+        expected_self_attn = kda_per_layer * 2 + mla_per_layer * 2
+        expected_mlp = 3 * 2 * kw["hidden_size"] * (kw["ffn_hidden_size"] * 2) * kw["num_layers"]
+        expected_logit = 3 * 2 * kw["hidden_size"] * kw["vocab_size"] * 1
+        expected_total = batch_size * kw["seq_length"] * (expected_mlp + expected_self_attn + expected_logit)
+
+        assert actual == pytest.approx(expected_total, rel=1e-12)
+
+    def test_more_kda_layers_lowers_flops_at_long_context(self):
+        """KDA has no quadratic term, so it undercuts MLA once the sequence is long."""
+        # The crossover is sequence-dependent: KDA's projections are fixed cost while
+        # MLA's core-attention term grows with seq_length, so this only holds at long context.
+        few = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=8192, kimi_kda_layers=(1,)))),
+            batch_size=1,
+        )
+        many = num_floating_point_operations(
+            MockConfigContainer(
+                model=MockModelConfig(**self._base_kwargs(seq_length=8192, kimi_kda_layers=(1, 2, 3)))
+            ),
+            batch_size=1,
+        )
+        assert many < few
+
+    def test_kda_is_linear_in_sequence_length(self):
+        """An all-KDA schedule drops the quadratic core-attention term entirely."""
+        all_kda = dict(kimi_kda_layers=(1, 2, 3, 4))
+        short = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=128, **all_kda))), batch_size=1
+        )
+        long = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=256, **all_kda))), batch_size=1
+        )
+        assert long == pytest.approx(2 * short, rel=1e-12)
+
+    def test_mtp_layers_follow_final_decoder_layer_type(self):
+        """MTP reuses the last decoder layer spec, so its attention type must match."""
+        kw_kda_last = self._base_kwargs(kimi_kda_layers=(1, 4), mtp_num_layers=1)
+        kw_mla_last = self._base_kwargs(kimi_kda_layers=(1, 2), mtp_num_layers=1)
+        kda_last = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_kda_last)), batch_size=1
+        )
+        mla_last = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_mla_last)), batch_size=1
+        )
+        # Same decoder KDA count (2), but the MTP layer inherits a different type.
+        assert kda_last != mla_last
+
+    @pytest.mark.parametrize("bad_layers", [(0, 1), (1, 5), (-1,)])
+    def test_out_of_range_kda_layers_raise(self, bad_layers):
+        """`kimi_kda_layers` holds 1-indexed layer numbers; out-of-range entries fail loudly."""
+        cfg = MockConfigContainer(model=MockModelConfig(**self._base_kwargs(kimi_kda_layers=bad_layers)))
+        with pytest.raises(ValueError, match="kimi_kda_layers contains layer numbers outside"):
+            num_floating_point_operations(cfg, batch_size=1)
+
+
+@pytest.mark.unit
 class TestMLAWithMoE:
     """Sanity tests for MLA combined with MoE (DeepSeek-V3 architecture shape)."""
 
@@ -2601,3 +2762,168 @@ class TestResolveGlobalFlopsSeqlenStats:
 
         all_reduce.assert_called_once()
         assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)
+
+
+@pytest.mark.unit
+class TestPackedDataExists:
+    """Unit tests for ``_packed_data_exists`` (parquet spec + npy fallback gate).
+
+    The helper decides whether the LoRA-aware FLOP branch fires. It must accept
+    the same specs the packed-parquet loader does -- a single file, a glob, or a
+    directory -- via ``resolve_packed_parquet_paths`` instead of a bare
+    ``Path.exists()`` (which silently disabled LoRA accounting for glob/dir specs),
+    while still recognising the deprecated single ``.npy`` file.
+    """
+
+    def test_none_or_empty_is_false(self):
+        assert _packed_data_exists(None) is False
+        assert _packed_data_exists("") is False
+
+    def test_parquet_single_file(self, tmp_path):
+        f = tmp_path / "training_4096.idx.parquet"
+        f.touch()
+        assert _packed_data_exists(str(f)) is True
+
+    def test_parquet_glob_spec(self, tmp_path):
+        (tmp_path / "shard_000.idx.parquet").touch()
+        (tmp_path / "shard_001.idx.parquet").touch()
+        assert _packed_data_exists(str(tmp_path / "shard_*.idx.parquet")) is True
+
+    def test_parquet_directory_spec(self, tmp_path):
+        (tmp_path / "shard_000.idx.parquet").touch()
+        assert _packed_data_exists(str(tmp_path)) is True
+
+    def test_missing_parquet_file_is_false(self, tmp_path):
+        # Nonexistent parquet spec: the resolver raises, and the helper must
+        # swallow it and report "not present" rather than propagate.
+        assert _packed_data_exists(str(tmp_path / "missing.idx.parquet")) is False
+
+    def test_legacy_npy_file(self, tmp_path):
+        f = tmp_path / "training_4096.npy"
+        f.touch()
+        assert _packed_data_exists(str(f)) is True
+
+    def test_missing_npy_file_is_false(self, tmp_path):
+        assert _packed_data_exists(str(tmp_path / "training_4096.npy")) is False
+
+
+@pytest.mark.unit
+class TestLoraSquadPackedFlopBranch:
+    """The LoRA + SQuAD + Llama-3-70B packed-dataset FLOP branch.
+
+    Exercises the packed-data-path discovery (prefer ``*.idx.parquet``, fall back
+    to the deprecated ``*.npy``) and confirms that when a packed dataset is found
+    the LoRA-aware (~4ND) branch fires -- i.e. ``calculate_avg_seqlen`` is consulted
+    -- instead of falling through to the full-model (6ND) accounting.
+    ``calculate_avg_seqlen`` itself is patched (its parquet/npy loading is covered
+    directly in tests/unit_tests/data/packing/test_algorithms.py); here we only
+    validate the branch selection and packed-path resolution.
+    """
+
+    @staticmethod
+    def _cfg(dataset_root, seq_len=512, packed_train_data_path=None):
+        model = MockModelConfig(
+            num_layers=2,
+            hidden_size=128,
+            seq_length=seq_len,
+            ffn_hidden_size=256,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=16,
+            vocab_size=1024,
+            make_vocab_size_divisible_by=128,
+            gated_linear_unit=False,
+        )
+        model.hf_model_id = "meta-llama/Meta-Llama-3-70B"
+        cfg = MockConfigContainer(model=model)
+        cfg.peft = LoRA()
+        cfg.dataset = SimpleNamespace(
+            dataset_name="squad",
+            enable_offline_packing=True,
+            offline_packing_specs=SimpleNamespace(
+                packed_train_data_path=packed_train_data_path,
+                packed_sequence_size=seq_len,
+            ),
+            dataset_root=str(dataset_root),
+        )
+        cfg.train = SimpleNamespace(global_batch_size=1)
+        return cfg
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        _lora_seq_stats_cache.clear()
+        yield
+        _lora_seq_stats_cache.clear()
+
+    def test_prefers_parquet_and_takes_lora_branch(self, tmp_path):
+        # dataset_root discovery: a packed parquet shard exists, so the branch fires.
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.idx.parquet").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            flops = num_floating_point_operations(cfg, batch_size=1)
+
+        mock_calc.assert_called_once()
+        # The resolved path must be the parquet shard, not the npy.
+        assert mock_calc.call_args.args[0].endswith("training_512.idx.parquet")
+        assert flops > 0
+
+    def test_falls_back_to_npy_when_no_parquet(self, tmp_path):
+        # No parquet present -> discovery must fall back to the deprecated .npy.
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.npy").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            flops = num_floating_point_operations(cfg, batch_size=1)
+
+        mock_calc.assert_called_once()
+        assert mock_calc.call_args.args[0].endswith("training_512.npy")
+        assert flops > 0
+
+    def test_lora_branch_differs_from_full_model_accounting(self, tmp_path):
+        # The LoRA-aware (~4ND) result must diverge from the 6ND full-model path,
+        # which is the whole point of the fix (parquet was being missed, silently
+        # falling through to 6ND).
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.idx.parquet").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ):
+            lora_flops = num_floating_point_operations(cfg, batch_size=1)
+
+        # Same model config but without the LoRA peft -> full-model accounting.
+        full_cfg = MockConfigContainer(model=cfg.model)
+        full_flops = num_floating_point_operations(full_cfg, batch_size=1)
+        assert lora_flops != full_flops
+
+    def test_result_is_cached_across_calls(self, tmp_path):
+        # calculate_avg_seqlen is expensive; repeated calls with the same packed
+        # path/gbs/seq_len must hit the module cache and not recompute.
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.idx.parquet").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            first = num_floating_point_operations(cfg, batch_size=1)
+            second = num_floating_point_operations(cfg, batch_size=1)
+
+        mock_calc.assert_called_once()
+        assert first == second

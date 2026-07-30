@@ -30,6 +30,7 @@ from megatron.bridge.data.conversation_processing import get_processor_tokenizer
 from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
+    PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
     is_text_only_prompt_completion_example,
     normalize_sft_examples,
@@ -270,6 +271,13 @@ class DirectHFSFTDatasetBuilder:
         prepare_hf_dataset_sources(requested_sources)
 
         processor = load_direct_hf_sft_processor(self.config, context.tokenizer)
+        if (
+            self.config.hf_processor_path is None
+            and self._collate_impl is None
+            and isinstance(self.config.preprocessing, PromptCompletionSFTPreprocessingConfig)
+            and getattr(context.tokenizer, "library", None) in {"sentencepiece", "tiktoken"}
+        ):
+            processor = normalize_direct_hf_sft_processor(context.tokenizer)
         train_dataset = build_direct_hf_sft_split(
             self.config,
             self.config.source,

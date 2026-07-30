@@ -129,18 +129,29 @@ def _apply_training_argparse_overrides(config, args):
         # Tokenizer configuration
         from megatron.bridge.training.config import TokenizerConfig
 
+        use_tokenizer_vocab_size = config.tokenizer.use_tokenizer_vocab_size
         if args.tokenizer_type == "NullTokenizer":
-            config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
+            config.tokenizer = TokenizerConfig(
+                tokenizer_type="NullTokenizer",
+                vocab_size=args.vocab_size,
+                use_tokenizer_vocab_size=use_tokenizer_vocab_size,
+            )
         elif args.tokenizer_type == "HuggingFaceTokenizer":
             if not args.tokenizer_model:
                 raise ValueError("--tokenizer-model is required when using HuggingFaceTokenizer")
             tokenizer_model = args.tokenizer_model
-            config.tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
+            config.tokenizer = TokenizerConfig(
+                tokenizer_type="HuggingFaceTokenizer",
+                tokenizer_model=tokenizer_model,
+                use_tokenizer_vocab_size=use_tokenizer_vocab_size,
+            )
         elif args.tokenizer_type == "SentencePieceTokenizer":
             if not args.tokenizer_model:
                 raise ValueError("--tokenizer-model is required for SentencePieceTokenizer")
             config.tokenizer = TokenizerConfig(
-                tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
+                tokenizer_type="SentencePieceTokenizer",
+                tokenizer_model=args.tokenizer_model,
+                use_tokenizer_vocab_size=use_tokenizer_vocab_size,
             )
     else:
         # Diffusion recipes (FLUX, WAN) keep their own dataset object (Wan/FluxDatasetConfig).

@@ -87,26 +87,28 @@ def nemotron_nano_v2_vl_collate_fn(
         video_nframe_max = -1
 
         for example in examples:
-            video_path = example["conversation"][0]["content"][0]["path"]
-            image_urls, metadata = maybe_path_or_url_to_data_urls(
-                video_path,
-                fps=max(0, int(video_fps)),
-                nframe=max(0, int(video_nframe)),
-                nframe_max=int(video_nframe_max),
-            )
-            frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
+            video_part = example["conversation"][0]["content"][0]
+            video_payload = video_part.get("video")
+            metadata = None
+            if video_payload is not None and not isinstance(video_payload, str):
+                frames.append(video_payload)
+            else:
+                video_path = video_payload if isinstance(video_payload, str) else video_part["path"]
+                image_urls, metadata = maybe_path_or_url_to_data_urls(
+                    video_path,
+                    fps=max(0, int(video_fps)),
+                    nframe=max(0, int(video_nframe)),
+                    nframe_max=int(video_nframe_max),
+                )
+                frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
 
         prompt = processor.apply_chat_template(
             [example["conversation"] for example in examples],
             tokenize=False,
             **shared_chat_template_kwargs_from_examples(examples),
         )
-        batch = processor(
-            text=prompt,
-            videos=frames,
-            videos_kwargs={"video_metadata": metadata},
-            return_tensors="pt",
-        )
+        processor_kwargs = {"videos_kwargs": {"video_metadata": metadata}} if metadata is not None else {}
+        batch = processor(text=prompt, videos=frames, return_tensors="pt", **processor_kwargs)
     else:
         # Ensure a pad_token is set so padding can produce uniform-length tensors.
         if processor.tokenizer.pad_token is None:

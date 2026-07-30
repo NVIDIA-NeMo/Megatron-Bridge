@@ -23,21 +23,22 @@ from unittest.mock import Mock
 import pytest
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from transformers import GenerationConfig, PretrainedConfig
+from transformers import GenerationConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import AutoMapping
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
     MiniMaxM3Bridge,
     MiniMaxM3ModelProvider,
     MiniMaxM3TopKRouter,
+    MiniMaxM3VLModelProvider,
     TopKRouter,
     _promote_router_weights_to_float32,
     minimax_m3_block_spec,
     quick_gelu,
 )
+from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3LightningIndexerState
 from megatron.bridge.models.model_provider import _apply_mixed_precision_wrapper
 from megatron.bridge.utils.instantiate_utils import instantiate
 
@@ -73,6 +74,11 @@ _MINIMAX_M3_TEXT_CONFIG = {
     "routed_scaling_factor": 2.0,
     "router_aux_loss_coef": 0.001,
     "moe_layer_freq": [0, 1, 1, 1],
+    "sparse_attention_config": {
+        "sparse_num_index_heads": 2,
+        "sparse_index_dim": 8,
+        "sparse_attention_freq": [0, 1, 1, 1],
+    },
     "num_nextn_predict_layers": 1,
     "swiglu_alpha": 1.702,
     "swiglu_limit": 7.0,
@@ -82,8 +88,30 @@ _MINIMAX_M3_TEXT_CONFIG = {
 _MINIMAX_M3_VL_CONFIG = {
     "architectures": ["MiniMaxM3SparseForConditionalGeneration"],
     "model_type": "minimax_m3_vl",
-    "tie_word_embeddings": False,
+    "image_token_index": 200025,
+    "video_token_index": 200026,
+    "projector_hidden_size": 64,
+    "multimodal_projector_bias": True,
+    "img_token_compression_config": {
+        "image_token_compression_method": "patch_merge",
+        "spatial_merge_size": 2,
+        "temporal_patch_size": 2,
+    },
     "torch_dtype": "bfloat16",
+}
+
+_MINIMAX_M3_VISION_CONFIG = {
+    "hidden_size": 32,
+    "intermediate_size": 64,
+    "num_hidden_layers": 2,
+    "num_attention_heads": 4,
+    "patch_size": 2,
+    "image_size": 4,
+    "rope_theta": 10000.0,
+    "attention_dropout": 0.0,
+    "hidden_act": "gelu",
+    "layer_norm_eps": 1e-5,
+    "num_channels": 3,
 }
 
 
@@ -107,11 +135,21 @@ def _make_text_config(overrides: dict | None = None) -> Mock:
 def _make_pretrained(text_overrides: dict | None = None) -> Mock:
     text_cfg = _make_text_config(text_overrides)
 
-    outer_keys = list(_MINIMAX_M3_VL_CONFIG.keys()) + ["text_config"]
+    vision_cfg = Mock(spec=list(_MINIMAX_M3_VISION_CONFIG.keys()))
+    for key, value in _MINIMAX_M3_VISION_CONFIG.items():
+        setattr(vision_cfg, key, value)
+
+    outer_keys = list(_MINIMAX_M3_VL_CONFIG.keys()) + ["text_config", "vision_config", "to_dict"]
     outer_cfg = Mock(spec=outer_keys)
     for k, v in _MINIMAX_M3_VL_CONFIG.items():
         setattr(outer_cfg, k, v)
     outer_cfg.text_config = text_cfg
+    outer_cfg.vision_config = vision_cfg
+    outer_cfg.to_dict.return_value = {
+        **_MINIMAX_M3_VL_CONFIG,
+        "text_config": dict(_MINIMAX_M3_TEXT_CONFIG),
+        "vision_config": dict(_MINIMAX_M3_VISION_CONFIG),
+    }
 
     m = Mock(spec=PreTrainedCausalLM)
     m.config = outer_cfg
@@ -145,6 +183,62 @@ class TestMiniMaxM3Bridge:
         assert provider.num_moe_experts == text_config.num_local_experts
         assert provider.moe_router_topk == text_config.num_experts_per_tok
         assert provider.share_embeddings_and_output_weights is False
+        assert isinstance(provider, MiniMaxM3VLModelProvider)
+        assert provider.lightning_indexer_layers == [1, 2, 3]
+        assert provider.index_n_heads == 2
+        assert provider.index_head_dim == 8
+
+    def test_provider_bridge_maps_native_lightning_indexer_config(self):
+        mock_pretrained = _make_pretrained(
+            {
+                "sparse_attention_config": _DELETE,
+                "layer_types": [
+                    "full_attention",
+                    "minimax_m3_sparse",
+                    "full_attention",
+                    "minimax_m3_sparse",
+                ],
+                "index_n_heads": 3,
+                "index_head_dim": 12,
+            }
+        )
+
+        provider = MiniMaxM3Bridge().provider_bridge(mock_pretrained)
+
+        assert provider.lightning_indexer_layers == [1, 3]
+        assert provider.index_n_heads == 3
+        assert provider.index_head_dim == 12
+
+    def test_provider_bridge_maps_multimodal_config(self, mock_pretrained):
+        provider = MiniMaxM3Bridge().provider_bridge(mock_pretrained)
+
+        assert provider.vision_config is mock_pretrained.config.vision_config
+        assert provider.image_token_id == 200025
+        assert provider.video_token_id == 200026
+        assert provider.projector_hidden_size == 64
+        assert provider.multimodal_projector_bias is True
+        assert provider.spatial_merge_size == 2
+        assert provider.temporal_patch_size == 2
+        assert provider.hf_config_dict["model_type"] == "minimax_m3_vl"
+
+    def test_vlm_provider_can_recover_checkpoint_compatible_text_provider(self, mock_pretrained):
+        vlm_provider = MiniMaxM3Bridge().provider_bridge(mock_pretrained)
+
+        text_provider = vlm_provider.to_text_provider()
+
+        assert type(text_provider) is MiniMaxM3ModelProvider
+        assert text_provider.hidden_size == vlm_provider.hidden_size
+        assert text_provider.num_layers == vlm_provider.num_layers
+        assert text_provider.transformer_layer_spec == vlm_provider.transformer_layer_spec
+        assert not hasattr(text_provider, "vision_config")
+
+    def test_provider_bridge_uses_top_level_embedding_tie_contract(self):
+        mock_pretrained = _make_pretrained({"tie_word_embeddings": False})
+        mock_pretrained.config.tie_word_embeddings = True
+
+        provider = MiniMaxM3Bridge().provider_bridge(mock_pretrained)
+
+        assert provider.share_embeddings_and_output_weights is True
 
     def test_provider_bridge_splits_dense_and_expert_ffn_sizes(self, mock_pretrained):
         """intermediate_size is the per-expert size; dense layers use dense_intermediate_size."""
@@ -241,17 +335,6 @@ class TestMiniMaxM3Bridge:
         provider = bridge.provider_bridge(mock_pretrained)
 
         assert provider.seq_length == 4096
-
-    def test_provider_bridge_flat_text_config(self):
-        """A flat (non-nested) text config is accepted for text-only checkpoints."""
-        text_cfg = _make_text_config()
-        m = Mock(spec=PreTrainedCausalLM)
-        m.config = text_cfg
-        m.generation_config = Mock(spec=GenerationConfig)
-
-        bridge = MiniMaxM3Bridge()
-        provider = bridge.provider_bridge(m)
-        assert provider.hidden_size == text_cfg.hidden_size
 
     def test_mapping_registry_contains_critical_weights(self):
         bridge = MiniMaxM3Bridge()
@@ -417,43 +500,175 @@ class TestMiniMaxM3Bridge:
         assert layer_spec.keywords == {"use_transformer_engine": True}
 
     def test_mapping_registry_uses_language_model_prefix(self):
-        """All HF-side params must live under the multimodal language_model. prefix."""
+        """Text params are nested under language_model on both sides."""
         bridge = MiniMaxM3Bridge()
         registry = bridge.mapping_registry()
 
         for mapping in registry:
             hf_param = mapping.hf_param
             hf_params = hf_param.values() if isinstance(hf_param, dict) else [hf_param]
+            if not all(str(param).startswith("language_model.") for param in hf_params):
+                continue
+            if str(mapping.megatron_param).startswith("lightning_indexers."):
+                continue
+            assert str(mapping.megatron_param).startswith("language_model.")
             for p in hf_params:
                 assert str(p).startswith("language_model."), f"HF param missing language_model. prefix: {p}"
 
-    def test_mapping_registry_does_not_map_indexer_or_vision(self):
-        """Lightning-indexer and vision-tower weights are intentionally unmapped."""
+    def test_mapping_registry_maps_complete_vision_namespace(self):
         bridge = MiniMaxM3Bridge()
         registry = bridge.mapping_registry()
 
-        for mapping in registry:
-            hf_param = mapping.hf_param
-            hf_params = hf_param.values() if isinstance(hf_param, dict) else [hf_param]
-            for p in hf_params:
-                assert "index_" not in str(p)
-                assert "vision_tower" not in str(p)
+        replicated = {
+            mapping.megatron_param: mapping.hf_param for mapping in registry if isinstance(mapping, ReplicatedMapping)
+        }
+        assert replicated["vision_tower.**"] == "vision_tower.**"
+        assert replicated["multi_modal_projector.**"] == "multi_modal_projector.**"
+        assert replicated["patch_merge_mlp.**"] == "patch_merge_mlp.**"
 
-    def test_megatron_to_hf_config_rejects_incomplete_multimodal_export(self, mock_pretrained):
+    def test_mapping_registry_covers_every_released_vision_and_projector_key(self):
+        registry = MiniMaxM3Bridge().mapping_registry()
+        vision_keys = [
+            "vision_tower.vision_model.embeddings.patch_embedding.weight",
+            "vision_tower.vision_model.pre_layrnorm.weight",
+            "vision_tower.vision_model.pre_layrnorm.bias",
+        ]
+        layer_suffixes = [
+            "layer_norm1.weight",
+            "layer_norm1.bias",
+            "self_attn.q_proj.weight",
+            "self_attn.q_proj.bias",
+            "self_attn.k_proj.weight",
+            "self_attn.k_proj.bias",
+            "self_attn.v_proj.weight",
+            "self_attn.v_proj.bias",
+            "self_attn.out_proj.weight",
+            "self_attn.out_proj.bias",
+            "layer_norm2.weight",
+            "layer_norm2.bias",
+            "mlp.fc1.weight",
+            "mlp.fc1.bias",
+            "mlp.fc2.weight",
+            "mlp.fc2.bias",
+        ]
+        vision_keys.extend(
+            f"vision_tower.vision_model.encoder.layers.{layer}.{suffix}"
+            for layer in range(32)
+            for suffix in layer_suffixes
+        )
+        projector_keys = [
+            f"{module}.linear_{layer}.{parameter}"
+            for module in ("multi_modal_projector", "patch_merge_mlp")
+            for layer in (1, 2)
+            for parameter in ("weight", "bias")
+        ]
+
+        assert len(vision_keys) == 515
+        assert len(projector_keys) == 8
+        for key in [*vision_keys, *projector_keys]:
+            mapping = registry.hf_to_megatron_lookup(key)
+            assert mapping is not None, key
+            assert mapping.megatron_param == key
+
+    def test_mapping_registry_covers_every_released_lightning_indexer_key(self):
+        registry = MiniMaxM3Bridge().mapping_registry()
+        suffixes = {
+            "index_q_proj": "q_proj",
+            "index_k_proj": "k_proj",
+            "index_q_norm": "q_norm",
+            "index_k_norm": "k_norm",
+        }
+        hf_keys = []
+
+        for layer_idx in range(3, 60):
+            for hf_suffix, megatron_suffix in suffixes.items():
+                hf_key = f"language_model.model.layers.{layer_idx}.self_attn.{hf_suffix}.weight"
+                megatron_key = f"lightning_indexers.{layer_idx}.{megatron_suffix}.weight"
+                hf_keys.append(hf_key)
+
+                hf_mapping = registry.hf_to_megatron_lookup(hf_key)
+                assert hf_mapping is not None, hf_key
+                assert hf_mapping.megatron_param == megatron_key
+
+                megatron_mapping = registry.megatron_to_hf_lookup(megatron_key)
+                assert megatron_mapping is not None, megatron_key
+                assert megatron_mapping.hf_param == hf_key
+
+        assert len(hf_keys) == 228
+
+    def test_lightning_indexer_mapping_round_trip_is_self_contained(self):
+        hf_key = "language_model.model.layers.3.self_attn.index_q_proj.weight"
+        mapping = MiniMaxM3Bridge().mapping_registry().hf_to_megatron_lookup(hf_key)
+        indexer = MiniMaxM3LightningIndexerState(
+            SimpleNamespace(
+                hidden_size=16,
+                index_n_heads=2,
+                index_head_dim=4,
+                params_dtype=torch.bfloat16,
+            )
+        )
+        source_weight = torch.randn(8, 16, dtype=torch.bfloat16)
+
+        converted_weight = mapping.hf_to_megatron(source_weight, indexer.q_proj)
+        with torch.no_grad():
+            indexer.q_proj.weight.copy_(converted_weight)
+        exported = mapping.megatron_to_hf(indexer.q_proj.weight, indexer.q_proj)
+
+        assert set(exported) == {hf_key}
+        torch.testing.assert_close(exported[hf_key], source_weight, rtol=0, atol=0)
+
+    def test_megatron_to_hf_config_preserves_nested_vlm_contract(self, mock_pretrained):
         bridge = MiniMaxM3Bridge()
         provider = bridge.provider_bridge(mock_pretrained)
+        config = MiniMaxM3Bridge.megatron_to_hf_config(provider)
 
-        with pytest.raises(NotImplementedError, match="multimodal"):
-            MiniMaxM3Bridge.megatron_to_hf_config(provider)
+        assert config["architectures"] == ["MiniMaxM3SparseForConditionalGeneration"]
+        assert config["model_type"] == "minimax_m3_vl"
+        assert config["image_token_index"] == 200025
+        assert config["video_token_index"] == 200026
+        assert config["projector_hidden_size"] == 64
+        assert config["vision_config"]["hidden_size"] == 32
+        assert config["vision_config"]["spatial_merge_size"] == 2
+        assert config["vision_config"]["temporal_patch_size"] == 2
+        assert config["text_config"]["hidden_size"] == 64
+        assert config["text_config"]["intermediate_size"] == 32
+        assert config["text_config"]["dense_intermediate_size"] == 128
+        assert config["text_config"]["moe_layer_freq"] == [0, 1, 1, 1]
+        assert config["text_config"]["mlp_layer_types"] == ["dense", "sparse", "sparse", "sparse"]
+        assert config["text_config"]["rope_parameters"]["rope_theta"] == 5000000.0
+        assert config["text_config"]["rope_parameters"]["partial_rotary_factor"] == 0.5
+        assert config["text_config"]["index_n_heads"] == 2
+        assert config["text_config"]["index_head_dim"] == 8
+        assert config["text_config"]["layer_types"] == [
+            "full_attention",
+            "minimax_m3_sparse",
+            "minimax_m3_sparse",
+            "minimax_m3_sparse",
+        ]
+        assert config["text_config"]["sparse_attention_config"]["sparse_attention_freq"] == [0, 1, 1, 1]
+        assert config["text_config"]["sparse_attention_config"]["sparse_disable_index_value"] == [0, 1, 1, 1]
+        assert config["tie_word_embeddings"] is False
 
-    def test_public_hf_save_rejects_before_creating_output(self, tmp_path):
-        hf_config = PretrainedConfig()
-        hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
-        hf_config.model_type = "minimax_m3_vl"
-        auto_bridge = AutoBridge(hf_config)
-        output_path = tmp_path / "incomplete-hf-export"
+    def test_megatron_to_hf_config_refreshes_standard_fields_without_generic_aliases(self, mock_pretrained):
+        bridge = MiniMaxM3Bridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+        provider.hidden_size = 96
+        provider.num_moe_experts = 16
+        provider.hf_config_dict["text_config"]["max_position_embeddings"] = 1_048_576
+        provider.hf_config_dict["text_config"].pop("torch_dtype")
 
-        with pytest.raises(NotImplementedError, match="standalone Hugging Face"):
-            auto_bridge.save_hf_pretrained([], output_path)
+        config = MiniMaxM3Bridge.megatron_to_hf_config(provider)
+        text_config = config["text_config"]
 
-        assert not output_path.exists()
+        assert text_config["hidden_size"] == 96
+        assert text_config["num_local_experts"] == 16
+        assert text_config["architectures"] == ["MiniMaxM3SparseForCausalLM"]
+        assert text_config["hidden_act"] == "swigluoai"
+        assert text_config["max_position_embeddings"] == 1_048_576
+        assert text_config["num_nextn_predict_layers"] == 1
+        assert "model_type" not in text_config
+        assert "torch_dtype" not in text_config
+        assert "num_experts" not in text_config
+        assert "n_routed_experts" not in text_config
+        assert "moe_intermediate_size" not in text_config
+        assert config["torch_dtype"] == "bfloat16"

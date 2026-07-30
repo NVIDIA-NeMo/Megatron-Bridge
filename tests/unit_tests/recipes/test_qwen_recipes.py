@@ -666,6 +666,9 @@ def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_functional_config(
     assert perf_cfg.model.cuda_graph_impl == default_cfg.model.cuda_graph_impl
     assert perf_cfg.model.cuda_graph_scope == default_cfg.model.cuda_graph_scope
     assert perf_cfg.comm_overlap.tp_comm_overlap == default_cfg.comm_overlap.tp_comm_overlap
+    assert perf_cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert default_cfg.comm_overlap.overlap_moe_expert_parallel_comm is None
+    assert perf_cfg.comm_overlap.delay_wgrad_compute is False
     assert perf_cfg.optimizer.use_precision_aware_optimizer == default_cfg.optimizer.use_precision_aware_optimizer
     assert perf_cfg.model.moe_router_force_load_balancing is True
     assert default_cfg.model.moe_router_force_load_balancing is False

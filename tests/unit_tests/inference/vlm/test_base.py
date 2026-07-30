@@ -113,6 +113,45 @@ class TestSetupModelAndTokenizer:
         assert result_model == mock_wrapped_model
         assert result_processor == mock_processor
 
+    @patch("megatron.bridge.inference.vlm.base.setup_inference_wrapper")
+    @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
+    @patch("megatron.bridge.inference.vlm.base.AutoBridge")
+    @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
+    @patch("megatron.bridge.inference.vlm.base.print_rank_0")
+    def test_setup_model_and_tokenizer_propagates_params_dtype(
+        self,
+        mock_print_rank_0,
+        mock_is_safe_repo,
+        mock_get_hf_model_id,
+        mock_auto_bridge,
+        mock_auto_processor,
+        mock_setup_inference_wrapper,
+    ):
+        mock_get_hf_model_id.return_value = "Qwen/Qwen2.5-VL-3B"
+
+        mock_bridge = MagicMock()
+        mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
+        mock_model_provider = MagicMock()
+        mock_bridge.to_megatron_provider.return_value = mock_model_provider
+
+        mock_model = MagicMock()
+        mock_model.cuda.return_value = mock_model
+        mock_bridge.load_megatron_model.return_value = [mock_model]
+
+        mock_processor = MagicMock()
+        mock_processor.tokenizer.pad_token = "<|pad|>"
+        mock_auto_processor.from_pretrained.return_value = mock_processor
+
+        setup_model_and_tokenizer(
+            megatron_model_path="/path/to/checkpoint",
+            params_dtype=torch.float16,
+        )
+
+        assert mock_model_provider.pipeline_dtype == torch.float16
+        assert mock_bridge.load_megatron_model.call_args.kwargs["mp_overrides"]["pipeline_dtype"] == torch.float16
+        assert mock_setup_inference_wrapper.call_args.kwargs["params_dtype"] == torch.float16
+
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint", return_value=None)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_raises_without_hf_id(self, mock_print_rank_0, mock_get_hf_model_id):
