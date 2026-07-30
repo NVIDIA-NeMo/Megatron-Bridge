@@ -74,7 +74,6 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     LoggerConfig,
-    MegatronMIMOFeatureConfig,
     OptimizerConfig,
     ProfilingConfig,
     TrainingConfig,
@@ -164,17 +163,31 @@ def _get_int_attr(config: object | None, name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
-def _build_hf_spec(hf_config: object) -> Qwen35MIMOHFSpec:
+def _build_hf_spec(hf_config: object, *, pad_token_id: int | None = None) -> Qwen35MIMOHFSpec:
     text_config = getattr(hf_config, "text_config", hf_config)
     vision_config = getattr(hf_config, "vision_config", None)
+    if pad_token_id is None:
+        pad_token_id = _get_int_attr(text_config, "pad_token_id", 0)
     return Qwen35MIMOHFSpec(
         image_token_id=_get_int_attr(hf_config, "image_token_id", 248056),
         video_token_id=_get_int_attr(hf_config, "video_token_id", 248057),
         vision_start_token_id=_get_int_attr(hf_config, "vision_start_token_id", 248053),
         vision_end_token_id=_get_int_attr(hf_config, "vision_end_token_id", 248054),
-        pad_token_id=_get_int_attr(text_config, "pad_token_id", 0),
+        pad_token_id=pad_token_id,
         spatial_merge_size=_get_int_attr(vision_config, "spatial_merge_size", 2),
     )
+
+
+def _tokenizer_pad_token_id(args: argparse.Namespace) -> int | None:
+    """Pad id of the tokenizer that actually pads the batches (pad falls back to eos,
+    mirroring ``normalize_direct_hf_sft_processor``)."""
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.processor_path or args.hf_model, trust_remote_code=args.trust_remote_code
+    )
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    return pad_token_id if pad_token_id is not None else getattr(tokenizer, "eos_token_id", None)
 
 
 def _parse_component_spec(raw: str) -> tuple[str, ModuleParallelismConfig]:
@@ -269,8 +282,8 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
     # per-sample real lengths from input_ids (the only tensor that counts image-placeholder tokens)
     # before nulling it, so every stage packs to the SAME [1, T] as the packed hidden states crossing
     # the pipeline. Without it, stages > 0 fall back to lengths=None and the packed shapes mismatch.
-    mimo_cfg = getattr(cfg, "mimo", None)
-    packing_active = bool(mimo_cfg is not None and mimo_cfg.pack_sequences_in_batch)
+    dataset_cfg = getattr(cfg, "dataset", None)
+    packing_active = bool(getattr(dataset_cfg, "enable_in_batch_packing", False))
 
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
         return MIMOBatchSpec(
@@ -1261,7 +1274,10 @@ def main() -> None:
         _log(f"distributed initialized (world_size={dist.get_world_size()})")
         _log(f"loading HF config from {args.hf_model}")
         hf_config = AutoConfig.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        hf_spec = _build_hf_spec(hf_config)
+        # The tokenizer's pad id, not text_config's: it pads the tokenized batches, and
+        # spec.pad_token_id drives both the seq-length tail padding and the packing
+        # length derivation (input_ids != pad), so the ids must agree.
+        hf_spec = _build_hf_spec(hf_config, pad_token_id=_tokenizer_pad_token_id(args))
         _log(
             f"qwen constants: image_token_id={hf_spec.image_token_id}, "
             f"vision_start_token_id={hf_spec.vision_start_token_id}, "
@@ -1287,10 +1303,11 @@ def main() -> None:
         _log(f"checkpoint dir: {args.checkpoint_dir}")
         _log("building training config")
         cfg = _build_config(model_provider=model_provider, dataset_config=dataset_config, args=args)
-        cfg.mimo = MegatronMIMOFeatureConfig(
-            pack_sequences_in_batch=args.pack_sequences_in_batch,
-            pad_token_id=hf_spec.pad_token_id,
-        )
+        if args.pack_sequences_in_batch:
+            # MegatronMIMO packs in the step, after the module-DP slice (deferred packing).
+            cfg.dataset.enable_in_batch_packing = True
+            cfg.dataset.defer_in_batch_packing_to_step = True
+            cfg.dataset.pad_token_id = hf_spec.pad_token_id
 
         _log("launching pretrain_megatron_mimo")
         pretrain_megatron_mimo(

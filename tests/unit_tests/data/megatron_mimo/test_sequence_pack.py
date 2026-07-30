@@ -222,3 +222,54 @@ class TestPPConsistentPacking:
         pos = torch.arange(3 * 3 * 4).reshape(3, 3, 4)
         with pytest.raises(ValueError, match="expected \\[3\\]"):
             pack_language_shard({"input_ids": None, "position_ids": pos}, lengths=torch.tensor([4, 4]))
+
+
+@pytest.mark.unit
+class TestMRoPEPackedParityWithQwen:
+    """Dense-then-packed MRoPE positions must equal ``get_rope_index`` on the packed
+    ``[1, T]`` layout (the branch ``Qwen3VLModel.forward`` takes when packing is on)."""
+
+    def test_packed_positions_match_qwen_flat_packed_branch(self):
+        from megatron.core.packed_seq_params import PackedSeqParams
+
+        from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
+
+        merge = 2
+        img, vid, vs = 151655, 151656, 151652
+        pad = 0
+
+        # sample0: [text, text, vision_start, img x4, text] -> one 1x4x4 image = 4 llm tokens
+        # sample1: [text, text, text]
+        s0 = torch.tensor([11, 12, vs, img, img, img, img, 13])
+        s1 = torch.tensor([21, 22, 23])
+        lengths = [s0.numel(), s1.numel()]
+        grid_thw = torch.tensor([[1, 4, 4]])
+
+        dense_ids = _padded([s0.tolist(), s1.tolist()], 12, pad)
+        dense_mask = torch.zeros_like(dense_ids)
+        dense_mask[0, : lengths[0]] = 1
+        dense_mask[1, : lengths[1]] = 1
+
+        # MIMO data path: dense per-sample positions, then concat to [3, 1, T].
+        dense_pos, _ = get_rope_index(
+            merge, img, vid, vs, input_ids=dense_ids, image_grid_thw=grid_thw, attention_mask=dense_mask
+        )
+        packed = assemble_packed_sequence([0, 1], dense_ids, lengths, position_ids=dense_pos, pad_token_id=pad)
+
+        # Monolithic path: positions computed on the packed [1, T] layout.
+        total = sum(lengths)
+        packed_ids = torch.cat([s0, s1]).unsqueeze(0)
+        cu = torch.tensor([0, lengths[0], total], dtype=torch.int32)
+        psp = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu,
+            cu_seqlens_kv=cu,
+            cu_seqlens_q_padded=cu,
+            cu_seqlens_kv_padded=cu,
+        )
+        packed_pos, _ = get_rope_index(
+            merge, img, vid, vs, input_ids=packed_ids, image_grid_thw=grid_thw, packed_seq_params=psp
+        )
+
+        assert packed["position_ids"].shape == (3, 1, total)
+        torch.testing.assert_close(packed["position_ids"], packed_pos)

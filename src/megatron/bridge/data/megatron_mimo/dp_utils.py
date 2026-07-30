@@ -291,7 +291,8 @@ def real_token_lengths(
     Length-source priority (authoritative first):
 
     1. ``attention_mask.sum(dim=1)`` when an ``attention_mask`` of matching ``[B, S]`` shape
-       is present — the true padding mask, so it is the authoritative length source.
+       is present. Callers whose masks do not cover modality placeholder tokens (common for
+       VLM batches) must pass ``attention_mask=None`` so the pad-id fallback is used.
     2. else ``(input_ids != pad_token_id).sum(dim=1)`` — the configured pad id.
 
     ``loss_mask`` is deliberately **not** used: it is a supervision mask (zeros

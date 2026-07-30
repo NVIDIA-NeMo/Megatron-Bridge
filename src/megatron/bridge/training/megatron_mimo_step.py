@@ -31,6 +31,36 @@ from megatron.bridge.training.state import GlobalState
 logger = logging.getLogger(__name__)
 
 
+def resolve_step_packing(dataset_cfg: object) -> Tuple[bool, int]:
+    """Resolve MegatronMIMO in-batch sequence packing from the dataset config.
+
+    MegatronMIMO packs in the step, after the module-DP slice, so collate-time packing
+    must be deferred (inverse of the ``vlm_step`` guard).
+
+    Args:
+        dataset_cfg: The ``ConfigContainer.dataset`` entry.
+
+    Returns:
+        ``(pack_sequences_enabled, pad_token_id)``; ``(False, 0)`` when disabled.
+
+    Raises:
+        ValueError: If packing is enabled without step deferral or without a pad id.
+    """
+    if not bool(getattr(dataset_cfg, "enable_in_batch_packing", False)):
+        return False, 0
+    if not bool(getattr(dataset_cfg, "defer_in_batch_packing_to_step", False)):
+        raise ValueError(
+            "megatron_mimo_step requires step-time in-batch packing; set defer_in_batch_packing_to_step=True"
+        )
+    pad_token_id = getattr(dataset_cfg, "pad_token_id", None)
+    if pad_token_id is None:
+        raise ValueError(
+            "megatron_mimo_step in-batch packing derives real token lengths via input_ids != pad_token_id; "
+            "set dataset.pad_token_id to the collator's pad id"
+        )
+    return True, pad_token_id
+
+
 def _get_module_dp_info(
     megatron_mimo_model: MimoModel,
 ) -> Tuple[int, int]:
@@ -175,10 +205,8 @@ def forward_step(
             modality_modules = megatron_mimo_model.role.modality_module_names
             needs_data = any(megatron_mimo_model.role.is_first_stage(mod) for mod in modality_modules)
 
-    # MegatronMIMO in-batch sequence packing, read from the serialized config (absent -> off).
-    mimo_cfg = getattr(state.cfg, "mimo", None)
-    pack_sequences_enabled = bool(mimo_cfg is not None and mimo_cfg.pack_sequences_in_batch)
-    pad_token_id = mimo_cfg.pad_token_id if mimo_cfg is not None else 0
+    # MegatronMIMO in-batch sequence packing, read from the dataset config (absent -> off).
+    pack_sequences_enabled, pad_token_id = resolve_step_packing(state.cfg.dataset)
 
     if needs_data:
         data_batch = get_batch(data_iterator)
