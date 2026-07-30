@@ -23,6 +23,7 @@ import torch
 _SCRIPT = Path(__file__).parents[3] / "examples" / "conversion" / "hf_to_megatron_generate_text.py"
 _SCRIPT_GLOBALS = runpy.run_path(_SCRIPT)
 _build_parser = _SCRIPT_GLOBALS["build_parser"]
+_build_inference_context = _SCRIPT_GLOBALS["_build_inference_context"]
 _decode_completion = _SCRIPT_GLOBALS["_decode_completion"]
 _hf_revision_kwargs = _SCRIPT_GLOBALS["_hf_revision_kwargs"]
 _maybe_gather_tensor_parallel_logits = _SCRIPT_GLOBALS["_maybe_gather_tensor_parallel_logits"]
@@ -83,6 +84,34 @@ def test_hf_revision_is_parsed_and_forwarded() -> None:
     assert args.hf_revision == revision
     assert _hf_revision_kwargs(args.hf_revision) == {"revision": revision}
     assert _hf_revision_kwargs(None) == {}
+
+
+@pytest.mark.unit
+def test_no_kv_cache_uses_legacy_full_prefix_decoding() -> None:
+    input_ids = torch.ones((2, 3), dtype=torch.long)
+
+    default_args = _build_parser().parse_args(["--hf_model_path", "org/model"])
+    legacy_args = _build_parser().parse_args(["--hf_model_path", "org/model", "--no-kv-cache"])
+
+    assert default_args.no_kv_cache is False
+    assert legacy_args.no_kv_cache is True
+    assert _build_inference_context(input_ids, no_kv_cache=True) is None
+
+
+@pytest.mark.unit
+def test_kv_cache_builds_static_inference_context() -> None:
+    input_ids = torch.ones((2, 3), dtype=torch.long)
+    inference_context = object()
+    context_factory = MagicMock(return_value=inference_context)
+
+    with patch.dict(
+        _build_inference_context.__globals__,
+        {"StaticInferenceContext": context_factory},
+    ):
+        result = _build_inference_context(input_ids, no_kv_cache=False)
+
+    assert result is inference_context
+    context_factory.assert_called_once_with(max_batch_size=2, max_sequence_length=3)
 
 
 @pytest.mark.unit

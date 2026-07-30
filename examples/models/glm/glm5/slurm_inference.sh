@@ -27,7 +27,8 @@
 # avoids the AbsorbedMLA sequence-parallel requirement for TP > 1.
 #
 # Megatron inference engine support is not yet available for this architecture.
-# This launcher defaults to the older slow sanity-check generation path for now.
+# This launcher passes --no-kv-cache to use the older slow sanity-check path,
+# which recomputes the full accumulated prefix for every generated token.
 #
 # Loads the HF checkpoint, converts to Megatron in-memory, and runs greedy
 # text generation via examples/conversion/hf_to_megatron_generate_text.py.
@@ -119,6 +120,7 @@ print(m.group(1) + m.group(2) if m else s.split('"'"','"'"')[0])
       --hf_model_path "$HF_MODEL_PATH" \
       --prompt "$PROMPT" \
       --max_new_tokens "$MAX_NEW_TOKENS" \
+      --no-kv-cache \
       --tp "$TP" --ep "$EP" --pp "$PP"
   '
 status=$?

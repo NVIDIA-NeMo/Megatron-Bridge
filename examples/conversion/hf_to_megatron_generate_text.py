@@ -68,6 +68,20 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
+def _build_inference_context(
+    input_ids: torch.Tensor,
+    *,
+    no_kv_cache: bool,
+) -> StaticInferenceContext | None:
+    """Build a static inference context unless legacy full-prefix decoding is requested."""
+    if no_kv_cache:
+        return None
+    return StaticInferenceContext(
+        max_batch_size=input_ids.size(0),
+        max_sequence_length=input_ids.size(1),
+    )
+
+
 def text_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     """Forward step function for text generation.
     Required by the forward_backward_func function.
@@ -284,9 +298,9 @@ def main(args) -> None:
             print_rank_0(f"Generation step {step}")
 
             fwd_bwd_function = get_forward_backward_func()
-            inference_context = StaticInferenceContext(
-                max_batch_size=input_ids.size(0),
-                max_sequence_length=input_ids.size(1),
+            inference_context = _build_inference_context(
+                input_ids,
+                no_kv_cache=args.no_kv_cache,
             )
             iterator = SingleBatchIterator(input_ids, position_ids, inference_context)
 
@@ -374,6 +388,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20,
         help="Maximum number of new tokens to generate.",
+    )
+    parser.add_argument(
+        "--no-kv-cache",
+        action="store_true",
+        help=(
+            "Disable the MCore inference context and recompute the full accumulated prefix for every token. "
+            "This slower legacy path supports models such as GLM-5 whose AbsorbedMLA attention does not yet "
+            "support cached inference."
+        ),
     )
     parser.add_argument(
         "--apply-chat-template",
