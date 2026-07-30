@@ -26,7 +26,6 @@ from megatron.core.process_groups_config import MultiModuleProcessGroupCollectio
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
-from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
@@ -40,6 +39,15 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
 from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+
+
+def get_tensor_shapes_adjust_fn_for_distillation(*args: Any, **kwargs: Any) -> Any:
+    """Load the ModelOpt distillation tensor-shape adjuster on demand."""
+    from modelopt.torch.distill.plugins.megatron import (
+        get_tensor_shapes_adjust_fn_for_distillation as _get_tensor_shapes_adjust_fn_for_distillation,
+    )
+
+    return _get_tensor_shapes_adjust_fn_for_distillation(*args, **kwargs)
 
 
 # For Paged Stashing support

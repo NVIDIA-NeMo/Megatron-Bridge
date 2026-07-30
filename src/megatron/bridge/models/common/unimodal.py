@@ -12,11 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.training.models.dist_utils import (
-    _ddp_wrap,  # noqa: F401
-    _print_num_params,  # noqa: F401
-    _wrap_with_mp_wrapper,  # noqa: F401
-    build_virtual_pipeline_stages,  # noqa: F401
-    to_empty_if_meta_device,  # noqa: F401
-    unimodal_build_distributed_models,  # noqa: F401
-)
+from typing import Any
+
+
+def _dist_utils() -> Any:
+    from megatron.training.models import dist_utils
+
+    return dist_utils
+
+
+def _ddp_wrap(*args: Any, **kwargs: Any) -> Any:
+    return _dist_utils()._ddp_wrap(*args, **kwargs)
+
+
+def _print_num_params(*args: Any, **kwargs: Any) -> Any:
+    return _dist_utils()._print_num_params(*args, **kwargs)
+
+
+def _wrap_with_mp_wrapper(*args: Any, **kwargs: Any) -> Any:
+    return _dist_utils()._wrap_with_mp_wrapper(*args, **kwargs)
+
+
+def build_virtual_pipeline_stages(*args: Any, **kwargs: Any) -> Any:
+    """Build virtual pipeline stages using Megatron training utilities."""
+    return _dist_utils().build_virtual_pipeline_stages(*args, **kwargs)
+
+
+def to_empty_if_meta_device(*args: Any, **kwargs: Any) -> Any:
+    """Move meta-device modules to empty tensors using Megatron training utilities."""
+    return _dist_utils().to_empty_if_meta_device(*args, **kwargs)
+
+
+def unimodal_build_distributed_models(*args: Any, **kwargs: Any) -> Any:
+    """Build distributed unimodal models using Megatron training utilities."""
+    return _dist_utils().unimodal_build_distributed_models(*args, **kwargs)

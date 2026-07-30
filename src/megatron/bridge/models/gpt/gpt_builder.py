@@ -15,7 +15,6 @@
 import inspect
 import logging
 
-from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.transformer import ModuleSpec
 from megatron.training.models.gpt import GPTModelBuilder, GPTModelConfig, mtp_block_spec
 
@@ -84,6 +83,7 @@ def modelopt_transformer_layer_spec(config: "GPTModelConfig") -> ModuleSpec:
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
     from megatron.core import parallel_state
+    from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 
     use_arbitrary_attention_mask = (
         config.use_arbitrary_attention_mask

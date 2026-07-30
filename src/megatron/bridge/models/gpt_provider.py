@@ -31,7 +31,6 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_first_stage,
     is_vp_last_stage,
 )
-from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
@@ -102,6 +101,7 @@ def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
     from megatron.core import parallel_state
+    from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 
     use_arbitrary_attention_mask = (
         config.use_arbitrary_attention_mask

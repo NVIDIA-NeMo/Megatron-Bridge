@@ -16,7 +16,6 @@ from megatron.core.models.hybrid.hybrid_layer_specs import (
     hybrid_inference_stack_spec as default_hybrid_inference_stack_spec,
 )
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec as default_hybrid_stack_spec
-from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
 from megatron.core.transformer import ModuleSpec
 from megatron.training.models.hybrid import HybridModelBuilder, HybridModelConfig
 
@@ -46,6 +45,8 @@ def modelopt_hybrid_stack_spec(config: "HybridModelConfig | None" = None) -> Mod
     Returns:
         Module specification for quantization-ready Hybrid stack.
     """
+    from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
+
     return get_hybrid_stack_modelopt_spec(
         local_core_attention=False,
         remap_te_layernorm=True,

@@ -62,7 +62,6 @@ from megatron.core.utils import (
     nvtx_range_pop,
     nvtx_range_push,
 )
-from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
@@ -102,6 +101,15 @@ from megatron.bridge.training.utils.train_utils import (
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+
+
+def get_tensor_shapes_adjust_fn_for_distillation(*args: Any, **kwargs: Any) -> Any:
+    """Load the ModelOpt distillation tensor-shape adjuster on demand."""
+    from modelopt.torch.distill.plugins.megatron import (
+        get_tensor_shapes_adjust_fn_for_distillation as _get_tensor_shapes_adjust_fn_for_distillation,
+    )
+
+    return _get_tensor_shapes_adjust_fn_for_distillation(*args, **kwargs)
 
 
 # For Paged Stashing support

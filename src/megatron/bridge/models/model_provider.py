@@ -18,8 +18,6 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
-from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
-
 
 try:
     from typing import Unpack
@@ -58,6 +56,18 @@ except ImportError:
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
+
+
+def _ddp_wrap(*args: Any, **kwargs: Any) -> Any:
+    from megatron.bridge.models.common.unimodal import _ddp_wrap as _unimodal_ddp_wrap
+
+    return _unimodal_ddp_wrap(*args, **kwargs)
+
+
+def _print_num_params(*args: Any, **kwargs: Any) -> Any:
+    from megatron.bridge.models.common.unimodal import _print_num_params as _unimodal_print_num_params
+
+    return _unimodal_print_num_params(*args, **kwargs)
 
 
 def _apply_mixed_precision_wrapper(

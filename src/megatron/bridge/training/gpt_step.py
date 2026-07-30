@@ -16,7 +16,6 @@ import logging
 from functools import partial
 from typing import Iterable
 
-import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
@@ -38,7 +37,6 @@ from megatron.core.utils import (
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params, get_thd_cp_partition_indices
@@ -55,6 +53,12 @@ _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
 _LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _PackedMetadataValue = torch.Tensor | int | None
+
+
+def _is_modelopt_distillation_model(model: object) -> bool:
+    import modelopt.torch.distill as mtd
+
+    return isinstance(model, mtd.DistillationModel)
 
 
 def _trim_padded_cu_seqlens_for_cp(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
@@ -554,7 +558,9 @@ def _create_loss_function_modelopt(
         check_for_spiky_loss=check_for_spiky_loss,
     )
     unwrapped_model = unwrap_model(model)
-    if isinstance(unwrapped_model, mtd.DistillationModel):
+    if _is_modelopt_distillation_model(unwrapped_model):
+        from megatron.bridge.training.post_training.distillation import loss_func_kd
+
         return partial(loss_func_kd, loss_mask=loss_mask, original_loss_fn=mnt_loss_func, model=unwrapped_model)
     else:
         return mnt_loss_func

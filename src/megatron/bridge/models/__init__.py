@@ -13,6 +13,8 @@
 # limitations under the License.
 
 # Import model providers for easy access
+from typing import Any
+
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
@@ -87,11 +89,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hy_v3 import (
     HYV3Bridge,
 )
-from megatron.bridge.models.hybrid import (
-    HybridModelBuilder,
-    HybridModelConfig,
-    HybridModelProvider,
-)
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
     KimiK3Bridge,
@@ -196,6 +194,11 @@ from megatron.bridge.models.stepfun import (
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
+
+_LAZY_EXPORTS = {
+    "HybridModelBuilder": "megatron.bridge.models.hybrid.hybrid_builder",
+    "HybridModelConfig": "megatron.bridge.models.hybrid.hybrid_builder",
+}
 
 __all__ = [
     "AutoBridge",
@@ -317,3 +320,14 @@ __all__ = [
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORTS:
+        import importlib
+
+        module = importlib.import_module(_LAZY_EXPORTS[name])
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

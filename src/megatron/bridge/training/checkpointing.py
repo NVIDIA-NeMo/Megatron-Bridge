@@ -54,11 +54,6 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
-from modelopt.torch.opt.plugins import (
-    restore_modelopt_state,
-    save_modelopt_state,
-    save_sharded_modelopt_state,
-)
 from torch.distributed.tensor import DTensor
 
 from megatron.bridge.peft.base import PEFT
@@ -94,6 +89,27 @@ from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
+
+
+def restore_modelopt_state(*args: Any, **kwargs: Any) -> Any:
+    """Restore ModelOpt state after the checkpointing module has loaded."""
+    from modelopt.torch.opt.plugins import restore_modelopt_state as _restore_modelopt_state
+
+    return _restore_modelopt_state(*args, **kwargs)
+
+
+def save_modelopt_state(*args: Any, **kwargs: Any) -> Any:
+    """Save ModelOpt state after the checkpointing module has loaded."""
+    from modelopt.torch.opt.plugins import save_modelopt_state as _save_modelopt_state
+
+    return _save_modelopt_state(*args, **kwargs)
+
+
+def save_sharded_modelopt_state(*args: Any, **kwargs: Any) -> Any:
+    """Save sharded ModelOpt state after the checkpointing module has loaded."""
+    from modelopt.torch.opt.plugins import save_sharded_modelopt_state as _save_sharded_modelopt_state
+
+    return _save_sharded_modelopt_state(*args, **kwargs)
 
 try:
     from megatron.core.distributed.fsdp.src.megatron_fsdp import MegatronFSDP

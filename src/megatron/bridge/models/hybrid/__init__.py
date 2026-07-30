@@ -12,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.hybrid.hybrid_builder import (
-    HybridModelBuilder,
-    HybridModelConfig,
-    get_default_hybrid_stack_spec,
-    modelopt_hybrid_stack_spec,
-    transformer_engine_hybrid_stack_spec,
-)
+from typing import Any
+
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 
+
+_LAZY_EXPORTS = {
+    "HybridModelBuilder": "megatron.bridge.models.hybrid.hybrid_builder",
+    "HybridModelConfig": "megatron.bridge.models.hybrid.hybrid_builder",
+    "get_default_hybrid_stack_spec": "megatron.bridge.models.hybrid.hybrid_builder",
+    "modelopt_hybrid_stack_spec": "megatron.bridge.models.hybrid.hybrid_builder",
+    "transformer_engine_hybrid_stack_spec": "megatron.bridge.models.hybrid.hybrid_builder",
+}
 
 __all__ = [
     "HybridModelBuilder",
@@ -30,3 +33,14 @@ __all__ = [
     "modelopt_hybrid_stack_spec",
     "transformer_engine_hybrid_stack_spec",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORTS:
+        import importlib
+
+        module = importlib.import_module(_LAZY_EXPORTS[name])
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

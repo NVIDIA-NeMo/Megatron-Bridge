@@ -12,12 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.mamba.mamba_builder import MambaModelBuilder, MambaModelConfig
+from typing import Any
+
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
+
+_LAZY_EXPORTS = {
+    "MambaModelBuilder": "megatron.bridge.models.mamba.mamba_builder",
+    "MambaModelConfig": "megatron.bridge.models.mamba.mamba_builder",
+}
 
 __all__ = [
     "MambaModelBuilder",
     "MambaModelConfig",
     "MambaModelProvider",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORTS:
+        import importlib
+
+        module = importlib.import_module(_LAZY_EXPORTS[name])
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

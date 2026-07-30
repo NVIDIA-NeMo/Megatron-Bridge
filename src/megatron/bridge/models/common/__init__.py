@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.common.base import (
-    BuildConfigT,
-    ModelBuilder,
-    ModelConfig,
-    ModelT,
-    Serializable,
-    compose_hooks,
-)
-from megatron.bridge.models.common.unimodal import build_virtual_pipeline_stages, unimodal_build_distributed_models
+from typing import Any
+
+
+_LAZY_EXPORTS = {
+    "BuildConfigT": "megatron.bridge.models.common.base",
+    "ModelBuilder": "megatron.bridge.models.common.base",
+    "ModelConfig": "megatron.bridge.models.common.base",
+    "ModelT": "megatron.bridge.models.common.base",
+    "Serializable": "megatron.bridge.models.common.base",
+    "compose_hooks": "megatron.bridge.models.common.base",
+    "build_virtual_pipeline_stages": "megatron.bridge.models.common.unimodal",
+    "unimodal_build_distributed_models": "megatron.bridge.models.common.unimodal",
+}
 
 
 __all__ = [
@@ -33,3 +37,14 @@ __all__ = [
     "build_virtual_pipeline_stages",
     "unimodal_build_distributed_models",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_EXPORTS:
+        import importlib
+
+        module = importlib.import_module(_LAZY_EXPORTS[name])
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

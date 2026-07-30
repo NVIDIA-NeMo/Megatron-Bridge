@@ -28,7 +28,6 @@ from megatron.core.models.hybrid.hybrid_layer_specs import (
 )
 from megatron.core.models.hybrid.hybrid_model import HybridModel as MCoreHybridModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_total_layer_count, parse_hybrid_pattern
 from megatron.core.transformer import ModuleSpec
@@ -69,6 +68,8 @@ def modelopt_hybrid_stack_spec(config: "HybridModelProvider | None" = None) -> M
     Returns:
         Module specification for quantization-ready Hybrid stack.
     """
+    from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
+
     return get_hybrid_stack_modelopt_spec(
         local_core_attention=False,
         remap_te_layernorm=True,
