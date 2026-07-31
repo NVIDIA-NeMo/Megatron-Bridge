@@ -77,6 +77,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 
+logger = logging.getLogger(__name__)
+
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -304,21 +307,78 @@ def _current_world_size() -> int | None:
     return None
 
 
-def _validate_benchmark_world_size(metadata: BenchmarkRecipeMetadata, *, dryrun: bool) -> None:
-    """Require the recipe's total GPU count for an executable run."""
-    if dryrun:
-        return
+def _benchmark_world_size(metadata: BenchmarkRecipeMetadata, *, dryrun: bool) -> int:
+    """Resolve the requested benchmark world size from the active launcher."""
     world_size = _current_world_size()
     if world_size is None:
+        if dryrun:
+            return metadata.num_gpus
         raise ValueError(
             "Benchmark recipes require an existing distributed environment with the world size set by torchrun "
             "or Slurm."
         )
-    if world_size != metadata.num_gpus:
+    return world_size
+
+
+def _config_override_is_explicit(cli_overrides: list[str], field_name: str) -> bool:
+    """Return whether CLI overrides explicitly own a config field or its parent."""
+    parent_name = field_name.split(".", maxsplit=1)[0]
+    for override in cli_overrides:
+        override_name = override.lstrip("+~").split("=", maxsplit=1)[0]
+        if override_name in {field_name, parent_name}:
+            return True
+    return False
+
+
+def _apply_benchmark_weak_scaling(
+    recipe: ConfigContainer,
+    metadata: BenchmarkRecipeMetadata,
+    cli_overrides: list[str],
+    *,
+    world_size: int,
+) -> ConfigContainer:
+    """Validate topology and proportionally scale benchmark GBS."""
+    model = getattr(recipe, "model", None)
+    parallel_sizes = {
+        "TP": getattr(model, "tensor_model_parallel_size", 1),
+        "PP": getattr(model, "pipeline_model_parallel_size", 1),
+        "CP": getattr(model, "context_parallel_size", 1),
+    }
+    invalid_sizes = {name: size for name, size in parallel_sizes.items() if not isinstance(size, int) or size <= 0}
+    if invalid_sizes:
+        raise ValueError(f"Parallel sizes must be positive integers, got {invalid_sizes}.")
+
+    model_parallel_size = parallel_sizes["TP"] * parallel_sizes["PP"] * parallel_sizes["CP"]
+    if world_size % model_parallel_size != 0:
         raise ValueError(
-            f"Benchmark recipe requires exactly {metadata.num_gpus} GPUs, but the distributed world size is "
-            f"{world_size}. Select a recipe matching the allocation."
+            f"Requested {world_size} GPUs is not divisible by TP * PP * CP "
+            f"({parallel_sizes['TP']} * {parallel_sizes['PP']} * {parallel_sizes['CP']} = {model_parallel_size}). "
+            "Override the parallel sizes for this GPU count."
         )
+
+    if world_size == metadata.num_gpus or _config_override_is_explicit(cli_overrides, "train.global_batch_size"):
+        return recipe
+
+    train = getattr(recipe, "train", None)
+    base_gbs = getattr(train, "global_batch_size", None)
+    if not isinstance(base_gbs, int) or base_gbs <= 0:
+        raise ValueError(f"Canonical recipe global batch size must be a positive integer, got {base_gbs!r}.")
+
+    scaled_gbs_numerator = base_gbs * world_size
+    if scaled_gbs_numerator % metadata.num_gpus != 0:
+        raise ValueError(
+            f"Weak scaling GBS {base_gbs} from {metadata.num_gpus} to {world_size} GPUs does not produce "
+            "an integer global batch size. Pass --global_batch_size explicitly."
+        )
+    scaled_gbs = scaled_gbs_numerator // metadata.num_gpus
+    train.global_batch_size = scaled_gbs
+    logger.info(
+        "Weak scaled benchmark global batch size from %d to %d for %d GPUs.",
+        base_gbs,
+        scaled_gbs,
+        world_size,
+    )
+    return recipe
 
 
 def _apply_benchmark_runtime_defaults(
@@ -420,12 +480,19 @@ def main(argv: list[str] | None = None) -> None:
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
     recipe = sync_model_pipeline_layout(recipe, cli_overrides=cli_overrides)
+    benchmark_world_size = None
     if benchmark_metadata is not None:
         recipe = _apply_benchmark_runtime_defaults(recipe, benchmark_metadata, cli_overrides)
+        benchmark_world_size = _benchmark_world_size(benchmark_metadata, dryrun=args.dryrun)
+        recipe = _apply_benchmark_weak_scaling(
+            recipe,
+            benchmark_metadata,
+            cli_overrides,
+            world_size=benchmark_world_size,
+        )
     configuration_mode = _train_mode(args.mode)
 
     if benchmark_metadata is not None:
-        _validate_benchmark_world_size(benchmark_metadata, dryrun=args.dryrun)
         recipe = bootstrap_recipe_environment(
             recipe,
             script_path=str(Path(__file__).resolve()),
@@ -449,7 +516,7 @@ def main(argv: list[str] | None = None) -> None:
         mode=execution_mode,
         step_func=forward_step,
         dryrun=args.dryrun,
-        dryrun_world_size=benchmark_metadata.num_gpus if benchmark_metadata is not None else None,
+        dryrun_world_size=benchmark_world_size,
         dump_environment=args.dump_env,
     )
 
