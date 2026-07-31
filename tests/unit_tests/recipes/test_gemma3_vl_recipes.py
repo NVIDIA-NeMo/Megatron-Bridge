@@ -97,7 +97,7 @@ def _assert_basic_config(cfg):
     assert cfg.tokenizer is not None
     assert cfg.checkpoint is not None
     assert cfg.rng is not None
-    assert cfg.model.attention_backend is AttnBackend.unfused
+    assert cfg.model.attention_backend is AttnBackend.fused
     assert cfg.dataset.enable_in_batch_packing is False
 
     assert cfg.train.global_batch_size >= 1
