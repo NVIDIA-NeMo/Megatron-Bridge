@@ -161,18 +161,22 @@ class Gemma3VLModel(MegatronModule):
                 inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
-        # Compute attention mask on FULL sequence (before CP slicing)
-        # This is needed because image regions need bidirectional attention
-        attention_mask = self._compute_attention_mask(input_ids)
+        # Compute the attention bias on the full sequence. The zero/negative
+        # bias expresses causal text attention plus bidirectional image blocks
+        # while keeping Transformer Engine on its fused backend.
+        attention_bias_dtype = inputs_embeds.dtype if inputs_embeds is not None else self.config.params_dtype
+        attention_biases = self._compute_attention_biases(input_ids, dtype=attention_bias_dtype)
 
-        # CP slicing: slice embeddings, labels, loss_mask, position_ids, and attention_mask
+        # CP slicing: slice embeddings, labels, loss_mask, and position_ids.
+        # Context parallelism is rejected by the provider while attention bias
+        # slicing is unsupported.
         # This must happen AFTER vision-text merge so image token positions are correct
-        inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
+        inputs_embeds, labels, loss_mask, position_ids, _ = slice_batch_for_context_parallel(
             inputs_embeds=inputs_embeds,
             labels=labels,
             loss_mask=loss_mask,
             position_ids=position_ids,
-            attention_mask=attention_mask,
+            attention_mask=None,
             packed_seq_params=packed_seq_params,
             pg_collection=self.config._pg_collection,
         )
@@ -188,12 +192,13 @@ class Gemma3VLModel(MegatronModule):
         outputs = self.language_model.forward(
             input_ids=None,
             position_ids=position_ids,
-            attention_mask=attention_mask,
+            attention_mask=None,
             decoder_input=inputs_embeds,
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
+            extra_block_kwargs={"attention_bias": attention_biases},
         )
         # Return both outputs and the CP-sliced loss_mask for consistent loss computation
         return (outputs, loss_mask)
@@ -229,14 +234,21 @@ class Gemma3VLModel(MegatronModule):
             for param in module.parameters():
                 param.requires_grad = False
 
-    def _compute_attention_mask(
+    def _compute_attention_biases(
         self,
         input_ids: Optional[torch.Tensor],
-    ) -> Optional[torch.Tensor]:
+        *,
+        dtype: torch.dtype,
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor]]:
+        """Build local/global additive biases for Gemma 3 VL attention."""
         if input_ids is None:
             return None
-        batch_size, seq_len = input_ids.shape
-        causal_mask = torch.tril(torch.ones((batch_size, 1, seq_len, seq_len))).to(input_ids.device)
+        _, seq_len = input_ids.shape
+        causal_mask = torch.ones(
+            (1, 1, seq_len, seq_len),
+            dtype=torch.bool,
+            device=input_ids.device,
+        ).tril()
 
         image_mask = input_ids == self.config.image_token_id
         padded_mask = F.pad(image_mask, (1, 0), value=0)
@@ -248,9 +260,17 @@ class Gemma3VLModel(MegatronModule):
             kv_block_indices[:, None, :] == q_block_indices.unsqueeze(-1),
             q_block_indices.unsqueeze(-1) > 0,
         )
-        # See te.DotProductAttention for the requirement of custom mask
-        attention_mask = ~torch.logical_or(causal_mask, bidirectional_mask.unsqueeze(1))
-        return attention_mask
+        global_allowed_mask = torch.logical_or(causal_mask, bidirectional_mask.unsqueeze(1))
+        global_attention_bias = torch.zeros(global_allowed_mask.shape, dtype=dtype, device=input_ids.device)
+        global_attention_bias.masked_fill_(~global_allowed_mask, torch.finfo(dtype).min)
+
+        window_size = self.config.window_size - 1
+        positions = torch.arange(seq_len, device=input_ids.device)
+        local_window_mask = (positions.unsqueeze(0) - positions.unsqueeze(1)).abs() <= window_size
+        local_allowed_mask = torch.logical_and(global_allowed_mask, local_window_mask.view(1, 1, seq_len, seq_len))
+        local_attention_bias = torch.zeros_like(global_attention_bias)
+        local_attention_bias.masked_fill_(~local_allowed_mask, torch.finfo(dtype).min)
+        return local_attention_bias, global_attention_bias
 
 
 @dataclass
