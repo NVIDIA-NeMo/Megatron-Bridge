@@ -203,7 +203,9 @@ def main(args) -> None:
         model_provider.pipeline_dtype = torch.bfloat16
 
         # Read pipeline layout from checkpoint for PP > 1
-        if pp > 1:
+        if args.pipeline_model_parallel_layout is not None:
+            model_provider.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
+        elif pp > 1:
             from pathlib import Path
 
             import yaml
@@ -224,15 +226,19 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
+        mp_overrides = {
+            "tensor_model_parallel_size": tp,
+            "pipeline_model_parallel_size": pp,
+            "expert_model_parallel_size": ep,
+            "expert_tensor_parallel_size": etp,
+            "pipeline_dtype": torch.bfloat16,
+        }
+        if args.pipeline_model_parallel_layout is not None:
+            mp_overrides["pipeline_model_parallel_layout"] = args.pipeline_model_parallel_layout
+
         model = bridge.load_megatron_model(
             args.megatron_model_path,
-            mp_overrides={
-                "tensor_model_parallel_size": tp,
-                "pipeline_model_parallel_size": pp,
-                "expert_model_parallel_size": ep,
-                "expert_tensor_parallel_size": etp,
-                "pipeline_dtype": torch.bfloat16,
-            },
+            mp_overrides=mp_overrides,
             wrap_with_ddp=False,
         )
 
@@ -253,6 +259,8 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        if args.pipeline_model_parallel_layout is not None:
+            model_provider.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
@@ -411,6 +419,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument(
+        "--pipeline-model-parallel-layout",
+        help="Optional pipeline layout used to keep model-specific layer groups within pipeline stages.",
+    )
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")

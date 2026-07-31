@@ -87,6 +87,15 @@ def test_hf_revision_is_parsed_and_forwarded() -> None:
 
 
 @pytest.mark.unit
+def test_pipeline_model_parallel_layout_is_parsed() -> None:
+    layout = "Etttttt|ttttmL"
+
+    args = _build_parser().parse_args(["--hf_model_path", "org/model", "--pipeline-model-parallel-layout", layout])
+
+    assert args.pipeline_model_parallel_layout == layout
+
+
+@pytest.mark.unit
 def test_legacy_full_prefix_disables_inference_context() -> None:
     input_ids = torch.ones((2, 3), dtype=torch.long)
 
