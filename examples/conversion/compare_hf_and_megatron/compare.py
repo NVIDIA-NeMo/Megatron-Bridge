@@ -492,6 +492,22 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         return input_ids, None, None, None
 
 
+def _is_transformers_none_tp_plan_error(error: TypeError) -> bool:
+    """Return whether Transformers failed allocator warmup on an unset TP plan."""
+    if str(error) != "object of type 'NoneType' has no len()":
+        return False
+
+    traceback = error.__traceback__
+    while traceback is not None:
+        frame = traceback.tb_frame
+        if frame.f_code.co_name == "get_total_byte_count" and frame.f_globals.get("__name__") == (
+            "transformers.modeling_utils"
+        ):
+            return True
+        traceback = traceback.tb_next
+    return False
+
+
 def _load_hf_model(args, is_vl_model: bool):
     """Load HuggingFace model on rank 0.
 
@@ -507,16 +523,31 @@ def _load_hf_model(args, is_vl_model: bool):
 
     print_rank_0("Loading HuggingFace model...")
     model_class = get_model_class(args.model_class, is_vl_model)
-    hf_model = model_class.from_pretrained(
-        args.hf_model_path,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-        trust_remote_code=is_safe_repo(
+    load_kwargs = {
+        "torch_dtype": torch.bfloat16,
+        "trust_remote_code": is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
         **_hf_revision_kwargs(args.hf_revision),
-    )
+    }
+    try:
+        hf_model = model_class.from_pretrained(
+            args.hf_model_path,
+            device_map=args.hf_device,
+            **load_kwargs,
+        )
+    except TypeError as error:
+        if not _is_transformers_none_tp_plan_error(error):
+            raise
+
+        print_rank_0(
+            "HuggingFace model has an unset tensor-parallel plan; retrying through CPU before moving it to CUDA."
+        )
+        gc.collect()
+        torch.cuda.empty_cache()
+        hf_model = model_class.from_pretrained(args.hf_model_path, **load_kwargs).to(args.hf_device)
+
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
 
@@ -591,15 +622,23 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
     if not _is_rank_0() or hf_model is None:
         return None, None, None, None, None
 
+    input_device = input_ids.device
+    try:
+        hf_device = next(hf_model.parameters()).device
+    except (AttributeError, StopIteration, TypeError):
+        hf_device = input_device
+    if not isinstance(hf_device, (torch.device, str, int)):
+        hf_device = input_device
+
     with torch.no_grad():
         hf_inputs = {
-            "input_ids": input_ids,
-            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
+            "input_ids": input_ids.to(hf_device),
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool).to(hf_device),
         }
         if pixel_values is not None:
-            hf_inputs["pixel_values"] = pixel_values
+            hf_inputs["pixel_values"] = pixel_values.to(hf_device)
         if image_grid_thw is not None:
-            hf_inputs["image_grid_thw"] = image_grid_thw
+            hf_inputs["image_grid_thw"] = image_grid_thw.to(hf_device)
 
         hf_output = hf_model(**hf_inputs)
 
@@ -627,7 +666,13 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         print_rank_0(f"HF next token: {hf_next_token.item()} ('{tokenizer.decode([hf_next_token.item()])}')")
         print_rank_0(f"HF Top 5: {hf_top5_info}")
 
-        return hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape
+        return (
+            hf_logits.to(input_device),
+            hf_next_token.to(input_device),
+            hf_logits_stats,
+            hf_top5_info,
+            logits_shape,
+        )
 
 
 def _load_megatron_model(args):
@@ -990,6 +1035,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
+    parser.add_argument(
+        "--hf-device",
+        default="cuda",
+        help="CUDA device used by the rank-0 Hugging Face reference model (for example, cuda:2).",
+    )
     parser.add_argument(
         "--model_class",
         type=str,
