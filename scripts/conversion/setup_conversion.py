@@ -17,8 +17,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import json
 import logging
 import os
 import shlex
@@ -26,7 +24,7 @@ import sys
 from pathlib import Path
 
 import nemo_run as run
-from arguments import build_parser, comparison_worker_args, conversion_worker_args
+from arguments import build_parser, conversion_worker_args
 from nemo_run.config import get_nemorun_home
 from torchx.specs.api import AppState
 
@@ -94,8 +92,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     elif not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
 
-    if args.command in ("roundtrip", "compare") and args.device != "gpu":
-        raise ValueError(f"{args.command.capitalize()} requires the GPU backend.")
+    if args.command == "roundtrip" and args.device != "gpu":
+        raise ValueError("Round-trip validation requires the GPU backend.")
     if args.command == "import" and args.device == "cpu" and args.low_memory_save:
         raise ValueError("--low-memory-save is only supported by the GPU backend.")
 
@@ -111,7 +109,7 @@ def _validate_args(args: argparse.Namespace) -> None:
     else:
         if args.gpus_per_node is None or args.gpus_per_node < 1:
             raise ValueError("GPU conversion requires --gpus-per-node of at least 1.")
-        if args.executor == "local" and args.command != "compare":
+        if args.executor == "local":
             worker_values = [args.hf_model]
             if args.command != "roundtrip":
                 worker_values.append(args.megatron_path)
@@ -191,21 +189,11 @@ def _build_executor(
 
 
 def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
-    """Build the selected conversion or parity task and its display arguments."""
-    if args.command == "compare":
-        display_args = comparison_worker_args(args)
-        relative_task_path = Path("scripts/conversion/run_comparison.py")
-        # NeMo Run 0.10 joins Torchrun arguments into a shell command. Encode
-        # prompts and paths as one shell-safe value so they cannot split or run.
-        encoded_args = base64.urlsafe_b64encode(json.dumps(display_args).encode()).decode()
-        task_args = ["--arguments-b64", encoded_args]
-    else:
-        display_args = conversion_worker_args(args)
-        relative_task_path = Path("scripts/conversion/run_conversion.py")
-        task_args = display_args
+    """Build the in-job conversion or round-trip task and its display arguments."""
+    display_args = conversion_worker_args(args)
+    relative_task_path = Path("scripts/conversion/run_conversion.py")
     repo_root = LOCAL_REPO_ROOT if args.executor == "local" else CONTAINER_REPO_ROOT
-    if args.executor == "slurm":
-        task_args = [shlex.quote(argument) for argument in task_args]
+    task_args = display_args if args.executor == "local" else [shlex.quote(argument) for argument in display_args]
     if args.executor == "local":
         existing_pythonpath = os.environ.get("PYTHONPATH", "")
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM"
@@ -248,13 +236,9 @@ def main(argv: list[str] | None = None) -> None:
     task, worker_args = _build_task(args)
 
     experiment_name = args.experiment_name or f"conversion-{args.command}-{args.device}"
-    display_task_path = task.path
-    if args.command == "compare":
-        repo_root = LOCAL_REPO_ROOT if args.executor == "local" else CONTAINER_REPO_ROOT
-        display_task_path = str(repo_root / "examples/conversion/compare_hf_and_megatron/compare.py")
     logger.info(
         "Conversion command: %s",
-        shlex.join(["python", display_task_path, *worker_args]),
+        shlex.join(["python", task.path, *worker_args]),
     )
     logger.info("Executor: %s; device: %s", args.executor, args.device)
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")

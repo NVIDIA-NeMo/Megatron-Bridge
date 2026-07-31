@@ -11,8 +11,7 @@ Slurm submission and selects one of two conversion backends:
 
 Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
-`./scripts/conversion/convert.sh roundtrip --help` for checkpoint conversion.
-Use `./scripts/conversion/convert.sh compare --help` for forward-logit parity.
+`./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
 ## Local CPU conversion
 
@@ -125,26 +124,6 @@ memory, and compares them with the original weights. It does not read or write
 Megatron checkpoints or write a Hugging Face output; use the `import` and
 `export` commands for persistent conversion. For long multi-node validations, set
 `--distributed-timeout-minutes` to raise the NCCL process-group timeout.
-
-## Forward-logit comparison
-
-`compare` runs the repository's one-step Hugging Face/Megatron logits parity
-check through the same local or Slurm execution layer. Unlike `roundtrip`,
-which checks that weight mappings are exactly reversible, this command builds
-both model implementations and compares their forward outputs.
-
-```bash
-./scripts/conversion/convert.sh compare \
-  --executor local \
-  --gpus-per-node 2 \
-  --hf-model-path Qwen/Qwen3-1.7B \
-  --prompt "Hello world" \
-  --tp 2
-```
-
-For VLM comparison, add `--image-path` and, when required by Transformers,
-`--model-class`. The command accepts the same TP, PP, EP, and ETP topology
-options as distributed conversion and requires the GPU backend.
 
 ## CPU conversion on Slurm
 

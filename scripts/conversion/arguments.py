@@ -205,65 +205,6 @@ def _add_roundtrip_arguments(parser: argparse.ArgumentParser, *, include_executi
     _add_parallelism_arguments(parser, include_distributed_timeout=True)
 
 
-def _add_comparison_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add forward-logit comparison arguments to the user-facing launcher."""
-    _add_execution_arguments(parser, default_device="gpu")
-    comparison = parser.add_argument_group("Forward-logit comparison")
-    comparison.add_argument(
-        "--hf-model-path",
-        "--hf_model_path",
-        required=True,
-        dest="hf_model_path",
-        help="Hugging Face model ID or local path.",
-    )
-    comparison.add_argument(
-        "--hf-revision",
-        help="Immutable Hugging Face Hub revision used for model, config, and tokenizer loading.",
-    )
-    comparison.add_argument("--prompt", required=True, help="Prompt used for the one-step comparison.")
-    comparison.add_argument("--image-path", "--image_path", dest="image_path", help="Optional image path or URL.")
-    comparison.add_argument(
-        "--megatron-model-path",
-        "--megatron_model_path",
-        dest="megatron_model_path",
-        help="Optional Megatron checkpoint; otherwise convert the Hugging Face weights in memory.",
-    )
-    comparison.add_argument(
-        "--model-class",
-        "--model_class",
-        dest="model_class",
-        help="Optional explicit Hugging Face model class for vision-language models.",
-    )
-    comparison.add_argument(
-        "--enable-debug-hooks",
-        "--enable_debug_hooks",
-        action="store_true",
-        dest="enable_debug_hooks",
-        help="Write Hugging Face and Megatron forward-hook diagnostics.",
-    )
-    comparison.add_argument(
-        "--roundtrip-hf",
-        "--roundtrip_hf",
-        action="store_true",
-        dest="roundtrip_hf",
-        help="Compare against Hugging Face weights exported back from the Megatron model.",
-    )
-    comparison.add_argument(
-        "--exported-hf-dir",
-        "--exported_hf_dir",
-        dest="exported_hf_dir",
-        help="Directory used by --roundtrip-hf for the exported Hugging Face model.",
-    )
-    comparison.add_argument(
-        "--trust-remote-code",
-        "--trust_remote_code",
-        action="store_true",
-        dest="trust_remote_code",
-        help="Allow custom model code execution.",
-    )
-    _add_parallelism_arguments(parser, include_distributed_timeout=False)
-
-
 def build_parser(*, include_execution: bool) -> argparse.ArgumentParser:
     """Build the conversion argument parser.
 
@@ -295,10 +236,6 @@ Examples:
   ./scripts/conversion/convert.sh roundtrip --executor local --device gpu \\
       --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B \\
       --ep 8
-
-  # Local multi-GPU Hugging Face/Megatron forward-logit comparison
-  ./scripts/conversion/convert.sh compare --executor local --gpus-per-node 2 \\
-      --hf-model-path Qwen/Qwen3-1.7B --prompt "Hello world" --tp 2
 """,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -352,55 +289,7 @@ Examples:
         allow_abbrev=False,
     )
     _add_roundtrip_arguments(roundtrip_parser, include_execution=include_execution)
-    if include_execution:
-        compare_parser = subparsers.add_parser(
-            "compare",
-            help="Compare Hugging Face and Megatron forward logits on GPUs.",
-            allow_abbrev=False,
-        )
-        _add_comparison_arguments(compare_parser)
     return parser
-
-
-def comparison_worker_args(args: argparse.Namespace) -> list[str]:
-    """Serialize options for the forward-logit comparison implementation.
-
-    Args:
-        args: Parsed user-facing comparison arguments.
-
-    Returns:
-        Arguments accepted by ``compare_hf_and_megatron/compare.py``.
-    """
-    worker_args = [
-        "--hf_model_path",
-        args.hf_model_path,
-        "--prompt",
-        args.prompt,
-        "--tp",
-        str(args.tp),
-        "--pp",
-        str(args.pp),
-        "--ep",
-        str(args.ep),
-        "--etp",
-        str(args.etp),
-    ]
-    for option, value in (
-        ("--hf-revision", args.hf_revision),
-        ("--image_path", args.image_path),
-        ("--megatron_model_path", args.megatron_model_path),
-        ("--model_class", args.model_class),
-        ("--exported_hf_dir", args.exported_hf_dir),
-    ):
-        if value is not None:
-            worker_args.extend([option, value])
-    if args.enable_debug_hooks:
-        worker_args.append("--enable_debug_hooks")
-    if args.roundtrip_hf:
-        worker_args.append("--roundtrip_hf")
-    if args.trust_remote_code:
-        worker_args.append("--trust-remote-code")
-    return worker_args
 
 
 def conversion_worker_args(args: argparse.Namespace) -> list[str]:
@@ -412,8 +301,6 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     Returns:
         Command-line arguments accepted by ``run_conversion.py``.
     """
-    if args.command == "compare":
-        raise ValueError("The compare command does not use the checkpoint conversion worker.")
     if args.command == "roundtrip":
         worker_args = [
             "roundtrip",

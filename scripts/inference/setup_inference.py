@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Submit Bridge-backed offline inference through Slurm."""
+"""Submit Bridge-backed offline inference and comparison through Slurm."""
 
 from __future__ import annotations
 
@@ -33,13 +33,14 @@ CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
 INFERENCE_TASKS = {
     "text-generation": Path("scripts/inference/text_generation.py"),
     "vlm-generation": Path("scripts/inference/vlm_generation.py"),
+    "model-comparison": Path("examples/conversion/compare_hf_and_megatron/compare.py"),
 }
 
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the lightweight head-node parser."""
     parser = argparse.ArgumentParser(
-        description="Launch Megatron Bridge offline inference through Slurm.",
+        description="Launch Megatron Bridge offline inference or model comparison through Slurm.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
         epilog="""
@@ -50,8 +51,9 @@ Example:
       --hf-model-path meta-llama/Llama-3.2-1B \\
       --prompt "Megatron Bridge inference is" --max_new_tokens 32
 
-Use --task vlm-generation for multimodal generation. Arguments not owned by
-this launcher are forwarded unchanged to the selected inference entry point.
+Use --task vlm-generation for multimodal generation or --task model-comparison
+for a one-step Hugging Face/Megatron comparison. Arguments not owned by this
+launcher are forwarded unchanged to the selected repository entry point.
 """,
     )
     execution = parser.add_argument_group("Execution")
