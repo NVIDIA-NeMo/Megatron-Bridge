@@ -146,6 +146,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
+    assert cfg.dataset.trust_remote_code is True
     assert cfg.dataset.source.dataset_name == "cord_v2"
     assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_expanded_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
@@ -163,6 +164,7 @@ def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
     )
 
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.dataset.trust_remote_code is True
     assert cfg.model.seq_length == 8192
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.calculate_per_token_loss is True
@@ -178,6 +180,7 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
 
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.dataset.trust_remote_code is True
     assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.peft is not None
     assert cfg.peft.target_modules == [
