@@ -234,6 +234,31 @@ def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
     assert proc.processor_kwargs[-1]["max_pixels"] == qwen_vl_collate.QWEN_VL_MAX_PIXELS
 
 
+def test_qwen2_5_collate_fn_pads_mm_token_type_ids_with_sequence(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _TokenTypeProcessor(_DummyProcessor):
+        def __call__(self, *args, **kwargs):
+            batch = super().__call__(*args, **kwargs)
+            batch["mm_token_type_ids"] = torch.tensor([[0, 1, 0]])
+            return batch
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    batch = collate.qwen2_5_collate_fn(
+        examples,
+        _TokenTypeProcessor(),
+        sequence_length=8,
+        pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].shape == batch["mm_token_type_ids"].shape == (1, 4)
+    assert batch["mm_token_type_ids"].tolist() == [[0, 1, 0, 0]]
+
+
 def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
     """qwen2_audio_collate_fn should store Qwen2AudioInputs under 'audio_inputs', not 'visual_inputs'."""
 
