@@ -198,14 +198,37 @@ def _pretrain(
         _finish_train(state, checkpoint_manager)
     except BaseException:
         if inprocess_call_wrapper is None:
-            _cleanup_after_pretrain_failure(should_destroy_process_group)
+            _cleanup_after_pretrain_failure(state, should_destroy_process_group)
         raise
 
     _maybe_destroy_process_group(should_destroy_process_group)
 
 
-def _cleanup_after_pretrain_failure(should_destroy_process_group: bool) -> None:
+def _abort_async_checkpoint_worker(state: GlobalState) -> None:
+    """Abort async checkpoint state before distributed teardown."""
+    try:
+        async_calls_queue = state._async_calls_queue
+        if async_calls_queue is not None:
+            async_calls_queue.close(abort=True)
+    finally:
+        state._async_calls_queue = None
+
+        from megatron.core.dist_checkpointing.strategies import filesystem_async
+
+        if filesystem_async._results_queue is not None:
+            try:
+                filesystem_async._results_queue._manager.shutdown()
+            finally:
+                filesystem_async._results_queue = None
+
+
+def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_group: bool) -> None:
     """Clean up framework-owned state after ordinary pretrain execution fails."""
+    try:
+        _abort_async_checkpoint_worker(state)
+    except Exception:
+        logger.exception("Failed to abort async checkpointing after pretrain failure")
+
     try:
         destroy_global_state()
     except Exception:

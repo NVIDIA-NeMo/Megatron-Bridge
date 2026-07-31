@@ -101,6 +101,26 @@ class TestLlamaBridgeConfigConverter:
         assert result.rope_scaling is True
         assert result.rope_scaling_factor == 32.0
 
+    def test_provider_bridge_preserves_linear_rope_scaling(self):
+        """Test that linear RoPE scaling is preserved in the Megatron provider."""
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=256,
+            vocab_size=128,
+            rope_scaling={"type": "linear", "factor": 8.0},
+        )
+
+        provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
+
+        assert provider.position_embedding_type == "rope"
+        assert provider.seq_len_interpolation_factor == 8.0
+        assert provider.rope_scaling is False
+
     def test_provider_bridge_architecture_mapping(self, mock_pretrained_llama, llama_config):
         """Test that architecture parameters are correctly mapped from HF config."""
         bridge = LlamaBridge()
@@ -516,6 +536,26 @@ class TestLlamaBridgeMegatronToHFConfig:
         assert hf_config["rope_scaling"]["low_freq_factor"] == 1.0
         assert hf_config["rope_scaling"]["high_freq_factor"] == 4.0
         assert hf_config["rope_scaling"]["original_max_position_embeddings"] == 8192
+
+    def test_megatron_to_hf_config_with_linear_rope_scaling(self):
+        """Test Megatron to HF config conversion with linear RoPE scaling."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=64,
+            ffn_hidden_size=128,
+            num_attention_heads=4,
+            num_query_groups=4,
+            seq_length=256,
+            vocab_size=128,
+            seq_len_interpolation_factor=8.0,
+        )
+
+        hf_config = LlamaBridge.megatron_to_hf_config(provider)
+
+        assert hf_config["rope_scaling"] == {
+            "rope_type": "linear",
+            "factor": 8.0,
+        }
 
 
 class TestLlamaBridgeMappingRegistry:

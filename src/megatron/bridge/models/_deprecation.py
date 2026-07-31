@@ -26,14 +26,18 @@ _REMOVAL_VERSION = "0.7.0"
 _LEGACY_NEMOTRON_NAME = "the legacy Nemotron bridge (NemotronForCausalLM, previously documented for Nemotron-4 340B)"
 
 _DEPRECATED_ARCHITECTURES = {
+    "DeciLMForCausalLM": "Llama Nemotron (Super and Ultra)",
+    "DeepseekV2ForCausalLM": "DeepSeek V2 and DeepSeek V2 Lite",
     "GemmaForCausalLM": "Gemma 1 (2B and 7B)",
     "Gemma2ForCausalLM": "Gemma 2 (2B, 9B, and 27B)",
+    "NemotronH_Nano_VL_V2": "Nemotron Nano v2 VL 12B",
     "NemotronForCausalLM": _LEGACY_NEMOTRON_NAME,
 }
 
 _LLAMA2_SHAPES = {(32000, 4096)}
 _MISTRAL_SHAPES = {(4096, 32), (5120, 40)}
 _NEMOTRON_H_V1_SHAPES = {(3072, 52), (4096, 52), (8192, 98), (8192, 118)}
+_NEMOTRON_NANO_V2_SHAPES = {(4480, 56), (5120, 62)}
 
 
 def _model_identifier(config: Any, model_name_or_path: str | Path | None) -> str:
@@ -61,6 +65,9 @@ def _deprecated_model_name(config: Any, model_name_or_path: str | Path | None = 
     identifier = _model_identifier(config, model_name_or_path)
 
     if "LlamaForCausalLM" in architectures:
+        if "llama" in identifier and "nemotron" in identifier:
+            return "Llama Nemotron (70B, Nano 8B, and Nano 4B)"
+
         shape = (getattr(config, "vocab_size", None), getattr(config, "max_position_embeddings", None))
         if "llama-2" in identifier or "llama2" in identifier or shape in _LLAMA2_SHAPES:
             return "Llama 2"
@@ -74,6 +81,10 @@ def _deprecated_model_name(config: Any, model_name_or_path: str | Path | None = 
         shape = (getattr(config, "hidden_size", None), getattr(config, "num_hidden_layers", None))
         if "nemotron-h-" in identifier or shape in _NEMOTRON_H_V1_SHAPES:
             return "Nemotron H v1 (4B, 8B, 47B, and 56B)"
+        if ("nemotron-nano" in identifier and ("-v2" in identifier or "_v2" in identifier)) or (
+            shape in _NEMOTRON_NANO_V2_SHAPES
+        ):
+            return "Nemotron Nano v2 (9B and 12B)"
 
     return None
 

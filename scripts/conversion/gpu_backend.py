@@ -267,6 +267,7 @@ def import_checkpoint(
     etp: int,
     torch_dtype: str,
     trust_remote_code: bool,
+    low_memory_save: bool,
     distributed_timeout_minutes: int | None,
     overwrite: bool,
 ) -> None:
@@ -282,6 +283,7 @@ def import_checkpoint(
         etp: Expert tensor parallelism size.
         torch_dtype: Weight dtype name.
         trust_remote_code: Allow custom Hugging Face repository code.
+        low_memory_save: Reduce peak GPU memory while saving the imported checkpoint.
         distributed_timeout_minutes: Process-group timeout in minutes.
         overwrite: Delete a non-empty destination before conversion.
     """
@@ -310,6 +312,7 @@ def import_checkpoint(
         megatron_path,
         hf_tokenizer_path=hf_model,
         hf_tokenizer_kwargs=_hf_tokenizer_kwargs(bridge, trust_remote_code=trust_remote_code),
+        low_memory_save=low_memory_save,
     )
     print_rank_0(f"GPU import complete: {megatron_path}")
 

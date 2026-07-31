@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-import logging
 import math
 import os
 import warnings
@@ -677,8 +676,8 @@ class LoggerConfig(MTrainLoggerConfig):
     comet_tags: Optional[list[str]] = None
     """Optional list of tags to apply to the Comet ML experiment."""
 
-    logging_level: int = logging.INFO
-    """Set default logging level"""
+    logging_level: int | None = None
+    """Logging level. When unset, use the environment override or default to INFO."""
 
     def finalize(self) -> None:
         """Validate logger settings and optional MLFlow dependency."""
