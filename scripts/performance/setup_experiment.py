@@ -36,6 +36,7 @@ try:
         _kubeflow_numa_binding_script,
         kubeflow_executor,
         slurm_executor,
+        xcalibur_executor,
     )
     from utils.utils import configure_slurm_gpu_tuning, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
@@ -45,8 +46,14 @@ except (ImportError, ModuleNotFoundError):
         _kubeflow_numa_binding_script,
         kubeflow_executor,
         slurm_executor,
+        xcalibur_executor,
     )
     from .utils.utils import configure_slurm_gpu_tuning, select_config_variant_interactive
+
+try:
+    from nemo_run.core.execution.xcalibur import XCaliburExecutor as _XCaliburExecutor
+except ImportError:
+    _XCaliburExecutor = None  # type: ignore[assignment,misc]
 
 try:
     import wandb
@@ -101,7 +108,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
             "--enable_vboost",
             "--lock_gpu_freq",
             "--peak_mem_clk",
-        ) or flag.startswith("--kubeflow_")
+        ) or flag.startswith("--kubeflow_") or flag.startswith("--xcalibur_")
 
     filtered_args = []
     skip_next = False
@@ -540,6 +547,19 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
+    xcalibur_namespace: Optional[str] = None,
+    xcalibur_image_pull_secret: Optional[str] = None,
+    xcalibur_workdir_pvc: Optional[str] = None,
+    xcalibur_workdir_pvc_path: str = "/nemo_run",
+    xcalibur_workdir_local_path: Optional[str] = None,
+    xcalibur_node_selector_json: Optional[str] = None,
+    xcalibur_volumes_json: Optional[str] = None,
+    xcalibur_volume_mounts_json: Optional[str] = None,
+    xcalibur_timeout_per_job: str = "24h",
+    xcalibur_test_scale: Optional[str] = None,
+    xcalibur_kubeconfig: Optional[str] = None,
+    xcalibur_kube_context: Optional[str] = None,
+    deterministic: bool = False,
     config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -630,7 +650,7 @@ def main(
     # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
-    if kubeflow_namespace:
+    if kubeflow_namespace or xcalibur_namespace:
         in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
         in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
@@ -686,6 +706,25 @@ def main(
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
+    elif xcalibur_namespace is not None:
+        executor = xcalibur_executor(
+            namespace=xcalibur_namespace,
+            image=container_image,
+            num_nodes=num_gpus // gpus_per_node,
+            gpus_per_node=gpus_per_node,
+            image_pull_secret=xcalibur_image_pull_secret,
+            workdir_pvc=xcalibur_workdir_pvc,
+            workdir_pvc_path=xcalibur_workdir_pvc_path,
+            workdir_local_path=xcalibur_workdir_local_path,
+            node_selector=json.loads(xcalibur_node_selector_json) if xcalibur_node_selector_json else None,
+            volumes=json.loads(xcalibur_volumes_json) if xcalibur_volumes_json else None,
+            volume_mounts=json.loads(xcalibur_volume_mounts_json) if xcalibur_volume_mounts_json else None,
+            timeout_per_job=xcalibur_timeout_per_job,
+            test_scale=xcalibur_test_scale,
+            kubeconfig=xcalibur_kubeconfig,
+            kube_context=xcalibur_kube_context,
+        )
+        executor.env_vars = custom_env_vars
     else:
         executor = slurm_executor(
             gpu=gpu,
@@ -1008,7 +1047,7 @@ if __name__ == "__main__":
         task=args.task,
         compute_dtype=args.compute_dtype,
         gpu=args.gpu,
-        hf_token=args.hf_token,
+        hf_token=args.hf_token or os.environ.get('HF_TOKEN'),
         offline=args.offline,
         detach=args.detach,
         dryrun=args.dryrun,
@@ -1087,6 +1126,19 @@ if __name__ == "__main__":
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
+        xcalibur_namespace=args.xcalibur_namespace,
+        xcalibur_image_pull_secret=args.xcalibur_image_pull_secret,
+        xcalibur_workdir_pvc=args.xcalibur_workdir_pvc,
+        xcalibur_workdir_pvc_path=args.xcalibur_workdir_pvc_path,
+        xcalibur_workdir_local_path=args.xcalibur_workdir_local_path,
+        xcalibur_node_selector_json=args.xcalibur_node_selector_json,
+        xcalibur_volumes_json=args.xcalibur_volumes_json,
+        xcalibur_volume_mounts_json=args.xcalibur_volume_mounts_json,
+        xcalibur_timeout_per_job=args.xcalibur_timeout_per_job,
+        xcalibur_test_scale=args.xcalibur_test_scale,
+        xcalibur_kubeconfig=args.xcalibur_kubeconfig,
+        xcalibur_kube_context=args.xcalibur_kube_context,
+        deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,
