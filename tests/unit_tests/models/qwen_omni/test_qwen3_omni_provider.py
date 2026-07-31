@@ -30,6 +30,13 @@ pytestmark = pytest.mark.unit
 
 
 class TestQwen3OmniModelProvider:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [("true", True), ("ON", True), ("false", False), (True, True), (0, False)],
+    )
+    def test_bool_config_enabled(self, value, expected):
+        assert qwen3_omni_provider._bool_config_enabled(value) is expected
+
     def test_qwen3_omni_model_provider_initialization(self):
         provider = Qwen3OmniModelProvider(
             num_layers=48,
