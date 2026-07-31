@@ -90,6 +90,24 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return an 8K CORD v2 SFT config with in-batch packing and CP2.
+
+    In-batch packing requires a micro batch greater than one. The TP4/CP2
+    topology needs at least eight GPUs and aligns every packed row to the
+    combined CP/SP multiple.
+    """
+    cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
+    cfg.model.seq_length = 8192
+    cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
+    cfg.train.micro_batch_size = 2
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.enable_in_batch_packing = True
+    cfg.dataset.in_batch_packing_pad_to_multiple_of = 8
+    return cfg
+
+
 def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a LoRA PEFT config for Nemotron Omni on CORD v2.
 
@@ -281,6 +299,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
 
 __all__ = [
+    "nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config",
     "nemotron_omni_valor32k_peft_4gpu_h100_bf16_config",

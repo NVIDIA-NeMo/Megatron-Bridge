@@ -156,6 +156,23 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     assert cfg.peft is None
 
 
+def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
+    cfg = _build_config(
+        _h100_recipe_module.nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.model.seq_length == 8192
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.train.global_batch_size == 64
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.dataset.enable_in_batch_packing is True
+    assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 8
+
+
 def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_cord_v2_peft_config, fake_processor)
 
