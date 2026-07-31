@@ -15,7 +15,7 @@
 """SSRF-guard tests for megatron.bridge.utils.safe_url.
 
 Covers ``is_safe_public_http_url``, ``safe_url_open``, and integration
-with ``load_image`` in ``vlm_generate_utils`` and ``load_audio`` in
+with ``load_image`` in ``vlm_generation_utils`` and ``load_audio`` in
 ``hf_to_megatron_generate_audio_lm``.
 """
 
@@ -188,11 +188,11 @@ class TestSafeUrlOpen:
 
 
 class TestLoadImageSsrf:
-    """Integration tests verifying ``load_image`` in ``vlm_generate_utils`` rejects unsafe URLs."""
+    """Integration tests verifying ``load_image`` in ``vlm_generation_utils`` rejects unsafe URLs."""
 
     def test_private_url_raises_value_error(self):
         """A URL resolving to a loopback address must raise ValueError."""
-        from examples.conversion.vlm_generate_utils import load_image
+        from scripts.inference.vlm_generation_utils import load_image
 
         with mock.patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo("127.0.0.1")):
             with pytest.raises(ValueError, match="Refusing to fetch image URL"):
@@ -200,7 +200,7 @@ class TestLoadImageSsrf:
 
     def test_metadata_endpoint_blocked(self):
         """Cloud metadata endpoint (169.254.169.254) must be blocked."""
-        from examples.conversion.vlm_generate_utils import load_image
+        from scripts.inference.vlm_generation_utils import load_image
 
         with mock.patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo("169.254.169.254")):
             with pytest.raises(ValueError, match="non-public"):
@@ -208,7 +208,7 @@ class TestLoadImageSsrf:
 
     def test_safe_url_never_called_for_unsafe_url(self):
         """When URL validation fails, the fetch function must never be invoked."""
-        from examples.conversion import vlm_generate_utils
+        from scripts.inference import vlm_generation_utils as vlm_generate_utils
 
         with mock.patch.object(vlm_generate_utils, "safe_url_open") as mocked_open:
             with mock.patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo("10.0.0.1")):
@@ -218,8 +218,8 @@ class TestLoadImageSsrf:
 
     def test_local_file_path_not_validated(self, tmp_path):
         """Local file paths must be opened directly without SSRF validation."""
-        from examples.conversion import vlm_generate_utils
         from PIL import Image
+        from scripts.inference import vlm_generation_utils as vlm_generate_utils
 
         img = Image.new("RGB", (1, 1))
         img_path = tmp_path / "test.png"

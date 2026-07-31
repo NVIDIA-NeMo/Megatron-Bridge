@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -89,6 +91,23 @@ def _parse_export(module, *options):
 def _parse_roundtrip(module, *options):
     return module.build_parser(include_execution=True).parse_args(
         ["roundtrip", "--hf-model-id", "hf/model", "--gpus-per-node", "2", *options]
+    )
+
+
+def _parse_compare(module, *options):
+    return module.build_parser(include_execution=True).parse_args(
+        [
+            "compare",
+            "--hf-model-path",
+            "hf/model",
+            "--prompt",
+            "Hello world",
+            "--gpus-per-node",
+            "2",
+            "--tp",
+            "2",
+            *options,
+        ]
     )
 
 
@@ -230,6 +249,14 @@ def test_roundtrip_rejects_cpu_backend():
         module._validate_args(args)
 
 
+def test_compare_rejects_cpu_backend():
+    module = _load_setup_conversion_module()
+    args = _parse_compare(module, "--device", "cpu")
+
+    with pytest.raises(ValueError, match="Compare requires the GPU backend"):
+        module._validate_args(args)
+
+
 @pytest.mark.parametrize(
     ("command", "options"),
     [
@@ -343,6 +370,23 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
     assert task.args != display_args
     assert display_args[4] == "/model path"
     assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
+
+
+def test_compare_task_uses_shell_safe_wrapper_payload():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse_compare(module, "--image-path", "/image path/example.png")
+    module._validate_args(args)
+
+    task, display_args = module._build_task(args)
+
+    assert task.path == str(REPO_ROOT / "scripts/conversion/run_comparison.py")
+    assert task.entrypoint == "python"
+    assert task.args[0] == "--arguments-b64"
+    decoded_args = json.loads(base64.urlsafe_b64decode(task.args[1]).decode())
+    assert decoded_args == display_args
+    assert display_args[:4] == ["--hf_model_path", "hf/model", "--prompt", "Hello world"]
+    assert display_args[display_args.index("--image_path") + 1] == "/image path/example.png"
 
 
 def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):

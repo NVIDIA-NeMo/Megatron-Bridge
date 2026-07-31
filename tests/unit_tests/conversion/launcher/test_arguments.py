@@ -187,6 +187,74 @@ def test_roundtrip_alias_and_worker_args():
     ]
 
 
+def test_compare_parser_and_worker_args():
+    module = _load_arguments_module()
+
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "compare",
+            "--gpus-per-node",
+            "2",
+            "--hf-model-path",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--prompt",
+            "Hello world",
+            "--image-path",
+            "/images/example.png",
+            "--megatron-model-path",
+            "/checkpoint",
+            "--model-class",
+            "VisionModel",
+            "--tp",
+            "2",
+            "--roundtrip-hf",
+            "--exported-hf-dir",
+            "/exported",
+            "--trust-remote-code",
+        ]
+    )
+
+    assert args.command == "compare"
+    assert args.device == "gpu"
+    assert module.comparison_worker_args(args) == [
+        "--hf_model_path",
+        "hf/model",
+        "--prompt",
+        "Hello world",
+        "--tp",
+        "2",
+        "--pp",
+        "1",
+        "--ep",
+        "1",
+        "--etp",
+        "1",
+        "--hf-revision",
+        "0123456789abcdef",
+        "--image_path",
+        "/images/example.png",
+        "--megatron_model_path",
+        "/checkpoint",
+        "--model_class",
+        "VisionModel",
+        "--exported_hf_dir",
+        "/exported",
+        "--roundtrip_hf",
+        "--trust-remote-code",
+    ]
+
+
+def test_worker_parser_does_not_expose_comparison_launcher():
+    module = _load_arguments_module()
+
+    with pytest.raises(SystemExit):
+        module.build_parser(include_execution=False).parse_args(
+            ["compare", "--hf-model-path", "hf/model", "--prompt", "hello"]
+        )
+
+
 def test_import_worker_args_forward_hf_revision():
     module = _load_arguments_module()
     args = module.build_parser(include_execution=True).parse_args(
