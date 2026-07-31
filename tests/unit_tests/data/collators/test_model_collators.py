@@ -919,14 +919,7 @@ def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch)
     assert processor.tokenizer.padding_side == "left"
 
 
-@pytest.mark.parametrize(
-    "assistant_content",
-    [
-        {"type": "text", "text": "A picture."},
-        [{"type": "text", "text": "A "}, {"type": "text", "text": "picture."}],
-    ],
-)
-def test_glm4v_collate_flattens_structured_assistant_content(monkeypatch, assistant_content):
+def test_glm4v_collate_flattens_structured_assistant_content(monkeypatch):
     class _GlmProcessor:
         class _Tokenizer:
             padding_side = "left"
@@ -953,6 +946,7 @@ def test_glm4v_collate_flattens_structured_assistant_content(monkeypatch, assist
         "_build_glm4v_assistant_loss_mask",
         lambda example, input_ids, *args, **kwargs: torch.ones_like(input_ids, dtype=torch.float32),
     )
+    assistant_content = [{"type": "text", "text": "A picture."}]
     example = {
         "conversation": [
             {"role": "user", "content": "Describe."},

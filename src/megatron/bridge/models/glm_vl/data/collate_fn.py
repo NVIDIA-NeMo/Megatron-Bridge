@@ -56,17 +56,14 @@ def _normalize_glm4v_assistant_content(example: dict[str, Any]) -> dict[str, Any
             normalized_conversation.append(turn)
             continue
 
-        content = turn.get("content")
-        parts = [content] if isinstance(content, Mapping) else content
-        if not isinstance(parts, list):
+        parts = turn.get("content")
+        if not isinstance(parts, list) or not parts:
             normalized_conversation.append(turn)
             continue
 
         text_parts = []
         for part in parts:
-            if isinstance(part, str):
-                text_parts.append(part)
-            elif isinstance(part, Mapping) and part.get("type") == "text" and isinstance(part.get("text"), str):
+            if isinstance(part, Mapping) and part.get("type") == "text" and isinstance(part.get("text"), str):
                 text_parts.append(part["text"])
             else:
                 break
