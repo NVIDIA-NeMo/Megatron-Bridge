@@ -95,6 +95,7 @@ def _make_config(*, train_iters, checkpoint_dir, tensorboard_dir, seq_length, gb
         validation=ValidationConfig(
             eval_interval=5,
             eval_iters=2,
+            eval_at_step_zero=True,
             multiple_validation_sets=True,
             validation_set_names=["val_a", "val_b"],
         ),
@@ -169,7 +170,7 @@ class TestPretrainResumeMultiVal:
     """Per-set validation resume on the GPT sampler path."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_per_set_consumed_valid_samples_resume(self, tmp_path):
+    def test_per_set_consumed_valid_samples_resume(self, tmp_path, capsys):
         initialize_distributed()
         shared_base_dir = broadcast_path(tmp_path)
         checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
@@ -201,6 +202,11 @@ class TestPretrainResumeMultiVal:
             )
             torch.distributed.barrier()
 
+            # The step-0 run emits one pre-train validation block per set.
+            captured_first = capsys.readouterr().out
+            if torch.distributed.get_rank() == torch.distributed.get_world_size() - 1:
+                assert captured_first.count("(pre-train validation)") == 2, captured_first
+
             # Read and assert on every rank so no rank runs ahead of the others.
             after_first, aggregate_first = _read_valid_counters(checkpoint_dir)
             # Two sets, each advanced the same amount (both evaluated every interval).
@@ -228,6 +234,11 @@ class TestPretrainResumeMultiVal:
                 forward_step,
             )
             torch.distributed.barrier()
+
+            # The resumed run starts at a nonzero step, so eval_at_step_zero must not re-run.
+            captured_second = capsys.readouterr().out
+            if torch.distributed.get_rank() == torch.distributed.get_world_size() - 1:
+                assert "(pre-train validation)" not in captured_second, captured_second
 
             after_second, aggregate_second = _read_valid_counters(checkpoint_dir)
             assert len(after_second) == 2, f"expected 2 per-set counters, got {after_second}"

@@ -526,10 +526,10 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_validation_config_eval_at_start_default(self):
-        """eval_at_start is a bridge addition defaulting to False and is settable."""
-        assert ValidationConfig().eval_at_start is False
-        assert ValidationConfig(eval_at_start=True).eval_at_start is True
+    def test_validation_config_eval_at_step_zero_default(self):
+        """eval_at_step_zero is a bridge addition defaulting to False and is settable."""
+        assert ValidationConfig().eval_at_step_zero is False
+        assert ValidationConfig(eval_at_step_zero=True).eval_at_step_zero is True
         # Inherited from Megatron-LM's ValidationConfig.
         assert ValidationConfig().multiple_validation_sets is False
         assert ValidationConfig().validation_set_names is None

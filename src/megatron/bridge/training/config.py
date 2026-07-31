@@ -484,10 +484,11 @@ class TrainingConfig(MTrainTrainingConfig):
 class ValidationConfig(MTrainValidationConfig):
     """Bridge validation config, extending Megatron-Core's with extra options."""
 
-    eval_at_start: bool = False
-    """If set, run one validation pass before the training loop starts (at the
-    current iteration, normally step 0). Useful for establishing a baseline
-    validation loss for the initial / loaded checkpoint."""
+    eval_at_step_zero: bool = False
+    """If set, run one validation pass before the training loop starts when
+    training begins at step 0 (fresh runs, or checkpoints loaded with
+    ``finetune``/``release``). Establishes a baseline validation loss for the
+    initial / loaded checkpoint. Not re-run on mid-run checkpoint resume."""
 
 
 @dataclass(kw_only=True)

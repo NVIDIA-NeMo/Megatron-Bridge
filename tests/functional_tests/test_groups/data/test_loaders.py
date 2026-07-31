@@ -568,10 +568,10 @@ class TestSampleBasedDataLoaders:
         assert valid_samples == expected_valid_samples
         assert test_samples == expected_test_samples
 
-    def test_get_train_valid_test_num_samples_eval_at_start(self):
-        """eval_at_start reserves one extra evaluation's worth of validation samples."""
+    def test_get_train_valid_test_num_samples_eval_at_step_zero(self):
+        """eval_at_step_zero reserves one extra evaluation's worth of validation samples."""
         cfg = create_simple_test_config()
-        cfg.validation.eval_at_start = True
+        cfg.validation.eval_at_step_zero = True
 
         _, valid_samples, _ = get_train_valid_test_num_samples(cfg)
 

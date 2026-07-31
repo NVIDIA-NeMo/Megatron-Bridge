@@ -363,9 +363,9 @@ class TestPretrain:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_eval_at_start(self, tmp_path, capsys):
+    def test_pretrain_with_eval_at_step_zero(self, tmp_path, capsys):
         """
-        Test that eval_at_start runs one validation pass before the first training iteration.
+        Test that eval_at_step_zero runs one validation pass before the first training iteration.
 
         Asserts (on the last rank, which prints eval summaries) that exactly one
         "(pre-train validation)" block is emitted and that it appears before the
@@ -434,7 +434,7 @@ class TestPretrain:
             validation=ValidationConfig(
                 eval_interval=5,
                 eval_iters=2,
-                eval_at_start=True,
+                eval_at_step_zero=True,
             ),
             optimizer=OptimizerConfig(
                 optimizer="adam",

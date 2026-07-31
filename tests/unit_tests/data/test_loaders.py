@@ -77,7 +77,7 @@ def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _moc
                 eval_global_batch_size=None,
                 eval_micro_batch_size=None,
                 skip_train=False,
-                eval_at_start=False,
+                eval_at_step_zero=False,
                 multiple_validation_sets=False,
             ),
         )
@@ -153,7 +153,7 @@ def test_multiple_validation_sets_build_one_dataloader_per_set(_mock_rank, _mock
                 eval_global_batch_size=None,
                 eval_micro_batch_size=None,
                 skip_train=False,
-                eval_at_start=False,
+                eval_at_step_zero=False,
                 multiple_validation_sets=multiple_validation_sets,
             ),
         )

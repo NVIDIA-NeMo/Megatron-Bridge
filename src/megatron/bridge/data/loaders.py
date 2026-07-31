@@ -130,8 +130,8 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
     else:
         eval_iters = 0
-    # Reserve one extra evaluation for the pre-train pass when eval_at_start is True.
-    if cfg.validation.eval_at_start and cfg.validation.eval_iters:
+    # Reserve one extra evaluation for the pre-train pass when eval_at_step_zero is True.
+    if cfg.validation.eval_at_step_zero and cfg.validation.eval_iters:
         eval_iters += cfg.validation.eval_iters
     test_iters = cfg.validation.eval_iters
 
