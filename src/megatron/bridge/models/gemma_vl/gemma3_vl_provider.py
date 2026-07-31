@@ -31,7 +31,7 @@ class Gemma3VLModelProvider(Gemma3ModelProvider):
     # These are model invariants, not user-selectable settings. Marking them as
     # non-init also drops stale causal/flash values from older checkpoint configs.
     is_vision_language: bool = field(default=True, init=False)
-    attention_backend: AttnBackend = field(default=AttnBackend.unfused, init=False)
+    attention_backend: AttnBackend = field(default=AttnBackend.fused, init=False)
 
     # VL models shouldn't scatter embeddings across sequence parallel regions because
     # the vision embeddings are going to be inserted into the language embeddings.
@@ -61,10 +61,10 @@ class Gemma3VLModelProvider(Gemma3ModelProvider):
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Gemma3VLModel:
         if not self.is_vision_language:
             raise ValueError("Gemma 3 VL requires is_vision_language=True.")
-        if self.attention_backend is not AttnBackend.unfused:
-            raise ValueError("Gemma 3 VL requires the unfused attention backend for arbitrary attention masks.")
+        if self.attention_backend is not AttnBackend.fused:
+            raise ValueError("Gemma 3 VL requires the fused attention backend for attention bias.")
         if self.context_parallel_size != 1:
-            raise ValueError("Gemma 3 VL does not support context parallelism with arbitrary attention masks.")
+            raise ValueError("Gemma 3 VL does not support context parallelism with attention bias.")
 
         model = Gemma3VLModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
