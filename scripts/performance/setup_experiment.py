@@ -724,7 +724,14 @@ def main(
             kubeconfig=xcalibur_kubeconfig,
             kube_context=xcalibur_kube_context,
         )
-        executor.env_vars = custom_env_vars
+        xcal_env = custom_env_vars.copy()
+        if hf_token:
+            # Always allow the pod to reach HF to download gated model files
+            # (tokenizer configs, etc.) — the pod has no access to the host
+            # HF cache so offline mode must not be forced here even when
+            # --offline was passed for the launcher-side setup.
+            xcal_env.update({"HF_TOKEN": hf_token, "HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
+        executor.env_vars = xcal_env
     else:
         executor = slurm_executor(
             gpu=gpu,
