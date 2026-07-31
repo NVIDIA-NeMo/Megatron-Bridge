@@ -21,6 +21,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_super_perf_defaults,
     _benchmark_common,
     _nemotron_3_super_nvfp4_precision,
+    _nemotron_3_ultra_perf_fsdp_config,
     _perf_precision,
     load_quantization_recipe,
     nemotron_3_nano_pretrain_config,
@@ -208,6 +209,299 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 64× GB200, MXFP8, Megatron-FSDP.
+
+    TP4 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, sequence length 8192,
+    HybridEP, CuteDSL fused grouped MLP, selective MoE activation recompute,
+    fine-grained activation offload, and one 64-GPU optimizer shard.
+    """
+    cfg = _nemotron_3_ultra_perf_fsdp_config(
+        num_gpus=64,
+        compute_dtype="fp8_mx",
+        tensor_model_parallel_size=4,
+        pipeline_model_parallel_size=1,
+        virtual_pipeline_model_parallel_size=None,
+        expert_model_parallel_size=64,
+        global_batch_size=256,
+        optimizer_shard_group_size=64,
+        fine_grained_activation_offloading=True,
+        # Approximately 500 MB for BF16. This offloads Ultra's top-22
+        # fused-grouped-MLP input without adding small-tensor transfer traffic.
+        min_offloaded_tensor_size=250_000_000,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by
+        # the op fuser and fused weighted squared-ReLU with moe_act recompute.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        # TE >= 2.10 uses the V1 path to avoid offloading weights.
+        "NVTE_CPU_OFFLOAD_V1": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× GB200, MXFP8, Megatron-FSDP HSDP.
+
+    TP4 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, sequence length 8192,
+    HybridEP, CuteDSL fused grouped MLP, selective MoE activation recompute,
+    fine-grained activation offload, and four 64-GPU optimizer shards.
+    """
+    cfg = _nemotron_3_ultra_perf_fsdp_config(
+        num_gpus=256,
+        compute_dtype="fp8_mx",
+        tensor_model_parallel_size=4,
+        pipeline_model_parallel_size=1,
+        virtual_pipeline_model_parallel_size=None,
+        expert_model_parallel_size=64,
+        global_batch_size=256,
+        optimizer_shard_group_size=64,
+        fine_grained_activation_offloading=True,
+        # Approximately 500 MB for BF16. This offloads Ultra's top-22
+        # fused-grouped-MLP input without adding small-tensor transfer traffic.
+        min_offloaded_tensor_size=250_000_000,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by
+        # the op fuser and fused weighted squared-ReLU with moe_act recompute.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        # TE >= 2.10 uses the V1 path to avoid offloading weights.
+        "NVTE_CPU_OFFLOAD_V1": 1,
+    }
+    return cfg
+
+
+def _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+    *,
+    num_gpus: int,
+    global_batch_size: int,
+    nccl_user_buffers: bool,
+) -> ConfigContainer:
+    """Build the TP1/PP2 Ultra FSDP throughput candidate."""
+    cfg = _nemotron_3_ultra_perf_fsdp_config(
+        num_gpus=num_gpus,
+        compute_dtype="fp8_mx",
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=2,
+        virtual_pipeline_model_parallel_size=2,
+        expert_model_parallel_size=64,
+        global_batch_size=global_batch_size,
+        optimizer_shard_group_size=64,
+        fine_grained_activation_offloading=False,
+        enable_fine_grained_param_gather=True,
+    )
+    cfg.ddp.nccl_ub = nccl_user_buffers
+    cfg.ddp.megatron_fsdp_max_pool_double_buffer = nccl_user_buffers
+    cfg.ddp.fsdp_manual_registration = nccl_user_buffers
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_config() -> ConfigContainer:
+    """Nemotron 3 Ultra: 128× GB200, TP1/PP2/VPP2 MXFP8 FSDP without CPU offload."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+        num_gpus=128,
+        global_batch_size=256,
+        nccl_user_buffers=False,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by
+        # the op fuser and fused weighted squared-ReLU with moe_act recompute.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContainer:
+    """Nemotron 3 Ultra 128-GPU TP1/PP2 FSDP candidate with NCCL user buffers."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+        num_gpus=128,
+        global_batch_size=256,
+        nccl_user_buffers=True,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by
+        # the op fuser and fused weighted squared-ReLU with moe_act recompute.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_config() -> ConfigContainer:
+    """Nemotron 3 Ultra: 256× GB200, TP1/PP2/VPP2 MXFP8 FSDP without CPU offload."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+        num_gpus=256,
+        global_batch_size=512,
+        nccl_user_buffers=False,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by
+        # the op fuser and fused weighted squared-ReLU with moe_act recompute.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContainer:
+    """Nemotron 3 Ultra TP1/PP2 FSDP candidate with NCCL user buffers."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+        num_gpus=256,
+        global_batch_size=512,
+        nccl_user_buffers=True,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by
+        # the op fuser and fused weighted squared-ReLU with moe_act recompute.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp4_config() -> ConfigContainer:
+    """Nemotron 3 Ultra: 256× GB200, TP1/PP4/VPP3 MXFP8 FSDP without CPU offload."""
+    cfg = _nemotron_3_ultra_perf_fsdp_config(
+        num_gpus=256,
+        compute_dtype="fp8_mx",
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=4,
+        virtual_pipeline_model_parallel_size=3,
+        expert_model_parallel_size=64,
+        global_batch_size=512,
+        optimizer_shard_group_size=64,
+        fine_grained_activation_offloading=False,
+        enable_fine_grained_param_gather=True,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by
+        # the op fuser and fused weighted squared-ReLU with moe_act recompute.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
 
