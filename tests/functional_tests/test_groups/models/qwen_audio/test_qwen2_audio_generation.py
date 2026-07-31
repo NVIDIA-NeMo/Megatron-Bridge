@@ -34,6 +34,8 @@ import pytest
 import torch
 from transformers import AutoTokenizer, Qwen2AudioConfig, Qwen2AudioForConditionalGeneration
 
+from tests.functional_tests.fixture_utils import resolve_test_data_file
+
 
 HF_QWEN2_AUDIO_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen2AudioForConditionalGeneration"],
@@ -150,6 +152,11 @@ class TestQwen2AudioGeneration:
         Args:
             qwen2_audio_toy_model_path: Path to the toy Qwen2 Audio model (from fixture)
         """
+        audio_path = resolve_test_data_file(
+            "megatron_bridge/assets/glass-breaking-151256.mp3",
+            "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-Audio/audio/glass-breaking-151256.mp3",
+        )
+        audio_option = "--audio_url" if audio_path.startswith(("http://", "https://")) else "--audio_path"
         cmd = [
             sys.executable,
             "-m",
@@ -157,7 +164,7 @@ class TestQwen2AudioGeneration:
             "--nproc_per_node=2",
             "examples/conversion/hf_to_megatron_generate_audio_lm.py",
             f"--hf_model_path={qwen2_audio_toy_model_path}",
-            "--audio_url=https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen2-Audio/audio/glass-breaking-151256.mp3",
+            f"{audio_option}={audio_path}",
             "--prompt=What's that sound?",
             "--tp=2",
             "--max_new_tokens=50",

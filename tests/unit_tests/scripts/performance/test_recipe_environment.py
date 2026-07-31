@@ -494,6 +494,41 @@ def test_flat_default_args_leave_inline_recipe_environment_unchanged():
     assert recipe.env_vars == original_env
 
 
+def test_vr200_argparse_overrides_keep_sm100_cuda_connection_count():
+    from utils.overrides import _apply_flat_cli_environment_compatibility
+
+    recipe = SimpleNamespace(
+        env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 1},
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="vr200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="llama",
+        model_recipe_name="llama31_405b",
+        task="pretrain",
+    )
+
+    _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=None,
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+
+
 def test_flat_explicit_argparse_compatibility_changes_only_legacy_coupled_values():
     from utils.overrides import _apply_flat_cli_environment_compatibility
 
@@ -946,6 +981,44 @@ def test_hydra_disable_clears_argparse_dependent_state(monkeypatch):
     assert effective_recipe.ddp.fsdp_manual_registration is False
     assert effective_recipe.model.moe_token_dispatcher_type == "alltoall"
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
+
+
+def test_training_tokenizer_override_preserves_recipe_vocab_policy():
+    """Selecting a runtime tokenizer keeps the canonical pretraining vocabulary policy."""
+    from argument_parser import parse_cli_args
+
+    from megatron.bridge.recipes.common import _pretrain_common
+
+    parser = parse_cli_args()
+    args, unknown = parser.parse_known_args(
+        [
+            "--model_family_name",
+            "gpt",
+            "--model_recipe_name",
+            "vanilla_gpt",
+            "--num_gpus",
+            "1",
+            "--gpu",
+            "h100",
+            "--use_recipes",
+            "--max_steps",
+            "1000",
+            "--tokenizer_type",
+            "HuggingFaceTokenizer",
+            "--tokenizer_model",
+            "test-tokenizer",
+        ]
+    )
+    assert unknown == []
+
+    recipe = _pretrain_common()
+    assert recipe.tokenizer.use_tokenizer_vocab_size is True
+
+    updated = run_recipe._apply_training_argparse_overrides(recipe, args)
+
+    assert updated.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert updated.tokenizer.tokenizer_model == "test-tokenizer"
+    assert updated.tokenizer.use_tokenizer_vocab_size is True
 
 
 def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):

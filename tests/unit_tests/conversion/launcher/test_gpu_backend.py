@@ -123,7 +123,8 @@ class _FakeHfPretrained:
 
 
 class TestImportHfToMegatron:
-    def test_import_saves_megatron_checkpoint_with_tokenizer_metadata(self, cli, monkeypatch):
+    @pytest.mark.parametrize("low_memory_save", [False, True])
+    def test_import_saves_megatron_checkpoint_with_tokenizer_metadata(self, cli, monkeypatch, low_memory_save):
         calls = []
         prepared_outputs = []
 
@@ -162,13 +163,14 @@ class TestImportHfToMegatron:
             etp=1,
             torch_dtype="bfloat16",
             trust_remote_code=True,
+            low_memory_save=low_memory_save,
             distributed_timeout_minutes=None,
             overwrite=False,
         )
 
         save_call = next(call for call in calls if call[0] == "save_megatron_model")
         assert save_call[1] == (["megatron-model"], "/ckpt")
-        assert "low_memory_save" not in save_call[2]
+        assert save_call[2]["low_memory_save"] is low_memory_save
         assert save_call[2]["hf_tokenizer_path"] == "hf"
         assert save_call[2]["hf_tokenizer_kwargs"] == {
             "padding_side": "left",

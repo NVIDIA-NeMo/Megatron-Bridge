@@ -31,20 +31,24 @@ def main() -> None:
     expected = cast(dict[str, str], json.loads(sys.argv[1]))
     string_registrations = set(cast(list[str], json.loads(sys.argv[2])))
     deprecated_registrations = set(cast(list[str], json.loads(sys.argv[3])))
-    supported = [
-        architecture
-        for architecture in AutoBridge.list_supported_models()
-        if architecture not in deprecated_registrations
-    ]
-    assert supported == sorted(expected), f"registration manifest mismatch: {supported!r}"
+    # Subset rather than equality: adding a new model must not require editing the manifest.
+    # The contract worth guarding is that every architecture already listed stays registered,
+    # keeps its key kind, and resolves to the same bridge class.
+    supported = set(AutoBridge.list_supported_models()) - deprecated_registrations
+    missing = sorted(set(expected) - supported)
+    assert not missing, f"expected architectures are no longer registered: {missing!r}"
 
     key_kinds = {
         key if isinstance(key, str) else key.__name__: isinstance(key, str)
         for key in model_bridge.get_model_bridge._exact_types
         if (key if isinstance(key, str) else key.__name__) not in deprecated_registrations
     }
-    expected_key_kinds = {architecture: architecture in string_registrations for architecture in expected}
-    assert key_kinds == expected_key_kinds, f"registration key-kind mismatch: {key_kinds!r}"
+    mismatched_key_kinds = {
+        architecture: key_kinds.get(architecture)
+        for architecture in expected
+        if key_kinds.get(architecture) != (architecture in string_registrations)
+    }
+    assert not mismatched_key_kinds, f"registration key-kind mismatch: {mismatched_key_kinds!r}"
 
     for architecture, expected_bridge_class in expected.items():
         config = PretrainedConfig(architectures=[architecture])

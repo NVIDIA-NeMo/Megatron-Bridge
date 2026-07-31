@@ -30,7 +30,6 @@ from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -72,8 +71,7 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -121,8 +119,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -171,8 +168,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -222,8 +218,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -274,8 +269,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
