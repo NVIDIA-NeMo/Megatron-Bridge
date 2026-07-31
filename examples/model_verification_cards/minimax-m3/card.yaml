@@ -8,27 +8,25 @@ summary: >
   results. Model-level verification covers the complete MiniMax-M3
   vision-language checkpoint, including the language model, vision tower,
   projector paths, and lightning-indexer state. The pinned 32-H100 GPU import
-  and GPU export completed their verification gates. The public
-  `vlm-generation` inference task route completed launcher smoke testing, but
-  the previous deterministic MiniMax-M3 multimodal generation evidence is no
-  longer claimed until the model-specific run is reproduced on a current clean
-  Bridge/runtime pairing and the literal completion is checked. All 59 exported
-  safetensors shards are byte-for-byte identical to the pinned source, and
-  Transformers 5.12.1 natively reloads the export without loading errors. CPU
-  import and export remain unverified because the CPU-only attempt exited
-  during CUDA-dependent model initialization before producing a checkpoint.
-  Full-VLM manual Hugging
+  and GPU export completed their verification gates. A current clean 32-H100
+  run also reloaded the persisted full-VLM checkpoint through the public
+  VLM generation entry point, processed the pinned repository image, generated a
+  coherent completion containing the exact image-only OCR target, and reached
+  EOS without token-0 or NUL degeneration. All 59 exported safetensors shards
+  are byte-for-byte identical to the pinned source, and Transformers 5.12.1
+  natively reloads the export without loading errors. CPU import and export
+  remain unverified because the CPU-only attempt exited during CUDA-dependent
+  model initialization before producing a checkpoint. Full-VLM manual Hugging
   Face/Megatron forward correlation also remains unverified. Training entries
   cover only the language-model backbone and do not claim vision or projector
   training; post-SFT full-VLM export therefore remains unsupported.
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu]
+    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - manual_forward_pass
-      - inference
   training:
     H100:
       unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
@@ -138,11 +136,11 @@ items:
       absolute logit differences as non-gating diagnostics.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 9bd762e26525ab40703f9dac0b8a935b2fc78c19  # pragma: allowlist secret
     command: >
-      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
-      --task vlm-generation
+      uv run python scripts/inference/vlm_generation.py
       --hf_model_path MiniMaxAI/MiniMax-M3
       --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
       --megatron_model_path
@@ -154,14 +152,19 @@ items:
       explain or reason."
       --max_new_tokens 64
       --trust_remote_code
-    last_verified: null
+    last_verified: 2026-07-31
     expected_result: >
-      No current deterministic full-VLM Megatron generation result is claimed.
-      Future verification must reload the pinned full-VLM checkpoint on a clean
-      Bridge commit and public base container, process docs/images/tp1.png,
-      run greedy decoding with an exact new-token limit, require the run to
-      stop on EOS or document exact-limit stopping, and check the literal
-      completion against the image-only OCR target "Pre-LayerNorm".
+      One deterministic greedy generation on 32 H100s reloaded the persisted
+      full-VLM checkpoint at TP1/PP1/EP32/ETP1, processed docs/images/tp1.png,
+      generated 50 tokens under a 64-token maximum, reached EOS naturally, and
+      exited successfully. The first five selected token IDs were 200059, 758,
+      3100, 9210, and 640; the completion contained zero NUL bytes and did not
+      exhibit token-0/NUL degeneration. The exact literal completion,
+      represented with JSON Unicode escapes for the model tags and quotes, was
+      "\u003cmm:think\u003eThe user wants me to read the green caption near the
+      top of the image. The green text says \u0022Pre-LayerNorm\u0022 Transformer
+      Block. The exact quoted term would be
+      \u0022Pre-LayerNorm\u0022.\u003c\u002fmm:think\u003e\u0022Pre-LayerNorm\u0022".
 
   pretrain:
     H100:
