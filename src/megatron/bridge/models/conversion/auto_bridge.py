@@ -404,6 +404,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
         # 3. Build final bridge from the synthesized config
         synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
+        synthesized_config.name_or_path = hf_model_id
         bridge = cls.from_hf_config(synthesized_config)
         bridge.hf_model_id = hf_model_id
         bridge.trust_remote_code = trust_remote_code

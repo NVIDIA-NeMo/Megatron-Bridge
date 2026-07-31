@@ -170,6 +170,14 @@ def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
     assert cfg.model.calculate_per_token_loss is True
     assert cfg.train.global_batch_size == 64
     assert cfg.train.micro_batch_size == 2
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.main_params_dtype == torch.float16
+    assert cfg.optimizer.store_param_remainders is True
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.dataset.seq_length == 8192
     assert cfg.dataset.enable_in_batch_packing is True
     assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 8

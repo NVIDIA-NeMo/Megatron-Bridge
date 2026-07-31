@@ -31,6 +31,7 @@ from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
@@ -96,13 +97,24 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
 
     In-batch packing requires a micro batch greater than one. The TP4/CP2
     topology needs at least eight GPUs and aligns every packed row to the
-    combined CP/SP multiple.
+    combined CP/SP multiple. Precision-aware Adam uses FP16 main parameters
+    with stored FP32 remainders, BF16 gradients, and BF16 moments so first-step
+    optimizer-state initialization fits within 80 GB H100 memory.
     """
     cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
     cfg.model.seq_length = 8192
     cfg.model.context_parallel_size = 2
     cfg.model.calculate_per_token_loss = True
     cfg.train.micro_batch_size = 2
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.store_param_remainders = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.dataset.seq_length = 8192
     cfg.dataset.enable_in_batch_packing = True
     cfg.dataset.in_batch_packing_pad_to_multiple_of = 8

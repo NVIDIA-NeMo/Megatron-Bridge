@@ -47,6 +47,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
@@ -309,7 +310,11 @@ class NemotronOmniBridge(NemotronVLBridge):
         state = getattr(hf_pretrained, "state", None)
         source = getattr(state, "source", None)
         if source is None:
-            return
+            source_path = getattr(hf_pretrained, "name_or_path", None)
+            if not source_path:
+                return
+            source = SafeTensorsStateSource(source_path)
+            state = StateDict(source)
         source_keys = set(source.get_all_keys())
         for name in self._HF_PASSTHROUGH_KEYS:
             if name in source_keys:

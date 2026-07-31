@@ -810,7 +810,9 @@ class TestAutoBridge:
                     "megatron.bridge.models.conversion.utils.conform_config_to_reference",
                     return_value={"vocab_size": 64000},
                 ) as mock_conform:
-                    with patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]):
+                    with patch.object(
+                        AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]
+                    ) as mock_from_config:
                         bridge = AutoBridge.from_auto_config(str(ckpt_dir), hf_model_id)
 
         assert bridge is second_bridge
@@ -818,6 +820,7 @@ class TestAutoBridge:
         mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=False)
         mock_load_cfg.assert_called_once_with(str(ckpt_dir))
         mock_conform.assert_called_once_with({"vocab_size": 64000}, {"vocab_size": 32000})
+        assert mock_from_config.call_args_list[1].args[0].name_or_path == hf_model_id
 
     def test_from_auto_config_uses_latest_iter_run_config(self, tmp_path):
         """from_auto_config falls back to latest iter_* directory for run_config.yaml."""
