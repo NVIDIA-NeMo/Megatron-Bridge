@@ -21,7 +21,12 @@ import torch
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
+from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
+    Qwen35TokenClassificationBridge,
+    Qwen35VLBridge,
+    Qwen35VLMoEBridge,
+)
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
     _TRANSFORMERS_HAS_QWEN3_5_MOE,
@@ -265,6 +270,59 @@ class TestQwen35VLBridgeMappingRegistry:
     def test_mapping_registry_has_vision_patch_embed(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("patch_embed" in n for n in names)
+
+
+# =====================================================================
+# Tests for Qwen35TokenClassificationBridge
+# =====================================================================
+
+
+class TestQwen35TokenClassificationBridge:
+    @pytest.fixture
+    def mock_pretrained(self):
+        vl_pretrained = _make_mock_pretrained(_make_dense_text_config(), _make_vision_config())
+        pretrained = Mock(spec=PreTrainedTokenClassification)
+        pretrained.config = vl_pretrained.config
+        pretrained.config.num_labels = 3
+        pretrained.config.classifier_dropout = 0.2
+        pretrained.config.token_classification_bias = True
+        return pretrained
+
+    def test_provider_registers_classification_head_before_weight_loading(self, mock_pretrained):
+        bridge = Qwen35TokenClassificationBridge()
+
+        provider = bridge.provider_bridge(mock_pretrained)
+
+        assert provider.mtp_num_layers == 0
+        assert provider.mtp_enabled is False
+        assert provider.share_embeddings_and_output_weights is False
+        assert len(provider._pre_wrap_hooks) == 1
+
+    def test_mapping_registry_uses_score_and_omits_lm_and_mtp(self, mock_pretrained):
+        bridge = Qwen35TokenClassificationBridge()
+        bridge.hf_pretrained = mock_pretrained
+
+        names = []
+        for mapping in bridge.mapping_registry().mappings:
+            names.append(str(mapping.megatron_param))
+            names.append(str(mapping.hf_param))
+
+        assert "score.weight" in names
+        assert "score.bias" in names
+        assert "language_model.output_layer.weight" in names
+        assert "language_model.output_layer.bias" in names
+        assert not any("lm_head" in name for name in names)
+        assert not any("mtp." in name for name in names)
+
+    def test_mapping_registry_omits_disabled_bias(self, mock_pretrained):
+        mock_pretrained.config.token_classification_bias = False
+        bridge = Qwen35TokenClassificationBridge()
+        bridge.hf_pretrained = mock_pretrained
+
+        hf_params = [str(mapping.hf_param) for mapping in bridge.mapping_registry().mappings]
+
+        assert "score.weight" in hf_params
+        assert "score.bias" not in hf_params
 
 
 # =====================================================================

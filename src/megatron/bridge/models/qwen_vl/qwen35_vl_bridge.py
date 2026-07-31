@@ -42,6 +42,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.qwen.qwen35_bridge import (
     Qwen35Bridge,
     Qwen35MoEBridge,
@@ -53,12 +54,14 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
 )
+from megatron.bridge.training.utils.train_utils import create_token_classification_head_hook
 
 
 logger = logging.getLogger(__name__)
 
 _QWEN3_5_DENSE_HF_CLASS_NAME = "Qwen3_5ForConditionalGeneration"
 _QWEN3_5_MOE_HF_CLASS_NAME = "Qwen3_5MoeForConditionalGeneration"
+_QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME = "Qwen3_5ForTokenClassification"
 
 
 def _get_vision_mappings():
@@ -352,4 +355,66 @@ class Qwen35VLBridge(MegatronModelBridge):
         )
         mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix="language_model."))
         mapping_list.extend(_get_vision_mappings())
+        return MegatronMappingRegistry(*mapping_list)
+
+
+@MegatronModelBridge.register_bridge(
+    source=_QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME,
+    target=Qwen3VLModel,
+    provider=Qwen35VLModelProvider,
+    model_type="qwen3_5",
+)
+class Qwen35TokenClassificationBridge(Qwen35VLBridge):
+    """Bridge for Qwen3.5 VL models with a replicated per-token classification head."""
+
+    def provider_bridge(
+        self,
+        hf_pretrained: PreTrainedTokenClassification,
+    ) -> Qwen35VLModelProvider:
+        provider = super().provider_bridge(hf_pretrained)
+        hf_config = hf_pretrained.config
+
+        classifier_dropout = getattr(hf_config, "classifier_dropout", None)
+        if classifier_dropout is None:
+            classifier_dropout = getattr(hf_config, "hidden_dropout", None)
+        if classifier_dropout is None:
+            classifier_dropout = 0.1
+
+        # GenericForTokenClassification wraps the base Qwen3.5 model and does not
+        # instantiate either the causal LM head or MTP layers.
+        provider.mtp_num_layers = 0
+        provider.mtp_enabled = False
+        provider.share_embeddings_and_output_weights = False
+        provider.register_pre_wrap_hook(
+            create_token_classification_head_hook(
+                hidden_size=provider.hidden_size,
+                sequence_parallel=provider.sequence_parallel,
+                num_labels=hf_config.num_labels,
+                bias=getattr(hf_config, "token_classification_bias", True),
+                dropout=classifier_dropout,
+            )
+        )
+        return provider
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        hf_config = self.hf_pretrained.config
+        mapping_list = Qwen35Bridge._get_dense_lm_mappings(
+            hf_prefix="model.language_model.",
+            megatron_prefix="language_model.",
+            output_layer_hf_param=None,
+        )
+        mapping_list.extend(_get_vision_mappings())
+        mapping_list.append(
+            ReplicatedMapping(
+                megatron_param="language_model.output_layer.weight",
+                hf_param="score.weight",
+            )
+        )
+        if getattr(hf_config, "token_classification_bias", True):
+            mapping_list.append(
+                ReplicatedMapping(
+                    megatron_param="language_model.output_layer.bias",
+                    hf_param="score.bias",
+                )
+            )
         return MegatronMappingRegistry(*mapping_list)

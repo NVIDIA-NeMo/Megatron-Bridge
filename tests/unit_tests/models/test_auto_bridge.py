@@ -47,6 +47,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 
 
 def create_mock_pretrained_causal_lm():
@@ -468,8 +469,38 @@ class TestAutoBridge:
             mock_masked_lm_from_pretrained.assert_called_once_with("bert-base-uncased")
             mock_causal_lm_from_pretrained.assert_not_called()
 
+    def test_from_hf_pretrained_dispatches_token_classification_wrapper(self):
+        mock_model = Mock(spec=PreTrainedTokenClassification)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["Qwen3_5ForTokenClassification"]
+        mock_model.config = mock_config
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedTokenClassification.from_pretrained"
+            ) as mock_token_classification_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+            ) as mock_causal_lm_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+            ) as mock_safe_load_config,
+            patch.object(AutoBridge, "_validate_config"),
+        ):
+            mock_token_classification_from_pretrained.return_value = mock_model
+            mock_safe_load_config.return_value = mock_config
+
+            result = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-token-classification")
+
+            assert result.hf_pretrained == mock_model
+            mock_token_classification_from_pretrained.assert_called_once_with("Qwen/Qwen3.5-token-classification")
+            mock_causal_lm_from_pretrained.assert_not_called()
+
     def test_resolve_pretrained_wrapper_cls(self):
-        """_resolve_pretrained_wrapper_cls selects PreTrainedMaskedLM only for '*ForMaskedLM'."""
+        """_resolve_pretrained_wrapper_cls selects the task-specific HF wrapper."""
+        token_classification_config = SimpleNamespace(architectures=["Qwen3_5ForTokenClassification"])
+        assert _resolve_pretrained_wrapper_cls(token_classification_config) is PreTrainedTokenClassification
+
         masked_lm_config = SimpleNamespace(architectures=["BertForMaskedLM"])
         assert _resolve_pretrained_wrapper_cls(masked_lm_config) is PreTrainedMaskedLM
 
@@ -731,10 +762,17 @@ class TestAutoBridge:
         bridge_masked_lm = AutoBridge(mock_masked_lm)
         assert bridge_masked_lm.hf_pretrained == mock_masked_lm
 
+        mock_token_classification = Mock(spec=PreTrainedTokenClassification)
+        bridge_token_classification = AutoBridge(mock_token_classification)
+        assert bridge_token_classification.hf_pretrained == mock_token_classification
+
         # Test with invalid type
         with pytest.raises(
             ValueError,
-            match="hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance",
+            match=(
+                "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, "
+                "PreTrainedTokenClassification, or PretrainedConfig instance"
+            ),
         ):
             AutoBridge("invalid")
 
@@ -745,6 +783,10 @@ class TestAutoBridge:
 
     def test_pretrained_wrapper_cls_property(self):
         """Test _pretrained_wrapper_cls resolves the wrapper class for each hf_pretrained kind."""
+        mock_token_classification = Mock(spec=PreTrainedTokenClassification)
+        bridge = AutoBridge(mock_token_classification)
+        assert bridge._pretrained_wrapper_cls is PreTrainedTokenClassification
+
         # A PreTrainedMaskedLM instance resolves directly, regardless of its config.
         mock_masked_lm = Mock(spec=PreTrainedMaskedLM)
         bridge = AutoBridge(mock_masked_lm)

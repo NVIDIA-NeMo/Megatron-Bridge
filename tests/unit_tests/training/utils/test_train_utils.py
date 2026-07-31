@@ -29,6 +29,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
     calc_params_l2_norm,
+    create_token_classification_head_hook,
     create_value_head_hook,
     freeze_moe_router,
     make_value_model,
@@ -3936,6 +3937,19 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert bias is None
 
 
+def test_linear_for_last_layer_supports_bias_and_dropout() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        bias=True,
+        dropout=0.25,
+    )
+
+    assert head.bias is not None
+    assert head.dropout.p == 0.25
+
+
 def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> None:
     head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True)
     with torch.no_grad():
@@ -3996,6 +4010,30 @@ def test_create_value_head_hook_replaces_last_virtual_pipeline_chunk(monkeypatch
     assert output_layer.in_features == 4
     assert output_layer.out_features == 2
     assert output_layer.sequence_parallel is True
+
+
+def test_token_classification_head_hook_replaces_nested_language_head(monkeypatch) -> None:
+    _patch_single_pipeline_last_stage(monkeypatch)
+    model_chunk = torch.nn.Module()
+    model_chunk.language_model = torch.nn.Module()
+    model_chunk.language_model.output_layer = torch.nn.Linear(4, 16)
+    hook = create_token_classification_head_hook(
+        hidden_size=4,
+        sequence_parallel=False,
+        num_labels=3,
+        bias=True,
+        dropout=0.2,
+    )
+
+    result = hook([model_chunk])
+
+    assert result == [model_chunk]
+    output_layer = model_chunk.language_model.output_layer
+    assert isinstance(output_layer, LinearForLastLayer)
+    assert output_layer.in_features == 4
+    assert output_layer.out_features == 3
+    assert output_layer.bias is not None
+    assert output_layer.dropout.p == 0.2
 
 
 def test_create_value_head_hook_requires_chunk_count_to_match_pipeline_flags(monkeypatch) -> None:

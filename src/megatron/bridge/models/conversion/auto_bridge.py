@@ -49,6 +49,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 
 
@@ -70,12 +71,17 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronLabsDiffusionModel",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
+    "ForTokenClassification",
 )
 
 # hf_pretrained wrapper types that carry both a config and (optionally) loaded weights.
 # Used for isinstance checks that should accept any such wrapper, regardless of which
 # HF Auto* class it loads the underlying model with.
-_PRETRAINED_WRAPPER_TYPES: tuple[type, ...] = (PreTrainedCausalLM, PreTrainedMaskedLM)
+_PRETRAINED_WRAPPER_TYPES: tuple[type, ...] = (
+    PreTrainedCausalLM,
+    PreTrainedMaskedLM,
+    PreTrainedTokenClassification,
+)
 
 # Mapping from non-standard HF architecture names to their actual transformers class names.
 # Some HF model configs report architecture names that don't follow the standard
@@ -196,7 +202,9 @@ def _model_omits_mtp(model_config: Any) -> bool:
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
 
 
-def _resolve_pretrained_wrapper_cls(config: Any) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM]:
+def _resolve_pretrained_wrapper_cls(
+    config: Any,
+) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM] | Type[PreTrainedTokenClassification]:
     """Select the hf_pretrained wrapper class for a model's architecture.
 
     Masked/encoder-only LMs (``*ForMaskedLM``) are loaded through
@@ -207,6 +215,8 @@ def _resolve_pretrained_wrapper_cls(config: Any) -> Type[PreTrainedCausalLM] | T
     supported architectures continue to use :class:`PreTrainedCausalLM`.
     """
     architectures = getattr(config, "architectures", None) or []
+    if any(arch.endswith("ForTokenClassification") for arch in architectures):
+        return PreTrainedTokenClassification
     if any(arch.endswith("ForMaskedLM") for arch in architectures):
         return PreTrainedMaskedLM
     return PreTrainedCausalLM
@@ -272,12 +282,18 @@ class AutoBridge(Generic[MegatronModelT]):
         a MegatronModelBridge subclass.
     """
 
-    def __init__(self, hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig):
+    def __init__(
+        self,
+        hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig,
+    ):
         if not isinstance(hf_pretrained, (*_PRETRAINED_WRAPPER_TYPES, PretrainedConfig)):
             raise ValueError(
-                "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance"
+                "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, "
+                "PreTrainedTokenClassification, or PretrainedConfig instance"
             )
-        self.hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig = hf_pretrained
+        self.hf_pretrained: (
+            PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig
+        ) = hf_pretrained
         if isinstance(hf_pretrained, PretrainedConfig):
             hf_config = hf_pretrained
             model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
@@ -1840,12 +1856,16 @@ class AutoBridge(Generic[MegatronModelT]):
         return bridge
 
     @property
-    def _pretrained_wrapper_cls(self) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM]:
+    def _pretrained_wrapper_cls(
+        self,
+    ) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM] | Type[PreTrainedTokenClassification]:
         """The hf_pretrained wrapper class matching this bridge's current instance.
 
         Falls back to resolving from the current config when ``hf_pretrained`` is a
         bare ``PretrainedConfig`` (i.e. the bridge was built with ``from_hf_config``).
         """
+        if isinstance(self.hf_pretrained, PreTrainedTokenClassification):
+            return PreTrainedTokenClassification
         if isinstance(self.hf_pretrained, PreTrainedMaskedLM):
             return PreTrainedMaskedLM
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
@@ -1853,7 +1873,9 @@ class AutoBridge(Generic[MegatronModelT]):
         return _resolve_pretrained_wrapper_cls(self.hf_pretrained)
 
     @property
-    def _provider_bridge_input(self) -> PreTrainedCausalLM | PreTrainedMaskedLM | _ConfigOnlyPretrainedShim:
+    def _provider_bridge_input(
+        self,
+    ) -> PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | _ConfigOnlyPretrainedShim:
         if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
             return self.hf_pretrained
         return self._config_only_pretrained

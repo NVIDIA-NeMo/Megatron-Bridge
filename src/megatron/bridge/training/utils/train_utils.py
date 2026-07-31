@@ -60,16 +60,26 @@ class LinearForLastLayer(nn.Linear):
     replicated linear projection.
     """
 
-    def __init__(self, input_size: int, output_size: int, sequence_parallel: bool) -> None:
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        sequence_parallel: bool,
+        bias: bool = False,
+        dropout: float = 0.0,
+    ) -> None:
         """Initialize a replicated final projection.
 
         Args:
             input_size: Hidden dimension of the transformer output.
             output_size: Output dimension of the value/reward head.
             sequence_parallel: Whether to gather sequence-parallel activations.
+            bias: Whether to add a trainable bias.
+            dropout: Dropout probability applied before the projection.
         """
-        super().__init__(in_features=input_size, out_features=output_size, bias=False)
+        super().__init__(in_features=input_size, out_features=output_size, bias=bias)
         self.sequence_parallel = sequence_parallel
+        self.dropout = nn.Dropout(dropout)
         if sequence_parallel:
             setattr(self.weight, "sequence_parallel", True)
 
@@ -81,7 +91,7 @@ class LinearForLastLayer(nn.Linear):
     ) -> tuple[torch.Tensor, None]:
         """Run the final projection and return Megatron-style ``(output, bias)``."""
         del weight, runtime_gather_output
-        logits = super().forward(input_).float()
+        logits = super().forward(self.dropout(input_)).float()
         if self.sequence_parallel:
             logits = tensor_parallel.gather_from_sequence_parallel_region(
                 logits,
@@ -101,6 +111,43 @@ def create_value_head_hook(hidden_size: int, sequence_parallel: bool, output_siz
     Returns:
         A model hook suitable for external trainer provider construction.
     """
+    return _create_last_layer_hook(
+        hidden_size=hidden_size,
+        sequence_parallel=sequence_parallel,
+        output_size=output_size,
+        output_layer_path="output_layer",
+        bias=False,
+        dropout=0.0,
+    )
+
+
+def create_token_classification_head_hook(
+    hidden_size: int,
+    sequence_parallel: bool,
+    num_labels: int,
+    bias: bool = True,
+    dropout: float = 0.1,
+    output_layer_path: str = "language_model.output_layer",
+) -> ModelHook:
+    """Replace the final pipeline stage output with a replicated token-classification head."""
+    return _create_last_layer_hook(
+        hidden_size=hidden_size,
+        sequence_parallel=sequence_parallel,
+        output_size=num_labels,
+        output_layer_path=output_layer_path,
+        bias=bias,
+        dropout=dropout,
+    )
+
+
+def _create_last_layer_hook(
+    hidden_size: int,
+    sequence_parallel: bool,
+    output_size: int,
+    output_layer_path: str,
+    bias: bool,
+    dropout: float,
+) -> ModelHook:
     from megatron.core import parallel_state
 
     _register_linear_for_last_layer_mapping()
@@ -127,10 +174,20 @@ def create_value_head_hook(hidden_size: int, sequence_parallel: bool, output_siz
 
         for index, model_chunk in enumerate(model_chunks):
             if model_post_process[index]:
-                model_chunk.output_layer = LinearForLastLayer(
-                    input_size=hidden_size,
-                    output_size=output_size,
-                    sequence_parallel=sequence_parallel,
+                output_parent = model_chunk
+                path_parts = output_layer_path.split(".")
+                for part in path_parts[:-1]:
+                    output_parent = getattr(output_parent, part)
+                setattr(
+                    output_parent,
+                    path_parts[-1],
+                    LinearForLastLayer(
+                        input_size=hidden_size,
+                        output_size=output_size,
+                        sequence_parallel=sequence_parallel,
+                        bias=bias,
+                        dropout=dropout,
+                    ),
                 )
 
         return model_chunks
