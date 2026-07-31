@@ -34,12 +34,14 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
 
 import copy
 import warnings
+from collections.abc import Iterable
 from dataclasses import fields
 
+import torch
 from megatron.core.activations import squared_relu
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ReplicatedMapping,
@@ -82,6 +84,13 @@ def _copy_mapping_with_prefixes(mapping, *, megatron_prefix: str, hf_prefix: str
 )
 class NemotronOmniBridge(NemotronVLBridge):
     """Bridge for the canonical expanded-sequence Nemotron-3 Omni model."""
+
+    _HF_PASSTHROUGH_KEYS = (
+        "sound_encoder.encoder.feature_extractor.featurizer.fb",
+        "sound_encoder.encoder.feature_extractor.featurizer.window",
+        "vision_model.radio_model.input_conditioner.norm_mean",
+        "vision_model.radio_model.input_conditioner.norm_std",
+    )
 
     CONFIG_MAPPING = NemotronVLBridge.CONFIG_MAPPING + [
         # HF public Omni config uses layer_norm_epsilon instead of rms_norm_eps.
@@ -230,8 +239,8 @@ class NemotronOmniBridge(NemotronVLBridge):
         # (conformer layers, subsampling convs, subsampling linear).
         # Feature extractor buffers (``feature_extractor.featurizer.fb``,
         # ``.window``) live outside the encoder and are intentionally
-        # unmapped -- they're skipped on import and regenerated from config
-        # on export.
+        # unmapped. They are preserved directly from the source checkpoint
+        # during export.
         mapping_list.append(
             ReplicatedMapping(
                 megatron_param="llava_model.sound_model.encoder.**",
@@ -274,6 +283,37 @@ class NemotronOmniBridge(NemotronVLBridge):
             )
 
         return MegatronMappingRegistry(*mappings)
+
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model: NemotronOmniModel | list[NemotronOmniModel],
+        hf_pretrained: PreTrainedCausalLM,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+    ) -> Iterable[HFWeightTuple]:
+        """Export model weights and preserve immutable source-only buffers."""
+        yield from super().stream_weights_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+        )
+
+        state = getattr(hf_pretrained, "state", None)
+        source = getattr(state, "source", None)
+        if source is None:
+            return
+        source_keys = set(source.get_all_keys())
+        for name in self._HF_PASSTHROUGH_KEYS:
+            if name in source_keys:
+                yield from HFWeightTuple(name, state[name]).iter_finalized(cpu=cpu)
 
 
 class NemotronOmniLlavaBridge(NemotronOmniBridge):

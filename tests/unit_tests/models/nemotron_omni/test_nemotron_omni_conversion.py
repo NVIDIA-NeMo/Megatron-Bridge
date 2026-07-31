@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import torch
@@ -22,7 +22,7 @@ from torch import nn
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import get_model_bridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
@@ -38,6 +38,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NemotronOmniModelProvider,
 )
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
+from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -308,6 +309,30 @@ def test_nemotron_omni_mapping_registry_includes_sound_mappings():
     assert any("sound_model.encoder.**" in name for name in names)
     assert any("sound_encoder.encoder.**" in name for name in names)
     assert all(not name.startswith("llava_model.") for name in names)
+
+
+def test_nemotron_omni_export_preserves_source_only_buffers():
+    bridge = NemotronOmniBridge()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    source_tensors = {
+        name: torch.full((2,), index, dtype=torch.float32) for index, name in enumerate(bridge._HF_PASSTHROUGH_KEYS)
+    }
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = [
+        "language_model.weight",
+        *source_tensors,
+    ]
+    hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
+    converted = HFWeightTuple("language_model.weight", torch.ones(1))
+
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained))
+
+    assert exported[0] == converted
+    exported_buffers = {item.param_name: item.weight for item in exported[1:]}
+    assert exported_buffers.keys() == source_tensors.keys()
+    for name, source_tensor in source_tensors.items():
+        assert torch.equal(exported_buffers[name], source_tensor)
 
 
 def test_canonical_bridge_maps_super_mtp_config():
