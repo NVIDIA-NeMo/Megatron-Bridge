@@ -30,7 +30,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 42de869db41994acdf48adf00c968c604a575196  # pragma: allowlist secret
+  bridge_commit: d9b4f9168b247b1068897358f061d82e63f8f1ef  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -310,16 +310,16 @@ items:
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-sft/resolved-config.yaml
       last_verified: 2026-07-30
       metrics:
-        initial_loss: 2.213064
-        final_loss: 0.9773649
-        last_10_steps_step_time_ms_avg: 7545.760
-        last_10_steps_model_tflops_per_gpu_avg: 49.980
+        initial_loss: 2.212866
+        final_loss: 0.9978729
+        last_10_steps_step_time_ms_avg: 9899.640
+        last_10_steps_model_tflops_per_gpu_avg: 38.180
       expected_result: >
         On 8x GB200, the shared Qwen3.5/Qwen3.6-VL functional recipe completed
         exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32,
         natural routing, HybridEP, no activation recompute, and BF16 gradient
-        reduction. Loss was finite from 2.213064 to 0.9773649 with zero skipped
-        or NaN iterations. Steps 91-100 averaged 7,545.760 ms and 49.980 model
+        reduction. Loss was finite from 2.212866 to 0.9978729 with zero skipped
+        or NaN iterations. Steps 91-100 averaged 9,899.640 ms and 38.180 model
         TFLOP/s/GPU. The recipe intentionally disables checkpoint output for
         this bounded functional run; reload/export coverage remains represented
         by the H100 SFT and sft_export_inference items.
@@ -482,20 +482,20 @@ items:
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-peft/resolved-config.yaml
       last_verified: 2026-07-30
       metrics:
-        initial_loss: 2.214158
-        final_loss: 1.265115
-        last_10_steps_step_time_ms_avg: 6190.450
-        last_10_steps_model_tflops_per_gpu_avg: 60.940
+        initial_loss: 2.214827
+        final_loss: 1.254138
+        last_10_steps_step_time_ms_avg: 5511.530
+        last_10_steps_model_tflops_per_gpu_avg: 68.410
       expected_result: >
         On the same 8x GB200 topology and MedPix schedule as the controlled SFT
         item, LoRA completed exactly 100 finite steps with zero skipped or NaN
         iterations. The persisted configs differ only in the evidence-output
         path, the intended PEFT LR/min-LR, and the LoRA block; model, data,
         topology, batch, schedule, and safety settings match. Step-1 loss
-        2.214158 differs from SFT's 2.213064 by only 0.001094, or 0.049434%,
+        2.214827 differs from SFT's 2.212866 by only 0.001961, or 0.088618%,
         ruling out an initial-forward configuration mismatch. The later loss
         difference reflects LoRA's trainable parameter set and learning rate.
-        Steps 91-100 averaged 6,190.450 ms and 60.940 model TFLOP/s/GPU.
+        Steps 91-100 averaged 5,511.530 ms and 68.410 model TFLOP/s/GPU.
 
   checkpoint_resume:
     H100:
@@ -561,20 +561,21 @@ items:
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --recipe qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config
         --max_steps 50
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-performance/resolved-config.yaml
       last_verified: 2026-07-30
       metrics:
-        initial_loss: 12.81534
-        final_loss: 3.030733
-        last_10_steps_step_time_ms_avg: 23264.790
-        last_10_steps_model_tflops_per_gpu_avg: 243.120
+        initial_loss: 12.81499
+        final_loss: 3.166235
+        last_10_steps_step_time_ms_avg: 26880.420
+        last_10_steps_model_tflops_per_gpu_avg: 210.360
       expected_result: >
         On 8x GB200, the exact architecture-shared Qwen3.5/Qwen3.6-VL
         fixed-shape mock-data recipe completed 50 steps at
         TP1/PP1/CP1/EP8/ETP1, dense DP8 and expert DP1, MBS3/GBS480, and 20
-        microbatches per optimizer step. The benchmark used forced expert
-        balance, HybridEP, MXFP8, cuDNN LayerNorm, and Transformer Engine CUDA
-        graphs for the MoE router and preprocessing scopes. Loss was finite
-        from 12.81534 to 3.030733 with zero skipped or NaN iterations. Steps
-        41-50 averaged 23,264.790 ms and 243.120 model TFLOP/s/GPU, and the
-        process exited successfully. This synthetic result is a throughput
-        measurement, not a convergence claim.
+        microbatches per optimizer step. The persisted post-setup config
+        confirmed forced expert balance, HybridEP, MXFP8, cuDNN LayerNorm, and
+        Transformer Engine CUDA graphs for the MoE router and preprocessing
+        scopes. Loss was finite from 12.81499 to 3.166235 with zero skipped or
+        NaN iterations. Steps 41-50 averaged 26,880.420 ms and 210.360 model
+        TFLOP/s/GPU, and the process exited successfully. This synthetic result
+        is a throughput measurement, not a convergence claim.
