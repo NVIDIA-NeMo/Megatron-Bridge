@@ -18,6 +18,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 
+import megatron.bridge.models.conversion.model_bridge as model_bridge_module
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import (
     AdapterWeightConversionTask,
@@ -70,6 +71,87 @@ def _patch_parallel_state(monkeypatch):
         "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_tensor_model_parallel_group",
         lambda: None,
     )
+
+
+def _patch_pipeline_state(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    is_first_stage: bool,
+    is_last_stage: bool,
+    rank: int,
+) -> tuple[object, Mock]:
+    pp_group = object()
+    embedding_group = object()
+    broadcast = Mock()
+
+    monkeypatch.setattr(model_bridge_module, "_get_pp_group", lambda _model: pp_group)
+    monkeypatch.setattr(model_bridge_module, "_get_embedding_group", lambda _model: embedding_group)
+    monkeypatch.setattr(model_bridge_module, "is_pp_first_stage", lambda _group: is_first_stage)
+    monkeypatch.setattr(model_bridge_module, "is_pp_last_stage", lambda _group: is_last_stage)
+    monkeypatch.setattr(torch.distributed, "get_process_group_ranks", lambda _group: [0, 1])
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: rank)
+    monkeypatch.setattr(torch.distributed, "broadcast", broadcast)
+
+    return embedding_group, broadcast
+
+
+def test_broadcast_shared_embeddings_uses_first_vpp_chunk_on_first_pp_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(share_embeddings_and_output_weights=True, pipeline_model_parallel_size=2)
+    word_embeddings = torch.nn.Embedding(2, 3)
+    output_layer = torch.nn.Linear(3, 2, bias=False)
+    with torch.no_grad():
+        output_layer.weight.fill_(-1)
+
+    model_chunks = [
+        SimpleNamespace(config=config, embedding=SimpleNamespace(word_embeddings=word_embeddings)),
+        SimpleNamespace(config=config, output_layer=output_layer),
+    ]
+    embedding_group, broadcast = _patch_pipeline_state(
+        monkeypatch,
+        is_first_stage=True,
+        is_last_stage=False,
+        rank=0,
+    )
+
+    DummyBridge()._broadcast_shared_embeddings(model_chunks)
+
+    broadcast.assert_called_once()
+    broadcasted_weight = broadcast.call_args.args[0]
+    assert broadcasted_weight.data_ptr() == word_embeddings.weight.data_ptr()
+    assert broadcast.call_args.kwargs == {"src": 0, "group": embedding_group}
+    torch.testing.assert_close(output_layer.weight, torch.full_like(output_layer.weight, -1))
+
+
+def test_broadcast_shared_embeddings_uses_last_vpp_chunk_on_last_pp_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(share_embeddings_and_output_weights=True, pipeline_model_parallel_size=2)
+    output_layer = torch.nn.Linear(3, 2, bias=False)
+    received_weight = torch.full_like(output_layer.weight, 4)
+    model_chunks = [
+        SimpleNamespace(config=config),
+        SimpleNamespace(config=config, output_layer=output_layer),
+    ]
+    embedding_group, broadcast = _patch_pipeline_state(
+        monkeypatch,
+        is_first_stage=False,
+        is_last_stage=True,
+        rank=1,
+    )
+
+    def receive_weight(tensor: torch.Tensor, *, src: int, group: object) -> None:
+        assert src == 0
+        assert group is embedding_group
+        tensor.copy_(received_weight)
+
+    broadcast.side_effect = receive_weight
+
+    DummyBridge()._broadcast_shared_embeddings(model_chunks)
+
+    broadcast.assert_called_once()
+    torch.testing.assert_close(output_layer.weight, received_weight)
 
 
 def test_merge_lora_adapter_weights_merges(monkeypatch):
