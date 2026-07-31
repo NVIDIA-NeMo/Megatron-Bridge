@@ -53,8 +53,8 @@ from megatron.bridge.training.state import GlobalState
 
 logger = logging.getLogger(__name__)
 
-# DSv4 offline-packed SFT passes CP metadata (cp_partition_mode, cp_group, local_cp_size)
-# through the batch dict so get_packed_seq_params can forward them to PackedSeqParams.
+# DSv4 offline-packed SFT passes cp_partition_mode
+# through the batch dict so get_packed_seq_params can forward it to PackedSeqParams.
 # These fields are MCore-dev-only, so they live here rather than in generic gpt_step.py.
 _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens_q",
@@ -65,8 +65,6 @@ _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS = (
     "max_seqlen_kv",
     "total_tokens",
     "cp_partition_mode",
-    "cp_group",
-    "local_cp_size",
 )
 _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens",
@@ -76,8 +74,6 @@ _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens_unpadded_argmin",
     "total_tokens",
     "cp_partition_mode",
-    "cp_group",
-    "local_cp_size",
 )
 
 
