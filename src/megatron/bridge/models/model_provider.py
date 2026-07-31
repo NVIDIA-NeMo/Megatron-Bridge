@@ -252,8 +252,10 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
             os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
             os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
-            torch.cuda.set_device(get_local_rank_preinit())
-            torch.distributed.init_process_group("nccl")
+            backend = "gloo" if use_cpu_initialization else "nccl"
+            if backend == "nccl":
+                torch.cuda.set_device(get_local_rank_preinit())
+            torch.distributed.init_process_group(backend)
 
         # If pg_collection is provided (e.g., from use_decentralized_pg=True),
         # use it directly. Otherwise, initialize model parallel state and get pg_collection from MPU.

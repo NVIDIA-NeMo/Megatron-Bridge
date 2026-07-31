@@ -228,6 +228,32 @@ def test_pg_collection_attached_to_provider(
     assert provider._pg_collection is pg_instance
 
 
+@patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
+@patch("megatron.bridge.models.model_provider.get_model")
+@patch("megatron.bridge.models.model_provider.torch.cuda.set_device")
+@patch("megatron.bridge.models.model_provider.torch.distributed")
+@patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
+def test_cpu_initialization_starts_gloo_without_selecting_cuda(
+    mock_ps_init,
+    mock_dist,
+    mock_set_device,
+    mock_get_model,
+    mock_use_pg,
+    provider,
+):
+    """Standalone CPU model construction must not require a CUDA driver."""
+    mock_dist.is_initialized.return_value = False
+    mock_model = [MockMegatronModule()]
+    mock_get_model.return_value = mock_model
+    mock_use_pg.return_value = Mock()
+
+    result = provider.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=True)
+
+    assert result is mock_model
+    mock_dist.init_process_group.assert_called_once_with("gloo")
+    mock_set_device.assert_not_called()
+
+
 def test_hook_registration_and_composition(provider):
     """Test hook registration order and composition."""
     # Initially, no hooks are registered
