@@ -213,6 +213,20 @@ class TestGemma3VLModelProvider:
         with pytest.raises(ValueError, match="requires is_vision_language=True"):
             provider.provide()
 
+    def test_gemma3_vl_accepts_auto_attention_override(self):
+        """Test that automatic backend selection preserves the VL attention bias."""
+        provider = Gemma3VLModelProvider(
+            num_layers=28,
+            hidden_size=2560,
+            num_attention_heads=10,
+        )
+        provider.attention_backend = AttnBackend.auto
+
+        with patch("megatron.bridge.models.gemma_vl.gemma3_vl_provider.Gemma3VLModel") as model:
+            provider.provide()
+
+        model.assert_called_once()
+
     def test_gemma3_vl_rejects_flash_attention_override(self):
         """Test that runtime overrides cannot select a backend that drops the VL mask."""
         provider = Gemma3VLModelProvider(
@@ -222,7 +236,7 @@ class TestGemma3VLModelProvider:
         )
         provider.attention_backend = AttnBackend.flash
 
-        with pytest.raises(ValueError, match="requires the fused attention backend"):
+        with pytest.raises(ValueError, match="requires automatic or fused attention"):
             provider.provide()
 
     def test_gemma3_vl_custom_vision_projector_config(self):
