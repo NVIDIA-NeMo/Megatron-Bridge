@@ -41,7 +41,6 @@ from megatron.core.utils import get_batch_on_this_cp_rank
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import (
     _create_loss_function,
-    _cu_seqlens_for_cp_partition,
     _current_stage_needs_mtp_inputs_from_layout,
     _forward_step_common,
     _has_packed_sequence_metadata,
@@ -117,17 +116,16 @@ def _partition_packed_batch_contiguous(
 ) -> dict[str, torch.Tensor]:
     """Slice a consecutive [start, end) token window for this CP rank.
 
-    Required for DSv4 hybrid attention: the CSA compressor exchanges boundary
-    hidden states between adjacent CP ranks, which requires contiguous token
-    assignments. The packed sequence length must be divisible by cp_size —
-    ensure packed_sequence_size = N * cp_size when running pack_sft_data.
+    Only data tensors (tokens, labels, loss_mask, position_ids, etc.) are sliced.
+    Sequence-length metadata (cu_seqlens, max_seqlen, ...) is intentionally kept
+    at global values — the DSv4 CSA compressor needs global sequence boundaries to
+    correctly exchange boundary hidden states between adjacent CP ranks.
+    This mirrors how zigzag mode leaves cu_seqlens untouched.
 
-    cu_seqlens are clipped to the local window; -1 padding sentinels in the
-    legacy cu_seqlens path are stripped via _cu_seqlens_for_cp_partition to
-    avoid invalid decreasing entries after clamping.
+    The packed sequence length must be divisible by cp_size — ensure
+    packed_sequence_size = N * cp_size when running pack_sft_data.
     """
     cp_rank = parallel_state.get_context_parallel_rank()
-    cu_seqlens = _cu_seqlens_for_cp_partition(batch)
 
     _data_val = next((v for k, v in batch.items() if v is not None and k not in _SEQLEN_KEYS), None)
     if _data_val is None:
@@ -148,44 +146,6 @@ def _partition_packed_batch_contiguous(
         if val is None or key in _SEQLEN_KEYS:
             continue
         batch[key] = val[:, start:end].contiguous()
-
-    # Clip cu_seqlens to local window; use trimmed source for legacy path.
-    _seqlen_src = {
-        "cu_seqlens": cu_seqlens,
-        "cu_seqlens_q": batch.get("cu_seqlens_q"),
-        "cu_seqlens_kv": batch.get("cu_seqlens_kv"),
-        "cu_seqlens_unpadded": batch.get("cu_seqlens_unpadded"),
-    }
-    for key in _SEQLEN_KEYS:
-        val = batch.get(key)
-        if (
-            val is None
-            or "argmin" in key
-            or key in {"max_seqlen", "max_seqlen_q", "max_seqlen_kv", "token_count", "attention_mask"}
-        ):
-            continue
-        src_val = _seqlen_src.get(key)
-        src = src_val if src_val is not None else val
-        batch[key] = (src.clamp(min=start, max=end) - start).to(val.dtype)
-
-    for argmin_key, cs_key in [
-        ("cu_seqlens_argmin", "cu_seqlens"),
-        ("cu_seqlens_unpadded_argmin", "cu_seqlens_unpadded"),
-    ]:
-        if batch.get(argmin_key) is not None and batch.get(cs_key) is not None:
-            batch[argmin_key] = batch[argmin_key].new_tensor([[batch[cs_key].squeeze().numel()]])
-
-    for max_key, cs_key in [
-        ("max_seqlen", "cu_seqlens"),
-        ("max_seqlen_q", "cu_seqlens_q"),
-        ("max_seqlen_kv", "cu_seqlens_kv"),
-    ]:
-        cs = batch.get(cs_key)
-        if cs is None or batch.get(max_key) is None:
-            continue
-        cs_flat = cs.squeeze()
-        diffs = (cs_flat[1:] - cs_flat[:-1]).clamp(min=0)
-        batch[max_key] = batch[max_key].new_tensor([[int(diffs.max().item()) if diffs.numel() > 0 else 0]])
 
     return batch
 

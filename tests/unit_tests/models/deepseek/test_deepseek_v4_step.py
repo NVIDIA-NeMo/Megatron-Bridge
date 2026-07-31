@@ -49,7 +49,8 @@ class TestPartitionPackedBatchContiguous:
         result = self._run(monkeypatch, batch, cp_rank=0, cp_size=2)
         assert result["tokens"].shape == (1, 4)
         assert torch.equal(result["tokens"].squeeze(), torch.arange(4, dtype=torch.long))
-        assert result["cu_seqlens"].squeeze().tolist() == [0, 4]
+        # cu_seqlens kept global — not partitioned (CSA needs global sequence boundaries)
+        assert result["cu_seqlens"].squeeze().tolist() == [0, 4, 8]
 
     def test_rank1_receives_second_half(self, monkeypatch):
         """Rank 1 of 2 receives the second half."""
@@ -59,7 +60,8 @@ class TestPartitionPackedBatchContiguous:
         result = self._run(monkeypatch, batch, cp_rank=1, cp_size=2)
         assert result["tokens"].shape == (1, 4)
         assert torch.equal(result["tokens"].squeeze(), torch.arange(4, 8, dtype=torch.long))
-        assert result["cu_seqlens"].squeeze().tolist() == [0, 4]
+        # cu_seqlens kept global — not partitioned (CSA needs global sequence boundaries)
+        assert result["cu_seqlens"].squeeze().tolist() == [0, 4, 8]
 
     def test_rejects_non_divisible_length(self, monkeypatch):
         """Raises RuntimeError when total_tokens is not divisible by cp_size."""
