@@ -72,6 +72,47 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
 }
 
 
+class PerfRecipeNotFoundError(ValueError):
+    """Raised when an exact flat performance recipe name is unavailable."""
+
+
+def _data_parallel_size(*, num_gpus: int, tensor_parallel: int, pipeline_parallel: int, context_parallel: int) -> int:
+    """Return DP after validating the requested world and model parallel sizes."""
+    parallel_sizes = {"TP": tensor_parallel, "PP": pipeline_parallel, "CP": context_parallel}
+    invalid_sizes = {name: size for name, size in parallel_sizes.items() if not isinstance(size, int) or size <= 0}
+    if invalid_sizes:
+        raise ValueError(f"Parallel sizes must be positive integers, got {invalid_sizes}.")
+    if not isinstance(num_gpus, int) or num_gpus <= 0:
+        raise ValueError(f"Number of GPUs must be a positive integer, got {num_gpus!r}.")
+
+    model_parallel_size = tensor_parallel * pipeline_parallel * context_parallel
+    if num_gpus % model_parallel_size != 0:
+        raise ValueError(
+            f"Requested {num_gpus} GPUs is not divisible by TP * PP * CP "
+            f"({tensor_parallel} * {pipeline_parallel} * {context_parallel} = {model_parallel_size}). "
+            "Override the parallel sizes for this GPU count."
+        )
+    return num_gpus // model_parallel_size
+
+
+def _weak_scaled_global_batch_size(*, base_gbs: int, base_num_gpus: int, num_gpus: int) -> int:
+    """Scale GBS proportionally, requiring the result to remain integral."""
+    if not isinstance(base_num_gpus, int) or base_num_gpus <= 0:
+        raise ValueError(f"Canonical recipe GPU count must be a positive integer, got {base_num_gpus!r}.")
+    if not isinstance(base_gbs, int) or base_gbs <= 0:
+        raise ValueError(f"Canonical recipe global batch size must be a positive integer, got {base_gbs!r}.")
+    if not isinstance(num_gpus, int) or num_gpus <= 0:
+        raise ValueError(f"Number of GPUs must be a positive integer, got {num_gpus!r}.")
+
+    scaled_gbs_numerator = base_gbs * num_gpus
+    if scaled_gbs_numerator % base_num_gpus != 0:
+        raise ValueError(
+            f"Weak scaling GBS {base_gbs} from {base_num_gpus} to {num_gpus} GPUs does not produce "
+            "an integer global batch size. Pass --global_batch_size explicitly."
+        )
+    return scaled_gbs_numerator // base_num_gpus
+
+
 def configure_slurm_gpu_tuning(
     executor: Any,
     *,
@@ -499,7 +540,7 @@ def get_perf_recipe_by_name(
     recipe_fn = find_perf_recipe(name)
     if recipe_fn is None:
         searched_modules = ", ".join(perf_recipe_family_modules()) or "none"
-        raise ValueError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
+        raise PerfRecipeNotFoundError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
     return recipe_fn()
 
 

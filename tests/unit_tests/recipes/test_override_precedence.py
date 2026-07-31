@@ -235,6 +235,39 @@ class TestRecomputePrecedence:
 
 
 class TestGbsPrecedence:
+    @staticmethod
+    def _nemotronh_64gpu_base_recipe():
+        return SimpleNamespace(
+            optimizer=SimpleNamespace(optimizer="adam"),
+            model=SimpleNamespace(
+                tensor_model_parallel_size=2,
+                pipeline_model_parallel_size=1,
+                context_parallel_size=1,
+                virtual_pipeline_model_parallel_size=None,
+            ),
+            train=SimpleNamespace(global_batch_size=192),
+            comm_overlap=None,
+        )
+
+    def test_nemotronh_b300_64gpu_recipe_weak_scales_to_8_gpus(self, monkeypatch):
+        """Nemotron-H preserves samples per GPU when its canonical recipe is reused."""
+        from utils import overrides as override_utils
+
+        base_config = SimpleNamespace(num_gpus=64, global_batch_size=192, gbs_scaling_factor=3)
+        monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+
+        recipe = override_utils.set_post_overrides(
+            self._nemotronh_64gpu_base_recipe(),
+            model_family_name="nemotronh",
+            model_recipe_name="nemotronh_56b",
+            gpu="b300",
+            num_gpus=8,
+            compute_dtype="fp8_cs",
+            task="pretrain",
+        )
+
+        assert recipe.train.global_batch_size == 24
+
     def test_F_autoscale_fires_when_no_one_sets(self):
         """When neither Hydra nor argparse sets GBS and num_gpus differs from
         the workload default, set_post_overrides should rescale. This is the
