@@ -681,6 +681,92 @@ def parse_cli_args():
         default=None,
     )
 
+    # XCalibur
+    xcalibur_args = parser.add_argument_group("XCalibur arguments")
+    xcalibur_args.add_argument(
+        "--xcalibur_namespace",
+        type=str,
+        help="Kubernetes namespace for XCalibur WorkloadRun. When set, uses the XCalibur executor instead of Slurm.",
+        required=False,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_image_pull_secret",
+        type=str,
+        help="Kubernetes image pull secret name for pulling the container image.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_workdir_pvc",
+        type=str,
+        help="PVC name for syncing job workdir to the cluster before launch.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_workdir_pvc_path",
+        type=str,
+        help="Mount path for the workdir PVC inside the training pod.",
+        default="/nemo_run",
+        required=False,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_workdir_local_path",
+        type=str,
+        help="Local directory rsynced into the workdir PVC before launch.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_node_selector_json",
+        type=str,
+        help="JSON-encoded dict of node selector labels for targeting specific nodes.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_volumes_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes Volume dicts.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_volume_mounts_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes VolumeMount dicts.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_timeout_per_job",
+        type=str,
+        help="Per-job timeout passed to XCalibur orchestration (e.g. '24h').",
+        required=False,
+        default="24h",
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_test_scale",
+        type=str,
+        help="XCalibur test scale: 'intra-node', 'intra-rack', or 'full-scale'.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_kubeconfig",
+        type=str,
+        help="Path to kubeconfig file for xcalctl/kubectl.",
+        required=False,
+        default=None,
+    )
+    xcalibur_args.add_argument(
+        "--xcalibur_kube_context",
+        type=str,
+        help="Kubernetes context to use with xcalctl/kubectl.",
+        required=False,
+        default=None,
+    )
+
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
     performance_args.add_argument(
