@@ -231,9 +231,9 @@ class Gemma3VLModel(MegatronModule):
 
     def _compute_attention_mask(
         self,
-        input_ids: torch.Tensor,
+        input_ids: Optional[torch.Tensor],
     ) -> Optional[torch.Tensor]:
-        if not self.pre_process:
+        if input_ids is None:
             return None
         batch_size, seq_len = input_ids.shape
         causal_mask = torch.tril(torch.ones((batch_size, 1, seq_len, seq_len))).to(input_ids.device)

@@ -93,6 +93,7 @@ Output:
 import argparse
 import gc
 import importlib
+import io
 import os
 import sys
 from typing import Optional
@@ -103,23 +104,8 @@ from megatron.core import parallel_state
 from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.inference.utils import InferenceMode
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
-
-
-try:
-    from qwen_vl_utils import process_vision_info
-
-    QWEN_VL_UTILS_AVAILABLE = True
-except ImportError:
-    QWEN_VL_UTILS_AVAILABLE = False
-    process_vision_info = None
-import io
-import os
-
-# Import debugger module from same directory
-import sys
-
 from PIL import Image
+from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
@@ -244,6 +230,15 @@ def is_vision_language_model(
         model_type = getattr(config, "model_type", "").lower()
         arch = getattr(config, "architectures", [])
         arch_str = " ".join(arch).lower() if arch else ""
+
+        # Some VLMs, including Gemma 3, use a family name without an explicit
+        # vision marker. Prefer the structured multimodal config over name
+        # heuristics so their image inputs are not silently discarded.
+        has_vision_config = getattr(config, "vision_config", None) is not None
+        has_text_config = getattr(config, "text_config", None) is not None
+        is_conditional_generation = "forconditionalgeneration" in arch_str
+        if has_vision_config and (has_text_config or is_conditional_generation):
+            return True
 
         # Common patterns for VL models
         vl_indicators = [
@@ -446,40 +441,36 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         tp_size: Tensor parallel size for padding sequence length
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, token_type_ids)
     """
     if is_vl_model and image_path:
-        if not QWEN_VL_UTILS_AVAILABLE:
-            raise ImportError("qwen_vl_utils is required for vision-language models but not installed")
-
-        # Create messages with image and text
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": image_path},
+                    {"type": "image", "image": load_image(image_path)},
                     {"type": "text", "text": prompt},
                 ],
             }
         ]
-
-        # Process vision info
-        image_inputs, video_inputs = process_vision_info(messages)
-
-        # Apply chat template
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-
-        # Process inputs
-        inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
+        inputs = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
             return_tensors="pt",
         )
 
-        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        input_ids = pad_input_ids_to_tp_multiple(inputs["input_ids"], tp_size, tokenizer.pad_token_id or 0)
+        token_type_ids = inputs.get("token_type_ids")
+        if token_type_ids is not None:
+            token_type_ids = pad_input_ids_to_tp_multiple(token_type_ids, tp_size, 0)
+        return (
+            input_ids,
+            inputs.get("pixel_values"),
+            inputs.get("image_grid_thw"),
+            token_type_ids,
+        )
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:
@@ -573,7 +564,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
+def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, *, token_type_ids=None):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -582,6 +573,7 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
+        token_type_ids: Multimodal token type IDs (optional).
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -600,6 +592,8 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             hf_inputs["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             hf_inputs["image_grid_thw"] = image_grid_thw
+        if token_type_ids is not None:
+            hf_inputs["token_type_ids"] = token_type_ids
 
         hf_output = hf_model(**hf_inputs)
 
@@ -804,7 +798,7 @@ def compare_models_one_step(args) -> None:
 
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
-    input_ids, pixel_values, image_grid_thw, messages = process_inputs(
+    input_ids, pixel_values, image_grid_thw, token_type_ids = process_inputs(
         tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
 
@@ -814,13 +808,20 @@ def compare_models_one_step(args) -> None:
         pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
         image_grid_thw = image_grid_thw.cuda()
+    if token_type_ids is not None:
+        token_type_ids = token_type_ids.cuda()
 
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
 
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
+        hf_model,
+        input_ids,
+        pixel_values,
+        image_grid_thw,
+        tokenizer,
+        token_type_ids=token_type_ids,
     )
 
     del hf_model

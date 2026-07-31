@@ -266,6 +266,9 @@ jobs:
           echo "MCORE_TRIGGERED_TESTING=true" | tee -a "$GITHUB_ENV"
           echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
+      - name: Test CI cache keys
+        run: .github/scripts/test_cache_keys.sh
+
       - name: Check lint
         run: |
           pip install pre-commit==3.6.0
@@ -399,46 +402,61 @@ jobs:
       - name: Compute cache keys
         id: cache_keys
         shell: bash
+        env:
+          BASE_REF: ${{ github.event.merge_group.base_ref || fromJSON(steps.get-pr-info.outputs.pr-info || '{}').base.ref || 'main' }}
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          MBRIDGE_SHA: ${{ needs.configure.outputs.merge_sha }}
+          MCORE_REF: ${{ github.event.inputs.mcore_ref }}
+          PR_NUMBER: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
+          REF: ${{ github.ref }}
         run: |
-          PR_NUMBER="${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}"
-          BRANCH_SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-' | tr -cd '[:alnum:]._-')
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            KEY="main"
-          elif [[ -n "$PR_NUMBER" ]]; then
-            KEY="$PR_NUMBER"
-          else
-            KEY="$BRANCH_SANITIZED"
+          BASE_REF="${BASE_REF#refs/heads/}"
+          CACHE_NAMESPACE=$(printf '%s' "$BASE_REF" | tr '/:@' '-' | tr -cd '[:alnum:]_.-')
+          if [[ -z "$CACHE_NAMESPACE" ]]; then
+            echo "Unable to derive a cache namespace from base ref: $BASE_REF" >&2
+            exit 1
           fi
 
-          # Single coherent cache donor. Dockerfile.ci builds non-reproducible
-          # from-source layers (DeepEP): same BuildKit cache key, different result
-          # digest on every cold build. Listing more than one cache-from donor lets
-          # BuildKit chain from a conflicting copy of such a layer and miss every
-          # layer downstream — a ~40 min cold rebuild even when a warm cache exists.
-          # So we still read EXACTLY ONE donor; only WHICH donor changes below.
-          #
-          # A PR's first build has no cache of its own and seeds from main. Every
-          # LATER push on the same PR seeds from the PR's OWN buildcache instead of
-          # main: a PR that touches an early layer (Dockerfile.ci, pyproject.toml,
-          # uv.lock, the MCore stubs) never has those layers in main-buildcache, so
-          # seeding from main cold-rebuilt the ~40 min dependency layer on EVERY
-          # push. Seeding from the PR's own cache reuses the layers that same PR
-          # already built and pushed to ${KEY}-buildcache. This stays single-donor,
-          # so the non-reproducible-DeepEP cascade above cannot happen. The probe
-          # falls back to main on any error, so this never fails the build.
-          if [[ -n "$PR_NUMBER" && "${{ github.ref }}" != "refs/heads/main" ]]; then
-            PR_CACHE="${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache"
-            if docker buildx imagetools inspect "$PR_CACHE" > /dev/null 2>&1; then
-              SEED="$KEY"
-            else
-              SEED="main"
-            fi
+          BASELINE_KEY="${CACHE_NAMESPACE}-baseline"
+          if [[ -n "$PR_NUMBER" ]]; then
+            KEY="${CACHE_NAMESPACE}-${PR_NUMBER}"
+          elif [[ -n "$MCORE_REF" ]]; then
+            KEY="${CACHE_NAMESPACE}-mcore-${MCORE_REF:0:12}-${MBRIDGE_SHA:0:12}"
+          elif [[ "$REF" == "refs/heads/$BASE_REF" || "$EVENT_NAME" == "schedule" ]]; then
+            KEY="$BASELINE_KEY"
           else
-            SEED="$KEY"
+            BRANCH_SANITIZED=$(printf '%s' "$GITHUB_REF_NAME" | tr '/:@' '-' | tr -cd '[:alnum:]_.-')
+            KEY="${CACHE_NAMESPACE}-${BRANCH_SANITIZED}"
           fi
+
+          if [[ "${#KEY}" -gt 100 ]]; then
+            KEY="${KEY:0:83}-$(printf '%s' "$KEY" | sha256sum | cut -c1-16)"
+          fi
+          if [[ "${#BASELINE_KEY}" -gt 100 ]]; then
+            BASELINE_KEY="${BASELINE_KEY:0:83}-$(printf '%s' "$BASELINE_KEY" | sha256sum | cut -c1-16)"
+          fi
+
           echo "key=$KEY" | tee -a "$GITHUB_OUTPUT"
-          echo "seed=$SEED" | tee -a "$GITHUB_OUTPUT"
+          echo "baseline=$BASELINE_KEY" | tee -a "$GITHUB_OUTPUT"
           echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Select cache donor
+        id: cache_from
+        shell: bash
+        env:
+          BASELINE_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.baseline }}-buildcache
+          LEGACY_CACHE: ${{ matrix.registry }}/megatron-bridge:main-buildcache
+          RUN_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache
+        run: |
+          DONOR_CACHE="$RUN_CACHE"
+          if ! docker buildx imagetools inspect "$DONOR_CACHE" >/dev/null 2>&1; then
+            DONOR_CACHE="$BASELINE_CACHE"
+          fi
+          if ! docker buildx imagetools inspect "$DONOR_CACHE" >/dev/null 2>&1; then
+            DONOR_CACHE="$LEGACY_CACHE"
+          fi
+          echo "donor=$DONOR_CACHE" | tee -a "$GITHUB_OUTPUT"
 
       - name: Compute platform
         id: platform
@@ -460,7 +478,7 @@ jobs:
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
-          cache-from: type=registry,ref=${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.seed }}-buildcache,mode=max
+          cache-from: type=registry,ref=${{ steps.cache_from.outputs.donor }},mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |

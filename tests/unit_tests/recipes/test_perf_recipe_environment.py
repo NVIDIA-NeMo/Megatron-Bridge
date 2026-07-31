@@ -50,6 +50,18 @@ _DEEPSEEK_WITHOUT_HYBRID_EP_RECIPES = {
     ("b200", "deepseek_v3_pretrain_256gpu_b200_fp8mx_config"),
     ("b200", "deepseek_v3_pretrain_256gpu_b200_nvfp4_config"),
 }
+_VR200_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_128gpu_vr200_fp8mx_config",
+    "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config",
+    "gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config",
+    "gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config",
+    "kimi_k2_pretrain_256gpu_vr200_fp8mx_config",
+    "llama3_70b_pretrain_64gpu_vr200_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vr200_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
+    "nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config",
+}
 
 
 def _function(path: Path, function_name: str) -> ast.FunctionDef:
@@ -155,6 +167,12 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
 
         cudnn_names = {"NVTE_NORM_BWD_USE_CUDNN", "NVTE_NORM_FWD_USE_CUDNN"}
         assert environment.keys().isdisjoint(cudnn_names) or environment.keys() >= cudnn_names
+        if path.parent.name == "vr200":
+            assert environment["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+            uses_cudnn_layernorm = function_name in _VR200_CUDNN_LAYERNORM_RECIPES
+            assert (environment.keys() >= cudnn_names) == uses_cudnn_layernorm
+            if uses_cudnn_layernorm:
+                assert all(environment[name] == 1 for name in cudnn_names)
 
         hybrid_ep_names = environment.keys() & _HYBRID_EP_ENV_NAMES
         assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES

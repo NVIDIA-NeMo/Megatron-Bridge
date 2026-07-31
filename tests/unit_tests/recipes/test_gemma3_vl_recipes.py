@@ -25,6 +25,7 @@ from typing import Callable
 
 import pytest
 import torch
+from megatron.core.transformer.enums import AttnBackend
 
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -96,6 +97,8 @@ def _assert_basic_config(cfg):
     assert cfg.tokenizer is not None
     assert cfg.checkpoint is not None
     assert cfg.rng is not None
+    assert cfg.model.attention_backend is AttnBackend.unfused
+    assert cfg.dataset.enable_in_batch_packing is False
 
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1

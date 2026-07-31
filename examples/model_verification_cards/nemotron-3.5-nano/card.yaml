@@ -325,17 +325,17 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-nano-h100/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-nano-h100/sft-checkpoints
-      last_verified: 2026-07-24
+      last_verified: 2026-07-30
       metrics:
-        initial_loss: 0.4250627
-        final_loss: 0.2780997
-        last_10_steps_step_time_ms_avg: 9807.500
-        last_10_steps_model_tflops_per_gpu_avg: 79.860
+        initial_loss: 0.4407026
+        final_loss: 0.2756689
+        last_10_steps_step_time_ms_avg: 9856.900
+        last_10_steps_model_tflops_per_gpu_avg: 79.470
       expected_result: >
         Packed OpenMathInstruct-2 full SFT completes 100 finite-loss steps with
-        active MTP gradients, LM loss 0.4250627 -> 0.2780997, finite MTP-1
-        loss 0.7055967 -> 0.4144804, and no skipped or NaN iterations. Steps
-        91-100 average 9,807.500 ms / 79.860 TFLOP/s/GPU, and the complete
+        active MTP gradients, LM loss 0.4407026 -> 0.2756689, finite MTP-1
+        loss 0.7634735 -> 0.4076096, and no skipped or NaN iterations. Steps
+        91-100 average 9,856.900 ms / 79.470 TFLOP/s/GPU, and the complete
         reloadable full-model checkpoint is written at step 100.
 
     GB200:
@@ -352,21 +352,21 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-nano-gb200/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/sft-checkpoints
-      last_verified: 2026-07-28
+      last_verified: 2026-07-30
       metrics:
-        initial_loss: 0.4252032
-        final_loss: 0.2784797
-        last_10_steps_step_time_ms_avg: 6872.550
-        last_10_steps_model_tflops_per_gpu_avg: 254.130
-        peak_allocated_memory_gib: 101.540
-        peak_reserved_memory_gib: 103.950
+        initial_loss: 0.4407797
+        final_loss: 0.2760494
+        last_10_steps_step_time_ms_avg: 6697.760
+        last_10_steps_model_tflops_per_gpu_avg: 260.770
+        peak_allocated_memory_gib: 101.640
+        peak_reserved_memory_gib: 104.100
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
         packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss
-        optimizer steps with active MTP gradients. LM loss is 0.4252032 ->
-        0.2784797, MTP-1 loss is 0.7056153 -> 0.4156865, and MTP-2 loss is
-        0.8357499 -> 0.4744240. Steps 91-100 average 6,872.550 ms / 254.130
-        TFLOP/s/GPU with 101.540 GiB peak allocated and 103.950 GiB peak
+        optimizer steps with active MTP gradients. LM loss is 0.4407797 ->
+        0.2760494, MTP-1 loss is 0.7641921 -> 0.4087451, and MTP-2 loss is
+        0.8651200 -> 0.4649736. Steps 91-100 average 6,697.760 ms / 260.770
+        TFLOP/s/GPU with 101.640 GiB peak allocated and 104.100 GiB peak
         reserved memory. No iteration is skipped or NaN, and the complete
         12-file reloadable full-model checkpoint is written at step 100.
 
@@ -390,8 +390,8 @@ items:
           --hf-model work/model-verification/nemotron-3.5-nano-h100/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-07-24
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"Subtract 5 from both sides: \u00243x = 15\u0024. Divide by 3: \u0024x = 5\u0024. The answer is \u0024\\boxed{5}\u0024. The answer is: \u0024\\boxed{\"."
+      last_verified: 2026-07-30
+      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\"."
 
     GB200:
       status: verified
@@ -413,8 +413,8 @@ items:
           --hf-model work/model-verification/nemotron-3.5-nano-gb200/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-07-28
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"Subtract 5 from both sides: \u00243x = 15\u0024. Divide by 3: \u0024x = 5\u0024. The answer is \u0024\\boxed{5}\u0024. The answer is: \u0024\\boxed{\"."
+      last_verified: 2026-07-30
+      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\"."
 
   sft_long_context:
     H100:
@@ -447,17 +447,17 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-h100/long-sft-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: 2026-07-30
       metrics:
-        initial_loss: 0.4112070
-        final_loss: 0.2666896
-        last_10_steps_step_time_ms_avg: 41359.860
-        last_10_steps_model_tflops_per_gpu_avg: 186.610
+        initial_loss: 0.4268321
+        final_loss: 0.2649768
+        last_10_steps_step_time_ms_avg: 40995.130
+        last_10_steps_model_tflops_per_gpu_avg: 188.280
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4112070 -> 0.2666896 and MTP-1 loss 0.7399117 ->
-        0.4445960. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 41,359.860 ms / 186.610
+        steps with LM loss 0.4268321 -> 0.2649768 and MTP-1 loss 0.7375677 ->
+        0.4385137. All 100 steps have finite LM/MTP losses and no skipped or
+        NaN iterations. Steps 91-100 average 40,995.130 ms / 188.280
         TFLOP/s/GPU. Complete step-50 and step-100 checkpoints each contain 20
         files, distributed metadata, saved run configuration and training
         state, with latest marker 100.
@@ -493,16 +493,16 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/long-sft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-23
+      last_verified: 2026-07-30
       metrics:
-        initial_loss: 0.4112488
-        final_loss: 0.2666710
-        last_10_steps_step_time_ms_avg: 121897.310
-        last_10_steps_model_tflops_per_gpu_avg: 126.660
+        initial_loss: 0.4268995
+        final_loss: 0.2649511
+        last_10_steps_step_time_ms_avg: 100358.390
+        last_10_steps_model_tflops_per_gpu_avg: 153.810
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4112488 -> 0.2666710 and MTP-1 loss 0.7400181 ->
-        0.4445055. All 100 steps have finite LM/MTP losses and no skipped or
+        steps with LM loss 0.4268995 -> 0.2649511 and MTP-1 loss 0.7376469 ->
+        0.4384451. All 100 steps have finite LM/MTP losses and no skipped or
         NaN iterations. The complete step-100 checkpoint has distributed
         metadata, 12 files, a latest marker of 100, and all four metrics
         recorded.
@@ -532,16 +532,16 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-h100/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: 2026-07-30
       metrics:
-        initial_loss: 0.4251121
-        final_loss: 0.2873518
-        last_10_steps_step_time_ms_avg: 16975.100
-        last_10_steps_model_tflops_per_gpu_avg: 92.480
+        initial_loss: 0.4406879
+        final_loss: 0.2856177
+        last_10_steps_step_time_ms_avg: 16927.070
+        last_10_steps_model_tflops_per_gpu_avg: 92.650
       expected_result: >
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
-        steps with adapters on the MTP layers, LM loss 0.4251121 -> 0.2873518,
-        finite MTP-1 loss 0.7056133 -> 0.4359691, and no skipped or NaN
+        steps with adapters on the MTP layers, LM loss 0.4406879 -> 0.2856177,
+        finite MTP-1 loss 0.7634883 -> 0.4294895, and no skipped or NaN
         iterations. The complete adapter checkpoint is written at step 100 and
         reloads over the pinned base checkpoint at step 100.
 
@@ -570,12 +570,12 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-23
+      last_verified: 2026-07-30
       metrics:
-        initial_loss: 0.4252179
-        final_loss: 0.2872458
-        last_10_steps_step_time_ms_avg: 19257.350
-        last_10_steps_model_tflops_per_gpu_avg: 81.850
+        initial_loss: 0.4405894
+        final_loss: 0.2855471
+        last_10_steps_step_time_ms_avg: 19163.540
+        last_10_steps_model_tflops_per_gpu_avg: 82.080
       expected_result: >
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
         steps with 48 rank-local adapter attachment records covering MTP
