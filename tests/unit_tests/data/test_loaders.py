@@ -79,6 +79,7 @@ def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _moc
                 skip_train=False,
                 eval_at_step_zero=False,
                 multiple_validation_sets=False,
+                validation_set_names=None,
             ),
         )
         real_torch_tensor = torch.tensor
@@ -134,7 +135,7 @@ def test_multiple_validation_sets_build_one_dataloader_per_set(_mock_rank, _mock
                 None,
             )
 
-    def make_cfg(provider, multiple_validation_sets):
+    def make_cfg(provider, multiple_validation_sets, validation_set_names=None):
         return SimpleNamespace(
             model=object(),
             dataset=provider,
@@ -155,6 +156,7 @@ def test_multiple_validation_sets_build_one_dataloader_per_set(_mock_rank, _mock
                 skip_train=False,
                 eval_at_step_zero=False,
                 multiple_validation_sets=multiple_validation_sets,
+                validation_set_names=validation_set_names,
             ),
         )
 
@@ -209,3 +211,87 @@ def test_multiple_validation_sets_build_one_dataloader_per_set(_mock_rank, _mock
     assert all(isinstance(it, RerunDataIterator) for it in valid_iters)
     assert next(valid_iters[0])["sample_id"].item() == 100
     assert next(valid_iters[1])["sample_id"].item() == 200
+
+
+@pytest.mark.unit
+@mock.patch("torch.distributed.broadcast")
+@mock.patch("torch.distributed.get_world_size", return_value=1)
+@mock.patch("torch.distributed.get_rank", return_value=0)
+def test_multiple_validation_sets_build_time_guards(_mock_rank, _mock_world_size, _mock_broadcast):
+    """The set-name length and cross-rank set-count guards fail at dataloader build time."""
+
+    class RangeDataset:
+        def __init__(self, offset, size):
+            self.samples = [{"sample_id": torch.tensor(offset + index)} for index in range(size)]
+
+        def __len__(self):
+            return len(self.samples)
+
+        def __getitem__(self, index):
+            return self.samples[index]
+
+    @dataclass
+    class MultiValDatasetProvider(DatasetProvider):
+        def build_datasets(self, context: DatasetBuildContext):
+            return (
+                RangeDataset(0, context.train_samples),
+                [RangeDataset(100, 4), RangeDataset(200, 4)],
+                None,
+            )
+
+    def make_cfg(provider, validation_set_names=None):
+        return SimpleNamespace(
+            model=object(),
+            dataset=provider,
+            train=SimpleNamespace(
+                train_samples=4,
+                train_iters=1,
+                global_batch_size=2,
+                micro_batch_size=1,
+                num_epochs=None,
+                exit_signal=None,
+                exit_signal_handler_for_dataloader=False,
+            ),
+            validation=SimpleNamespace(
+                eval_interval=1,
+                eval_iters=1,
+                eval_global_batch_size=None,
+                eval_micro_batch_size=None,
+                skip_train=False,
+                eval_at_step_zero=False,
+                multiple_validation_sets=True,
+                validation_set_names=validation_set_names,
+            ),
+        )
+
+    provider = MultiValDatasetProvider(
+        dataloader_type="single",
+        drop_last=True,
+        num_workers=0,
+        persistent_workers=False,
+    )
+    provider.finalize()
+
+    with pytest.raises(ValueError, match="validation_set_names"):
+        build_train_valid_test_data_loaders(
+            cfg=make_cfg(provider, validation_set_names=["only-one"]),
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+            dp_group=object(),
+        )
+
+    def fake_all_reduce(tensor, op=None):
+        tensor[0] = 3
+        tensor[1] = -2
+
+    with (
+        mock.patch("megatron.bridge.data.loaders.torch.distributed.is_initialized", return_value=True),
+        mock.patch("megatron.bridge.data.loaders.torch.distributed.all_reduce", side_effect=fake_all_reduce),
+    ):
+        with pytest.raises(RuntimeError, match=r"min 2, max 3; this rank has 2"):
+            build_train_valid_test_data_loaders(
+                cfg=make_cfg(provider),
+                train_state=TrainState(),
+                build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+                dp_group=object(),
+            )

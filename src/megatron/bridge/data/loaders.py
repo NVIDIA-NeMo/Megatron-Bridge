@@ -279,6 +279,32 @@ def build_train_valid_test_data_loaders(
     if cfg.validation.multiple_validation_sets and valid_ds is not None and not isinstance(valid_ds, list):
         valid_ds = [valid_ds]
 
+    if cfg.validation.multiple_validation_sets:
+        num_sets = len(valid_ds) if valid_ds is not None else 0
+        if torch.distributed.is_initialized():
+            # A rank with fewer sets would run fewer evaluate() calls (each one runs
+            # collectives) and deadlock the others; fail loudly on every rank instead.
+            counts = torch.tensor(
+                [num_sets, -num_sets], dtype=torch.long, device="cuda" if torch.cuda.is_available() else "cpu"
+            )
+            torch.distributed.all_reduce(counts, op=torch.distributed.ReduceOp.MAX)
+            max_sets, min_sets = counts[0].item(), -counts[1].item()
+            if max_sets != min_sets:
+                raise RuntimeError(
+                    f"multiple_validation_sets: ranks disagree on the number of validation sets "
+                    f"(min {min_sets}, max {max_sets}; this rank has {num_sets}). The dataset "
+                    "provider must return the same number of validation sets on every rank."
+                )
+        if (
+            valid_ds is not None
+            and cfg.validation.validation_set_names is not None
+            and len(cfg.validation.validation_set_names) != num_sets
+        ):
+            raise ValueError(
+                f"Number of validation_set_names ({len(cfg.validation.validation_set_names)}) must match "
+                f"the number of validation datasets ({num_sets})"
+            )
+
     drop_last = False if cfg.train.num_epochs is not None else cfg.dataset.drop_last
     if (
         train_ds is not None

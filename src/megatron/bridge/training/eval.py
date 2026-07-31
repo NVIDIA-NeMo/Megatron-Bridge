@@ -453,37 +453,14 @@ def evaluate_and_print_results(
     # A list here can be ambiguous when pipeline parallelism is used, so we branch based on the
     # flag, not on the type of data_iterator.
     val_config = state.cfg.validation
-    if val_config.multiple_validation_sets and not is_test:
-        data_iterators = data_iterator
-        if torch.distributed.is_initialized():
-            # A rank with fewer sets would run fewer evaluate() calls (each one
-            # runs collectives) and deadlock the others; fail loudly on every
-            # rank instead.
-            num_sets = len(data_iterators)
-            counts = torch.tensor(
-                [num_sets, -num_sets], dtype=torch.long, device="cuda" if torch.cuda.is_available() else "cpu"
-            )
-            torch.distributed.all_reduce(counts, op=torch.distributed.ReduceOp.MAX)
-            max_sets, min_sets = counts[0].item(), -counts[1].item()
-            if max_sets != min_sets:
-                raise RuntimeError(
-                    f"multiple_validation_sets: ranks disagree on the number of validation sets "
-                    f"(min {min_sets}, max {max_sets}; this rank has {num_sets}). The dataset "
-                    "provider must return the same number of validation sets on every rank."
-                )
-        if val_config.validation_set_names is not None and len(val_config.validation_set_names) != len(data_iterators):
-            raise ValueError(
-                f"Number of validation_set_names ({len(val_config.validation_set_names)}) must match "
-                f"the number of validation datasets ({len(data_iterators)})"
-            )
-    else:
-        data_iterators = [data_iterator]
+    multi_set = val_config.multiple_validation_sets and not is_test
+    data_iterators = data_iterator if multi_set else [data_iterator]
 
     set_loss_dict = None
     for index, set_data_iterator in enumerate(data_iterators):
         suffix = ""
         valid_set_index = None
-        if val_config.multiple_validation_sets and not is_test:
+        if multi_set:
             valid_set_index = index
             if val_config.validation_set_names:
                 suffix = f"-{val_config.validation_set_names[index]}"
