@@ -139,13 +139,16 @@ items:
       --apply-chat-template --thinking-mode disabled --max_new_tokens 16
       --legacy-full-prefix --tp 1 --pp 13 --ep 8 --etp 1
     last_verified: null
-    expected_result: >
+    expected_result: |-
       The command must use greedy legacy full-prefix decoding, emit exactly 16
       new tokens, and complete without constructing an MCore inference context.
       The --legacy-full-prefix path uses non-cached autoregressive generation
       and recomputes the accumulated prefix at every decoding step because
       cached inference is not yet supported for AbsorbedMLA. A clean-commit
-      rerun is required before restoring verified status.
+      rerun is required before restoring verified status. The earlier pre-flag
+      GLM-5.2 run produced this 16-token completion:
+      "1.  **Analyze the Request:**
+          *   **Topic:**"
 
   pretrain:
     H100:
