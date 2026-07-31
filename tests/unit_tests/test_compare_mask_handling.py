@@ -210,6 +210,16 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
 
+    def test_hf_text_only_path_selects_composite_language_backbone(self):
+        """Text-only comparisons bypass a composite model's media-required forward."""
+        composite_model = MagicMock()
+        language_model = torch.nn.Linear(3, 3)
+        composite_model.language_model = language_model
+
+        with patch.object(compare, "print_rank_0"):
+            assert compare._get_hf_forward_model(composite_model, pixel_values=None) is language_model
+            assert compare._get_hf_forward_model(composite_model, pixel_values=torch.ones(1)) is composite_model
+
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
         broadcast_shapes = []

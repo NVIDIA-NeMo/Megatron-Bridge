@@ -604,6 +604,15 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
+def _get_hf_forward_model(hf_model, pixel_values):
+    """Select a composite model's language backbone for text-only comparison."""
+    language_model = getattr(hf_model, "language_model", None)
+    if pixel_values is None and isinstance(language_model, torch.nn.Module):
+        print_rank_0("Using the HuggingFace language backbone for a text-only comparison.")
+        return language_model
+    return hf_model
+
+
 def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
     """Run HuggingFace model inference and return results.
 
@@ -622,9 +631,11 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
     if not _is_rank_0() or hf_model is None:
         return None, None, None, None, None
 
+    hf_forward_model = _get_hf_forward_model(hf_model, pixel_values)
+
     input_device = input_ids.device
     try:
-        hf_device = next(hf_model.parameters()).device
+        hf_device = next(hf_forward_model.parameters()).device
     except (AttributeError, StopIteration, TypeError):
         hf_device = input_device
     if not isinstance(hf_device, (torch.device, str, int)):
@@ -640,7 +651,7 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         if image_grid_thw is not None:
             hf_inputs["image_grid_thw"] = image_grid_thw.to(hf_device)
 
-        hf_output = hf_model(**hf_inputs)
+        hf_output = hf_forward_model(**hf_inputs)
 
         # Debug: Check output type
         print_rank_0(f"HF output type: {type(hf_output)}")
