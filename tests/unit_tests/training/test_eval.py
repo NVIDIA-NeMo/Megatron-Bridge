@@ -227,7 +227,8 @@ def test_evaluate_and_print_results_multiple_validation_sets(
         write_to_tensorboard=False,
     )
 
-    assert result is losses[-1]
+    expected_keys = [suffix.removeprefix("-") for suffix in expected_suffixes]
+    assert result == dict(zip(expected_keys, losses))
     assert mock_evaluate.call_count == 2
     assert [call.args[2] for call in mock_evaluate.call_args_list] == iterators
     printed = " ".join(str(call.args[0]) for call in mock_print_rank_last.call_args_list)

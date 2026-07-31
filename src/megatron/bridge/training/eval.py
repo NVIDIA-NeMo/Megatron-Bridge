@@ -411,7 +411,7 @@ def evaluate_and_print_results(
     pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
-) -> Optional[dict[str, torch.Tensor]]:
+) -> Optional[Union[dict[str, torch.Tensor], dict[str, dict[str, torch.Tensor]]]]:
     """Helper function to evaluate and dump results on screen.
 
     Args:
@@ -437,9 +437,11 @@ def evaluate_and_print_results(
             Controls which callback events are fired (on_test_* vs on_eval_*).
 
     Returns:
-        Optional[dict[str, torch.Tensor]]: The averaged evaluation loss dictionary (of the
-        last evaluated set when ``multiple_validation_sets`` is set), or None if evaluation
-        exited early due to a configured time limit.
+        The averaged evaluation loss dictionary, or, when ``multiple_validation_sets`` is set,
+        a dictionary mapping each set's name (or index as a string) to its loss dictionary.
+        None if evaluation exited early due to a configured time limit; in that case sets
+        evaluated before the abort have already advanced their per-set consumed-sample
+        counters while the remaining sets have not, so per-set resume offsets may differ.
     """
     if write_to_tensorboard:
         writer = state.tensorboard_logger
@@ -457,15 +459,17 @@ def evaluate_and_print_results(
     data_iterators = data_iterator if multi_set else [data_iterator]
 
     set_loss_dict = None
+    per_set_loss_dicts = {}
     for index, set_data_iterator in enumerate(data_iterators):
         suffix = ""
         valid_set_index = None
         if multi_set:
             valid_set_index = index
             if val_config.validation_set_names:
-                suffix = f"-{val_config.validation_set_names[index]}"
+                set_name = val_config.validation_set_names[index]
             else:
-                suffix = f"-{index}"
+                set_name = str(index)
+            suffix = f"-{set_name}"
 
         set_loss_dict, collected_non_loss_data, timelimit = evaluate(
             state,
@@ -544,4 +548,7 @@ def evaluate_and_print_results(
         print_rank_last(string)
         print_rank_last("-" * length)
 
-    return set_loss_dict
+        if multi_set:
+            per_set_loss_dicts[set_name] = set_loss_dict
+
+    return per_set_loss_dicts if multi_set else set_loss_dict
