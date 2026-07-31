@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar
 
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.hybrid.hybrid_builder import (
@@ -31,7 +34,7 @@ class MambaModelConfig(HybridModelConfig):
     """Backward-compatible wrapper around :class:`HybridModelConfig`."""
 
     builder: ClassVar[str] = "megatron.bridge.models.mamba.MambaModelBuilder"
-    mamba_stack_spec: ModuleSpec | None = None
+    mamba_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["MambaModelConfig"], ModuleSpec] | None = None
 
     def __post_init__(self) -> None:
         """Normalize the deprecated Mamba stack-spec field to the Hybrid field."""
@@ -57,6 +60,39 @@ class MambaModelConfig(HybridModelConfig):
 
 class MambaModelBuilder(HybridModelBuilder):
     """Backward-compatible wrapper around :class:`HybridModelBuilder`."""
+
+    def build_model(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> HybridModel:
+        """Build a Hybrid model while resolving legacy Mamba stack-spec factories.
+
+        Args:
+            pg_collection: Process groups used to construct the model.
+            pre_process: Whether to include input processing on this stage.
+            post_process: Whether to include output processing on this stage.
+            vp_stage: Virtual pipeline stage to construct.
+
+        Returns:
+            The constructed Hybrid model.
+        """
+        stack_spec = self._model_config.hybrid_stack_spec
+        if stack_spec is None or isinstance(stack_spec, ModuleSpec):
+            return super().build_model(pg_collection, pre_process, post_process, vp_stage)
+
+        if len(inspect.signature(stack_spec).parameters) > 0:
+            resolved_stack_spec = stack_spec(self._model_config)
+        else:
+            resolved_stack_spec = stack_spec()
+
+        self._model_config.hybrid_stack_spec = resolved_stack_spec
+        try:
+            return super().build_model(pg_collection, pre_process, post_process, vp_stage)
+        finally:
+            self._model_config.hybrid_stack_spec = stack_spec
 
 
 def transformer_engine_mamba_stack_spec() -> ModuleSpec:

@@ -1399,6 +1399,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "QuantColumnParallelLinear",
             "TEColumnParallelLinear",
             "TELayerNormColumnParallelLinear",
+            "InferenceColumnParallelLinear",
             "InferenceLayerNormColumnParallelLinear",
             "TEColumnParallelGroupedLinear",
             "VocabParallelEmbedding",

@@ -15,6 +15,7 @@
 """Input/output checkpointing."""
 
 import contextlib
+import gc
 import os
 import random
 import shutil
@@ -1594,7 +1595,10 @@ def save_checkpoint(
 
         def cleanup_old_checkpoints_finalize_fn() -> None:
             cleanup_old_non_persistent_checkpoint(
-                save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
+                save_dir,
+                leave_ckpt_num=ckpt_cfg.most_recent_k,
+                do_async=ckpt_cfg.async_save,
+                max_iteration=checkpoint_step,
             )
 
         assert async_save_request is not None
@@ -2249,6 +2253,16 @@ def _load_model_weights_from_checkpoint(
                 continue
             _load_model_state_dict(model[i], state_dict[model_key], strict)
 
+    # The loaded state dict can own checkpoint staging tensors distinct from
+    # the model parameters. Release both state-dict structures before the
+    # synchronization below so cached allocations cannot starve NCCL or the
+    # conversion collectives that follow.
+    del state_dict
+    del sharded_state_dict
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
 
@@ -2673,8 +2687,8 @@ def _load_checkpoint_from_path(
             skip_load_to_model_and_opt=skip_load_to_model_and_opt,
         )
 
-    # Step 1: Load base checkpoint with rank0=True (torch_dist only)
-    if ckpt_format == "torch_dist":
+    # Step 1: Resolve the checkpoint source and load common metadata when available.
+    if ckpt_format in ("torch_dist", "fsdp_dtensor"):
         state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
             load_dir,
             cfg.checkpoint,
@@ -2845,30 +2859,31 @@ def _load_checkpoint_from_path(
 
     elif ckpt_format == "fsdp_dtensor":
         # Handle fsdp_dtensor format
+        if state_dict is None:
+            return 0, 0
 
-        # Resolve checkpoint path
-        if is_checkpoint_iteration_directory(load_dir):
-            checkpoint_name = load_dir
-        else:
-            tracker_filename = get_checkpoint_train_state_filename(load_dir, prefix=TRACKER_PREFIX)
-            if file_exists(tracker_filename):
-                train_state = read_train_state(tracker_filename)
-                iteration = train_state.step
-                release = False
-            else:
-                legacy_tracker_filename = get_checkpoint_tracker_filename(load_dir)
-                if file_exists(legacy_tracker_filename):
-                    iteration, release = read_metadata(legacy_tracker_filename)
-                else:
-                    print_rank_0(f"WARNING: could not find metadata file in {load_dir}")
-                    return 0, 0
-            checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
-
-        reader = _get_filesystem_reader(checkpoint_name)
-        try:
-            state_dict_metadata = reader.read_metadata().state_dict_metadata
-        except FileNotFoundError:
+        tp_pp_match = True
+        if ckpt_type == CheckpointType.LOCAL:
             state_dict_metadata = {}
+        else:
+            run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+            if file_exists(run_config_filename):
+                run_config = read_run_config(run_config_filename)
+                ckpt_tp_pp = (
+                    run_config["model"]["tensor_model_parallel_size"],
+                    run_config["model"]["pipeline_model_parallel_size"],
+                )
+                run_tp_pp = (
+                    cfg.model.tensor_model_parallel_size,
+                    cfg.model.pipeline_model_parallel_size,
+                )
+                tp_pp_match = ckpt_tp_pp == run_tp_pp
+
+            reader = _get_filesystem_reader(checkpoint_name)
+            try:
+                state_dict_metadata = reader.read_metadata().state_dict_metadata
+            except FileNotFoundError:
+                state_dict_metadata = {}
 
         # Decide what sections to load based on metadata and config
         gen_sd_rerun_state = {}
@@ -2880,9 +2895,15 @@ def _load_checkpoint_from_path(
                 gen_sd_rerun_state = get_rerun_state_machine().state_dict(
                     data_iterator=None, ckpt_format=ckpt_format, force=True
                 )
-            if cfg.checkpoint.load_rng:
+            if cfg.checkpoint.load_rng and tp_pp_match:
                 gen_sd_rng_state = get_rng_state(
                     cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
+                )
+            elif cfg.checkpoint.load_rng:
+                ignore_rng_state = True
+                print_rank_0(
+                    f"(TP, PP) mismatch after resume ({run_tp_pp} vs {ckpt_tp_pp} from checkpoint): "
+                    "RNG state will be ignored"
                 )
             if cfg.checkpoint.load_optim:
                 gen_sd_optim = optimizer
@@ -3370,6 +3391,7 @@ def _load_non_persistent_base_checkpoint(
     sharded_state_dict: Optional[dict[str, Any]],
     non_persistent_iteration: int,
     checkpointing_context: Optional[dict[str, Any]] = None,
+    cfg: Optional[ConfigContainer] = None,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
@@ -3378,6 +3400,16 @@ def _load_non_persistent_base_checkpoint(
     if ckpt_cfg.non_persistent_ckpt_type == "global":
         if not rank0:
             print_rank_0(f"Loading from a non-persistent checkpoint (non-persistent iter {non_persistent_iteration})")
+        if ckpt_cfg.ckpt_format == "fsdp_dtensor":
+            return load_fsdp_dtensor_checkpoint(
+                non_persistent_global_dir,
+                ckpt_cfg,
+                rank0,
+                sharded_state_dict,
+                non_persistent_iteration,
+                checkpointing_context=checkpointing_context,
+                cfg=cfg,
+            )
         return _load_global_dist_base_checkpoint(
             non_persistent_global_dir,
             ckpt_cfg,
@@ -3573,6 +3605,7 @@ def _load_base_checkpoint(
                 sharded_state_dict,
                 non_persistent_iteration,
                 checkpointing_context,
+                cfg=cfg,
                 pg_collection=pg_collection,
             )
         else:

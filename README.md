@@ -11,6 +11,8 @@
 </div>
 
 ## 📣 News
+- [07/31/2026] **[K-EXAONE-2](https://huggingface.co/LGAI-EXAONE/K-EXAONE-2.0-750B-A37B) is now supported**! Day-0 support for LG AI Research's K-EXAONE-2 (750B-A37B MoE) is now available on the [k-exaone-2 branch](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/k-exaone-2). Users can convert checkpoints, run inference, fine-tune with SFT or PEFT (LoRA), and use the NVFP4 inference-optimized checkpoint released alongside the model. See the branch documentation for setup instructions and examples.
+
 - [07/17/2026] [**LongStraw (MinT-2M)**](https://github.com/MindLab-Research/longstraw) is a long-context RL research system from MindLab Research that uses Megatron Bridge's modeling and LoRA capabilities. LongStraw explores resident-prefix, response-only GRPO by capturing a shared prompt once and replaying only the trainable response branches, and reports a 2.1M-token GLM-5.2 execution path across 32 NVIDIA H20 GPUs. The broader MinT system behind this work was also used to post-train [**Macaron-V1-Preview**](https://macaron.im/mindlab/research/macaron-v1-preview), MindLab's 749B Mixture-of-LoRA agent model derived from GLM-5.1. Learn more in the [paper](https://arxiv.org/abs/2607.14952).
 
 - [06/22/2026] **Megatron Bridge 0.5.0 released!** Highlights include expanded LLM and multimodal support (Qwen3.5, DeepSeek V4, Ernie 4.5, GLM-5/4.7, StepFun Step-3.5/3.7, MiMo-V2, Gemma 4, Falcon H1, Ling MoE V2, Nemotron-3 Nano Omni, Qwen3-Omni, Qwen3-ASR, and Nemotron Diffusion), MegatronMIMO and Energon v7 training updates, evaluator backend integration, eval-time context parallelism, deterministic recipes, quantized FP8/MXFP4 export, CUDA graph/performance improvements, and Megatron Inference/tokenizer unification with Megatron-LM. Huge thanks to our community contributors: [@HowardZorn](https://github.com/HowardZorn), [@hy2826](https://github.com/hy2826), [@bo-ke](https://github.com/bo-ke), [@beccohov](https://github.com/beccohov), [@dhiaEddineRhaiem](https://github.com/dhiaEddineRhaiem), [@pavelgein](https://github.com/pavelgein), [@ccclyu](https://github.com/ccclyu), [@hbhflw2000](https://github.com/hbhflw2000), and [@HollowMan6](https://github.com/HollowMan6)! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.5.0).
@@ -224,7 +226,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | Family | Supported variants |
 |----------------|--------------------|
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
-| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 / V4 Flash |
+| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite (deprecated), DeepSeek V3, DeepSeek V4 / V4 Flash |
 | [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
 | **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl) |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
@@ -238,7 +240,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Mistral**](docs/models/mistral/index.md) | Mistral 7B / Small 3 24B (deprecated), Ministral 3 (3B/8B/14B) |
 | [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
-| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H v1 (deprecated), Nemotron Nano v2, Nemotron-3 Nano, Nemotron-3 Super, Llama Nemotron, Nemotron Nano v2 VL, Nemotron-3 Nano Omni |
+| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H v1 (deprecated), Nemotron Nano v2 (deprecated), Nemotron-3 Nano, Nemotron-3 Super, Llama Nemotron (deprecated), Nemotron Nano v2 VL (deprecated), Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
 | [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |

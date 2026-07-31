@@ -13,42 +13,51 @@
 # limitations under the License.
 
 """
-Unit tests for Nemotron 3 Nano recipe configuration builders.
+Unit tests for Nemotron 3 and 3.5 Nano recipe configuration builders.
 
 Tests cover:
 - Pretrain configuration defaults (parameterless API)
 - SFT configuration (parameterless API for full supervised fine-tuning)
-- PEFT configuration with LoRA and DoRA (peft_scheme parameter)
+- PEFT configuration with LoRA and DoRA (``peft_scheme`` parameter)
 - MoE-specific settings (HybridEP pretraining, DeepEP finetuning, expert parallelism)
+- Separate Nemotron 3 and 3.5 pretrain configurations
+- SFT configuration with explicit Nemotron 3.5 MTP overrides
+- PEFT configuration with explicit Nemotron 3.5 MTP overrides, LoRA, and DoRA
 - Parallelism and tokenizer configurations
 """
 
 import os
 import tempfile
+from inspect import signature
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.recipes.nemotronh.h100 import nemotron_3_nano as recipe_module
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
+    nemotron_3_5_nano_peft_config,
+    nemotron_3_5_nano_pretrain_config,
+    nemotron_3_5_nano_sft_config,
     nemotron_3_nano_peft_config,
     nemotron_3_nano_pretrain_config,
     nemotron_3_nano_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
 
 @pytest.mark.unit
 class TestNemotron3NanoPretrain:
     """Test cases for Nemotron 3 Nano pretrain recipe.
 
-    Note: Pretrain config uses the parameterless API and returns fixed defaults.
-    Customization is done by modifying the returned ConfigContainer after creation.
+    Most customization is done by modifying the returned ConfigContainer after
+    creation; Nemotron 3.5 uses a separate recipe.
     """
 
     def test_pretrain_config_default_parameters(self):
         """Test pretrain_config returns correct default configuration."""
-        # Pretrain config uses parameterless API
         config = nemotron_3_nano_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
@@ -83,9 +92,39 @@ class TestNemotron3NanoPretrain:
         # Check precision
         assert config.mixed_precision == "bf16_mixed"
 
+        # MTP is opt-in for pretraining.
+        assert config.model.mtp_num_layers == 0
+        assert config.model.mtp_hybrid_override_pattern is None
+
+    def test_nemotron_3_5_pretrain_config(self):
+        """The Nemotron 3.5 recipe enables the repeated Nano MTP head."""
+        base_config = nemotron_3_nano_pretrain_config()
+        config = nemotron_3_5_nano_pretrain_config()
+
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.keep_mtp_spec_in_bf16 is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
+        assert config.model.use_te_rng_tracker is True
+        assert base_config.model.use_te_rng_tracker is False
+        assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
+        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.train.global_batch_size == 512
+        assert config.model.context_parallel_size == 2
+        assert config.model.cp_comm_type == "p2p"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn"]
+        assert cuda_graph_module_names(config.model) == ["mamba"]
+
+    def test_pretrain_recipes_do_not_expose_mtp_flag(self):
+        """Nemotron 3 and 3.5 pretraining use distinct parameterless factories."""
+        assert "enable_mtp" not in signature(nemotron_3_nano_pretrain_config).parameters
+        assert "enable_mtp" not in signature(nemotron_3_5_nano_pretrain_config).parameters
+
     def test_pretrain_config_hybridep_enabled(self):
         """Test that HybridEP is enabled by default for MoE pretrain."""
-        # Pretrain config uses parameterless API
         config = nemotron_3_nano_pretrain_config()
 
         # HybridEP should be enabled by default - check MoE dispatcher settings
@@ -129,6 +168,7 @@ class TestNemotron3NanoPretrain:
 
         # Verify checkpoint configuration
         assert config.checkpoint.save_interval == 200
+        assert config.checkpoint.async_save is False
         assert config.checkpoint.ckpt_assume_constant_structure is True
         assert config.checkpoint.dist_ckpt_strictness == "log_all"
 
@@ -137,8 +177,8 @@ class TestNemotron3NanoPretrain:
 class TestNemotron3NanoSft:
     """Test cases for Nemotron 3 Nano SFT recipe.
 
-    Note: SFT config uses the parameterless API and returns fixed defaults.
-    Customization is done by modifying the returned ConfigContainer after creation.
+    Nemotron 3 and 3.5 recipes derive their model architecture from their
+    respective hard-coded Hugging Face repositories.
     """
 
     def test_sft_config_default_parameters(self):
@@ -222,6 +262,112 @@ class TestNemotron3NanoSft:
         config.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
         assert config.checkpoint.pretrained_checkpoint == "/path/to/checkpoint"
+
+    @pytest.mark.parametrize(
+        ("recipe_factory", "mtp_num_layers", "tokenizer_model"),
+        [
+            (nemotron_3_nano_sft_config, 0, recipe_module._NEMOTRON_3_NANO_MODEL_ID),
+            (nemotron_3_nano_peft_config, 0, recipe_module._NEMOTRON_3_NANO_MODEL_ID),
+            (nemotron_3_5_nano_sft_config, 2, recipe_module._NEMOTRON_3_5_NANO_MODEL_ID),
+            (nemotron_3_5_nano_peft_config, 2, recipe_module._NEMOTRON_3_5_NANO_MODEL_ID),
+        ],
+    )
+    def test_finetuning_uses_nemotron_3_base_model(
+        self,
+        recipe_factory,
+        mtp_num_layers,
+        tokenizer_model,
+    ):
+        """SFT and PEFT use the shared Nano provider before applying MTP."""
+        config = recipe_factory()
+
+        assert isinstance(config.model, HybridModelProvider)
+        assert config.model.mtp_num_layers == mtp_num_layers
+        assert config.model.mtp_hybrid_override_pattern == ("*E" if mtp_num_layers else None)
+        assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
+        assert config.model.keep_mtp_spec_in_bf16 is bool(mtp_num_layers)
+        assert config.model.mtp_loss_scaling_factor == (0.3 if mtp_num_layers else 0.1)
+        assert config.model.hf_model_id == tokenizer_model
+        assert config.tokenizer.tokenizer_model == tokenizer_model
+
+    def test_nemotron_3_5_sft_retains_generic_topology(self):
+        """Nemotron 3.5 SFT remains independent of the specialized TP4 recipe."""
+        config = nemotron_3_5_nano_sft_config()
+
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.sequence_parallel is False
+
+    def test_nemotron_3_5_peft_overrides_base_recipe(self):
+        """Nemotron 3.5 PEFT mutates the corresponding Nemotron 3 config."""
+        base_config = Mock()
+        base_config.model = HybridModelProvider()
+        base_config.tokenizer = Mock()
+
+        with patch.object(
+            recipe_module,
+            "nemotron_3_nano_peft_8gpu_h100_bf16_config",
+            return_value=base_config,
+        ) as base_factory:
+            config = nemotron_3_5_nano_peft_config(peft_scheme="dora")
+
+        base_factory.assert_called_once_with("dora")
+        assert config is base_config
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.keep_mtp_spec_in_bf16 is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+
+    def test_finetuning_recipes_do_not_expose_model_id(self):
+        """Model selection is fixed by separate Nemotron 3 and 3.5 factories."""
+        assert not signature(nemotron_3_nano_sft_config).parameters
+        assert not signature(nemotron_3_5_nano_sft_config).parameters
+        assert set(signature(nemotron_3_nano_peft_config).parameters) == {"peft_scheme"}
+        assert set(signature(nemotron_3_5_nano_peft_config).parameters) == {"peft_scheme"}
+
+    def test_nemotron_3_5_openmath_sft_recipe_owns_verified_h100_defaults(self):
+        """The dedicated H100 recipe makes the standard packed SFT command concise."""
+        config = recipe_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
+
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.keep_mtp_spec_in_bf16 is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.model.tensor_model_parallel_size == 2
+        assert config.model.sequence_parallel is True
+        assert config.model.expert_tensor_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 8
+        assert config.model.recompute_granularity == "selective"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn", "mlp"]
+        assert config.dataset.seq_length == 4096
+        assert config.dataset.hf_dataset.dataset_name == "openmathinstruct2"
+        assert config.dataset.hf_dataset.load_kwargs == {"revision": recipe_module._OPENMATHINSTRUCT2_REVISION}
+        assert config.dataset.enable_offline_packing is True
+        assert config.dataset.offline_packing_specs.packed_sequence_size == 4096
+        assert config.dataset.offline_packing_specs.pad_seq_to_mult == 2
+        assert config.dataset.offline_packing_specs.tokenizer_model_name == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.train.train_iters == 100
+        assert config.train.global_batch_size == 128
+        assert config.train.micro_batch_size == 1
+        assert config.train.empty_unused_memory_level == 2
+        assert config.optimizer.lr == 5e-6
+        assert config.optimizer.min_lr == 0.0
+        assert config.optimizer.overlap_param_gather is False
+        assert config.ddp.overlap_param_gather is False
+        assert config.validation.eval_iters == 0
+        assert config.validation.eval_interval == 0
+        assert config.checkpoint.load is None
+        assert config.checkpoint.save_optim is False
+        assert config.checkpoint.save_rng is False
+        assert config.checkpoint.async_save is False
+        assert config.checkpoint.save_interval == 100
+        assert config.logger.log_interval == 1
+        assert config.logger.log_throughput is True
+        assert config.logger.tensorboard_dir is None
 
     def test_sft_config_with_custom_directory(self):
         """Test custom directory configuration for SFT."""
@@ -390,7 +536,6 @@ class TestNemotron3NanoCommon:
     )
     def test_config_container_structure(self, recipe_fn):
         """Test that all configs return proper ConfigContainer with correct model provider."""
-        # All configs use parameterless API (peft_config has optional peft_scheme)
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
@@ -418,7 +563,6 @@ class TestNemotron3NanoCommon:
     )
     def test_ddp_configuration(self, recipe_fn):
         """Test distributed data parallel configuration."""
-        # All configs use parameterless API (peft_config has optional peft_scheme)
         config = recipe_fn()
 
         assert config.ddp.check_for_nan_in_grad is True
@@ -436,7 +580,6 @@ class TestNemotron3NanoCommon:
     )
     def test_moe_model_configuration(self, recipe_fn):
         """Test MoE-specific model configuration from provider."""
-        # All configs use parameterless API (peft_config has optional peft_scheme)
         config = recipe_fn()
 
         # Check MoE settings from HybridModelProvider

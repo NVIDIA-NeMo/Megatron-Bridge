@@ -52,7 +52,7 @@ REQUIRED_ITEM_NAMES = (
     "peft",
     "checkpoint_resume",
 )
-OPTIONAL_ITEM_NAMES = ("pretrain_performance",)
+OPTIONAL_ITEM_NAMES = ("pretrain_performance", "pretrain_fsdp")
 ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
 MODEL_LEVEL_INDEX_SCOPE = (
     "hf_to_megatron_cpu",
@@ -71,7 +71,15 @@ TRAINING_INDEX_SCOPE = (
     "checkpoint_resume",
 )
 TRAINING_ITEMS = frozenset(
-    {"pretrain", "sft", "sft_long_context", "peft", "checkpoint_resume", "pretrain_performance"}
+    {
+        "pretrain",
+        "sft",
+        "sft_long_context",
+        "peft",
+        "checkpoint_resume",
+        "pretrain_performance",
+        "pretrain_fsdp",
+    }
 )
 HARDWARE_SCOPED_ITEMS = TRAINING_ITEMS | {"sft_export_inference"}
 PUBLIC_HARDWARE_KEYS = frozenset(
@@ -91,8 +99,8 @@ PUBLIC_HARDWARE_KEYS = frozenset(
     }
 )
 CONVERSION_ITEMS = frozenset({"hf_to_megatron_cpu", "hf_to_megatron_gpu", "megatron_to_hf_cpu", "megatron_to_hf_gpu"})
-FEATURE_ITEMS = frozenset({"pretrain", "sft", "sft_long_context", "peft"})
-METRIC_NAMES = frozenset(
+FEATURE_ITEMS = frozenset({"pretrain", "sft", "sft_long_context", "peft", "pretrain_fsdp"})
+REQUIRED_METRIC_NAMES = frozenset(
     {
         "initial_loss",
         "final_loss",
@@ -100,11 +108,16 @@ METRIC_NAMES = frozenset(
         "last_10_steps_model_tflops_per_gpu_avg",
     }
 )
-FEATURE_KEYS = frozenset({"sequence_packing", "cuda_graph", "context_parallel_size", "moe_dispatcher"})
+OPTIONAL_METRIC_NAMES = frozenset({"peak_allocated_memory_gib", "peak_reserved_memory_gib"})
+METRIC_NAMES = REQUIRED_METRIC_NAMES | OPTIONAL_METRIC_NAMES
+FEATURE_KEYS = frozenset(
+    {"sequence_packing", "cuda_graph", "context_parallel_size", "moe_dispatcher", "megatron_fsdp"}
+)
 PACKING_VALUES = frozenset({"offline", "in_batch"})
 CUDA_GRAPH_IMPLEMENTATIONS = frozenset({"local", "transformer_engine"})
 CUDA_GRAPH_SCOPES = frozenset({"full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"})
 MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
+MEGATRON_FSDP_STRATEGIES = frozenset({"optim_grads_params"})
 MANUAL_FORWARD_COSINE_THRESHOLD = 0.99
 MANUAL_FORWARD_REVISION_PINNING_DATE = dt.date(2026, 7, 20)
 UNTUNED_PERFORMANCE_DISCLAIMER = (
@@ -113,7 +126,7 @@ UNTUNED_PERFORMANCE_DISCLAIMER = (
 )
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "verification_index", "items"})
-VERIFICATION_INDEX_KEYS = frozenset({"model_level", "training", "performance"})
+VERIFICATION_INDEX_KEYS = frozenset({"model_level", "training", "performance", "fsdp"})
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
 ENVIRONMENT_KEYS = frozenset({"base_container", "bridge_commit"})
 ITEM_KEYS = frozenset(
@@ -129,6 +142,7 @@ ITEM_KEYS = frozenset(
         "enabled_features",
         "metrics",
         "resume_comparison",
+        "variants",
     }
 )
 RESUME_KEYS = frozenset(
@@ -140,7 +154,6 @@ RESUME_KEYS = frozenset(
         "sentinels_match",
     }
 )
-
 FORBIDDEN_KEY_FRAGMENTS = (
     "account",
     "cluster",
@@ -314,7 +327,24 @@ def _iter_item_leaves(
         if item_name in HARDWARE_SCOPED_ITEMS and "status" not in value:
             for hardware, leaf in value.items():
                 if isinstance(leaf, Mapping):
-                    yield item_name, hardware, leaf, ("items", item_name, hardware)
+                    variants = leaf.get("variants") if item_name == "pretrain_fsdp" else None
+                    if isinstance(variants, Mapping):
+                        for variant_name, variant in variants.items():
+                            if isinstance(variant, Mapping):
+                                yield (
+                                    item_name,
+                                    hardware,
+                                    variant,
+                                    (
+                                        "items",
+                                        item_name,
+                                        hardware,
+                                        "variants",
+                                        str(variant_name),
+                                    ),
+                                )
+                    else:
+                        yield item_name, hardware, leaf, ("items", item_name, hardware)
         else:
             yield item_name, None, value, ("items", item_name)
 
@@ -479,48 +509,45 @@ def _validate_verification_index(
                 errors=errors,
             )
 
-    performance_path = (*path, "performance")
-    performance_variants = {
-        hardware: item
-        for hardware, item in hardware_groups.get("pretrain_performance", {}).items()
-        if hardware != "all"
-    }
-    if not performance_variants:
-        if "performance" in verification_index:
-            errors.append(
-                f"{_pointer(*performance_path)}: omit performance when pretrain_performance has no concrete leaves"
-            )
-        return
-    if "performance" not in verification_index:
-        errors.append(f"{_pointer(*performance_path)}: required to mirror pretrain_performance concrete leaves")
-        return
-
-    performance = _as_mapping(verification_index.get("performance"), path=performance_path, errors=errors)
-    if performance is None:
-        return
-    expected_hardware = set(performance_variants)
-    actual_hardware = set(performance)
-    for hardware in sorted(actual_hardware):
-        if hardware not in PUBLIC_HARDWARE_KEYS:
-            errors.append(
-                f"{_pointer(*performance_path, str(hardware))}: expected a supported public hardware key; "
-                f"choose from {sorted(PUBLIC_HARDWARE_KEYS)}"
-            )
-    for hardware in sorted(expected_hardware - actual_hardware):
-        errors.append(f"{_pointer(*performance_path, hardware)}: required to mirror pretrain_performance.{hardware}")
-    for hardware in sorted(actual_hardware - expected_hardware):
-        errors.append(f"{_pointer(*performance_path, hardware)}: no matching pretrain_performance.{hardware} leaf")
-    for hardware in sorted(expected_hardware & actual_hardware):
-        indexed_status = performance.get(hardware)
-        if not isinstance(indexed_status, str) or indexed_status not in STATUSES:
-            errors.append(f"{_pointer(*performance_path, hardware)}: expected one of {sorted(STATUSES)}")
+    for index_name, item_name in (("performance", "pretrain_performance"), ("fsdp", "pretrain_fsdp")):
+        index_path = (*path, index_name)
+        variants = {
+            hardware: item for hardware, item in hardware_groups.get(item_name, {}).items() if hardware != "all"
+        }
+        if not variants:
+            if index_name in verification_index:
+                errors.append(f"{_pointer(*index_path)}: omit {index_name} when {item_name} has no concrete leaves")
             continue
-        expected_status = _item_status(performance_variants[hardware])
-        if expected_status is not None and indexed_status != expected_status:
-            errors.append(
-                f"{_pointer(*performance_path, hardware)}: indexed as {indexed_status} but "
-                f"pretrain_performance.{hardware} is {expected_status}"
-            )
+        if index_name not in verification_index:
+            errors.append(f"{_pointer(*index_path)}: required to mirror {item_name} concrete leaves")
+            continue
+
+        index = _as_mapping(verification_index.get(index_name), path=index_path, errors=errors)
+        if index is None:
+            continue
+        expected_hardware = set(variants)
+        actual_hardware = set(index)
+        for hardware in sorted(actual_hardware):
+            if hardware not in PUBLIC_HARDWARE_KEYS:
+                errors.append(
+                    f"{_pointer(*index_path, str(hardware))}: expected a supported public hardware key; "
+                    f"choose from {sorted(PUBLIC_HARDWARE_KEYS)}"
+                )
+        for hardware in sorted(expected_hardware - actual_hardware):
+            errors.append(f"{_pointer(*index_path, hardware)}: required to mirror {item_name}.{hardware}")
+        for hardware in sorted(actual_hardware - expected_hardware):
+            errors.append(f"{_pointer(*index_path, hardware)}: no matching {item_name}.{hardware} leaf")
+        for hardware in sorted(expected_hardware & actual_hardware):
+            indexed_status = index.get(hardware)
+            if not isinstance(indexed_status, str) or indexed_status not in STATUSES:
+                errors.append(f"{_pointer(*index_path, hardware)}: expected one of {sorted(STATUSES)}")
+                continue
+            expected_status = _item_status(variants[hardware])
+            if expected_status is not None and indexed_status != expected_status:
+                errors.append(
+                    f"{_pointer(*index_path, hardware)}: indexed as {indexed_status} but "
+                    f"{item_name}.{hardware} is {expected_status}"
+                )
 
 
 def _is_iso_date(value: Any) -> bool:
@@ -569,7 +596,13 @@ def _command_values(item: Mapping[str, Any]) -> list[str]:
     return []
 
 
-def _validate_enabled_features(value: Any, *, item_path: tuple[str, ...], errors: list[str]) -> None:
+def _validate_enabled_features(
+    value: Any,
+    *,
+    item_name: str,
+    item_path: tuple[str, ...],
+    errors: list[str],
+) -> None:
     path = (*item_path, "enabled_features")
     features = _as_mapping(value, path=path, errors=errors)
     if features is None:
@@ -615,10 +648,18 @@ def _validate_enabled_features(value: Any, *, item_path: tuple[str, ...], errors
     if dispatcher is not None and (not isinstance(dispatcher, str) or dispatcher not in MOE_DISPATCHERS):
         errors.append(f"{_pointer(*path, 'moe_dispatcher')}: expected deepep or hybridep")
 
+    megatron_fsdp = features.get("megatron_fsdp")
+    if item_name == "pretrain_fsdp":
+        if not isinstance(megatron_fsdp, str) or megatron_fsdp not in MEGATRON_FSDP_STRATEGIES:
+            errors.append(f"{_pointer(*path, 'megatron_fsdp')}: expected one of {sorted(MEGATRON_FSDP_STRATEGIES)}")
+    elif megatron_fsdp is not None:
+        errors.append(f"{_pointer(*path, 'megatron_fsdp')}: allowed only on pretrain_fsdp")
+
 
 def _validate_metrics(
     item: Mapping[str, Any],
     *,
+    item_name: str,
     item_path: tuple[str, ...],
     status: str,
     errors: list[str],
@@ -627,10 +668,11 @@ def _validate_metrics(
     metrics = _as_mapping(item.get("metrics"), path=path, errors=errors)
     if metrics is None:
         return
-    _check_keys(metrics, allowed=METRIC_NAMES, required=METRIC_NAMES, path=path, errors=errors)
+    required_names = METRIC_NAMES if item_name == "pretrain_fsdp" and status == "verified" else REQUIRED_METRIC_NAMES
+    _check_keys(metrics, allowed=METRIC_NAMES, required=required_names, path=path, errors=errors)
 
     if status == "verified":
-        for name in sorted(METRIC_NAMES):
+        for name in sorted(REQUIRED_METRIC_NAMES | (OPTIONAL_METRIC_NAMES & metrics.keys())):
             value = metrics.get(name)
             if not _is_finite_number(value):
                 errors.append(f"{_pointer(*path, name)}: verified metrics must be finite numbers")
@@ -639,6 +681,8 @@ def _validate_metrics(
                 in {
                     "last_10_steps_step_time_ms_avg",
                     "last_10_steps_model_tflops_per_gpu_avg",
+                    "peak_allocated_memory_gib",
+                    "peak_reserved_memory_gib",
                 }
                 and float(value) <= 0
             ):
@@ -1331,6 +1375,8 @@ def _validate_item(
     item = _as_mapping(value, path=path, errors=errors)
     if item is None:
         return
+    if "variants" in item:
+        errors.append(f"{_pointer(*path, 'variants')}: allowed only on a pretrain_fsdp hardware container")
     required = frozenset({"status", "precision", "last_verified", "expected_result"})
     if item_name == "sft_export_inference":
         required |= frozenset({"commands"})
@@ -1438,7 +1484,13 @@ def _validate_item(
             )
 
     if item_name in TRAINING_ITEMS:
-        _validate_metrics(item, item_path=path, status=status, errors=errors)
+        _validate_metrics(
+            item,
+            item_name=item_name,
+            item_path=path,
+            status=status,
+            errors=errors,
+        )
         _validate_training_window(
             item,
             item_name=item_name,
@@ -1454,7 +1506,12 @@ def _validate_item(
         errors.append(f"{_pointer(*path)}: metrics are allowed only on training items")
 
     if item_name in FEATURE_ITEMS:
-        _validate_enabled_features(item.get("enabled_features"), item_path=path, errors=errors)
+        _validate_enabled_features(
+            item.get("enabled_features"),
+            item_name=item_name,
+            item_path=path,
+            errors=errors,
+        )
         if item_name == "sft_long_context" and status == "verified":
             features = item.get("enabled_features")
             if isinstance(features, Mapping):
@@ -1480,6 +1537,65 @@ def _validate_item(
         _validate_manual_forward_pass(item, status=status, model_revision=model_revision, errors=errors)
     if item_name == "inference":
         _validate_inference(item, item_name=item_name, item_path=path, status=status, errors=errors)
+
+
+def _validate_fsdp_variant_group(
+    value: Any,
+    *,
+    path: tuple[str, ...],
+    model_revision: str | None,
+    errors: list[str],
+) -> None:
+    """Validate multiple precision variants under one FSDP hardware target."""
+    group = _as_mapping(value, path=path, errors=errors)
+    if group is None:
+        return
+    _check_keys(
+        group,
+        allowed=frozenset({"status", "variants"}),
+        required=frozenset({"status", "variants"}),
+        path=path,
+        errors=errors,
+    )
+
+    status = group.get("status")
+    if not isinstance(status, str) or status not in {"verified", "unverified"}:
+        errors.append(f"{_pointer(*path, 'status')}: FSDP variant groups must be verified or unverified")
+
+    variants = _as_mapping(group.get("variants"), path=(*path, "variants"), errors=errors)
+    if variants is None:
+        return
+    if not variants:
+        errors.append(f"{_pointer(*path, 'variants')}: expected at least one precision variant")
+        return
+
+    variant_statuses: list[str] = []
+    for precision_name, variant in variants.items():
+        variant_path = (*path, "variants", precision_name)
+        if precision_name not in PRECISIONS:
+            errors.append(f"{_pointer(*variant_path)}: expected one of {sorted(PRECISIONS)}")
+            continue
+        _validate_item(
+            "pretrain_fsdp",
+            variant,
+            errors,
+            path=variant_path,
+            model_revision=model_revision,
+        )
+        if isinstance(variant, Mapping):
+            if variant.get("precision") != precision_name:
+                errors.append(f"{_pointer(*variant_path, 'precision')}: must match the variant key")
+            variant_status = variant.get("status")
+            if isinstance(variant_status, str) and variant_status in {"verified", "unverified"}:
+                variant_statuses.append(variant_status)
+
+    expected_status = (
+        "verified"
+        if len(variant_statuses) == len(variants) and all(value == "verified" for value in variant_statuses)
+        else "unverified"
+    )
+    if status in {"verified", "unverified"} and status != expected_status:
+        errors.append(f"{_pointer(*path, 'status')}: must be {expected_status} to summarize the precision variants")
 
 
 def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[str, ...], str]]:
@@ -1631,13 +1747,22 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
                 variants = _hardware_variants(items[name], item_name=name, errors=errors)
                 hardware_groups[name] = variants
                 for hardware, item in variants.items():
-                    _validate_item(
-                        name,
-                        item,
-                        errors,
-                        path=("items", name, hardware),
-                        model_revision=model_revision,
-                    )
+                    item_path = ("items", name, hardware)
+                    if name == "pretrain_fsdp" and "variants" in item:
+                        _validate_fsdp_variant_group(
+                            item,
+                            path=item_path,
+                            model_revision=model_revision,
+                            errors=errors,
+                        )
+                    else:
+                        _validate_item(
+                            name,
+                            item,
+                            errors,
+                            path=item_path,
+                            model_revision=model_revision,
+                        )
             else:
                 _validate_item(
                     name,

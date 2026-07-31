@@ -200,6 +200,7 @@ def _nemotron_3_nano_finetune_model() -> HybridModelProvider:
         init_method_std=0.0173,
         use_fused_weighted_squared_relu=True,
         calculate_per_token_loss=True,
+        hf_model_id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         pipeline_dtype=torch.bfloat16,

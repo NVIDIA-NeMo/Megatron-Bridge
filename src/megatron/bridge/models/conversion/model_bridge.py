@@ -952,7 +952,11 @@ class MegatronModelBridge(
         """
         from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
-        ep_size = parallel_state.get_expert_model_parallel_world_size()
+        # Use the mapping's process group rather than the global parallel-state
+        # singleton. Decentralized callers such as MegatronMIMO install
+        # route-local groups directly on mappings, while MCore's cached global EP
+        # world size may still describe another component.
+        ep_size = task.mapping.ep_size
         num_experts = model_config.num_moe_experts
         experts_per_rank = num_experts // ep_size
 
