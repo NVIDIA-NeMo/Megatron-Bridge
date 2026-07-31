@@ -144,3 +144,5 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
 COPY --chmod=644 . /opt/Megatron-Bridge
+COPY --chmod=755 scripts/conversion/convert.sh /opt/Megatron-Bridge/scripts/conversion/convert.sh
+COPY --chmod=755 scripts/training/train.sh /opt/Megatron-Bridge/scripts/training/train.sh
