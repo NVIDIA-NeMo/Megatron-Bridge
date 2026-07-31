@@ -36,6 +36,7 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
+from megatron.bridge.models._deprecation import warn_if_deprecated_model, warn_if_legacy_nemotron_path
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -64,6 +65,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
     "NemotronH_Nano_Omni_Reasoning_V3",
+    "NemotronH_Super_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
@@ -276,6 +278,18 @@ class AutoBridge(Generic[MegatronModelT]):
                 "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance"
             )
         self.hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig = hf_pretrained
+        if isinstance(hf_pretrained, PretrainedConfig):
+            hf_config = hf_pretrained
+            model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
+        else:
+            # Pretrained wrappers load their config lazily. A deprecation
+            # warning must not turn construction into an HF Hub request.
+            wrapper_state = vars(hf_pretrained)
+            hf_config = wrapper_state.get("_config")
+            model_name_or_path = wrapper_state.get("_model_name_or_path")
+        if hf_config is not None:
+            warn_if_deprecated_model(hf_config, model_name_or_path)
+
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.hf_model_id: Optional[str] = None
@@ -351,6 +365,8 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             FileNotFoundError: If run_config.yaml is not found in the Megatron path
         """
+        warn_if_legacy_nemotron_path(hf_model_id)
+
         from transformers import AutoConfig
 
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
@@ -479,6 +495,8 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> # Works with local paths too
             >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
+        warn_if_legacy_nemotron_path(path)
+
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
         config_kwargs = dict(kwargs)
@@ -510,7 +528,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         wrapper_cls = _resolve_pretrained_wrapper_cls(config)
         try:
-            return cls(wrapper_cls.from_pretrained(path, **kwargs))
+            hf_pretrained = wrapper_cls.from_pretrained(path, **kwargs)
+            # Reuse the config that was already loaded and validated above.
+            # Besides avoiding a second Hub request, this guarantees that the
+            # warning and model wrapper observe the same immutable revision.
+            hf_pretrained.config = config
+            return cls(hf_pretrained)
         except Exception as e:
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 
@@ -1324,6 +1347,8 @@ class AutoBridge(Generic[MegatronModelT]):
         cls,
         hf_model_id: str | Path,
         megatron_path: str | Path,
+        *,
+        low_memory_save: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -1338,6 +1363,8 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
+            low_memory_save: Reduce peak memory while saving the Megatron checkpoint.
+                This destroys the converted model during save and can increase runtime.
             **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -1357,7 +1384,8 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b",
             ...     torch_dtype=torch.float16,
-            ...     device_map="auto"
+            ...     device_map="auto",
+            ...     low_memory_save=True
             ... )
         """
         # Load the HuggingFace model
@@ -1382,7 +1410,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path,
             hf_tokenizer_path=hf_model_id,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
-            low_memory_save=True,
+            low_memory_save=low_memory_save,
         )
 
     def export_ckpt(

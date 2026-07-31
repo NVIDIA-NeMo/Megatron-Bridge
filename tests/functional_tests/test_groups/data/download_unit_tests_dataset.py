@@ -28,6 +28,54 @@ import click
 import requests
 from github import Github
 
+from tests.functional_tests.fixture_utils import get_test_data_root
+
+
+DEFAULT_REPO_NAME = "NVIDIA/Megatron-LM"
+STAGED_RELEASE_ASSETS = (
+    Path("megatron-lm/release-assets/v2.5/datasets.zip"),
+    Path("megatron-lm/release-assets/v2.5/tokenizers.zip"),
+)
+
+
+def extract_asset(asset_path: Path, assets_dir: Path) -> bool:
+    """Extract a release asset into the writable test data directory."""
+    try:
+        print(f"  Extracting {asset_path.name} to {assets_dir}...")
+
+        if asset_path.name.endswith(".zip"):
+            with zipfile.ZipFile(asset_path, "r") as zip_ref:
+                zip_ref.extractall(assets_dir)
+        elif asset_path.name.endswith((".tar.gz", ".tgz")):
+            with tarfile.open(asset_path, "r:gz") as tar_ref:
+                tar_ref.extractall(assets_dir)
+        elif asset_path.name.endswith(".tar"):
+            with tarfile.open(asset_path, "r") as tar_ref:
+                tar_ref.extractall(assets_dir)
+        else:
+            print(f"  Warning: Unknown file type for {asset_path.name}, skipping extraction")
+            return False
+
+        print(f"  Successfully extracted to {assets_dir}")
+        return True
+
+    except Exception as e:
+        print(f"  Error extracting {asset_path.name}: {e}")
+        return False
+
+
+def extract_staged_release_assets(repo_name: str, assets_dir: Path) -> bool:
+    """Extract staged Megatron-LM v2.5 assets when all of them are available."""
+    if repo_name != DEFAULT_REPO_NAME:
+        return False
+
+    staged_assets = tuple(get_test_data_root() / relative_path for relative_path in STAGED_RELEASE_ASSETS)
+    if not all(asset_path.is_file() for asset_path in staged_assets):
+        return False
+
+    print(f"Using staged release assets from {staged_assets[0].parent}")
+    return all(extract_asset(asset_path, assets_dir) for asset_path in staged_assets)
+
 
 def download_and_extract_asset(asset_url: str, asset_name: str, assets_dir: Path) -> bool:
     """
@@ -41,45 +89,29 @@ def download_and_extract_asset(asset_url: str, asset_name: str, assets_dir: Path
     Returns:
         bool: True if successful, False otherwise
     """
+    temp_file = assets_dir / asset_name
     try:
         # Download the asset
         print(f"  Downloading {asset_name}...")
-        response = requests.get(asset_url, stream=True)
+        response = requests.get(asset_url, stream=True, timeout=60)
         response.raise_for_status()
 
         # Save to temporary file
-        temp_file = assets_dir / asset_name
         with open(temp_file, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
 
-        print(f"  Extracting {asset_name} to {assets_dir}...")
-
-        # Extract based on file type
-        if asset_name.endswith(".zip"):
-            with zipfile.ZipFile(temp_file, "r") as zip_ref:
-                zip_ref.extractall(assets_dir)
-        elif asset_name.endswith((".tar.gz", ".tgz")):
-            with tarfile.open(temp_file, "r:gz") as tar_ref:
-                tar_ref.extractall(assets_dir)
-        elif asset_name.endswith(".tar"):
-            with tarfile.open(temp_file, "r") as tar_ref:
-                tar_ref.extractall(assets_dir)
-        else:
-            print(f"  Warning: Unknown file type for {asset_name}, skipping extraction")
-            return False
-
-        # Clean up temporary file
-        temp_file.unlink()
-        print(f"  Successfully extracted to {assets_dir}")
-        return True
+        return extract_asset(temp_file, assets_dir)
 
     except Exception as e:
         print(f"  Error downloading/extracting {asset_name}: {e}")
         return False
+    finally:
+        if temp_file.is_file():
+            temp_file.unlink()
 
 
-def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_dir: str = "assets") -> None:
+def get_oldest_release_and_assets(repo_name: str = DEFAULT_REPO_NAME, assets_dir: str = "assets") -> None:
     """
     Fetch the oldest release of a GitHub repository and list its assets.
 
@@ -88,12 +120,15 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
         assets_dir: Directory to extract assets to
     """
     try:
-        # Initialize GitHub client
-        token = os.getenv("GH_TOKEN", None)
-        if token is None:
-            raise ValueError("GH_TOKEN environment variable is not set")
+        assets_path = Path(assets_dir)
+        assets_path.mkdir(parents=True, exist_ok=True)
 
-        g = Github(login_or_token=token)
+        if extract_staged_release_assets(repo_name, assets_path):
+            return
+
+        # Initialize an authenticated GitHub client when a token is available.
+        token = os.getenv("GH_TOKEN", None)
+        g = Github(login_or_token=token) if token else Github()
 
         # Get the repository
         repo = g.get_repo(repo_name)
@@ -161,9 +196,6 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
             print("-" * 80)
             print("Downloading and extracting assets...")
 
-            # Create assets directory
-            assets_path = Path(assets_dir)
-            assets_path.mkdir(parents=True, exist_ok=True)
             print(f"Created assets directory: {assets_path.absolute()}")
 
             successful_downloads = 0
@@ -182,7 +214,7 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
 
 
 @click.command()
-@click.option("--repo", default="NVIDIA/Megatron-LM", help="GitHub repository name (format: owner/repo)")
+@click.option("--repo", default=DEFAULT_REPO_NAME, help="GitHub repository name (format: owner/repo)")
 @click.option("--assets-dir", default="assets", help="Directory to extract assets to")
 def main(repo, assets_dir):
     """Fetch the oldest release of a GitHub repository and download its assets."""

@@ -31,6 +31,30 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 _lora_seq_stats_cache: dict = {}
 
 
+def _packed_data_exists(path: str | None) -> bool:
+    """Return True if a packed dataset file exists, for both parquet and npy formats.
+
+    Parquet specs may be a single file, a glob, or a directory, so they are detected
+    with ``is_packed_parquet_spec`` and validated via the packed-parquet resolver
+    rather than a bare ``Path.exists()`` check (which would fail for globs/directories
+    and silently disable LoRA-aware FLOP accounting). This mirrors the format detection
+    in ``calculate_avg_seqlen`` so a spec that passes this gate also reads correctly.
+    """
+    if not path:
+        return False
+    try:
+        from megatron.bridge.data.packing.paths import (
+            is_packed_parquet_spec,
+            resolve_packed_parquet_paths,
+        )
+
+        if is_packed_parquet_spec(path):
+            return len(resolve_packed_parquet_paths(path)) > 0
+    except Exception:
+        return False
+    return Path(path).exists()
+
+
 def get_model_chunk_vp_stage(model: torch.nn.Module) -> int | None:
     """Return the virtual-pipeline stage assigned to a model chunk, if any.
 
@@ -671,10 +695,13 @@ def num_floating_point_operations(
             dataset_root = getattr(dataset_cfg, "dataset_root", None) or getattr(dataset_cfg, "hf_output_root", None)
             seq_size = getattr(packed_specs, "packed_sequence_size", None)
             if dataset_root is not None and seq_size is not None:
-                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
+                # Prefer the current parquet format; fall back to the deprecated .npy.
+                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.idx.parquet"))
+                if not matches:
+                    matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
                 if matches:
                     packed_data_path = str(matches[0])
-        if is_lora and is_squad and is_llama3_70b and packed_data_path is not None and Path(packed_data_path).exists():
+        if is_lora and is_squad and is_llama3_70b and _packed_data_exists(packed_data_path):
             gbs = cfg.train.global_batch_size
             seq_len = cfg.model.seq_length
             cache_key = (packed_data_path, gbs, seq_len)
@@ -1021,6 +1048,57 @@ def num_floating_point_operations(
             self_attn_term = (
                 gdn_self_attn_per_layer * num_gdn_layers + standard_self_attn_per_layer * num_standard_attn_layers
             )
+
+        # Handle Kimi K3's KDA (Kimi Delta Attention) hybrid schedule. The K3 provider
+        # subclasses MLAModelProvider, so the branches above cost every layer as MLA --
+        # including the quadratic core-attention term. Layers listed in `kimi_kda_layers`
+        # are linear-attention blocks instead, so replace their share of the MLA cost
+        # with the KDA per-layer cost.
+        kimi_kda_layers = getattr(cfg.model, "kimi_kda_layers", None)
+        if kimi_kda_layers:
+            decoder_num_layers = cfg.model.num_layers
+            # `kimi_kda_layers` holds 1-indexed global layer numbers, matching the
+            # `layer_number in config.kimi_kda_layers` check in the K3 layer spec.
+            kda_layer_numbers = set(kimi_kda_layers)
+            out_of_range = sorted(number for number in kda_layer_numbers if not 0 < number <= decoder_num_layers)
+            if out_of_range:
+                raise ValueError(
+                    f"kimi_kda_layers contains layer numbers outside [1, {decoder_num_layers}]: {out_of_range}. "
+                    "The list must hold 1-indexed global layer numbers."
+                )
+
+            # MTP construction reuses the final decoder layer spec, so each MTP layer
+            # has the same attention type as the final decoder layer.
+            last_layer_is_kda = decoder_num_layers in kda_layer_numbers
+            num_kda_layers = len(kda_layer_numbers) + last_layer_is_kda * mtp_num_layers
+            num_mla_layers = num_layers - num_kda_layers
+
+            mla_self_attn_per_layer = self_attn_term / num_layers if num_layers > 0 else 0
+
+            head_dim = cfg.model.kimi_linear_head_dim
+            num_kda_heads = cfg.model.kimi_linear_num_heads
+            conv_kernel_dim = cfg.model.kimi_linear_conv_kernel_size
+            projection_size = num_kda_heads * head_dim
+
+            kda_self_attn_per_layer = (
+                3
+                * 2  # fwd(1) + bwd(2) *FMA
+                * (
+                    # q / k / v / gate / output projections
+                    cfg.model.hidden_size * projection_size * 5
+                    # per-head beta projection
+                    + cfg.model.hidden_size * num_kda_heads
+                    # low-rank forget gate (f_a_proj -> f_b_proj)
+                    + cfg.model.hidden_size * head_dim
+                    + head_dim * projection_size
+                    # depthwise short convolutions over q / k / v
+                    + conv_kernel_dim * 3 * projection_size
+                    # chunked delta-rule recurrence over the [head_dim, head_dim] state
+                    + num_kda_heads * (head_dim**2) * 4
+                )
+            )
+
+            self_attn_term = kda_self_attn_per_layer * num_kda_layers + mla_self_attn_per_layer * num_mla_layers
 
         padded_vocab_size = calculate_padded_vocab_size(
             cfg.model.vocab_size,

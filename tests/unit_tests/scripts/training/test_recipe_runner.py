@@ -244,6 +244,56 @@ def test_sync_model_dataset_sequence_length_uses_canonical_dataset_field(recipe_
     assert config.model.seq_length == 256
 
 
+def test_sync_model_pipeline_layout_uses_overridden_topology(recipe_runner: ModuleType) -> None:
+    layout = [["first"], ["middle"], ["middle"], ["last"]]
+    layout_builder = Mock(return_value=layout)
+    config = SimpleNamespace(
+        model=SimpleNamespace(
+            pipeline_model_parallel_size=4,
+            virtual_pipeline_model_parallel_size=1,
+            pipeline_model_parallel_layout=[["stale"]] * 16,
+            _pipeline_model_parallel_layout_builder=layout_builder,
+        )
+    )
+
+    assert (
+        recipe_runner.sync_model_pipeline_layout(
+            config,
+            cli_overrides=[
+                "model.pipeline_model_parallel_size=4",
+                "model.virtual_pipeline_model_parallel_size=1",
+            ],
+        )
+        is config
+    )
+    assert config.model.pipeline_model_parallel_layout == layout
+    layout_builder.assert_called_once_with(4, 1)
+
+
+def test_sync_model_pipeline_layout_preserves_explicit_layout_override(recipe_runner: ModuleType) -> None:
+    layout = [["custom"]]
+    layout_builder = Mock()
+    config = SimpleNamespace(
+        model=SimpleNamespace(
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=1,
+            pipeline_model_parallel_layout=layout,
+            _pipeline_model_parallel_layout_builder=layout_builder,
+        )
+    )
+
+    recipe_runner.sync_model_pipeline_layout(
+        config,
+        cli_overrides=[
+            "model.pipeline_model_parallel_size=1",
+            "model.pipeline_model_parallel_layout=[[custom]]",
+        ],
+    )
+
+    assert config.model.pipeline_model_parallel_layout == layout
+    layout_builder.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "dataset",
     [

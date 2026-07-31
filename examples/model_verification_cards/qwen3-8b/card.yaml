@@ -14,12 +14,18 @@ summary: >
   training.
 verification_index:
   model_level:
-    verified: all
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
   training:
     H100:
-      verified: all
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     GB200:
-      unverified: all
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: Qwen/Qwen3-8B
   hf_revision: b968826d9c46dd6066d109eabc6255188de91218  # pragma: allowlist secret

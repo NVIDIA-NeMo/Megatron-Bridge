@@ -21,7 +21,7 @@ from collections.abc import Callable
 
 import pytest
 
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, MockVLMSFTDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
     exported_recipe_factory_keys,
@@ -84,3 +84,9 @@ def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]
         "dist",
     ):
         assert getattr(cfg, section) is not None
+
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
+
+    if "pretrain" in recipe_factory.__name__ and isinstance(cfg.dataset, MockVLMSFTDatasetConfig):
+        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+        assert cfg.tokenizer.vocab_size == cfg.model.vocab_size

@@ -325,25 +325,34 @@ def calc_params_l2_norm(
     params_data = []
     moe_params_data = []
     sharded_params_data = []
+    sharded_moe_params_data = []
     data_parallel_group = None
+    pg_collection = get_pg_collection(model)
 
     for model_chunk in model:
         for param in model_chunk.parameters():
             data_parallel_group = get_data_parallel_group_if_dtensor(param, data_parallel_group)
-            is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(param)
+            # MCore uses allreduce=False to mark parameters that use expert-parallel process groups.
+            uses_expert_parallel_groups = not getattr(param, "allreduce", True)
+            is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(
+                param,
+                tp_group=pg_collection.tp,
+                expert_tp_group=pg_collection.expt_tp,
+            )
             if not is_not_tp_duplicate:
                 continue
             assert is_not_tp_duplicate
-            if not getattr(param, "allreduce", True):
+            if uses_expert_parallel_groups:
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
                 if model_config.bf16:
                     if not force_create_fp32_copy and hasattr(param, "main_param"):
                         if getattr(param, "main_param_sharded", False):
                             if param.main_param is not None:
-                                sharded_params_data.append(param.main_param)
+                                sharded_moe_params_data.append(param.main_param)
                         else:
-                            moe_params_data.append(param.main_param)
+                            main_param = param.main_param
+                            moe_params_data.append(main_param if main_param is not None else param.data.float())
                     else:
                         # Fallback to original logic of making a fp32 copy of the
                         # parameter if `.main_param` attribute is not available.
@@ -359,7 +368,8 @@ def calc_params_l2_norm(
                                 if param.main_param is not None:
                                     sharded_params_data.append(param.main_param)
                             else:
-                                params_data.append(param.main_param)
+                                main_param = param.main_param
+                                params_data.append(main_param if main_param is not None else param.data.float())
                         else:
                             # Fallback to original logic of making a fp32 copy of the
                             # parameter if `.main_param` attribute is not available.
@@ -399,7 +409,6 @@ def calc_params_l2_norm(
         sharded_norm_2 = torch.zeros((1,), dtype=torch.float32, device="cuda")
     # Sum over all DP groups, including CP since distributed optimizer state is
     # sharded jointly over DP+CP.
-    pg_collection = get_pg_collection(model)
     torch.distributed.all_reduce(
         sharded_norm_2,
         op=torch.distributed.ReduceOp.SUM,
@@ -422,6 +431,25 @@ def calc_params_l2_norm(
     # See details in https://gitlab-master.nvidia.com/ADLR/megatron-lm/-/issues/409
     else:
         moe_norm_2 = torch.zeros_like(norm_2)
+
+    # Distributed optimizer shards expert main parameters over expert DP rather
+    # than regular DP, so reduce their contribution separately.
+    if len(sharded_moe_params_data) > 0:
+        sharded_moe_norm, _ = multi_tensor_applier(
+            multi_tensor_l2norm,
+            dummy_overflow_buf,
+            [sharded_moe_params_data],
+            False,  # no per-parameter norm.
+        )
+        sharded_moe_norm_2 = sharded_moe_norm * sharded_moe_norm
+    else:
+        sharded_moe_norm_2 = torch.zeros((1,), dtype=torch.float32, device="cuda")
+    torch.distributed.all_reduce(
+        sharded_moe_norm_2,
+        op=torch.distributed.ReduceOp.SUM,
+        group=pg_collection.expt_dp,
+    )
+    moe_norm_2 += sharded_moe_norm_2
 
     # Reduce norm across model parallel groups (dense and expert).
     # Dense params should sum across all model-parallel GPUs (tensor + pipeline).
@@ -718,7 +746,9 @@ def training_log(
     train_config = config.train
     pg_collection = pg_collection or get_pg_collection(model)
 
-    loggers_exist = writer is not None or wandb_writer is not None or mlflow_logger is not None
+    loggers_exist = (
+        writer is not None or wandb_writer is not None or mlflow_logger is not None or comet_logger is not None
+    )
 
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"
@@ -791,14 +821,21 @@ def training_log(
     # Tensorboard values.
     # Timer requires all the ranks to call.
     if logger_config.log_timers_to_tensorboard and (iteration % logger_config.tensorboard_log_interval == 0):
-        reset_in_tb = False if hasattr(timers, "write_to_wandb") else True
-        timers.write(timers_to_log, writer, iteration, normalizer=total_iterations, reset=reset_in_tb)
-        if hasattr(timers, "write_to_wandb"):
-            timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
-        if hasattr(timers, "write_to_mlflow"):
-            timers.write_to_mlflow(timers_to_log, mlflow_logger, iteration, normalizer=total_iterations, reset=True)
-        if hasattr(timers, "write_to_comet"):
-            timers.write_to_comet(timers_to_log, comet_logger, iteration, normalizer=total_iterations, reset=True)
+        timer_backends = [
+            (getattr(timers, "write_to_wandb", None), wandb_writer),
+            (getattr(timers, "write_to_mlflow", None), mlflow_logger),
+            (getattr(timers, "write_to_comet", None), comet_logger),
+        ]
+        timer_backends = [(write_fn, backend) for write_fn, backend in timer_backends if write_fn is not None]
+        timers.write(timers_to_log, writer, iteration, normalizer=total_iterations, reset=not timer_backends)
+        for index, (write_fn, backend) in enumerate(timer_backends):
+            write_fn(
+                timers_to_log,
+                backend,
+                iteration,
+                normalizer=total_iterations,
+                reset=index == len(timer_backends) - 1,
+            )
 
     if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
         rank = get_rank_safe()

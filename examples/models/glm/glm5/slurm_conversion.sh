@@ -14,6 +14,8 @@
 # limitations under the License.
 
 # GLM-5 round-trip verification on 8 Slurm nodes (64 GPUs).
+# TP=1 avoids the AbsorbedMLA sequence-parallel requirement for TP > 1;
+# PP=2 evenly splits the model's 78 transformer layers.
 # Run this wrapper from a Slurm login node; convert.sh submits one job and
 # waits for it by default.
 #
@@ -60,5 +62,5 @@ done
     "${ENV_ARGS[@]}" \
     --experiment-name glm5-roundtrip \
     --hf-model zai-org/GLM-5 \
-    --tp 2 --pp 1 --ep 32 --etp 1 \
+    --tp 1 --pp 2 --ep 32 --etp 1 \
     "$@"
