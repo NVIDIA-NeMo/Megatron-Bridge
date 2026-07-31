@@ -251,14 +251,31 @@ jobs:
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
+        env:
+          MCORE_BRANCH: ${{ github.event.inputs.mcore_branch || 'unknown' }}
+          MCORE_REF: ${{ github.event.inputs.mcore_ref }}
+          MCORE_REPO: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}
+          TRIGGERED_BY: ${{ github.event.inputs.triggered_by }}
         run: |
-          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_ref }}"
-          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
-          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+          echo "🔄 Updating MCore submodule to commit: $MCORE_REF"
+          echo "📍 MCore repo: $MCORE_REPO"
+          echo "🎯 Triggered by: $TRIGGERED_BY"
 
           cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
+          if [[ ! "$MCORE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "MCore ref must be a full commit SHA" >&2
+            exit 1
+          fi
+          case "$MCORE_REPO" in
+            https://github.com/NVIDIA/Megatron-LM.git|https://github.com/svcnemo-autobot/Megatron-LM.git)
+              ;;
+            *)
+              echo "Unsupported MCore repository: $MCORE_REPO" >&2
+              exit 1
+              ;;
+          esac
+          git fetch "$MCORE_REPO" "$MCORE_REF"
+          git checkout "$MCORE_REF"
 
       - name: Set environment for MCore testing
         if: ${{ github.event.inputs.mcore_ref != '' }}
@@ -267,7 +284,9 @@ jobs:
           echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Test CI cache keys
-        run: .github/scripts/test_cache_keys.sh
+        run: |
+          .github/scripts/test_cache_keys.sh
+          .github/scripts/test_docker_dependency_layers.sh
 
       - name: Check lint
         run: |
@@ -354,21 +373,41 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Record baseline MCore revision
+        run: echo "BASELINE_MCORE_REF=$(git -C 3rdparty/Megatron-LM rev-parse HEAD)" | tee -a "$GITHUB_ENV"
+
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
+        env:
+          MCORE_BRANCH: ${{ github.event.inputs.mcore_branch || 'unknown' }}
+          MCORE_REF: ${{ github.event.inputs.mcore_ref }}
+          MCORE_REPO: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}
+          TRIGGERED_BY: ${{ github.event.inputs.triggered_by }}
         run: |
-          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_ref }}"
-          echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
-          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
-          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+          echo "🔄 Updating MCore submodule to commit: $MCORE_REF"
+          echo "📌 MCore branch: $MCORE_BRANCH"
+          echo "📍 MCore repo: $MCORE_REPO"
+          echo "🎯 Triggered by: $TRIGGERED_BY"
 
           cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
+          if [[ ! "$MCORE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "MCore ref must be a full commit SHA" >&2
+            exit 1
+          fi
+          case "$MCORE_REPO" in
+            https://github.com/NVIDIA/Megatron-LM.git|https://github.com/svcnemo-autobot/Megatron-LM.git)
+              ;;
+            *)
+              echo "Unsupported MCore repository: $MCORE_REPO" >&2
+              exit 1
+              ;;
+          esac
+          git fetch "$MCORE_REPO" "$MCORE_REF"
+          git checkout "$MCORE_REF"
 
           # Verify the checkout was successful
           ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+          EXPECTED_COMMIT="$MCORE_REF"
 
           echo "✅ MCore submodule updated successfully"
           echo "Expected: ${EXPECTED_COMMIT}"
@@ -476,6 +515,7 @@ jobs:
           platforms: ${{ steps.platform.outputs.platforms }}
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
           cache-from: type=registry,ref=${{ steps.cache_from.outputs.donor }},mode=max
@@ -1210,3 +1250,4 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
+
