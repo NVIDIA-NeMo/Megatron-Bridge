@@ -24,6 +24,30 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 _lora_seq_stats_cache: dict = {}
 
 
+def _packed_data_exists(path: str | None) -> bool:
+    """Return True if a packed dataset file exists, for both parquet and npy formats.
+
+    Parquet specs may be a single file, a glob, or a directory, so they are detected
+    with ``is_packed_parquet_spec`` and validated via the packed-parquet resolver
+    rather than a bare ``Path.exists()`` check (which would fail for globs/directories
+    and silently disable LoRA-aware FLOP accounting). This mirrors the format detection
+    in ``calculate_avg_seqlen`` so a spec that passes this gate also reads correctly.
+    """
+    if not path:
+        return False
+    try:
+        from megatron.bridge.data.datasets.packed_parquet import (
+            is_packed_parquet_spec,
+            resolve_packed_parquet_paths,
+        )
+
+        if is_packed_parquet_spec(path):
+            return len(resolve_packed_parquet_paths(path)) > 0
+    except Exception:
+        return False
+    return Path(path).exists()
+
+
 def vit_flops(
     cfg: ConfigContainer,
     batch_size: int,
@@ -366,10 +390,13 @@ def num_floating_point_operations(
             dataset_root = getattr(cfg.dataset, "dataset_root", None)
             seq_size = getattr(packed_specs, "packed_sequence_size", None)
             if dataset_root is not None and seq_size is not None:
-                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
+                # Prefer the current parquet format; fall back to the deprecated .npy.
+                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.idx.parquet"))
+                if not matches:
+                    matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
                 if matches:
                     packed_data_path = str(matches[0])
-        if is_lora and is_squad and is_llama3_70b and packed_data_path is not None and Path(packed_data_path).exists():
+        if is_lora and is_squad and is_llama3_70b and _packed_data_exists(packed_data_path):
             gbs = cfg.train.global_batch_size
             seq_len = cfg.model.seq_length
             cache_key = (packed_data_path, gbs, seq_len)

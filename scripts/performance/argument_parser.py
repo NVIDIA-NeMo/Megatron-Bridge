@@ -241,6 +241,13 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--num_moe_experts",
+        type=int,
+        help="Number of experts to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--pipeline_model_parallel_layout",
         type=str,
         help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
@@ -675,7 +682,7 @@ def parse_cli_args():
         "-c",
         "--compute_dtype",
         type=str,
-        choices=["bf16", "fp8_cs", "fp8_mx", "fp8_sc", "nvfp4"],
+        choices=["bf16", "fp8_ds", "fp8_cs", "fp8_mx", "fp8_sc", "nvfp4"],
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
