@@ -545,6 +545,17 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_validation_set_names_require_multiple_validation_sets(self):
+        """validation_set_names without multiple_validation_sets fails config validation."""
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container.validation.validation_set_names = ["alpha", "beta"]
+
+        try:
+            with pytest.raises(ValueError, match="validation_set_names requires multiple_validation_sets"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_multiple_validation_sets_rejects_megatron_mimo(self):
         """multiple_validation_sets is rejected for MegatronMIMO models, whose data path bypasses it."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider

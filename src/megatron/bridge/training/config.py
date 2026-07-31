@@ -1149,6 +1149,8 @@ class ConfigContainer(Container):
             raise ValueError(
                 "full_validation is not supported by Megatron Bridge; use eval_iters to bound evaluation."
             )
+        if self.validation.validation_set_names is not None and not self.validation.multiple_validation_sets:
+            raise ValueError("validation_set_names requires multiple_validation_sets to be set.")
         if self.validation.multiple_validation_sets:
             from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
