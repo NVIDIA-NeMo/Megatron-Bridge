@@ -973,7 +973,7 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
     cfg.validation.eval_interval = 2000
     cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc_interval = 500
 
     cfg.scheduler.lr_warmup_iters = 2000
 
@@ -985,7 +985,6 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
@@ -1016,8 +1015,8 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.average_in_collective = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
     return cfg
