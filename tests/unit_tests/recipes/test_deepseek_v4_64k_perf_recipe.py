@@ -58,10 +58,10 @@ def test_deepseek_v4_pro_64k_thd_recipe() -> None:
     assert varlen_config["mean_seq_len"] == 65_534
 
     assert cfg.train.global_batch_size == 256
-    assert cfg.train.train_iters is None
-    assert cfg.train.train_samples == 585_937_500
+    assert cfg.train.train_iters == 50
+    assert cfg.train.train_samples is None
     assert cfg.train.micro_batch_size == 1
-    assert cfg.train.exit_interval == 30
+    assert cfg.train.exit_interval is None
     assert cfg.train.manual_gc_interval == 10
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
@@ -76,10 +76,10 @@ def test_deepseek_v4_pro_64k_thd_recipe() -> None:
     assert cfg.optimizer.overlap_param_gather is True
     assert cfg.optimizer.optimizer_offload_fraction == 0.0
     assert cfg.optimizer.barrier_with_L1_time is True
-    assert cfg.scheduler.lr_decay_iters is None
-    assert cfg.scheduler.lr_decay_samples == 584_765_624
-    assert cfg.scheduler.lr_warmup_iters == 0
-    assert cfg.scheduler.lr_warmup_samples == 1_536_000
+    assert cfg.scheduler.lr_decay_iters == 50
+    assert cfg.scheduler.lr_decay_samples is None
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_warmup_samples == 0
     assert cfg.optimizer.muon_momentum == 0.9
     assert cfg.optimizer.muon_nesterov is False
     assert cfg.optimizer.main_grads_dtype == torch.float32

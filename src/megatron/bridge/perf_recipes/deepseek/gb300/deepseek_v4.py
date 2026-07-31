@@ -166,15 +166,7 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg, cross_entropy_impl="native")
 
-    # Restore the sample-based schedule after applying the benchmark defaults.
-    cfg.train.train_iters = None
-    cfg.train.train_samples = 585_937_500
-    cfg.scheduler.lr_decay_iters = None
-    cfg.scheduler.lr_decay_samples = 584_765_624
-    cfg.scheduler.lr_warmup_iters = 0
-    cfg.scheduler.lr_warmup_samples = 1_536_000
     cfg.model.use_transformer_engine_op_fuser = True
-    cfg.train.exit_interval = 30
     cfg.train.manual_gc_interval = 10
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
