@@ -19,6 +19,20 @@ from __future__ import annotations
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
+)
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config as deepseek_v4_flash_pretrain_gb200_config,
+)
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config as deepseek_v4_flash_pretrain_muon_gb200_config,
+)
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config as deepseek_v4_flash_pretrain_mxfp8_gb200_config,
+)
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     DEEPSEEK_V4_PRO_HF_PATH,
 )
@@ -53,6 +67,12 @@ __all__ = [
     "deepseek_v4_flash_pretrain_config",
     "deepseek_v4_flash_pretrain_muon_config",
     "deepseek_v4_flash_pretrain_mxfp8_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config",
+    "deepseek_v4_flash_pretrain_gb200_config",
+    "deepseek_v4_flash_pretrain_mxfp8_gb200_config",
+    "deepseek_v4_flash_pretrain_muon_gb200_config",
     "deepseek_v4_flash_sft_config",
     "deepseek_v4_pro_pretrain_config",
     "deepseek_v4_pro_pretrain_mxfp8_config",

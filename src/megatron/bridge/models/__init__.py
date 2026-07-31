@@ -40,8 +40,17 @@ from megatron.bridge.models.ernie_vl import (
     Ernie45VLModel,
     Ernie45VLModelProvider,
 )
-from megatron.bridge.models.exaone import (
+from megatron.bridge.models.exaone.exaone4 import (
     Exaone4Bridge,
+)
+from megatron.bridge.models.exaone.exaone45 import (
+    Exaone45Bridge,
+    Exaone45Model,
+    Exaone45ModelProvider,
+)
+from megatron.bridge.models.exaone.exaone_moe import (
+    ExaoneMoeBridge,
+    ExaoneMoeModelProvider,
 )
 from megatron.bridge.models.falcon_h1 import (
     FalconH1Bridge,
@@ -85,6 +94,8 @@ from megatron.bridge.models.hybrid import (
 )
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
+    KimiK3Bridge,
+    KimiK3ModelProvider,
 )
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
@@ -226,6 +237,8 @@ __all__ = [
     "HybridModelConfig",
     "HybridModelProvider",
     "KimiK2Bridge",
+    "KimiK3Bridge",
+    "KimiK3ModelProvider",
     "KimiK25VLModel",
     "KimiK25VLBridge",
     "KimiK25VLModelProvider",
@@ -296,4 +309,11 @@ __all__ = [
     "Step37Bridge",
     "Step37Model",
     "Step37ModelProvider",
+    # EXAONE
+    "Exaone4Bridge",
+    "Exaone45Bridge",
+    "Exaone45Model",
+    "Exaone45ModelProvider",
+    "ExaoneMoeBridge",
+    "ExaoneMoeModelProvider",
 ]

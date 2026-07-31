@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections import namedtuple
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -516,6 +517,38 @@ def test_save_hf_pretrained_mimo_rejects_non_safetensors_source(tmp_path):
 
     with pytest.raises(ValueError, match="safetensors"):
         orchestrator_module.save_hf_pretrained_mimo(bridge, _FakeMimoModel(), [], {}, tmp_path)
+
+
+def test_save_hf_pretrained_mimo_disables_and_ignores_omitted_mtp(monkeypatch, tmp_path):
+    from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+
+    text_config = SimpleNamespace(mtp_num_hidden_layers=1, num_hidden_layers=40)
+    config = SimpleNamespace(text_config=text_config)
+    saved_mtp_values = []
+
+    hf_pretrained = Mock()
+    hf_pretrained.config = config
+    hf_pretrained.save_artifacts.side_effect = lambda *args, **kwargs: saved_mtp_values.append(
+        text_config.mtp_num_hidden_layers
+    )
+    state_source = Mock(spec=SafeTensorsStateSource)
+    state_source.has_glob.side_effect = lambda pattern: pattern == "mtp.*"
+    hf_pretrained.state.source = state_source
+
+    standard_provider = SimpleNamespace(mtp_num_layers=None)
+    bridge = Mock()
+    bridge.hf_pretrained = hf_pretrained
+    bridge._model_bridge = Mock(ADDITIONAL_FILE_PATTERNS=None)
+    bridge._require_provider.return_value = SimpleNamespace(standard_provider=standard_provider)
+
+    monkeypatch.setattr(orchestrator_module.dist, "is_initialized", lambda: False)
+    monkeypatch.setattr(orchestrator_module, "_stream_mimo_weights_to_rank0", lambda **kwargs: iter(()))
+
+    orchestrator_module.save_hf_pretrained_mimo(bridge, _FakeMimoModel(), [], {}, tmp_path)
+
+    assert saved_mtp_values == [0]
+    assert text_config.mtp_num_hidden_layers == 1
+    assert state_source.save_generator.call_args.kwargs["ignored_source_key_prefixes"] == ("mtp.",)
 
 
 def test_copy_hf_artifacts_forwards_additional_file_patterns(tmp_path):

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -287,6 +287,71 @@ class TestGemma3VLBridgeMappingRegistry:
         assert mapping is not None
         assert str(mapping.megatron_param) == "vision_tower.embeddings.patch_embedding.bias"
         assert str(mapping.hf_param) == "vision_tower.vision_model.embeddings.patch_embedding.bias"
+
+        export_mapping = registry.megatron_to_hf_lookup("vision_tower.embeddings.patch_embedding.bias")
+
+        assert export_mapping is not None
+        assert str(export_mapping.megatron_param) == "vision_tower.embeddings.patch_embedding.bias"
+        assert str(export_mapping.hf_param) == "vision_tower.vision_model.embeddings.patch_embedding.bias"
+
+    def test_build_conversion_tasks_preserves_legacy_vision_tower_owner(self, gemma3_vl_bridge):
+        """Test legacy HF keys do not turn the owning PP task into a receiver-only task."""
+        megatron_name = "vision_tower.embeddings.patch_embedding.bias"
+        legacy_hf_name = "vision_tower.vision_model.embeddings.patch_embedding.bias"
+        weight = torch.nn.Parameter(torch.ones(2))
+        module = Mock()
+        model = Mock()
+        model.config = Mock()
+        model.named_parameters.return_value = [(megatron_name, weight)]
+
+        hf_pretrained = Mock()
+        hf_pretrained.config = Mock()
+        hf_pretrained.state.source.get_all_keys.return_value = {legacy_hf_name}
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+                return_value=[model],
+            ),
+            patch(
+                "megatron.bridge.models.conversion.model_bridge.persistent_buffers",
+                return_value=[],
+            ),
+            patch(
+                "megatron.bridge.models.conversion.model_bridge._get_pg_collection_from_model",
+                return_value=None,
+            ),
+            patch(
+                "megatron.bridge.models.conversion.model_bridge._get_pp_rank",
+                return_value=0,
+            ),
+            patch(
+                "megatron.bridge.models.conversion.model_bridge._megatron_local_name_to_global",
+                return_value=megatron_name,
+            ),
+            patch(
+                "megatron.bridge.models.conversion.model_bridge.get_module_and_param_from_name",
+                return_value=(module, weight),
+            ),
+            patch.object(
+                gemma3_vl_bridge,
+                "_megatron_global_param_names_all_pp_ranks",
+                return_value=[megatron_name],
+            ),
+            patch.object(
+                gemma3_vl_bridge,
+                "_share_embeddings_and_output_weights",
+                return_value=False,
+            ),
+        ):
+            tasks = gemma3_vl_bridge.build_conversion_tasks(hf_pretrained, [model])
+
+        assert len(tasks) == 1
+        task = tasks[0]
+        assert task is not None
+        assert task.param_weight is weight
+        assert task.megatron_module is module
+        assert str(task.mapping.hf_param) == legacy_hf_name
 
     def test_mapping_registry_multimodal_projector_params(self, gemma3_vl_bridge):
         """Test mapping_registry handles multimodal projector parameters correctly."""

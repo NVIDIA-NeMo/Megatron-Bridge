@@ -130,6 +130,10 @@ class _ChatMLBoundaryTokenizer:
             return {"input_ids": [102]}
         if text == "<|im_end|>\n":
             return {"input_ids": [102, 103]}
+        if text == "hi":
+            return {"input_ids": [10]}
+        if text == "answer":
+            return {"input_ids": [21, 22]}
 
         texts = text if isinstance(text, list) else [text]
         tokenized = [[100, 10, 102, 103, 101, 21, 22, 102, 103] for _ in texts]

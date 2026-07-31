@@ -30,7 +30,12 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.auto_bridge import (
+    MTP_CONFIG_FIELDS,
+    AutoBridge,
+    _model_omits_mtp,
+    _mtp_source_key_prefixes,
+)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -279,13 +284,32 @@ def build_route_local_registry(
     return MegatronMappingRegistry(*stripped)
 
 
+def bind_hf_source_to_bridge(source_bridge: "MegatronModelBridge", hf_pretrained: Any) -> None:
+    """Attach the HF source to a bridge before its mapping registry is built.
+
+    ``MegatronModelBridge.mapping_registry()`` may inspect the checkpoint itself —
+    for example to detect whether MoE experts are stored fused or per-expert — and
+    falls back to no-checkpoint defaults when nothing is attached. The standard
+    conversion entry points bind ``hf_pretrained`` / ``hf_config`` before consulting
+    the registry, but MIMO builds route-local registries eagerly in
+    :func:`make_route_local_bridge`, so it must bind first or every route silently
+    inherits the wrong mappings.
+    """
+    source_bridge.hf_pretrained = hf_pretrained
+    source_bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
+
 def make_route_local_bridge(
     source_bridge: "MegatronModelBridge",
     route: MIMOComponent,
     *,
     route_local_registry: MegatronMappingRegistry | None = None,
 ) -> "MegatronModelBridge":
-    """Clone a source bridge and override its registry for one route."""
+    """Clone a source bridge and override its registry for one route.
+
+    Callers must bind the HF source with :func:`bind_hf_source_to_bridge` first when
+    the registry is checkpoint-dependent.
+    """
     if route_local_registry is None:
         route_local_registry = build_route_local_registry(source_bridge.mapping_registry(), route)
 
@@ -513,6 +537,7 @@ class MegatronMIMOBridge(AutoBridge):
         mimo_model = self._coerce_mimo_model(megatron_model)
         infra = self._require_infra(infra)
         hf_pretrained = self._resolve_hf_pretrained(hf_path)
+        bind_hf_source_to_bridge(self._model_bridge, hf_pretrained)
 
         tasks: list[MIMOConversionTask] = []
         for route, pg_collection in _iter_active_routes(self.routes, infra.pg_collections):
@@ -808,6 +833,8 @@ def import_hf_to_megatron_mimo(
     active route with a prefix-stripped registry and the route's
     pg_collection. Returns ``mimo_model`` for convenience.
     """
+    bind_hf_source_to_bridge(source_bridge, hf_pretrained)
+
     for route, pg_collection in _iter_active_routes(routes, pg_collections):
         submodule = mimo_model.get_submodule(route.target_module_path)
         wrapped = make_route_local_bridge(source_bridge, route)
@@ -849,6 +876,8 @@ def export_megatron_mimo_to_hf(
     Megatron-side ``megatron_param`` is prefix-stripped, so routes produce
     disjoint subsets of the HF state dict.
     """
+    bind_hf_source_to_bridge(source_bridge, hf_pretrained)
+
     for route, pg_collection in _iter_active_routes(routes, pg_collections):
         submodule = mimo_model.get_submodule(route.target_module_path)
         wrapped = make_route_local_bridge(source_bridge, route)
@@ -892,18 +921,23 @@ def save_hf_pretrained_mimo(
             "pre-safetensors checkpoints are not supported."
         )
 
+    standard_provider = bridge._require_provider().standard_provider
+    mtp_disabled = _model_omits_mtp(standard_provider)
     output_path = Path(path)
     if dist.is_initialized():
         if dist.get_rank() == 0:
-            _copy_hf_artifacts(bridge, output_path, source_path=source_path)
+            _copy_hf_artifacts(bridge, output_path, source_path=source_path, disable_mtp=mtp_disabled)
     else:
-        _copy_hf_artifacts(bridge, output_path, source_path=source_path)
+        _copy_hf_artifacts(bridge, output_path, source_path=source_path, disable_mtp=mtp_disabled)
 
     if dist.is_initialized():
         dist.barrier()
 
     state_source = bridge.hf_pretrained.state.source
     assert isinstance(state_source, SafeTensorsStateSource), "checked above"
+    ignored_source_key_prefixes = (
+        _mtp_source_key_prefixes(state_source, bridge.hf_pretrained.config, standard_provider) if mtp_disabled else ()
+    ) or None
     state_source.save_generator(
         _stream_mimo_weights_to_rank0(
             source_bridge=bridge._model_bridge,
@@ -915,6 +949,7 @@ def save_hf_pretrained_mimo(
         ),
         output_path,
         strict=strict,
+        ignored_source_key_prefixes=ignored_source_key_prefixes,
     )
 
     if dist.is_initialized():
@@ -929,14 +964,50 @@ def _copy_hf_artifacts(
     output_path: Path,
     *,
     source_path: Optional[Union[str, Path]] = None,
+    disable_mtp: bool = False,
 ) -> None:
     output_path.mkdir(parents=True, exist_ok=True)
     additional_files = getattr(bridge._model_bridge, "ADDITIONAL_FILE_PATTERNS", None) or None
-    bridge.hf_pretrained.save_artifacts(
-        output_path,
-        original_source_path=source_path,
-        additional_files=additional_files,
-    )
+    with _temporarily_disable_hf_mtp(bridge.hf_pretrained.config, enabled=disable_mtp):
+        bridge.hf_pretrained.save_artifacts(
+            output_path,
+            original_source_path=source_path,
+            additional_files=additional_files,
+        )
+
+
+@contextlib.contextmanager
+def _temporarily_disable_hf_mtp(config: Any, *, enabled: bool) -> Iterator[None]:
+    """Save a config consistent with MIMO's intentionally omitted MTP route."""
+    if not enabled:
+        yield
+        return
+
+    mutations: list[tuple[Any, str, Any]] = []
+    configs = [config]
+    text_config = config.get("text_config") if isinstance(config, dict) else getattr(config, "text_config", None)
+    if text_config is not None:
+        configs.append(text_config)
+
+    for current in configs:
+        for field in MTP_CONFIG_FIELDS:
+            if isinstance(current, dict):
+                if field not in current:
+                    continue
+                mutations.append((current, field, current[field]))
+                current[field] = 0
+            elif field in getattr(current, "__dict__", {}):
+                mutations.append((current, field, getattr(current, field)))
+                setattr(current, field, 0)
+
+    try:
+        yield
+    finally:
+        for current, field, value in mutations:
+            if isinstance(current, dict):
+                current[field] = value
+            else:
+                setattr(current, field, value)
 
 
 def _stream_mimo_weights_to_rank0(

@@ -246,6 +246,11 @@ Examples:
         allow_abbrev=False,
     )
     _add_common_conversion_arguments(import_parser, include_execution=include_execution)
+    import_parser.add_argument(
+        "--low-memory-save",
+        action="store_true",
+        help="Reduce peak GPU memory while saving large imported checkpoints at the cost of additional runtime.",
+    )
 
     export_parser = subparsers.add_parser(
         "export",
@@ -348,7 +353,10 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     if args.distributed_timeout_minutes is not None:
         worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
 
-    if args.command == "export":
+    if args.command == "import":
+        if args.low_memory_save:
+            worker_args.append("--low-memory-save")
+    elif args.command == "export":
         worker_args.extend(["--hf-path", args.hf_path])
         if args.no_progress:
             worker_args.append("--no-progress")

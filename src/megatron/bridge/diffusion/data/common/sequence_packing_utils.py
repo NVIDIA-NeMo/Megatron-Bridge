@@ -13,7 +13,28 @@
 # limitations under the License.
 
 
-from typing import List
+from typing import Any, List
+
+from megatron.bridge.data.packing.algorithms import first_fit as _shared_first_fit
+
+
+def packing_length(item: Any) -> int:
+    """
+    Returns the bin-packing length of an item.
+
+    Items are either plain sequence lengths or objects that report their length by
+    adding with an int -- `DiffusionSample` does this, returning its padded query
+    sequence length when one is set and its unpadded length otherwise. Going through
+    `0 + item` keeps this module free of a hard dependency on the sample type, and
+    matches the length the previous `sum(bin) + s` capacity check used.
+
+    Args:
+      item: A sequence length, or an object implementing `__radd__` against an int.
+
+    Returns:
+      The integer length used for bin-packing capacity accounting.
+    """
+    return 0 + item
 
 
 def find_first_bin_that_fits(bins: List[List[int]], s: int, bin_size: int) -> int:
@@ -38,22 +59,22 @@ def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
     """
     Packs sequences of varying lengths into bins using the First-Fit algorithm.
 
+    Delegates to the shared segment-tree implementation in
+    `megatron.bridge.data.packing.algorithms`, which places each item in O(log N)
+    rather than rescanning and re-summing every open bin. Bin assignments are
+    identical to the previous linear-scan implementation.
+
     Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
+      seqlens: The sequences to pack. Entries are either integer lengths or objects
+        that report their length when added to an int (see `packing_length`); the
+        original entries are what end up in the returned bins.
       pack_size: The maximum capacity of each bin.
 
     Returns:
-      A list of lists, where each inner list represents a bin and contains the indices
-        of the sequences assigned to that bin.
+      A list of lists, where each inner list represents a bin and contains the
+        entries assigned to that bin.
     """
-    res = []
-    for s in seqlens:
-        first_bin = find_first_bin_that_fits(res, s, pack_size)
-        if first_bin == -1:  # open a new bin
-            res.append([s])
-        else:
-            res[first_bin].append(s)
-    return res
+    return _shared_first_fit(seqlens, pack_size, item_lengths=[packing_length(item) for item in seqlens])
 
 
 def first_fit_decreasing(seqlens: List[int], pack_size: int) -> List[List[int]]:
