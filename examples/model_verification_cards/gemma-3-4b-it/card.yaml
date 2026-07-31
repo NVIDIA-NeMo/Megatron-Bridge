@@ -63,12 +63,13 @@ items:
       --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: 2026-07-24
+    last_verified: 2026-07-30
     expected_result: >
       Exact-revision distributed BF16 import completed with TP2/PP2/EP1/ETP1.
       All 781 Bridge tensors loaded and all four ranks saved a reloadable
       checkpoint with the vision tower and multimodal projector on the owning
-      pipeline stage.
+      pipeline stage. Independent TP2/PP2 and Gloo reloads retained
+      FusedAttention and matched all 883 mapped tensors exactly.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -101,7 +102,7 @@ items:
       --hf-path work/model-verification/gemma-3-4b-it/hf-export
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: 2026-07-24
+    last_verified: 2026-07-30
     expected_result: >
       TP2/PP2 distributed export completed without a missing PP owner. Source
       and export contained the same 883 keys with exact shapes, dtypes, and
@@ -144,11 +145,11 @@ items:
       --prompt "What animal is on the candy?"
       --max_new_tokens 32
       --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: 2026-07-24
+    last_verified: 2026-07-30
     expected_result: |-
-      One exact-revision TP2/PP2 BF16 greedy multimodal run generated exactly
-      32 tokens without reaching EOS. The public input was p-blog/candy.JPG at
-      documentation-images revision
+      One exact-revision TP2/PP2 BF16 greedy multimodal run selected
+      FusedAttention and generated exactly 32 tokens without reaching EOS. The
+      public input was p-blog/candy.JPG at documentation-images revision
       44c3249461c5a5336585d1e31e0a4ce7fce06a5a with SHA-256
       fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
       The JSON-escaped literal completion was: "Based on the image, the animal
