@@ -53,6 +53,10 @@ class GLM5Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    CONFIG_MAPPING = [mapping for mapping in MegatronModelBridge.CONFIG_MAPPING if mapping[1] != "num_moe_experts"] + [
+        ("n_routed_experts", "num_moe_experts")
+    ]
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
