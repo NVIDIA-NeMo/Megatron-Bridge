@@ -23,6 +23,15 @@ _EXAMPLE_ROOT = Path(__file__).parents[3] / "examples" / "models" / "nemotron" /
 
 
 @pytest.mark.unit
+def test_hf_revision_kwargs():
+    script_globals = runpy.run_path(_EXAMPLE_ROOT / "hf_to_megatron_generate_nemotron_omni.py")
+    revision_kwargs = script_globals["_hf_revision_kwargs"]
+
+    assert revision_kwargs(None) == {}
+    assert revision_kwargs("immutable-revision") == {"revision": "immutable-revision"}
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "script_name",
     [

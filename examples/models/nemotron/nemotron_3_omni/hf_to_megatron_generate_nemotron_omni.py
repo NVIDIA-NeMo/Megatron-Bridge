@@ -616,6 +616,11 @@ def process_video_audio_inputs(
     return input_ids, packed_pixel_values, num_patches, imgs_sizes, num_frames, sound_clips, sound_length
 
 
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Build keyword arguments for revision-pinned Hugging Face loads."""
+    return {"revision": revision} if revision is not None else {}
+
+
 def main(args) -> None:
     """Main function for Nemotron Omni VL generation from HuggingFace models.
 
@@ -674,7 +679,11 @@ def main(args) -> None:
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=True,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
 
         # Initialize model parallel before loading
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -714,7 +723,11 @@ def main(args) -> None:
     else:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=True,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -746,8 +759,16 @@ def main(args) -> None:
             inner.llava_model.config.grad_scale_func = None
 
     # Initialize tokenizer and processor
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=True,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
+    processor = AutoProcessor.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=True,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
     img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
     image_token_id = tokenizer.convert_tokens_to_ids("<image>")
@@ -940,6 +961,12 @@ if __name__ == "__main__":
         type=str,
         default="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
         help="Path to the HuggingFace Nemotron Omni VL model.",
+    )
+    parser.add_argument(
+        "--hf-revision",
+        dest="hf_revision",
+        default=None,
+        help="Immutable Hugging Face Hub revision used for model, tokenizer, and processor loading.",
     )
     parser.add_argument(
         "--prompt",
