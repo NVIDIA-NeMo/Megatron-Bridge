@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Unit tests for VLM generation helpers
-in ``scripts.inference.vlm_generation_utils``.
+in ``examples.conversion.vlm_generate_utils``.
 
 Covers the ``ImportError`` fallback when ``qwen_vl_utils`` is unavailable
 and the success paths with mocked processors and ``qwen_vl_utils`` helpers.
@@ -28,11 +28,11 @@ import pytest
 import torch
 
 
-# Load scripts/inference/vlm_generation_utils.py directly from its file path.
+# Load examples/conversion/vlm_generate_utils.py directly from its file path.
 # This avoids ambiguity when another `examples` package (e.g. from Megatron-LM)
 # shadows the local one on sys.path.
 _REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_VLM_GEN_UTILS_PATH = os.path.join(_REPO_ROOT, "scripts", "inference", "vlm_generation_utils.py")
+_VLM_GEN_UTILS_PATH = os.path.join(_REPO_ROOT, "examples", "conversion", "vlm_generate_utils.py")
 _spec = importlib.util.spec_from_file_location("vlm_generate_utils_under_test", _VLM_GEN_UTILS_PATH)
 vlm_generate_utils = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(vlm_generate_utils)
