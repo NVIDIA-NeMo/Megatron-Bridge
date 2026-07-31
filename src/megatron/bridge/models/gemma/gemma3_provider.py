@@ -142,12 +142,13 @@ class Gemma3ModelProvider(GPTModelProvider):
 
 def gemma3_layer_spec(config) -> ModuleSpec:
     """Gemma3 custom layer spec."""
+    attn_mask_type = AttnMaskType.arbitrary if config.is_vision_language else AttnMaskType.causal
     return ModuleSpec(
         module=TransformerLayer,
         submodules=TransformerLayerSubmodules(
             self_attention=ModuleSpec(
                 module=Gemma3SelfAttention,
-                params={"attn_mask_type": AttnMaskType.causal},
+                params={"attn_mask_type": attn_mask_type},
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TELayerNormColumnParallelLinear,
                     core_attention=Gemma3TEDotProductAttention,  # mixed gloabl/local attn
@@ -235,7 +236,11 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         config = copy.deepcopy(config)
         if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
             # local attention, (q, k)
-            config.window_size = (config.window_size - 1, 0)
+            window_size = config.window_size - 1
+            # The VL mask already blocks future text tokens. Keep the right
+            # window open so image tokens in the same block stay bidirectional.
+            right_window_size = window_size if config.is_vision_language else 0
+            config.window_size = (window_size, right_window_size)
         else:
             # global attention
             config.window_size = None
