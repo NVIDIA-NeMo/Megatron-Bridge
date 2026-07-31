@@ -613,7 +613,8 @@ def main(
     if export_nsys_sqlite and not enable_nsys:
         logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
-    script_name = ENTRYPOINT_BOOTSTRAP
+    # XCalibur uses run_script.py directly; all other executors use bootstrap.py.
+    script_name = "run_script.py" if xcalibur_namespace else ENTRYPOINT_BOOTSTRAP
     # Keep the historical W&B-name behavior for CI. The lightweight fallback
     # deliberately avoids resolving a recipe: effective parallelism, batches,
     # and process environment are finalized by bootstrap.py in the container.
