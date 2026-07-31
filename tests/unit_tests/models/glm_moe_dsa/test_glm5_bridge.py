@@ -21,7 +21,6 @@ from transformers import GlmMoeDsaConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
-from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
 
@@ -62,30 +61,40 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
     return GLM5Bridge().provider_bridge(SimpleNamespace(config=SimpleNamespace(**config)))
 
 
-def test_hf_config_maps_routed_expert_count() -> None:
-    """GLM-5 uses its routed-expert count even when num_experts differs."""
-    hf_config = GlmMoeDsaConfig(n_routed_experts=8, num_experts=256)
+def test_hf_config_ignores_upstream_num_experts_default() -> None:
+    """GLM-5 ignores the num_experts default injected by affected Transformers versions."""
+    hf_config = GlmMoeDsaConfig(n_routed_experts=8)
 
     provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
 
     assert hf_config.num_experts == 256
-    assert [mapping for mapping in GLM5Bridge.CONFIG_MAPPING if mapping[1] == "num_moe_experts"] == [
-        ("n_routed_experts", "num_moe_experts")
-    ]
     assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
 
 
-def test_megatron_config_export_preserves_reference_num_experts() -> None:
-    """GLM-5 export updates routed experts without changing the unrelated reference field."""
-    reference_config = GlmMoeDsaConfig(n_routed_experts=256, num_experts=256).to_dict()
+@pytest.mark.parametrize(
+    ("hf_config", "should_map"),
+    [
+        (SimpleNamespace(num_experts=256, n_routed_experts=8), False),
+        (SimpleNamespace(num_experts=8), True),
+        (SimpleNamespace(n_routed_experts=8), True),
+    ],
+)
+def test_num_experts_workaround_is_config_shape_specific(hf_config: SimpleNamespace, should_map: bool) -> None:
+    """The workaround applies only to the conflicting upstream config shape."""
+    bridge = GLM5Bridge()
+
+    result = bridge._should_map_hf_config_field(hf_config, "num_experts", "num_moe_experts", 256)
+
+    assert result is should_map
+
+
+def test_megatron_config_export_keeps_generic_moe_aliases() -> None:
+    """GLM-5 keeps the generic reverse mappings rather than establishing a special default."""
     mapped_config = GLM5Bridge.megatron_to_hf_config(SimpleNamespace(num_moe_experts=8))
 
-    exported_config = conform_config_to_reference(mapped_config, reference_config)
-
+    assert mapped_config["num_experts"] == 8
+    assert mapped_config["num_local_experts"] == 8
     assert mapped_config["n_routed_experts"] == 8
-    assert "num_experts" not in mapped_config
-    assert exported_config["n_routed_experts"] == 8
-    assert exported_config["num_experts"] == 256
 
 
 @pytest.mark.parametrize(
