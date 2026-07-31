@@ -1914,6 +1914,37 @@ def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
     assert batch["labels"][0, -5:].tolist() == [21, 22, 102, 103, -100]
 
 
+def test_nemotron_omni_collate_ignores_end_token_padding_when_building_loss_masks():
+    proc = _NemotronOmniProcessor(
+        tokenized_rows=[
+            [199, 10, 102, 103, 101, 21, 22, 102, 103],
+            [199, 11, 102, 103, 101, 31, 32, 33, 34, 35, 102, 103],
+        ]
+    )
+    proc.tokenizer.pad_token_id = 102
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "short question"},
+                {"role": "assistant", "content": "short answer"},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": "long question"},
+                {"role": "assistant", "content": "longer answer"},
+            ]
+        },
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc, pad_to_multiple_of=1)
+
+    assert batch["attention_mask"][0].tolist() == [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0]
+    assert torch.all(batch["loss_mask"][0, 9:] == 0)
+    assert batch["loss_mask"][0].sum() > 0
+    assert batch["loss_mask"][1].sum() > 0
+
+
 def test_nemotron_omni_collate_rejects_unsupported_visual_keys():
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6]])
 

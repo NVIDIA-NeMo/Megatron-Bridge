@@ -28,6 +28,7 @@ import torch
 from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
 from megatron.bridge.data.conversation_processing import (
+    AssistantMaskBoundaryConfig,
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
@@ -48,6 +49,35 @@ CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system",
 VISION_FRAME_SIZE = 512
 PIXEL_SHUFFLE_FACTOR = 2
 _NEMOTRON_OMNI_VISUAL_KEYS = ("pixel_values",)
+
+
+def _build_padded_assistant_loss_masks(
+    examples: Sequence[Mapping[str, Any]],
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    processor: Any,
+    skipped_tokens: torch.Tensor,
+    *,
+    boundary_config: AssistantMaskBoundaryConfig,
+) -> torch.Tensor:
+    """Build assistant loss masks without treating batch padding as message boundaries."""
+    if input_ids.dim() != 2 or attention_mask.shape != input_ids.shape:
+        raise ValueError("Nemotron Omni assistant masking expects matching 2D input_ids and attention_mask.")
+
+    loss_masks = []
+    for example, token_row, attention_row in zip(examples, input_ids, attention_mask, strict=True):
+        active_positions = attention_row.to(dtype=torch.bool)
+        active_mask = build_assistant_loss_mask(
+            example,
+            token_row[active_positions],
+            processor,
+            skipped_tokens,
+            boundary_config=boundary_config,
+        ).to(dtype=torch.int)
+        padded_mask = torch.zeros_like(token_row, dtype=torch.int)
+        padded_mask[active_positions] = active_mask
+        loss_masks.append(padded_mask)
+    return torch.stack(loss_masks)
 
 
 def _validate_nemotron_omni_visual_keys(visual_keys: object = None) -> None:
@@ -888,17 +918,13 @@ def nemotron_omni_collate_fn(
         assistant_end_fallbacks=("<|im_end|>",),
         role_start_markers=CHATML_OTHER_ROLE_STARTS,
     )
-    loss_mask = torch.stack(
-        [
-            build_assistant_loss_mask(
-                example,
-                input_ids,
-                processor,
-                skipped_tokens,
-                boundary_config=boundary_config,
-            ).to(dtype=torch.int)
-            for example, input_ids in zip(mask_examples, batch["input_ids"], strict=True)
-        ]
+    loss_mask = _build_padded_assistant_loss_masks(
+        mask_examples,
+        batch["input_ids"],
+        batch["attention_mask"],
+        processor,
+        skipped_tokens,
+        boundary_config=boundary_config,
     )
     if collapse_image_tokens:
         adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
