@@ -70,7 +70,7 @@ def gemma3_vl_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = AttnBackend.unfused
+    cfg.model.attention_backend = AttnBackend.fused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -182,7 +182,7 @@ def gemma3_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = AttnBackend.unfused
+    cfg.model.attention_backend = AttnBackend.fused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -294,7 +294,7 @@ def gemma3_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = AttnBackend.unfused
+    cfg.model.attention_backend = AttnBackend.fused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -415,7 +415,7 @@ def gemma3_vl_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = AttnBackend.unfused
+    cfg.model.attention_backend = AttnBackend.fused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -536,7 +536,7 @@ def gemma3_vl_12b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = AttnBackend.unfused
+    cfg.model.attention_backend = AttnBackend.fused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -657,7 +657,7 @@ def gemma3_vl_27b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = AttnBackend.unfused
+    cfg.model.attention_backend = AttnBackend.fused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
