@@ -25,6 +25,11 @@ def test_dockerfile_ci_keeps_public_launchers_executable():
     contents = dockerfile.read_text()
     repository_copy = contents.index("COPY --chmod=644 . /opt/Megatron-Bridge")
 
-    for launcher in ("scripts/conversion/convert.sh", "scripts/training/train.sh"):
+    launchers = (
+        "scripts/conversion/convert.sh",
+        "scripts/inference/infer.sh",
+        "scripts/training/train.sh",
+    )
+    for launcher in launchers:
         executable_copy = f"COPY --chmod=755 {launcher} /opt/Megatron-Bridge/{launcher}"
         assert contents.index(executable_copy) > repository_copy
