@@ -139,7 +139,7 @@ def _apply_k_exaone_2_0_topology(
 
 
 def exaone_moe_2_0_750b_a37_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a pre-training config for K-EXAONE 2.0 750B-A37 MoE."""
+    """Return a pre-training config for K-EXAONE 2.0 750B-A37B MoE."""
     cfg = _pretrain_common()
     _apply_exaone_moe_common(cfg, hf_path=_HF_PATH_2_0)
     _apply_k_exaone_2_0_topology(
@@ -162,7 +162,7 @@ def exaone_moe_2_0_750b_a37_pretrain_512gpu_h100_bf16_config() -> ConfigContaine
 
 
 def exaone_moe_2_0_750b_a37_sft_512gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a full SFT config for K-EXAONE 2.0 750B-A37 MoE."""
+    """Return a full SFT config for K-EXAONE 2.0 750B-A37B MoE."""
     cfg = _sft_common()
     _apply_exaone_moe_common(cfg, hf_path=_HF_PATH_2_0)
     _apply_k_exaone_2_0_topology(
@@ -195,7 +195,7 @@ def exaone_moe_2_0_750b_a37_sft_512gpu_h100_bf16_config() -> ConfigContainer:
 def exaone_moe_2_0_750b_a37_peft_128gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
-    """Return a PEFT config for K-EXAONE 2.0 750B-A37 MoE."""
+    """Return a PEFT config for K-EXAONE 2.0 750B-A37B MoE."""
     cfg = _peft_common()
     _apply_exaone_moe_common(cfg, hf_path=_HF_PATH_2_0)
     _apply_k_exaone_2_0_topology(
