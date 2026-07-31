@@ -35,11 +35,12 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 2d185b9619c302281eb1a3219b3c7afaee940afc  # pragma: allowlist secret
+  bridge_commit: 330f87c0a391eb2770cbf2306352cc807211d7ba  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
     status: verified
+    bridge_commit: 2d0175b116af6cb785bb8efab7ee053435496266  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
@@ -56,6 +57,7 @@ items:
 
   hf_to_megatron_gpu:
     status: verified
+    bridge_commit: 2d185b9619c302281eb1a3219b3c7afaee940afc  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -93,6 +95,7 @@ items:
 
   megatron_to_hf_gpu:
     status: verified
+    bridge_commit: 2d185b9619c302281eb1a3219b3c7afaee940afc  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -134,6 +137,7 @@ items:
 
   inference:
     status: verified
+    bridge_commit: 2d185b9619c302281eb1a3219b3c7afaee940afc  # pragma: allowlist secret
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=4
