@@ -13,11 +13,13 @@
 # limitations under the License.
 """Unit tests for GLM-5.2 recipes."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from megatron.bridge.recipes.glm import gb200
+from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
 from megatron.bridge.recipes.glm.h100 import glm5
 
 
@@ -95,6 +97,7 @@ class _FakeAutoBridge:
 
 @pytest.fixture(autouse=True)
 def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gb200_glm5, "AutoBridge", _FakeAutoBridge)
     monkeypatch.setattr(glm5, "AutoBridge", _FakeAutoBridge)
 
 
@@ -204,6 +207,12 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_glm52_gb200_recipes_do_not_depend_on_h100_recipes() -> None:
+    source = Path(gb200_glm5.__file__).read_text(encoding="utf-8")
+
+    assert "megatron.bridge.recipes.glm.h100" not in source
 
 
 @pytest.mark.parametrize(
