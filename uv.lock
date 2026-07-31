@@ -699,14 +699,14 @@ wheels = [
 
 [[package]]
 name = "cuda-tile"
-version = "1.6.0rc1"
+version = "1.6.0rc3"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc1-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:2603e1019d9b4982fe55842d45fb74d5b41b12e75e52e47bd1687ac2f696b36b" },
-    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc1-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:2bc3b5ef6acd7cfde34ad6ef0f487760fab629b98f6ebcb2f4b85c4022385264" },
+    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc3-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:614664bec77132efe3643a51372ee9af32615cb9405e6d4c086d99eae338a984" },
+    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc3-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:bf13ab25918ab027e95948d57216a4a9e96c82a5eeb587e1051373e268ad7973" },
 ]
 
 [[package]]
