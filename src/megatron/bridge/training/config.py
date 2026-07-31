@@ -1144,6 +1144,19 @@ class ConfigContainer(Container):
         if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
             raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
 
+        if self.validation.full_validation:
+            raise ValueError(
+                "full_validation is not supported by Megatron Bridge; use eval_iters to bound evaluation."
+            )
+        if self.validation.multiple_validation_sets:
+            from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+            if isinstance(self.model, MegatronMIMOProvider):
+                raise ValueError(
+                    "multiple_validation_sets is not supported for MegatronMIMO models: the MIMO data "
+                    "path builds per-rank validation loaders and bypasses per-set bookkeeping."
+                )
+
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)

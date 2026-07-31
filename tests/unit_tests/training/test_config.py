@@ -534,6 +534,31 @@ class TestConfigContainerValidation:
         assert ValidationConfig().multiple_validation_sets is False
         assert ValidationConfig().validation_set_names is None
 
+    def test_full_validation_rejected(self):
+        """full_validation is inherited from MCore but unimplemented; setting it must fail loud."""
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container.validation.full_validation = True
+
+        try:
+            with pytest.raises(ValueError, match="full_validation is not supported"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_multiple_validation_sets_rejects_megatron_mimo(self):
+        """multiple_validation_sets is rejected for MegatronMIMO models, whose data path bypasses it."""
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container.validation.multiple_validation_sets = True
+
+        try:
+            with patch.object(type(container), "model", property(lambda self: MagicMock(spec=MegatronMIMOProvider))):
+                with pytest.raises(ValueError, match="MegatronMIMO"):
+                    container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize("pipeline_model_parallel_size", [1, 2])
     def test_multiple_validation_sets_allows_pipeline_parallel(self, monkeypatch, pipeline_model_parallel_size):
         """multiple_validation_sets validates with any PP size.
