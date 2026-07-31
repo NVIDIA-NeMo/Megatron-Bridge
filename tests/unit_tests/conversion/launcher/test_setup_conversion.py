@@ -405,7 +405,7 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
     assert executor.kwargs["ntasks_per_node"] == 1
-    assert executor.kwargs["exclusive"] is False
+    assert executor.kwargs["exclusive"] is None
     assert executor.kwargs["job_name_prefix"] == "mb4909-nano4b-conversion"
     assert "cpus_per_task" not in executor.kwargs
     assert "gpus_per_node" not in executor.kwargs
@@ -445,7 +445,7 @@ def test_slurm_cpu_executor_can_request_gpu_runtime(tmp_path, monkeypatch):
 
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
-    assert executor.kwargs["exclusive"] is False
+    assert executor.kwargs["exclusive"] is None
 
 
 def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
@@ -483,7 +483,7 @@ def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
     executor = module._build_executor(args, [], [])
 
     assert executor.kwargs["ntasks_per_node"] == 4
-    assert executor.kwargs["exclusive"] is False
+    assert executor.kwargs["exclusive"] is None
     assert "cpus_per_task" not in executor.kwargs
     assert executor.kwargs["launcher"] is None
     assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--cpus-per-task=8"]

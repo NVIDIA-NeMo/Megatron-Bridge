@@ -3,11 +3,9 @@
 
 title: qwen3_6_35b_a3b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. This card verifies conversion, multimodal inference, MedPix SFT and
-  PEFT, post-SFT export, DataComp projection pretraining, long-context SFT, and
-  checkpoint resume for Qwen/Qwen3.6-35B-A3B.
+  Performance scope: pretrain_performance.GB200 uses the tuned fixed-shape
+  recipe shared by Qwen3.5/Qwen3.6-VL; functional timing and throughput remain
+  sanity checks. This card verifies conversion, inference, and training.
 verification_index:
   model_level:
     verified:
@@ -20,6 +18,11 @@ verification_index:
   training:
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+    GB200:
+      verified: [sft, peft]
+      unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
+  performance:
+    GB200: verified
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
   hf_revision: 995ad96eacd98c81ed38be0c5b274b04031597b0  # pragma: allowlist secret
@@ -39,7 +42,6 @@ items:
       --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron
-      --torch-dtype bfloat16
     last_verified: 2026-07-23
     bridge_commit: 58b11d7e122b6d7da57d1b5f264fe7fa61e393ec  # pragma: allowlist secret
     expected_result: >
@@ -62,7 +64,7 @@ items:
       --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron
-      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 8 --etp 1
+      --tp 2 --ep 8
     last_verified: 2026-07-23
     expected_result: >
       The 16-H100 pinned-revision import exited successfully at
@@ -84,7 +86,6 @@ items:
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron/iter_0000000
       --hf-path work/model-verification/qwen3.6-35b-a3b/cpu-hf-export
-      --torch-dtype bfloat16
     last_verified: 2026-07-23
     bridge_commit: 72d554863cd4dbcacd26abda92054afd0506e668  # pragma: allowlist secret
     expected_result: >
@@ -112,8 +113,7 @@ items:
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
       --hf-path work/model-verification/qwen3.6-35b-a3b/hf-export
-      --torch-dtype bfloat16 --export-weight-dtype bfloat16
-      --distributed-save --tp 2 --pp 1 --ep 8 --etp 1
+      --tp 2 --ep 8
     last_verified: 2026-07-23
     expected_result: >
       The 16-H100 distributed export exited successfully and wrote 26 indexed
@@ -138,7 +138,7 @@ items:
       --model_class Qwen3_5MoeForConditionalGeneration
       --megatron_model_path
       work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
-      --tp 1 --pp 8 --ep 1 --etp 1
+      --pp 8
       --image_path work/data/medpix/verification.png
       --prompt "What was observed in the imaging?"
     last_verified: 2026-07-23
@@ -165,7 +165,7 @@ items:
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron_model_path
       work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
-      --tp 1 --pp 8 --ep 1 --etp 1
+      --pp 8
       --image_path work/data/medpix/verification.png
       --prompt "What was observed in the imaging?"
       --max_new_tokens 32
@@ -193,32 +193,26 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe qwen35_vl_35b_a3b_pretrain_mock_config
-        --mode pretrain --dataset energon --step-func qwen3_vl_step
-        --deterministic
+        --dataset energon --deterministic
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
         --max_steps 20 --warmup_iters 2
         --save_dir
         work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/checkpoints
-        --save_interval 10 dataset.micro_batch_size=1
+        --save_interval 10
         dataset.path=work/data/datacomp/energon
         dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
-        dataset.do_validation=false dataset.do_test=false
-        dataset.enable_in_batch_packing=false
-        dataset.defer_in_batch_packing_to_step=true
+        dataset.do_validation=false
         scheduler.lr_decay_iters=20
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044 model.eos_token_id=248044
+        model.bos_token_id=248044
         model.recompute_granularity=full
         model.recompute_method=uniform model.recompute_num_layers=1
-        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
         checkpoint.load=null
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_large_grads=true
-        dist.distributed_timeout_minutes=30
         logger.log_interval=1 logger.log_throughput=true
-        logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/resolved-config.yaml
       last_verified: 2026-07-28
       metrics:
@@ -254,8 +248,7 @@ items:
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe qwen35_vl_35b_a3b_sft_config --mode sft --dataset medpix
-        --step-func qwen3_vl_step
+        --recipe qwen35_vl_35b_a3b_sft_config --dataset medpix
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
         --max_steps 100 --warmup_iters 10
@@ -264,16 +257,14 @@ items:
         dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
         dataset.do_validation=false dataset.pad_to_max_length=true
-        scheduler.lr_decay_iters=100 dist.distributed_timeout_minutes=30
+        scheduler.lr_decay_iters=100
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044 model.eos_token_id=248044
-        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_large_grads=true
         --save_dir
         work/model-verification/qwen3.6-35b-a3b/sft-support-v11/checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
-        logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/sft-support-v11/resolved-config.yaml
       last_verified: 2026-07-23
       bridge_commit: 5df98f7edb1f109187a4b3544836fae344044a25  # pragma: allowlist secret
@@ -297,6 +288,42 @@ items:
         training state is reloadable. These metrics remain tied to that
         historical convergence run.
 
+    GB200:
+      status: verified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+        --recipe qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config
+        --dataset medpix
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/gb200-imported/iter_0000000
+        --max_steps 100 --warmup_iters 10
+        'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
+        'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
+        dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
+        'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
+        scheduler.lr_decay_iters=100
+        model.hf_model_id=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-sft/resolved-config.yaml
+      last_verified: 2026-07-30
+      metrics:
+        initial_loss: 2.213064
+        final_loss: 0.9773649
+        last_10_steps_step_time_ms_avg: 7545.760
+        last_10_steps_model_tflops_per_gpu_avg: 49.980
+      expected_result: >
+        On 8x GB200, the shared Qwen3.5/Qwen3.6-VL functional recipe completed
+        exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32,
+        natural routing, HybridEP, no activation recompute, and BF16 gradient
+        reduction. Loss was finite from 2.213064 to 0.9773649 with zero skipped
+        or NaN iterations. Steps 91-100 averaged 7,545.760 ms and 49.980 model
+        TFLOP/s/GPU. The recipe intentionally disables checkpoint output for
+        this bounded functional run; reload/export coverage remains represented
+        by the H100 SFT and sft_export_inference items.
+
   sft_export_inference:
     H100:
       status: verified
@@ -312,7 +339,6 @@ items:
           work/model-verification/qwen3.6-35b-a3b/sft-support-v11/checkpoints/iter_0000100
           --hf-path
           work/model-verification/qwen3.6-35b-a3b/sft-support-v11/hf-export
-          --torch-dtype bfloat16
         - >
           ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 1 --mem 256G
           --task hf-inference
@@ -321,7 +347,6 @@ items:
           --prompt "What was observed in the imaging?"
           --image work/data/medpix/verification.png
           --max-new-tokens 32 --chat-template --disable-thinking
-          --device cuda --dtype bfloat16
       last_verified: 2026-07-23
       bridge_commit: a881c9bffbfde520700b9c1c3971532fcd52d563  # pragma: allowlist secret
       expected_result: >
@@ -351,7 +376,7 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
         --recipe qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config
-        --mode sft --dataset medpix --step-func qwen3_vl_step
+        --dataset medpix
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
         --max_steps 20 --warmup_iters 2
@@ -360,15 +385,12 @@ items:
         dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
         dataset.do_validation=false scheduler.lr_decay_iters=20
-        dist.distributed_timeout_minutes=30
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044 model.eos_token_id=248044
-        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044
         checkpoint.load=null checkpoint.save=null
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_large_grads=true
         logger.log_interval=1 logger.log_throughput=true
-        logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/medpix-long-context/resolved-config.yaml
       last_verified: 2026-07-28
       metrics:
@@ -394,8 +416,7 @@ items:
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-        --recipe qwen35_vl_35b_a3b_peft_config --mode lora --dataset medpix
-        --step-func qwen3_vl_step
+        --recipe qwen35_vl_35b_a3b_peft_config --dataset medpix
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
         --max_steps 100 --warmup_iters 10
@@ -404,16 +425,14 @@ items:
         dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
         dataset.do_validation=false dataset.pad_to_max_length=true
-        scheduler.lr_decay_iters=100 dist.distributed_timeout_minutes=30
+        scheduler.lr_decay_iters=100
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044 model.eos_token_id=248044
-        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_large_grads=true
         --save_dir
         work/model-verification/qwen3.6-35b-a3b/peft-support-v5/checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-        logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/peft-support-v5/resolved-config.yaml
       last_verified: 2026-07-23
       bridge_commit: 5df98f7edb1f109187a4b3544836fae344044a25  # pragma: allowlist secret
@@ -436,6 +455,47 @@ items:
         A fresh maintained-launcher process loaded the base checkpoint, then
         loaded the adapter checkpoint at iteration 100, entered the loop at
         iteration 100 without an extra optimizer step, and exited successfully.
+        This final loss is not directly comparable to the H100 SFT final loss:
+        the historical runs used different GPU topology and data sharding/order,
+        and full-parameter SFT and LoRA intentionally use different trainable
+        parameter sets and learning rates.
+
+    GB200:
+      status: verified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+        --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config
+        --dataset medpix
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/gb200-imported/iter_0000000
+        --max_steps 100 --warmup_iters 10
+        'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
+        'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
+        dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
+        'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
+        scheduler.lr_decay_iters=100
+        model.hf_model_id=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-peft/resolved-config.yaml
+      last_verified: 2026-07-30
+      metrics:
+        initial_loss: 2.214158
+        final_loss: 1.265115
+        last_10_steps_step_time_ms_avg: 6190.450
+        last_10_steps_model_tflops_per_gpu_avg: 60.940
+      expected_result: >
+        On the same 8x GB200 topology and MedPix schedule as the controlled SFT
+        item, LoRA completed exactly 100 finite steps with zero skipped or NaN
+        iterations. The persisted configs differ only in the evidence-output
+        path, the intended PEFT LR/min-LR, and the LoRA block; model, data,
+        topology, batch, schedule, and safety settings match. Step-1 loss
+        2.214158 differs from SFT's 2.213064 by only 0.001094, or 0.049434%,
+        ruling out an initial-forward configuration mismatch. The later loss
+        difference reflects LoRA's trainable parameter set and learning rate.
+        Steps 91-100 averaged 6,190.450 ms and 60.940 model TFLOP/s/GPU.
 
   checkpoint_resume:
     H100:
@@ -446,32 +506,26 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe qwen35_vl_35b_a3b_pretrain_mock_config
-        --mode pretrain --dataset energon --step-func qwen3_vl_step
-        --deterministic
+        --dataset energon --deterministic
         --load_dir
         work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/checkpoints
         --max_steps 20 --warmup_iters 2
         --save_dir
         work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-resume/checkpoints
-        --save_interval 10 dataset.micro_batch_size=1
+        --save_interval 10
         dataset.path=work/data/datacomp/energon
         dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
-        dataset.do_validation=false dataset.do_test=false
-        dataset.enable_in_batch_packing=false
-        dataset.defer_in_batch_packing_to_step=true
+        dataset.do_validation=false
         scheduler.lr_decay_iters=20
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044 model.eos_token_id=248044
+        model.bos_token_id=248044
         model.recompute_granularity=full
         model.recompute_method=uniform model.recompute_num_layers=1
-        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
         checkpoint.ckpt_step=10
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_large_grads=true
-        dist.distributed_timeout_minutes=30
         logger.log_interval=1 logger.log_throughput=true
-        logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-resume/resolved-config.yaml
       last_verified: 2026-07-28
       metrics:
@@ -498,3 +552,29 @@ items:
         saved a complete 72,366,371,502-byte eight-shard model/optimizer/RNG
         checkpoint plus eight nonempty Energon rank states at step 20, with
         the tracker selecting iteration 20.
+
+  pretrain_performance:
+    GB200:
+      status: verified
+      precision: fp8_mx
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+        --recipe qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config
+        --max_steps 50
+      last_verified: 2026-07-30
+      metrics:
+        initial_loss: 12.81534
+        final_loss: 3.030733
+        last_10_steps_step_time_ms_avg: 23264.790
+        last_10_steps_model_tflops_per_gpu_avg: 243.120
+      expected_result: >
+        On 8x GB200, the exact architecture-shared Qwen3.5/Qwen3.6-VL
+        fixed-shape mock-data recipe completed 50 steps at
+        TP1/PP1/CP1/EP8/ETP1, dense DP8 and expert DP1, MBS3/GBS480, and 20
+        microbatches per optimizer step. The benchmark used forced expert
+        balance, HybridEP, MXFP8, cuDNN LayerNorm, and Transformer Engine CUDA
+        graphs for the MoE router and preprocessing scopes. Loss was finite
+        from 12.81534 to 3.030733 with zero skipped or NaN iterations. Steps
+        41-50 averaged 23,264.790 ms and 243.120 model TFLOP/s/GPU, and the
+        process exited successfully. This synthetic result is a throughput
+        measurement, not a convergence claim.

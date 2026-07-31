@@ -174,7 +174,8 @@ def _build_executor(
         nodes=args.nodes,
         ntasks_per_node=task_count,
         mem=args.mem,
-        exclusive=args.exclusive,
+        # NeMo Run renders False as ``#SBATCH --exclusive=False``; None omits the directive.
+        exclusive=args.exclusive or None,
         time=args.time,
         gres=args.gres,
         launcher=launcher,
