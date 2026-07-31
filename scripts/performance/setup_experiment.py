@@ -93,10 +93,14 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
       into the training entrypoint's Hydra override parser.
+    * ``--offline`` — controls HF Hub access on the launcher node only; offline
+      behaviour in the rank-local script is governed by the ``HF_HUB_OFFLINE``
+      environment variable, not by this flag.
 
-    All of these take a value, passed either as ``--flag value`` (two tokens) or
-    ``--flag=value`` (one token).
+    Value-taking flags are passed as ``--flag value`` or ``--flag=value``.
+    Boolean flags (no following value) are listed in ``_LAUNCHER_ONLY_BOOL``.
     """
+    _LAUNCHER_ONLY_BOOL = {"--offline", "--dryrun"}
 
     def _is_launcher_only(flag: str) -> bool:
         return flag in (
@@ -116,6 +120,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     for arg in argv:
         if skip_next:
             skip_next = False
+            continue
+        if arg in _LAUNCHER_ONLY_BOOL:
             continue
         if _is_launcher_only(arg.split("=", 1)[0]):
             skip_next = "=" not in arg
