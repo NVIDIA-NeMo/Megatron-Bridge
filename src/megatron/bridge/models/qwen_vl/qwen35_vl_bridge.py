@@ -20,10 +20,12 @@ Qwen3.5 is a family of multimodal models that combine:
 - A vision encoder (similar to Qwen3-VL)
 - Dense MLP or Mixture of Experts (MoE) with shared experts
 
-This module provides two bridges:
+This module provides three bridges:
 
 - ``Qwen35VLBridge``: Dense variant (e.g., Qwen3.5-27B)
   Reference: https://huggingface.co/Qwen/Qwen3.5-27B
+
+- ``Qwen35TokenClassificationBridge``: Dense token-classification variant
 
 - ``Qwen35VLMoEBridge``: MoE variant (e.g., Qwen3.5-397B-A17B)
   Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
@@ -50,11 +52,12 @@ from megatron.bridge.models.qwen.qwen35_bridge import (
     _apply_qwen35_moe_config,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+    Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
 )
-from megatron.bridge.training.utils.train_utils import create_token_classification_head_hook
 
 
 logger = logging.getLogger(__name__)
@@ -303,6 +306,7 @@ class Qwen35VLBridge(MegatronModelBridge):
     """
 
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
+    PROVIDER_CLASS = Qwen35VLModelProvider
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLModelProvider:
         """Create a Qwen35VLModelProvider from a HuggingFace pretrained model."""
@@ -314,7 +318,7 @@ class Qwen35VLBridge(MegatronModelBridge):
         vision_config = hf_config.vision_config
         vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
 
-        provider = Qwen35VLModelProvider(**provider_kwargs)
+        provider = self.PROVIDER_CLASS(**provider_kwargs)
 
         # LM parameters
         _apply_qwen35_common_config(provider, text_config)
@@ -360,18 +364,29 @@ class Qwen35VLBridge(MegatronModelBridge):
 
 @MegatronModelBridge.register_bridge(
     source=_QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME,
-    target=Qwen3VLModel,
-    provider=Qwen35VLModelProvider,
+    target=Qwen3VLForTokenClassification,
+    provider=Qwen35TokenClassificationModelProvider,
     model_type="qwen3_5",
 )
 class Qwen35TokenClassificationBridge(Qwen35VLBridge):
     """Bridge for Qwen3.5 VL models with a replicated per-token classification head."""
 
+    PROVIDER_CLASS = Qwen35TokenClassificationModelProvider
+
     def provider_bridge(
         self,
         hf_pretrained: PreTrainedTokenClassification,
-    ) -> Qwen35VLModelProvider:
+    ) -> Qwen35TokenClassificationModelProvider:
+        """Create a serializable token-classification provider from an HF config.
+
+        Args:
+            hf_pretrained: Lazy Hugging Face token-classification wrapper.
+
+        Returns:
+            A provider carrying the base VLM and classification-head configuration.
+        """
         provider = super().provider_bridge(hf_pretrained)
+        assert isinstance(provider, Qwen35TokenClassificationModelProvider)
         hf_config = hf_pretrained.config
 
         classifier_dropout = getattr(hf_config, "classifier_dropout", None)
@@ -380,24 +395,15 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
         if classifier_dropout is None:
             classifier_dropout = 0.1
 
-        # GenericForTokenClassification wraps the base Qwen3.5 model and does not
-        # instantiate either the causal LM head or MTP layers.
+        provider.num_labels = hf_config.num_labels
+        provider.classifier_dropout = classifier_dropout
         provider.mtp_num_layers = 0
         provider.mtp_enabled = False
         provider.share_embeddings_and_output_weights = False
-        provider.register_pre_wrap_hook(
-            create_token_classification_head_hook(
-                hidden_size=provider.hidden_size,
-                sequence_parallel=provider.sequence_parallel,
-                num_labels=hf_config.num_labels,
-                bias=getattr(hf_config, "token_classification_bias", True),
-                dropout=classifier_dropout,
-            )
-        )
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        hf_config = self.hf_pretrained.config
+        """Return mappings for the Qwen3.5 base model and classification head."""
         mapping_list = Qwen35Bridge._get_dense_lm_mappings(
             hf_prefix="model.language_model.",
             megatron_prefix="language_model.",
@@ -410,11 +416,10 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
                 hf_param="score.weight",
             )
         )
-        if getattr(hf_config, "token_classification_bias", True):
-            mapping_list.append(
-                ReplicatedMapping(
-                    megatron_param="language_model.output_layer.bias",
-                    hf_param="score.bias",
-                )
+        mapping_list.append(
+            ReplicatedMapping(
+                megatron_param="language_model.output_layer.bias",
+                hf_param="score.bias",
             )
+        )
         return MegatronMappingRegistry(*mapping_list)

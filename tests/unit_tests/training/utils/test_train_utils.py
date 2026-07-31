@@ -29,7 +29,6 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
     calc_params_l2_norm,
-    create_token_classification_head_hook,
     create_value_head_hook,
     freeze_moe_router,
     make_value_model,
@@ -3937,6 +3936,15 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert bias is None
 
 
+def test_value_head_apis_preserve_positional_call_compatibility() -> None:
+    """The relocated value-head APIs must retain their established positional signatures."""
+    head = LinearForLastLayer(2, 1, False)
+    hook = create_value_head_hook(2, False)
+
+    assert isinstance(head, LinearForLastLayer)
+    assert callable(hook)
+
+
 def test_linear_for_last_layer_supports_bias_and_dropout() -> None:
     head = LinearForLastLayer(
         input_size=2,
@@ -3950,20 +3958,87 @@ def test_linear_for_last_layer_supports_bias_and_dropout() -> None:
     assert head.dropout.p == 0.25
 
 
+def test_linear_for_last_layer_supports_model_initialization_policy() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        bias=True,
+        init_method=lambda weight: torch.nn.init.constant_(weight, 0.125),
+    )
+
+    assert torch.equal(head.weight, torch.full_like(head.weight, 0.125))
+    assert torch.equal(head.bias, torch.zeros_like(head.bias))
+
+
+def test_linear_for_last_layer_can_skip_initialization(monkeypatch) -> None:
+    reset_parameters = mock.Mock()
+    monkeypatch.setattr(torch.nn.Linear, "reset_parameters", reset_parameters)
+
+    LinearForLastLayer(2, 1, False, perform_initialization=False)
+
+    reset_parameters.assert_not_called()
+
+
+def test_linear_for_last_layer_reuses_initializer_after_meta_materialization() -> None:
+    with torch.device("meta"):
+        head = LinearForLastLayer(
+            2,
+            1,
+            False,
+            bias=True,
+            init_method=lambda weight: torch.nn.init.constant_(weight, 0.125),
+        )
+
+    head.to_empty(device="cpu")
+    head.reset_parameters()
+
+    assert torch.equal(head.weight, torch.full_like(head.weight, 0.125))
+    assert torch.equal(head.bias, torch.zeros_like(head.bias))
+
+
+def test_linear_for_last_layer_marks_bias_for_sequence_parallel_grad_sync() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=True,
+        bias=True,
+    )
+
+    assert head.weight.sequence_parallel is True
+    assert head.bias is not None
+    assert head.bias.sequence_parallel is True
+
+
+def test_linear_for_last_layer_can_preserve_projection_dtype() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        output_in_fp32=False,
+    ).to(dtype=torch.bfloat16)
+
+    logits, _ = head(torch.ones(2, 2, dtype=torch.bfloat16))
+
+    assert logits.dtype == torch.bfloat16
+
+
 def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> None:
-    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True)
+    tp_group = object()
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True, tp_group=tp_group)
     with torch.no_grad():
         head.weight.fill_(1.0)
 
     calls = {}
 
-    def fake_gather(tensor, tensor_parallel_output_grad):
+    def fake_gather(tensor, tensor_parallel_output_grad, group):
         calls["tensor"] = tensor
         calls["tensor_parallel_output_grad"] = tensor_parallel_output_grad
+        calls["group"] = group
         return tensor + 1
 
     monkeypatch.setattr(
-        "megatron.bridge.training.utils.train_utils.tensor_parallel.gather_from_sequence_parallel_region",
+        "megatron.bridge.models.common.heads.tensor_parallel.gather_from_sequence_parallel_region",
         fake_gather,
     )
 
@@ -3972,6 +4047,7 @@ def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> 
     assert torch.equal(logits, torch.full((2, 1), 3.0))
     assert torch.equal(calls["tensor"], torch.full((2, 1), 2.0))
     assert calls["tensor_parallel_output_grad"] is False
+    assert calls["group"] is tp_group
     assert bias is None
 
 
@@ -4010,30 +4086,6 @@ def test_create_value_head_hook_replaces_last_virtual_pipeline_chunk(monkeypatch
     assert output_layer.in_features == 4
     assert output_layer.out_features == 2
     assert output_layer.sequence_parallel is True
-
-
-def test_token_classification_head_hook_replaces_nested_language_head(monkeypatch) -> None:
-    _patch_single_pipeline_last_stage(monkeypatch)
-    model_chunk = torch.nn.Module()
-    model_chunk.language_model = torch.nn.Module()
-    model_chunk.language_model.output_layer = torch.nn.Linear(4, 16)
-    hook = create_token_classification_head_hook(
-        hidden_size=4,
-        sequence_parallel=False,
-        num_labels=3,
-        bias=True,
-        dropout=0.2,
-    )
-
-    result = hook([model_chunk])
-
-    assert result == [model_chunk]
-    output_layer = model_chunk.language_model.output_layer
-    assert isinstance(output_layer, LinearForLastLayer)
-    assert output_layer.in_features == 4
-    assert output_layer.out_features == 3
-    assert output_layer.bias is not None
-    assert output_layer.dropout.p == 0.2
 
 
 def test_create_value_head_hook_requires_chunk_count_to_match_pipeline_flags(monkeypatch) -> None:

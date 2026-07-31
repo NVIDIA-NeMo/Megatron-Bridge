@@ -44,3 +44,32 @@ def test_load_model_uses_auto_model_for_token_classification() -> None:
         torch_dtype=torch.bfloat16,
     )
     model.to.assert_called_once_with("cpu")
+
+
+def test_multimodal_processors_are_preserved_as_optional_artifacts(tmp_path) -> None:
+    wrapper = PreTrainedTokenClassification(
+        model_name_or_path="Qwen/Qwen3.5-token-classification",
+        device="cpu",
+    )
+    processor = Mock()
+    processor.image_processor = Mock()
+
+    with patch(
+        "megatron.bridge.models.hf_pretrained.token_classification.AutoProcessor.from_pretrained",
+        return_value=processor,
+    ) as from_pretrained:
+        assert wrapper.processor is processor
+        assert wrapper.image_processor is processor.image_processor
+
+    assert wrapper.OPTIONAL_ARTIFACTS == ["processor", "image_processor"]
+    from_pretrained.assert_called_once_with(
+        "Qwen/Qwen3.5-token-classification",
+        trust_remote_code=False,
+    )
+
+    wrapper._config = Mock()
+    wrapper._tokenizer = Mock()
+    wrapper.save_artifacts(tmp_path)
+
+    processor.save_pretrained.assert_called_once_with(tmp_path)
+    processor.image_processor.save_pretrained.assert_called_once_with(tmp_path)

@@ -27,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     GatedMLPMapping,
     GDNConv1dMapping,
     GDNLinearMappingSeparate,
+    MegatronParamMapping,
     QKVMapping,
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
@@ -482,10 +483,11 @@ class Qwen35Bridge(MegatronModelBridge):
 
     @staticmethod
     def _get_dense_lm_mappings(
-        hf_prefix="model.",
-        megatron_prefix="",
+        *,
+        hf_prefix: str = "model.",
+        megatron_prefix: str = "",
         output_layer_hf_param: str | None = "lm_head.weight",
-    ):
+    ) -> list[MegatronParamMapping]:
         """Get language model parameter mappings for dense (non-MoE) Qwen3.5.
 
         Args:
@@ -493,6 +495,8 @@ class Qwen35Bridge(MegatronModelBridge):
                 for LM and "model.language_model.layers.*" for VL models.
             megatron_prefix: Prefix for Megatron param names. Use "" for LM
                 (default) and "language_model." for VL models.
+            output_layer_hf_param: HF output-head parameter name. If ``None``,
+                omit the output-head mapping.
 
         Returns:
             List of mapping objects for the dense LM portion.
