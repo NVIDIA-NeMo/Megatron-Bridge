@@ -253,8 +253,6 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
         tokens = torch.LongTensor(input_ids)
         loss_mask = torch.LongTensor(loss_mask)
-        # drop any padding/eos tokens from contributing to the loss
-        loss_mask[tokens == self.tokenizer.eos_id] = 0
 
         processed_batch = {
             "tokens": tokens,

@@ -23,6 +23,7 @@ from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 import torch
+import transformers
 from megatron.core import parallel_state
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import (
@@ -49,6 +50,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 
 
 def create_mock_pretrained_causal_lm():
@@ -485,8 +487,93 @@ class TestAutoBridge:
             mock_masked_lm_from_pretrained.assert_called_once_with("bert-base-uncased")
             mock_causal_lm_from_pretrained.assert_not_called()
 
+    def test_from_hf_pretrained_dispatches_token_classification_wrapper(self):
+        mock_model = Mock(spec=PreTrainedTokenClassification)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["Qwen3_5ForTokenClassification"]
+        mock_model.config = mock_config
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedTokenClassification.from_pretrained"
+            ) as mock_token_classification_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+            ) as mock_causal_lm_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+            ) as mock_safe_load_config,
+            patch.object(AutoBridge, "_validate_config"),
+        ):
+            mock_token_classification_from_pretrained.return_value = mock_model
+            mock_safe_load_config.return_value = mock_config
+
+            result = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-token-classification")
+
+            assert result.hf_pretrained == mock_model
+            mock_token_classification_from_pretrained.assert_called_once_with("Qwen/Qwen3.5-token-classification")
+            mock_causal_lm_from_pretrained.assert_not_called()
+
+    def test_token_classification_config_only_provider_and_mappings(self):
+        from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config
+
+        from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+            _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION,
+            Qwen35TokenClassificationModelProvider,
+        )
+
+        if not _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION:
+            pytest.skip("transformers does not have Qwen3.5 token-classification support")
+
+        config = Qwen3_5Config(num_labels=3, classifier_dropout=0.2)
+        config.architectures = ["Qwen3_5ForTokenClassification"]
+
+        bridge = AutoBridge.from_hf_config(config)
+        provider = bridge.to_megatron_provider(load_weights=False)
+        hf_params = {str(mapping.hf_param) for mapping in bridge._model_bridge.mapping_registry().mappings}
+
+        assert isinstance(provider, Qwen35TokenClassificationModelProvider)
+        assert provider.num_labels == 3
+        assert provider.classifier_dropout == 0.2
+        assert {"score.weight", "score.bias"} <= hf_params
+
+    def test_qwen35_token_classification_runtime_preflight_does_not_block_config_only(self):
+        config = PretrainedConfig()
+        config.architectures = ["Qwen3_5ForTokenClassification"]
+
+        with (
+            patch.object(transformers, "Qwen3_5ForTokenClassification", None),
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry",
+                return_value=config,
+            ),
+        ):
+            assert isinstance(AutoBridge.from_hf_config(config), AutoBridge)
+            assert AutoBridge.can_handle("Qwen/Qwen3.5-token-classification") is False
+            with pytest.raises(ValueError, match="requires transformers >= 5.9"):
+                AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-token-classification")
+
+    def test_qwen35_token_classification_runtime_preflight_allows_remote_model(self):
+        config = PretrainedConfig()
+        config.architectures = ["Qwen3_5ForTokenClassification"]
+        config.auto_map = {"AutoModelForTokenClassification": "custom.ModelForTokenClassification"}
+
+        with (
+            patch.object(transformers, "Qwen3_5ForTokenClassification", None),
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry",
+                return_value=config,
+            ),
+        ):
+            assert isinstance(AutoBridge.from_hf_config(config), AutoBridge)
+            assert AutoBridge.can_handle("custom/qwen35-token-classification", trust_remote_code=False) is False
+            assert AutoBridge.can_handle("custom/qwen35-token-classification", trust_remote_code=True) is True
+
     def test_resolve_pretrained_wrapper_cls(self):
-        """_resolve_pretrained_wrapper_cls selects PreTrainedMaskedLM only for '*ForMaskedLM'."""
+        """_resolve_pretrained_wrapper_cls selects the task-specific HF wrapper."""
+        token_classification_config = SimpleNamespace(architectures=["Qwen3_5ForTokenClassification"])
+        assert _resolve_pretrained_wrapper_cls(token_classification_config) is PreTrainedTokenClassification
+
         masked_lm_config = SimpleNamespace(architectures=["BertForMaskedLM"])
         assert _resolve_pretrained_wrapper_cls(masked_lm_config) is PreTrainedMaskedLM
 
@@ -895,10 +982,17 @@ class TestAutoBridge:
         bridge_masked_lm = AutoBridge(mock_masked_lm)
         assert bridge_masked_lm.hf_pretrained == mock_masked_lm
 
+        mock_token_classification = Mock(spec=PreTrainedTokenClassification)
+        bridge_token_classification = AutoBridge(mock_token_classification)
+        assert bridge_token_classification.hf_pretrained == mock_token_classification
+
         # Test with invalid type
         with pytest.raises(
             ValueError,
-            match="hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance",
+            match=(
+                "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, "
+                "PreTrainedTokenClassification, or PretrainedConfig instance"
+            ),
         ):
             AutoBridge("invalid")
 
@@ -909,6 +1003,10 @@ class TestAutoBridge:
 
     def test_pretrained_wrapper_cls_property(self):
         """Test _pretrained_wrapper_cls resolves the wrapper class for each hf_pretrained kind."""
+        mock_token_classification = Mock(spec=PreTrainedTokenClassification)
+        bridge = AutoBridge(mock_token_classification)
+        assert bridge._pretrained_wrapper_cls is PreTrainedTokenClassification
+
         # A PreTrainedMaskedLM instance resolves directly, regardless of its config.
         mock_masked_lm = Mock(spec=PreTrainedMaskedLM)
         bridge = AutoBridge(mock_masked_lm)

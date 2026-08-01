@@ -35,3 +35,6 @@ rec2idx
 # Pytest plugin shipped by `hypothesis`; eagerly imports `pytest`, which is not
 # installed in the fw_base/fw_final runtime venvs (test-time-only dependency):
 _hypothesis_pytestplugin
+
+# MCore's setuptools build helper executes setup() when imported; it is not a runtime module:
+setup

@@ -292,7 +292,7 @@ def setup(
     # Register PEFT pre-wrap hook if PEFT is configured
     if cfg.peft is not None:
         peft_hook = _create_peft_pre_wrap_hook(cfg, state)
-        _register_pre_wrap_hook(cfg.model, peft_hook)
+        _register_setup_pre_wrap_hook(cfg.model, peft_hook, setup_hook_name="peft")
         print_rank_0("Registered PEFT pre-wrap hook")
 
     if getattr(cfg.model, "restore_modelopt_state", False):
@@ -323,7 +323,7 @@ def setup(
             load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
 
-        _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
+        _register_setup_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook, setup_hook_name="modelopt")
 
     # Enable CUDA allocator history tracing before any model tensors are allocated,
     # so snapshots dumped later in training contain a full timeline + stack context.
@@ -467,12 +467,39 @@ def setup(
     )
 
 
-def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
+def _register_pre_wrap_hook(
+    model_cfg: ModelConfig | ModelProviderMixin,
+    hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+) -> None:
     """Register a pre-wrap hook on either ModelConfig or ModelProviderMixin."""
     if isinstance(model_cfg, ModelConfig):
         model_cfg.pre_wrap_hooks.append(hook)
     else:
         model_cfg.register_pre_wrap_hook(hook)
+
+
+def _register_setup_pre_wrap_hook(
+    model_cfg: ModelConfig | ModelProviderMixin,
+    hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+    *,
+    setup_hook_name: str,
+) -> None:
+    """Replace one setup-owned hook while preserving user registrations."""
+    setup_hooks = getattr(model_cfg, "_megatron_bridge_setup_pre_wrap_hooks", {})
+    previous_hook = setup_hooks.get(setup_hook_name)
+    if previous_hook is not None:
+        if isinstance(model_cfg, ModelConfig):
+            model_cfg.pre_wrap_hooks[:] = [
+                registered_hook for registered_hook in model_cfg.pre_wrap_hooks if registered_hook is not previous_hook
+            ]
+        else:
+            model_cfg._pre_wrap_hooks[:] = [
+                registered_hook for registered_hook in model_cfg._pre_wrap_hooks if registered_hook is not previous_hook
+            ]
+
+    setup_hooks[setup_hook_name] = hook
+    model_cfg._megatron_bridge_setup_pre_wrap_hooks = setup_hooks
+    _register_pre_wrap_hook(model_cfg, hook)
 
 
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:

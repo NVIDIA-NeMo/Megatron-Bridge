@@ -53,6 +53,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
@@ -75,12 +76,17 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronLabsDiffusionModel",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
+    "ForTokenClassification",
 )
 
 # hf_pretrained wrapper types that carry both a config and (optionally) loaded weights.
 # Used for isinstance checks that should accept any such wrapper, regardless of which
 # HF Auto* class it loads the underlying model with.
-_PRETRAINED_WRAPPER_TYPES: tuple[type, ...] = (PreTrainedCausalLM, PreTrainedMaskedLM)
+_PRETRAINED_WRAPPER_TYPES: tuple[type, ...] = (
+    PreTrainedCausalLM,
+    PreTrainedMaskedLM,
+    PreTrainedTokenClassification,
+)
 
 # Mapping from non-standard HF architecture names to their actual transformers class names.
 # Some HF model configs report architecture names that don't follow the standard
@@ -92,6 +98,38 @@ HF_ARCHITECTURE_ALIASES: dict[str, str] = {
 
 MTP_CONFIG_FIELDS: tuple[str, ...] = ("num_nextn_predict_layers", "mtp_num_hidden_layers", "mtp_num_layers")
 _MISSING = object()
+
+_MINIMUM_TRANSFORMERS_BY_ARCHITECTURE: dict[str, str] = {
+    "Qwen3_5ForTokenClassification": "5.9",
+}
+
+
+def _validate_hf_model_runtime_support(config: PretrainedConfig, *, trust_remote_code: bool) -> None:
+    """Validate dependencies needed to load an actual Hugging Face model.
+
+    Config-only Megatron construction does not need the corresponding HF model
+    implementation, so this check is intentionally limited to weight-loading
+    entry points and ``can_handle``.
+
+    Args:
+        config: Hugging Face model configuration being checked.
+        trust_remote_code: Whether a config ``auto_map`` implementation may be used.
+
+    Raises:
+        ValueError: If the installed Transformers cannot load the requested model.
+    """
+    architectures = getattr(config, "architectures", None) or []
+    auto_map = getattr(config, "auto_map", None) or {}
+    for architecture in architectures:
+        minimum_transformers = _MINIMUM_TRANSFORMERS_BY_ARCHITECTURE.get(architecture)
+        if minimum_transformers is None:
+            continue
+        has_remote_implementation = trust_remote_code and bool(auto_map.get("AutoModelForTokenClassification"))
+        if getattr(transformers, architecture, None) is None and not has_remote_implementation:
+            raise ValueError(
+                f"{architecture} requires transformers >= {minimum_transformers}, "
+                f"but found {transformers.__version__}. Please upgrade transformers."
+            )
 
 
 def _get_config_field(config: Any, field: str) -> Any:
@@ -201,17 +239,24 @@ def _model_omits_mtp(model_config: Any) -> bool:
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
 
 
-def _resolve_pretrained_wrapper_cls(config: Any) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM]:
+def _resolve_pretrained_wrapper_cls(
+    config: Any,
+) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM] | Type[PreTrainedTokenClassification]:
     """Select the hf_pretrained wrapper class for a model's architecture.
 
-    Masked/encoder-only LMs (``*ForMaskedLM``) are loaded through
+    Token classifiers (``*ForTokenClassification``) are loaded through
+    :class:`PreTrainedTokenClassification`, which uses
+    ``AutoModelForTokenClassification``. Masked/encoder-only LMs
+    (``*ForMaskedLM``) are loaded through
     :class:`PreTrainedMaskedLM`, which uses ``AutoModelForMaskedLM``. This matters
     because ``AutoModelForCausalLM`` (used by :class:`PreTrainedCausalLM`) resolves
     some masked-LM config classes (e.g. ``BertConfig``) to an unrelated causal-LM
-    class instead of raising, silently loading the wrong architecture. All other
-    supported architectures continue to use :class:`PreTrainedCausalLM`.
+    class instead of raising, silently loading the wrong architecture. Remaining
+    supported architectures use :class:`PreTrainedCausalLM`.
     """
     architectures = getattr(config, "architectures", None) or []
+    if any(arch.endswith("ForTokenClassification") for arch in architectures):
+        return PreTrainedTokenClassification
     if any(arch.endswith("ForMaskedLM") for arch in architectures):
         return PreTrainedMaskedLM
     return PreTrainedCausalLM
@@ -238,18 +283,18 @@ class AutoBridge(Generic[MegatronModelT]):
 
     This unified bridge class combines automatic model detection with full bridge
     functionality for converting models between HuggingFace and Megatron formats.
-    It handles the conversion of causal language models (e.g., GPT, Llama, Phi)
-    between HuggingFace's transformers library format and Megatron-Core's distributed
-    training format. It manages weight mapping, tensor parallelism distribution, and
-    configuration translation.
+    It handles supported causal and masked language models as well as task-specific
+    heads such as token classification. It manages weight mapping, tensor-parallel
+    distribution, and configuration translation.
 
     The bridge supports both directions of conversion:
     - HuggingFace → Megatron: For training or inference with Megatron
     - Megatron → HuggingFace: For saving trained models in HF format
 
     Args:
-        hf_pretrained: Either a PreTrainedCausalLM or PreTrainedMaskedLM instance
-            with loaded model, or a PretrainedConfig for configuration-only operations
+        hf_pretrained: A PreTrainedCausalLM, PreTrainedMaskedLM, or
+            PreTrainedTokenClassification instance with loaded model, or a
+            PretrainedConfig for configuration-only operations.
 
     Example:
         >>> # Load and convert a model to Megatron format
@@ -277,12 +322,18 @@ class AutoBridge(Generic[MegatronModelT]):
         a MegatronModelBridge subclass.
     """
 
-    def __init__(self, hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig):
+    def __init__(
+        self,
+        hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig,
+    ):
         if not isinstance(hf_pretrained, (*_PRETRAINED_WRAPPER_TYPES, PretrainedConfig)):
             raise ValueError(
-                "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance"
+                "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, "
+                "PreTrainedTokenClassification, or PretrainedConfig instance"
             )
-        self.hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig = hf_pretrained
+        self.hf_pretrained: (
+            PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig
+        ) = hf_pretrained
         if isinstance(hf_pretrained, PretrainedConfig):
             hf_config = hf_pretrained
             model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
@@ -434,7 +485,7 @@ class AutoBridge(Generic[MegatronModelT]):
             AutoBridge: Bridge instance configured for the architecture
 
         Raises:
-            ValueError: If the configuration is not for a supported CausalLM model
+            ValueError: If the configuration does not name a supported model architecture.
 
         Example:
             >>> from transformers import AutoConfig
@@ -514,6 +565,7 @@ class AutoBridge(Generic[MegatronModelT]):
         config = safe_load_config_with_retry(path, trust_remote_code=trust_remote_code, **config_kwargs)
 
         cls._validate_config(config, str(path))
+        _validate_hf_model_runtime_support(config, trust_remote_code=trust_remote_code)
 
         # Transformers 5.0+ changed `rope_scaling` to a property whose setter
         # does `self.rope_parameters = value`, replacing the entire dict and
@@ -572,6 +624,7 @@ class AutoBridge(Generic[MegatronModelT]):
             # architecture suffix *and* a registered MegatronModelBridge) so this
             # preflight can't report True for a model that would then fail to load.
             cls._validate_config(config, str(path))
+            _validate_hf_model_runtime_support(config, trust_remote_code=trust_remote_code)
             return True
         except Exception:
             return False
@@ -620,7 +673,8 @@ class AutoBridge(Generic[MegatronModelT]):
         if hf_path is None:
             if not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
                 raise ValueError(
-                    "hf_path is required when hf_pretrained is not a PreTrainedCausalLM or PreTrainedMaskedLM instance"
+                    "hf_path is required when hf_pretrained is not a PreTrainedCausalLM, "
+                    "PreTrainedMaskedLM, or PreTrainedTokenClassification instance"
                 )
             pre_trained = self.hf_pretrained
         else:
@@ -1989,7 +2043,8 @@ class AutoBridge(Generic[MegatronModelT]):
         if hf_path is None:
             if not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
                 raise ValueError(
-                    "hf_path is required when hf_pretrained is not a PreTrainedCausalLM or PreTrainedMaskedLM instance"
+                    "hf_path is required when hf_pretrained is not a PreTrainedCausalLM, "
+                    "PreTrainedMaskedLM, or PreTrainedTokenClassification instance"
                 )
             pre_trained = self.hf_pretrained
         else:
@@ -2031,12 +2086,16 @@ class AutoBridge(Generic[MegatronModelT]):
         return bridge
 
     @property
-    def _pretrained_wrapper_cls(self) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM]:
+    def _pretrained_wrapper_cls(
+        self,
+    ) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM] | Type[PreTrainedTokenClassification]:
         """The hf_pretrained wrapper class matching this bridge's current instance.
 
         Falls back to resolving from the current config when ``hf_pretrained`` is a
         bare ``PretrainedConfig`` (i.e. the bridge was built with ``from_hf_config``).
         """
+        if isinstance(self.hf_pretrained, PreTrainedTokenClassification):
+            return PreTrainedTokenClassification
         if isinstance(self.hf_pretrained, PreTrainedMaskedLM):
             return PreTrainedMaskedLM
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
@@ -2044,14 +2103,16 @@ class AutoBridge(Generic[MegatronModelT]):
         return _resolve_pretrained_wrapper_cls(self.hf_pretrained)
 
     @property
-    def _provider_bridge_input(self) -> PreTrainedCausalLM | PreTrainedMaskedLM | _ConfigOnlyPretrainedShim:
+    def _provider_bridge_input(
+        self,
+    ) -> PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | _ConfigOnlyPretrainedShim:
         if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
             return self.hf_pretrained
         return self._config_only_pretrained
 
     @property
     def _causal_lm_architecture(self):
-        """Resolve the model's CausalLM architecture for dispatch.
+        """Resolve the model architecture used for bridge dispatch.
 
         Behavior:
         - If the model can be imported from transformers directly, return the actual transformers class object.
@@ -2059,11 +2120,11 @@ class AutoBridge(Generic[MegatronModelT]):
         "DeepseekV2ForCausalLM").
 
         Returns:
-            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a
-            string for auto_map models.
+            str | type: The Transformers model class, or its class name for
+            ``auto_map`` and other dynamically registered models.
 
         Raises:
-            ValueError: If no CausalLM architecture is found or cannot be resolved.
+            ValueError: If no supported architecture is found or resolved.
         """
         if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
             config = self.hf_pretrained.config
@@ -2091,8 +2152,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"\n✗ No supported architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
                 f"None of the architectures end with {SUPPORTED_HF_ARCHITECTURES_DISPLAY}.\n"
-                f"This bridge only supports causal language models and the allowlisted non-causal "
-                f"architectures above (e.g. masked LMs).\n"
+                f"This bridge only supports the language-model and task-head architectures "
+                f"listed above (for example causal LMs, masked LMs, and token classifiers).\n"
                 f"For other model types, use a different bridge class."
             )
 
@@ -2144,12 +2205,10 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 # Resolve non-standard architecture names via alias mapping
                 resolved_arch = HF_ARCHITECTURE_ALIASES.get(architecture, architecture)
-                try:
-                    arch_class = getattr(transformers, resolved_arch)
-                    arch_key = arch_class
-                except AttributeError:
-                    # Fall back to name-based registration
-                    arch_key = architecture
+                arch_class = getattr(transformers, resolved_arch, None)
+                # Fall back to name-based registration when the installed
+                # Transformers release does not expose the model class.
+                arch_key = arch_class if arch_class is not None else architecture
 
             # Test if we have a registered implementation (type or class-name string)
             has_implementation = False

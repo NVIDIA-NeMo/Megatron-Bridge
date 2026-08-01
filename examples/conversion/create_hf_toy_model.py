@@ -87,19 +87,81 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("output_dir", type=Path, help="Directory for the truncated checkpoint.")
     parser.add_argument("--num-hidden-layers", type=int, required=True, help="Number of leading layers to retain.")
     parser.add_argument("--revision", help="Optional Hugging Face Hub revision when source is a model ID.")
+    parser.add_argument("--cache-dir", type=Path, help="Optional Hugging Face Hub cache directory.")
     parser.add_argument("--overwrite", action="store_true", help="Replace output_dir if it already exists.")
     return parser.parse_args()
 
 
-def _resolve_source(source: str, *, revision: str | None) -> Path:
+def _select_hub_files(
+    repo_files: list[str],
+    index: dict[str, object] | None,
+    *,
+    num_hidden_layers: int,
+) -> list[str]:
+    """Select metadata and weight shards needed for a shallow Hub checkpoint."""
+    selected = {filename for filename in repo_files if "/" not in filename and _should_copy_metadata(Path(filename))}
+    if "config.json" in repo_files:
+        selected.add("config.json")
+    if index is None:
+        safetensors_files = [
+            filename for filename in repo_files if "/" not in filename and filename.endswith(".safetensors")
+        ]
+        if len(safetensors_files) != 1:
+            raise ValueError(f"Expected one unsharded safetensors file, found {len(safetensors_files)}")
+        selected.update(safetensors_files)
+        return sorted(selected)
+
+    selected.add(_SAFETENSORS_INDEX_NAME)
+    weight_map = cast(dict[str, str], index["weight_map"])
+    selected.update(
+        shard
+        for tensor_name, shard in weight_map.items()
+        if _retains_tensor(tensor_name, num_hidden_layers=num_hidden_layers)
+    )
+    return sorted(selected)
+
+
+def _resolve_source(
+    source: str,
+    *,
+    revision: str | None,
+    num_hidden_layers: int,
+    cache_dir: Path | None,
+) -> tuple[Path, bool]:
     source_path = Path(source).expanduser()
     if source_path.is_dir():
-        return source_path.resolve()
+        return source_path.resolve(), False
 
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
-    LOGGER.info("Downloading Hugging Face checkpoint %s", source)
-    return Path(snapshot_download(repo_id=source, revision=revision))
+    repo_files = HfApi().list_repo_files(source, revision=revision)
+    index = None
+    if _SAFETENSORS_INDEX_NAME in repo_files:
+        index_path = Path(
+            hf_hub_download(
+                repo_id=source,
+                filename=_SAFETENSORS_INDEX_NAME,
+                revision=revision,
+                cache_dir=cache_dir,
+            )
+        )
+        index = cast(dict[str, object], json.loads(index_path.read_text()))
+    selected_files = _select_hub_files(repo_files, index, num_hidden_layers=num_hidden_layers)
+    selected_shards = sum(filename.endswith(".safetensors") for filename in selected_files)
+    LOGGER.info(
+        "Downloading %d weight shard(s) plus metadata from Hugging Face checkpoint %s",
+        selected_shards,
+        source,
+    )
+    snapshot_path = Path(
+        snapshot_download(
+            repo_id=source,
+            revision=revision,
+            allow_patterns=selected_files,
+            cache_dir=cache_dir,
+        )
+    )
+    return snapshot_path, index is not None
 
 
 def _prepare_output(source_dir: Path, output_dir: Path, *, overwrite: bool) -> Path:
@@ -127,27 +189,56 @@ def _copy_metadata_files(source_dir: Path, output_dir: Path) -> None:
             shutil.copy2(source_path, output_dir / source_path.name, follow_symlinks=True)
 
 
+def _language_config(config: dict[str, object]) -> dict[str, object]:
+    """Return the config dictionary that owns the transformer layers."""
+    if "num_hidden_layers" in config:
+        return config
+
+    text_config = config.get("text_config")
+    if isinstance(text_config, dict) and "num_hidden_layers" in text_config:
+        return cast(dict[str, object], text_config)
+
+    raise ValueError("config.json does not contain num_hidden_layers at the top level or under text_config")
+
+
 def _truncate_config(source_dir: Path, output_dir: Path, *, num_hidden_layers: int) -> int:
     config_path = source_dir / "config.json"
     if not config_path.is_file():
         raise FileNotFoundError(f"Hugging Face config not found: {config_path}")
 
     config = json.loads(config_path.read_text())
-    if "num_hidden_layers" not in config:
-        raise ValueError("config.json does not contain a top-level num_hidden_layers field")
-    original_num_hidden_layers = int(config["num_hidden_layers"])
+    transformer_config = _language_config(config)
+    original_num_hidden_layers = int(transformer_config["num_hidden_layers"])
     if not 0 < num_hidden_layers <= original_num_hidden_layers:
         raise ValueError(
             f"num_hidden_layers must be between 1 and {original_num_hidden_layers}, got {num_hidden_layers}"
         )
 
-    config["num_hidden_layers"] = num_hidden_layers
-    if "max_window_layers" in config:
-        config["max_window_layers"] = min(int(config["max_window_layers"]), num_hidden_layers)
-    if isinstance(config.get("layer_types"), list):
-        config["layer_types"] = config["layer_types"][:num_hidden_layers]
-    if isinstance(config.get("mlp_only_layers"), list):
-        config["mlp_only_layers"] = [layer for layer in config["mlp_only_layers"] if layer < num_hidden_layers]
+    transformer_config["num_hidden_layers"] = num_hidden_layers
+    if "max_window_layers" in transformer_config:
+        transformer_config["max_window_layers"] = min(int(transformer_config["max_window_layers"]), num_hidden_layers)
+    if isinstance(transformer_config.get("layer_types"), list):
+        transformer_config["layer_types"] = transformer_config["layer_types"][:num_hidden_layers]
+    if isinstance(transformer_config.get("mlp_only_layers"), list):
+        transformer_config["mlp_only_layers"] = [
+            layer for layer in transformer_config["mlp_only_layers"] if layer < num_hidden_layers
+        ]
+    linear_attn_config = transformer_config.get("linear_attn_config")
+    if isinstance(linear_attn_config, dict):
+        # Unlike the exclusive bounds used above, these lists hold 1-indexed global layer
+        # *numbers*, not 0-indexed offsets, so the retained range is [1, num_hidden_layers]
+        # and the bound is inclusive. Kimi K3's published config is the reference case:
+        # across 93 layers, `kda_layers` spans 1..91 and `full_attn_layers` spans 4..93,
+        # and the two partition 1..93 exactly. The consumer side agrees — the layer spec
+        # tests `layer_number in config.kimi_kda_layers` with MCore's 1-indexed
+        # `layer_number` (see `KimiK3Attention.__init__`).
+        for layer_list_name in ("kda_layers", "full_attn_layers"):
+            if isinstance(linear_attn_config.get(layer_list_name), list):
+                linear_attn_config[layer_list_name] = [
+                    layer_number
+                    for layer_number in linear_attn_config[layer_list_name]
+                    if layer_number <= num_hidden_layers
+                ]
 
     (output_dir / "config.json").write_text(json.dumps(config, indent=2) + "\n")
     return original_num_hidden_layers
@@ -279,6 +370,7 @@ def truncate_checkpoint(
     *,
     num_hidden_layers: int,
     revision: str | None = None,
+    cache_dir: Path | None = None,
     overwrite: bool = False,
 ) -> Path:
     """Create a shallow checkpoint that retains pretrained weights from leading layers.
@@ -288,19 +380,25 @@ def truncate_checkpoint(
         output_dir: Directory where the truncated checkpoint is written.
         num_hidden_layers: Number of leading transformer layers to retain.
         revision: Optional Hub revision used when ``source`` is a model ID.
+        cache_dir: Optional Hugging Face Hub cache directory.
         overwrite: Whether to replace an existing output directory.
 
     Returns:
         Resolved path to the truncated checkpoint.
     """
-    source_dir = _resolve_source(source, revision=revision)
+    source_dir, selectively_downloaded = _resolve_source(
+        source,
+        revision=revision,
+        num_hidden_layers=num_hidden_layers,
+        cache_dir=cache_dir,
+    )
     output_dir = _prepare_output(source_dir, output_dir, overwrite=overwrite)
     _copy_metadata_files(source_dir, output_dir)
     original_num_hidden_layers = _truncate_config(source_dir, output_dir, num_hidden_layers=num_hidden_layers)
     tensor_count, tensor_bytes, removed_tensor_count = _rewrite_checkpoint(
         source_dir, output_dir, num_hidden_layers=num_hidden_layers
     )
-    if num_hidden_layers < original_num_hidden_layers and removed_tensor_count == 0:
+    if not selectively_downloaded and num_hidden_layers < original_num_hidden_layers and removed_tensor_count == 0:
         raise ValueError("No layer tensors were removed; expected tensor names containing layers.<index>")
     LOGGER.info(
         "Created %s from %s: layers=%d/%d, tensors=%d, tensor_bytes=%d",
@@ -323,6 +421,7 @@ def main() -> None:
         args.output_dir,
         num_hidden_layers=args.num_hidden_layers,
         revision=args.revision,
+        cache_dir=args.cache_dir,
         overwrite=args.overwrite,
     )
 
