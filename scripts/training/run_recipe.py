@@ -83,7 +83,16 @@ logger = logging.getLogger(__name__)
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
+from benchmark_parallelism import (  # noqa: E402
+    ParallelTopology,
+    data_parallel_size,
+    topology_from_config,
+    weak_scaled_global_batch_size,
+)
 from recipe_metadata import (  # noqa: E402
     BenchmarkRecipeMetadata,
     infer_recipe_mode,
@@ -335,48 +344,31 @@ def _apply_benchmark_weak_scaling(
     metadata: BenchmarkRecipeMetadata,
     cli_overrides: list[str],
     *,
+    canonical_topology: ParallelTopology,
+    canonical_global_batch_size: int,
     world_size: int,
 ) -> ConfigContainer:
-    """Validate topology and proportionally scale benchmark GBS."""
+    """Validate topology and preserve samples per DP rank."""
     model = getattr(recipe, "model", None)
-    parallel_sizes = {
-        "TP": getattr(model, "tensor_model_parallel_size", 1),
-        "PP": getattr(model, "pipeline_model_parallel_size", 1),
-        "CP": getattr(model, "context_parallel_size", 1),
-    }
-    invalid_sizes = {name: size for name, size in parallel_sizes.items() if not isinstance(size, int) or size <= 0}
-    if invalid_sizes:
-        raise ValueError(f"Parallel sizes must be positive integers, got {invalid_sizes}.")
+    canonical_dp = data_parallel_size(num_gpus=metadata.num_gpus, topology=canonical_topology)
+    requested_dp = data_parallel_size(num_gpus=world_size, topology=topology_from_config(model))
 
-    model_parallel_size = parallel_sizes["TP"] * parallel_sizes["PP"] * parallel_sizes["CP"]
-    if world_size % model_parallel_size != 0:
-        raise ValueError(
-            f"Requested {world_size} GPUs is not divisible by TP * PP * CP "
-            f"({parallel_sizes['TP']} * {parallel_sizes['PP']} * {parallel_sizes['CP']} = {model_parallel_size}). "
-            "Override the parallel sizes for this GPU count."
-        )
-
-    if world_size == metadata.num_gpus or _config_override_is_explicit(cli_overrides, "train.global_batch_size"):
+    if _config_override_is_explicit(cli_overrides, "train.global_batch_size") or requested_dp == canonical_dp:
         return recipe
 
     train = getattr(recipe, "train", None)
-    base_gbs = getattr(train, "global_batch_size", None)
-    if not isinstance(base_gbs, int) or base_gbs <= 0:
-        raise ValueError(f"Canonical recipe global batch size must be a positive integer, got {base_gbs!r}.")
-
-    scaled_gbs_numerator = base_gbs * world_size
-    if scaled_gbs_numerator % metadata.num_gpus != 0:
-        raise ValueError(
-            f"Weak scaling GBS {base_gbs} from {metadata.num_gpus} to {world_size} GPUs does not produce "
-            "an integer global batch size. Pass --global_batch_size explicitly."
-        )
-    scaled_gbs = scaled_gbs_numerator // metadata.num_gpus
+    scaled_gbs = weak_scaled_global_batch_size(
+        base_gbs=canonical_global_batch_size,
+        base_data_parallel=canonical_dp,
+        data_parallel=requested_dp,
+    )
     train.global_batch_size = scaled_gbs
     logger.info(
-        "Weak scaled benchmark global batch size from %d to %d for %d GPUs.",
-        base_gbs,
+        "Weak scaled benchmark global batch size from %d to %d for DP %d -> %d.",
+        canonical_global_batch_size,
         scaled_gbs,
-        world_size,
+        canonical_dp,
+        requested_dp,
     )
     return recipe
 
@@ -478,6 +470,11 @@ def main(argv: list[str] | None = None) -> None:
         recipe = _apply_benchmark_dataset_defaults(recipe, benchmark_metadata)
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
+    benchmark_canonical_topology = None
+    benchmark_canonical_global_batch_size = None
+    if benchmark_metadata is not None:
+        benchmark_canonical_topology = topology_from_config(getattr(recipe, "model", None))
+        benchmark_canonical_global_batch_size = getattr(getattr(recipe, "train", None), "global_batch_size", 1)
     recipe = apply_cli_overrides(recipe, cli_overrides)
     recipe = sync_model_pipeline_layout(recipe, cli_overrides=cli_overrides)
     benchmark_world_size = None
@@ -488,6 +485,8 @@ def main(argv: list[str] | None = None) -> None:
             recipe,
             benchmark_metadata,
             cli_overrides,
+            canonical_topology=benchmark_canonical_topology,
+            canonical_global_batch_size=benchmark_canonical_global_batch_size,
             world_size=benchmark_world_size,
         )
     configuration_mode = _train_mode(args.mode)

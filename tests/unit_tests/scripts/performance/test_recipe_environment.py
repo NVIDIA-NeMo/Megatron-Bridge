@@ -399,7 +399,7 @@ def test_weak_scaling_validates_world_size_and_integer_gbs():
         )
         == 4
     )
-    assert utils._weak_scaled_global_batch_size(base_gbs=192, base_num_gpus=64, num_gpus=8) == 24
+    assert utils._weak_scaled_global_batch_size(base_gbs=192, base_data_parallel=32, data_parallel=4) == 24
 
     with pytest.raises(ValueError, match=r"7 GPUs.*TP \* PP \* CP.*2 \* 1 \* 1"):
         utils._data_parallel_size(
@@ -409,7 +409,41 @@ def test_weak_scaling_validates_world_size_and_integer_gbs():
             context_parallel=1,
         )
     with pytest.raises(ValueError, match=r"does not produce an integer global batch size"):
-        utils._weak_scaled_global_batch_size(base_gbs=190, base_num_gpus=64, num_gpus=8)
+        utils._weak_scaled_global_batch_size(base_gbs=190, base_data_parallel=32, data_parallel=4)
+
+
+def test_exp_name_rejects_fractional_data_parallel_weak_scaling(monkeypatch):
+    base_config = utils.WorkloadBaseConfig(
+        num_gpus=64,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
+        context_parallel_size=1,
+        expert_model_parallel_size=1,
+        expert_tensor_parallel_size=None,
+        global_batch_size=190,
+    )
+    monkeypatch.setattr(utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+    args = SimpleNamespace(
+        num_gpus=8,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        virtual_pipeline_model_parallel_size=-1,
+        expert_model_parallel_size=None,
+        expert_tensor_parallel_size=None,
+        micro_batch_size=None,
+        global_batch_size=None,
+    )
+
+    with pytest.raises(ValueError, match="does not produce an integer global batch size"):
+        utils.get_exp_name_config(
+            args,
+            model_family_name="nemotronh",
+            model_recipe_name="nemotronh_56b",
+            gpu="b300",
+            compute_dtype="fp8_cs",
+            task="pretrain",
+        )
 
 
 def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):

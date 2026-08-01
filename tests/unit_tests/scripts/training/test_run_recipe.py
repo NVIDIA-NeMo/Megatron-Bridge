@@ -529,6 +529,70 @@ def test_benchmark_recipe_weak_scales_noncanonical_world_size(monkeypatch):
     handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
 
 
+def test_benchmark_recipe_weak_scales_by_data_parallel_ratio_after_topology_override(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    config = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=None,
+        ),
+        train=SimpleNamespace(global_batch_size=192),
+    )
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_overrides(recipe, overrides):
+        assert "model.tensor_model_parallel_size=1" in overrides
+        recipe.model.tensor_model_parallel_size = 1
+        return recipe
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
+
+    module.main(
+        [
+            "--recipe",
+            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "--mode",
+            "pretrain",
+            "--tensor_model_parallel_size",
+            "1",
+        ]
+    )
+
+    # Canonical DP is 64 / TP2 = 32; requested DP is 8 / TP1 = 8.
+    assert config.train.global_batch_size == 48
+
+
+def test_benchmark_recipe_rejects_world_size_incompatible_with_expert_grid(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+            expert_tensor_parallel_size=1,
+        ),
+        train=SimpleNamespace(global_batch_size=1280),
+    )
+
+    with pytest.raises(ValueError, match=r"expert.*8 GPUs.*ETP \* EP \* PP.*1 \* 8 \* 4 = 32"):
+        module.main(
+            [
+                "--recipe",
+                "gpt_oss_120b_pretrain_64gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+            ]
+        )
+
+
 def test_benchmark_recipe_explicit_global_batch_size_disables_weak_scaling(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "8")

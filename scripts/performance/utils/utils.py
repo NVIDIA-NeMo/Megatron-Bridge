@@ -31,6 +31,21 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_COMMON_SCRIPTS_ROOT = Path(__file__).resolve().parents[2] / "common"
+if str(_COMMON_SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_COMMON_SCRIPTS_ROOT))
+
+from benchmark_parallelism import (  # noqa: E402
+    data_parallel_size as _validated_data_parallel_size,
+)
+from benchmark_parallelism import (
+    topology_from_config,
+)
+from benchmark_parallelism import (
+    weak_scaled_global_batch_size as _weak_scaled_global_batch_size,
+)
+
+
 # Default timeout for interactive config variant selection (in seconds)
 CONFIG_VARIANT_SELECTION_TIMEOUT = 15
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -76,41 +91,24 @@ class PerfRecipeNotFoundError(ValueError):
     """Raised when an exact flat performance recipe name is unavailable."""
 
 
-def _data_parallel_size(*, num_gpus: int, tensor_parallel: int, pipeline_parallel: int, context_parallel: int) -> int:
-    """Return DP after validating the requested world and model parallel sizes."""
-    parallel_sizes = {"TP": tensor_parallel, "PP": pipeline_parallel, "CP": context_parallel}
-    invalid_sizes = {name: size for name, size in parallel_sizes.items() if not isinstance(size, int) or size <= 0}
-    if invalid_sizes:
-        raise ValueError(f"Parallel sizes must be positive integers, got {invalid_sizes}.")
-    if not isinstance(num_gpus, int) or num_gpus <= 0:
-        raise ValueError(f"Number of GPUs must be a positive integer, got {num_gpus!r}.")
-
-    model_parallel_size = tensor_parallel * pipeline_parallel * context_parallel
-    if num_gpus % model_parallel_size != 0:
-        raise ValueError(
-            f"Requested {num_gpus} GPUs is not divisible by TP * PP * CP "
-            f"({tensor_parallel} * {pipeline_parallel} * {context_parallel} = {model_parallel_size}). "
-            "Override the parallel sizes for this GPU count."
-        )
-    return num_gpus // model_parallel_size
-
-
-def _weak_scaled_global_batch_size(*, base_gbs: int, base_num_gpus: int, num_gpus: int) -> int:
-    """Scale GBS proportionally, requiring the result to remain integral."""
-    if not isinstance(base_num_gpus, int) or base_num_gpus <= 0:
-        raise ValueError(f"Canonical recipe GPU count must be a positive integer, got {base_num_gpus!r}.")
-    if not isinstance(base_gbs, int) or base_gbs <= 0:
-        raise ValueError(f"Canonical recipe global batch size must be a positive integer, got {base_gbs!r}.")
-    if not isinstance(num_gpus, int) or num_gpus <= 0:
-        raise ValueError(f"Number of GPUs must be a positive integer, got {num_gpus!r}.")
-
-    scaled_gbs_numerator = base_gbs * num_gpus
-    if scaled_gbs_numerator % base_num_gpus != 0:
-        raise ValueError(
-            f"Weak scaling GBS {base_gbs} from {base_num_gpus} to {num_gpus} GPUs does not produce "
-            "an integer global batch size. Pass --global_batch_size explicitly."
-        )
-    return scaled_gbs_numerator // base_num_gpus
+def _data_parallel_size(
+    *,
+    num_gpus: int,
+    tensor_parallel: int,
+    pipeline_parallel: int,
+    context_parallel: int,
+    expert_parallel: int = 1,
+    expert_tensor_parallel: int | None = None,
+) -> int:
+    """Return DP after validating the requested dense and expert grids."""
+    topology = WorkloadBaseConfig(
+        tensor_model_parallel_size=tensor_parallel,
+        pipeline_model_parallel_size=pipeline_parallel,
+        context_parallel_size=context_parallel,
+        expert_model_parallel_size=expert_parallel,
+        expert_tensor_parallel_size=expert_tensor_parallel,
+    )
+    return _validated_data_parallel_size(num_gpus=num_gpus, topology=topology_from_config(topology))
 
 
 def configure_slurm_gpu_tuning(
@@ -211,6 +209,8 @@ class WorkloadBaseConfig:
     virtual_pipeline_model_parallel_size: int | None = None
     expert_model_parallel_size: int = 1
     expert_tensor_parallel_size: int | None = None
+    gtp_weight_remat_size: int = 1
+    expert_gtp_weight_remat_size: int = 1
 
     global_batch_size: int = 1
     micro_batch_size: int = 1
@@ -644,6 +644,12 @@ def _workload_base_config_from_recipe(config, *, num_gpus: int) -> WorkloadBaseC
         virtual_pipeline_model_parallel_size=model.virtual_pipeline_model_parallel_size,
         expert_model_parallel_size=getattr(model, "expert_model_parallel_size", 1),
         expert_tensor_parallel_size=getattr(model, "expert_tensor_parallel_size", None),
+        gtp_weight_remat_size=getattr(model, "gtp_weight_remat_size", getattr(model, "gtp_remat_size", 1)),
+        expert_gtp_weight_remat_size=getattr(
+            model,
+            "expert_gtp_weight_remat_size",
+            getattr(model, "expert_gtp_remat_size", 1),
+        ),
         global_batch_size=train.global_batch_size,
         micro_batch_size=train.micro_batch_size,
         env_vars=dict(getattr(config, "env_vars", {})),
@@ -742,10 +748,32 @@ def get_exp_name_config(
     )
     mbs_size = args.micro_batch_size if args.micro_batch_size is not None else base_config.micro_batch_size
 
+    requested_topology = WorkloadBaseConfig(
+        tensor_model_parallel_size=tp_size,
+        pipeline_model_parallel_size=pp_size,
+        context_parallel_size=cp_size,
+        expert_model_parallel_size=ep_size,
+        expert_tensor_parallel_size=etp_size,
+        gtp_weight_remat_size=base_config.gtp_weight_remat_size,
+        expert_gtp_weight_remat_size=base_config.expert_gtp_weight_remat_size,
+    )
+    base_dp = _validated_data_parallel_size(
+        num_gpus=base_config.num_gpus,
+        topology=topology_from_config(base_config),
+    )
+    requested_dp = _validated_data_parallel_size(
+        num_gpus=num_gpus,
+        topology=topology_from_config(requested_topology),
+    )
+
     if args.global_batch_size is not None:
         gbs_size = args.global_batch_size
-    elif num_gpus != base_config.num_gpus:
-        gbs_size = int(base_config.gbs_scaling_factor * num_gpus)
+    elif requested_dp != base_dp:
+        gbs_size = _weak_scaled_global_batch_size(
+            base_gbs=base_config.global_batch_size,
+            base_data_parallel=base_dp,
+            data_parallel=requested_dp,
+        )
     else:
         gbs_size = base_config.global_batch_size
 
