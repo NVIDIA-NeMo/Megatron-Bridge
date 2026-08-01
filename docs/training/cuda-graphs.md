@@ -7,7 +7,7 @@ every training step.
 This page is the stable guide for what CUDA graphs are, when they help, and
 what tradeoffs to expect. For exact enablement knobs, code anchors, and
 verification commands, see
-[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
+[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
 
 ## What It Is
 
@@ -24,7 +24,12 @@ Megatron Bridge supports two capture implementations:
 | `"none"` (default) | Disabled | — |
 
 `"local"` captures the whole forward-backward iteration. `"transformer_engine"`
-captures selected submodules and is usually the more flexible default path.
+captures selected submodules and is the more flexible candidate when a profile
+shows meaningful host/launch overhead.
+
+Scope names follow real module types. `mamba` applies to Mamba layers; it is not
+a generic label for linear attention. Qwen3.5 Gated DeltaNet (GDN) lives under
+`self_attention`, so its applicable TE scope is `attn`, not `mamba`.
 
 ## What Problem It Solves
 
@@ -60,7 +65,8 @@ Enable CUDA graphs when all of the following are mostly true:
 
 As a rule of thumb:
 
-- prefer `transformer_engine` scoped graphs for the safer first rollout
+- after profiling, prefer the narrowest useful `transformer_engine` scoped graph
+  for the first A/B
 - use `local` `full_iteration` graphs only when you specifically want the
   largest launch-overhead reduction and can accept the stricter constraints
 
@@ -107,7 +113,7 @@ If you choose `local` with `full_iteration`, disable the loss and gradient NaN
 checks that conflict with full capture.
 
 For exact config snippets and runnable commands, see
-[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
+[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
 
 ## Minimal Runnable Example
 
@@ -150,7 +156,8 @@ pretrain run with the all-to-all dispatcher, TE-scoped
 warmup steps (`48` graphable layers, about `6.9 s` capture time on rank 0) but
 replay iterations 5-8 averaged `42.00 s` versus `41.36 s` for eager. Treat this
 as evidence to validate CUDA graphs on the target dispatcher, container, and
-batch shape rather than enabling them blindly.
+batch shape rather than enabling them blindly. Repeat the eager/graph A/B after
+changing dispatcher, overlap, precision, or recompute.
 
 ### Packed-sequence SFT and LoRA
 
@@ -200,4 +207,4 @@ The `OptimizerCudaGraphWrapper` is an experimental utility that enables CUDA gra
 
 - [Performance Guide](../performance-guide.md)
 - [Communication Overlap](communication-overlap.md)
-- [skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md)
+- [skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md)
