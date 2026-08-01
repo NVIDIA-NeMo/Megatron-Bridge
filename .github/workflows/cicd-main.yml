@@ -261,19 +261,15 @@ jobs:
           echo "📍 MCore repo: $MCORE_REPO"
           echo "🎯 Triggered by: $TRIGGERED_BY"
 
-          cd 3rdparty/Megatron-LM
           if [[ ! "$MCORE_REF" =~ ^[0-9a-f]{40}$ ]]; then
             echo "MCore ref must be a full commit SHA" >&2
             exit 1
           fi
-          case "$MCORE_REPO" in
-            https://github.com/NVIDIA/Megatron-LM.git|https://github.com/svcnemo-autobot/Megatron-LM.git)
-              ;;
-            *)
-              echo "Unsupported MCore repository: $MCORE_REPO" >&2
-              exit 1
-              ;;
-          esac
+          if ! .github/scripts/validate_mcore_repo.sh "$MCORE_REPO"; then
+            echo "Unsupported MCore repository: $MCORE_REPO" >&2
+            exit 1
+          fi
+          cd 3rdparty/Megatron-LM
           git fetch "$MCORE_REPO" "$MCORE_REF"
           git checkout "$MCORE_REF"
 
@@ -389,19 +385,15 @@ jobs:
           echo "📍 MCore repo: $MCORE_REPO"
           echo "🎯 Triggered by: $TRIGGERED_BY"
 
-          cd 3rdparty/Megatron-LM
           if [[ ! "$MCORE_REF" =~ ^[0-9a-f]{40}$ ]]; then
             echo "MCore ref must be a full commit SHA" >&2
             exit 1
           fi
-          case "$MCORE_REPO" in
-            https://github.com/NVIDIA/Megatron-LM.git|https://github.com/svcnemo-autobot/Megatron-LM.git)
-              ;;
-            *)
-              echo "Unsupported MCore repository: $MCORE_REPO" >&2
-              exit 1
-              ;;
-          esac
+          if ! .github/scripts/validate_mcore_repo.sh "$MCORE_REPO"; then
+            echo "Unsupported MCore repository: $MCORE_REPO" >&2
+            exit 1
+          fi
+          cd 3rdparty/Megatron-LM
           git fetch "$MCORE_REPO" "$MCORE_REF"
           git checkout "$MCORE_REF"
 
