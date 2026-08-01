@@ -48,10 +48,16 @@ class PackedSequenceSpecs:
     def _validate_packed_path(self, attr_name: str, path_value: str | Path) -> None:
         """Validate an explicitly supplied packed artifact path."""
         path_str = str(path_value)
+        from megatron.bridge.data.packing.indexed import is_packed_indexed_dataset
+
+        if is_packed_indexed_dataset(path_str):
+            setattr(self, attr_name, path_str)
+            return
+
         if path_str.lower().endswith(".npy"):
             warnings.warn(
                 "The .npy packed sequence format is deprecated and will be removed in the next release. "
-                f"Please use packed parquet format instead. Path: {path_str}",
+                f"Please use packed SFT .bin/.idx format instead. Path: {path_str}",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -75,6 +81,6 @@ class PackedSequenceSpecs:
             return
 
         raise ValueError(
-            f"{attr_name} must be a .npy file or a packed parquet spec "
+            f"{attr_name} must be a packed SFT .bin/.idx prefix, a .npy file, or a packed parquet spec "
             f"(file/directory/glob ending in .parquet or .pq): {path_str}"
         )

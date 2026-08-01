@@ -20,6 +20,7 @@ import pytest
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
 from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder
 from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.data.packing.indexed import GPTSFTPackedIndexedDataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -100,3 +101,61 @@ def test_default_pack_path_is_stable_for_equivalent_non_hf_tokenizers(tmp_path):
     first = build()
     second = build()
     assert first.default_pack_path == second.default_pack_path
+
+
+def test_default_packed_paths_use_indexed_dataset_prefixes(tmp_path):
+    builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            dataset_root=tmp_path,
+            seq_length=128,
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
+                packed_sequence_size=128,
+                tokenizer_model_name="mock-tokenizer",
+            ),
+        ),
+        tokenizer=MagicMock(),
+    )
+
+    assert builder.train_path_packed.name == "training_128.sft"
+    assert builder.validation_path_packed.name == "validation_128.sft"
+
+
+def test_builder_prepares_and_loads_indexed_packed_data(tmp_path):
+    row = '{"input": "one two", "output": "three four"}\n'
+    for split_name in ("training", "validation", "test"):
+        (tmp_path / f"{split_name}.jsonl").write_text(row * 4)
+
+    tokenizer = MagicMock()
+    tokenizer.eos_id = 2
+    tokenizer.eod = 2
+    tokenizer.bos_id = 1
+    tokenizer.pad_id = 0
+    tokenizer.vocab_size = 128
+    tokenizer.space_sensitive = True
+    tokenizer.text_to_ids = lambda text: list(range(3, len(text.split()) + 4))
+    builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            dataset_root=tmp_path,
+            seq_length=32,
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
+                packed_sequence_size=32,
+                tokenizer_model_name="null",
+                num_tokenizer_workers=1,
+            ),
+        ),
+        tokenizer=tokenizer,
+    )
+
+    train_dataset, validation_dataset, test_dataset = builder.build()
+
+    assert builder.train_path_packed.with_suffix(".sft.bin").is_file()
+    assert builder.train_path_packed.with_suffix(".sft.idx").is_file()
+    assert builder.validation_path_packed.with_suffix(".sft.bin").is_file()
+    assert builder.validation_path_packed.with_suffix(".sft.idx").is_file()
+    assert isinstance(train_dataset, GPTSFTPackedIndexedDataset)
+    assert isinstance(validation_dataset, GPTSFTPackedIndexedDataset)
+    assert test_dataset is not None
+    batch = train_dataset.collate_fn([train_dataset[0]])
+    assert batch["tokens"].shape == batch["labels"].shape == batch["loss_mask"].shape

@@ -275,19 +275,24 @@ def prepare_gpt_sft_packed_data(
     finally:
         np.random.set_state(random_state)
 
-    # save output data
+    # IndexedDataset is the default storage. Parquet remains available for
+    # migration and explicit A/B validation.
     output_path_str = str(output_path)
     if output_path_str.lower().endswith((".parquet", ".pq")):
         from megatron.bridge.data.packing.parquet import write_packed_parquet
 
         write_packed_parquet(output_data, output_path)
-    else:
+    elif output_path_str.lower().endswith(".npy"):
         # Legacy .npy format
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
             msc.numpy.save(output_path, output_data)
         else:
             np.save(output_path, output_data)
+    else:
+        from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+        write_packed_indexed_dataset(output_data, output_path)
 
     # save packing metadata, packing_metadata is appended to the packing file if it exists
     if output_metadata_path is not None:

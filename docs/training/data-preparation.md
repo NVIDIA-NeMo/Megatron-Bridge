@@ -8,8 +8,7 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 |----------|--------|-------------|--------------------|
 | LLM pretraining | Recommended | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` |
 | Text SFT or PEFT, processed at runtime | Recommended | Hosted Hugging Face rows or local JSON/JSONL loaded through Hugging Face datasets | [Hugging Face text-only](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-text-only/README.md) through `DirectHFSFTDatasetConfig` + builder |
-| Text SFT or PEFT, prepared data | Planned; not available yet | Pretokenized `.bin`/`.idx` | Future Issue #4664 prepared-SFT builder |
-| Text SFT or PEFT, transitional prepared data | Supported until `.bin`/`.idx` replacement | Local/materialized JSONL and optional packed Parquet | `GPTSFTDatasetConfig` |
+| Text SFT or PEFT, prepared data | Recommended | Offline-packed `.sft.bin`/`.sft.idx`; packed Parquet for compatibility | [`GPTSFTDatasetConfig`](packed-sft-indexed-dataset.md) |
 | Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Hugging Face multimodal](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) through `DirectHFSFTDatasetConfig` + builder |
 | Large sharded multimodal training | Recommended | WebDataset/Energon | [Multimodal Energon](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md) through `EnergonDatasetConfig` + builder |
 
@@ -102,6 +101,8 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same. `checkpoint.pretrained_checkpoint` is required for the frozen base model, and `checkpoint.load` is used only when resuming adapter checkpoints.
 
 For preparation schemas, offline packing, finite epochs, and a complete knob reference, see the [text-only SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/text-only-sft/README.md).
+For the prepared `.bin/.idx` workflow and Parquet migration checks, see the
+[packed SFT indexed dataset tutorial](packed-sft-indexed-dataset.md).
 
 ## Hugging Face Datasets for SFT and PEFT
 

@@ -16,8 +16,8 @@
 """Pre-pack SFT training data for a recipe that uses packed sequences.
 
 Run this before submitting a training job so packing is not performed on
-GPU compute nodes. Packed .parquet files are written to the dataset cache
-directory defined by the recipe.
+GPU compute nodes. Packed ``.sft.bin/.sft.idx`` files are written to the
+dataset cache directory defined by the recipe.
 
 Usage (inside container with PYTHONPATH=/opt/megatron-lm:/opt/Megatron-Bridge/src):
 
@@ -55,10 +55,14 @@ def main() -> None:
         "--val-input-path", default=None, help="Optional processed JSONL path for the validation split."
     )
     parser.add_argument(
-        "--packed-train-data-path", default=None, help="Optional output path for packed training data."
+        "--packed-train-data-path",
+        default=None,
+        help="Optional packed output prefix (.bin/.idx by default; .parquet remains supported).",
     )
     parser.add_argument(
-        "--packed-val-data-path", default=None, help="Optional output path for packed validation data."
+        "--packed-val-data-path",
+        default=None,
+        help="Optional packed output prefix (.bin/.idx by default; .parquet remains supported).",
     )
     parser.add_argument("--packed-metadata-path", default=None, help="Optional output path for packing metadata.")
     parser.add_argument(

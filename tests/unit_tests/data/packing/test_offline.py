@@ -14,6 +14,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -29,6 +30,31 @@ from megatron.bridge.data.packing.offline import (
 
 
 PAD_ID = 0
+
+
+def test_default_output_uses_indexed_dataset_writer(monkeypatch, tmp_path):
+    from megatron.bridge.data.packing import indexed, offline
+
+    rows = [{"input_ids": [1, 2], "loss_mask": [0, 1], "seq_start_id": [0]}]
+    writer = Mock()
+    monkeypatch.setattr(offline, "tokenize_dataset", lambda *args, **kwargs: np.array([], dtype=object))
+    monkeypatch.setattr(offline, "create_hist", lambda *args, **kwargs: ({}, []))
+    monkeypatch.setattr(offline, "create_packing_strategy", lambda *args, **kwargs: ([], {}))
+    monkeypatch.setattr(offline, "fill_packing_strategy", lambda *args, **kwargs: rows)
+    monkeypatch.setattr(indexed, "write_packed_indexed_dataset", writer)
+    prefix = tmp_path / "training_128.sft"
+
+    prepare_gpt_sft_packed_data(
+        input_path=tmp_path / "training.jsonl",
+        output_path=prefix,
+        output_metadata_path=None,
+        packed_sequence_size=128,
+        tokenizer=SimpleNamespace(eos_id=PAD_ID),
+        max_seq_length=128,
+        dataset_builder=Mock(),
+    )
+
+    writer.assert_called_once_with(rows, prefix)
 
 
 def test_configured_seed_controls_offline_packing(monkeypatch):

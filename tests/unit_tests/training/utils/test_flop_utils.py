@@ -2766,7 +2766,7 @@ class TestResolveGlobalFlopsSeqlenStats:
 
 @pytest.mark.unit
 class TestPackedDataExists:
-    """Unit tests for ``_packed_data_exists`` (parquet spec + npy fallback gate).
+    """Unit tests for ``_packed_data_exists`` across packed storage formats.
 
     The helper decides whether the LoRA-aware FLOP branch fires. It must accept
     the same specs the packed-parquet loader does -- a single file, a glob, or a
@@ -2778,6 +2778,13 @@ class TestPackedDataExists:
     def test_none_or_empty_is_false(self):
         assert _packed_data_exists(None) is False
         assert _packed_data_exists("") is False
+
+    def test_indexed_prefix(self, tmp_path):
+        from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+        prefix = tmp_path / "training_4096.sft"
+        write_packed_indexed_dataset([{"input_ids": [1, 2], "loss_mask": [0, 1], "seq_start_id": [0]}], prefix)
+        assert _packed_data_exists(str(prefix)) is True
 
     def test_parquet_single_file(self, tmp_path):
         f = tmp_path / "training_4096.idx.parquet"
@@ -2811,8 +2818,8 @@ class TestPackedDataExists:
 class TestLoraSquadPackedFlopBranch:
     """The LoRA + SQuAD + Llama-3-70B packed-dataset FLOP branch.
 
-    Exercises the packed-data-path discovery (prefer ``*.idx.parquet``, fall back
-    to the deprecated ``*.npy``) and confirms that when a packed dataset is found
+    Exercises packed-data discovery (prefer indexed data, then Parquet, then
+    deprecated ``*.npy``) and confirms that when a packed dataset is found
     the LoRA-aware (~4ND) branch fires -- i.e. ``calculate_avg_seqlen`` is consulted
     -- instead of falling through to the full-model (6ND) accounting.
     ``calculate_avg_seqlen`` itself is patched (its parquet/npy loading is covered
@@ -2871,6 +2878,26 @@ class TestLoraSquadPackedFlopBranch:
         mock_calc.assert_called_once()
         # The resolved path must be the parquet shard, not the npy.
         assert mock_calc.call_args.args[0].endswith("training_512.idx.parquet")
+        assert flops > 0
+
+    def test_prefers_indexed_and_takes_lora_branch(self, tmp_path):
+        from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        prefix = packed_dir / "training_512.sft"
+        write_packed_indexed_dataset([{"input_ids": [1, 2], "loss_mask": [0, 1], "seq_start_id": [0]}], prefix)
+        (packed_dir / "training_512.idx.parquet").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            flops = num_floating_point_operations(cfg, batch_size=1)
+
+        mock_calc.assert_called_once()
+        assert mock_calc.call_args.args[0].endswith("training_512.sft")
         assert flops > 0
 
     def test_falls_back_to_npy_when_no_parquet(self, tmp_path):

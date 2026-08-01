@@ -113,7 +113,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         train_path_packed = dataset.train_path_packed
 
-        assert PosixPath(train_path_packed) == PosixPath(dataset.default_pack_path / "training_1.idx.parquet")
+        assert PosixPath(train_path_packed) == PosixPath(dataset.default_pack_path / "training_1.sft")
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
 
@@ -131,7 +131,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         validation_path_packed = dataset.validation_path_packed
 
-        assert PosixPath(validation_path_packed) == PosixPath(dataset.default_pack_path / "validation_1.idx.parquet")
+        assert PosixPath(validation_path_packed) == PosixPath(dataset.default_pack_path / "validation_1.sft")
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
         try:
@@ -161,7 +161,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         train_path_packed = dataset.train_path_packed
 
-        assert train_path_packed == msc.Path(str(dataset.default_pack_path / "training_1.idx.parquet"))
+        assert train_path_packed == msc.Path(str(dataset.default_pack_path / "training_1.sft"))
 
         # Validation
         dataset, _ = get_dataset(ensure_test_data, packed_val_data_path=npy_path)
@@ -172,7 +172,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         validation_path_packed = dataset.validation_path_packed
 
-        assert validation_path_packed == msc.Path(str(dataset.default_pack_path / "validation_1.idx.parquet"))
+        assert validation_path_packed == msc.Path(str(dataset.default_pack_path / "validation_1.sft"))
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
 

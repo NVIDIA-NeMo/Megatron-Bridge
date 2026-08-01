@@ -31,6 +31,10 @@ from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 from megatron.bridge.data.base import DataloaderConfig, validate_declarative_mapping
 from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTDataset, get_dataset_root
 from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.data.packing.indexed import (
+    is_packed_indexed_dataset,
+    normalize_packed_indexed_prefix,
+)
 from megatron.bridge.data.packing.paths import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
@@ -435,7 +439,9 @@ def build_gpt_sft_split(
 ) -> Any | None:
     """Build one GPT SFT split from a local JSONL or packed-data path."""
     path_str = str(path)
-    if is_packed_parquet_spec(path_str):
+    if is_packed_indexed_dataset(path_str):
+        path_exists = True
+    elif is_packed_parquet_spec(path_str):
         try:
             # Retry with directory-metadata refresh: on NFS filesystems a non-producer
             # node can transiently see zero files right after rank 0 wrote them (#4207).
@@ -454,11 +460,12 @@ def build_gpt_sft_split(
 
     is_not_packing = packed_sequence_size <= 0
     effective_metadata_path = None
-    if not is_not_packing:
-        if pad_cu_seqlens:
-            effective_metadata_path = pack_metadata_path
-        elif not is_packed_parquet_spec(path_str):
-            effective_metadata_path = pack_metadata_path
+    if not is_not_packing and pad_cu_seqlens:
+        effective_metadata_path = pack_metadata_path
+    elif not is_not_packing and path_str.lower().endswith(".npy"):
+        # The legacy NumPy reader needs metadata even when cumulative sequence
+        # lengths are not padded. Indexed and Parquet rows are self-describing.
+        effective_metadata_path = pack_metadata_path
 
     options = dict(dataset_kwargs or {})
     chat = options.pop("chat", False)
@@ -492,6 +499,17 @@ def build_gpt_sft_split(
         from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 
         return GPTSFTPackedDataset(
+            pack_metadata_file_path=effective_metadata_path,
+            pad_cu_seqlens=pad_cu_seqlens,
+            pad_seq_to_mult=pad_seq_to_mult,
+            **dataset_init_kwargs,
+            **options,
+        )
+
+    if is_packed_indexed_dataset(path_str):
+        from megatron.bridge.data.packing.indexed import GPTSFTPackedIndexedDataset
+
+        return GPTSFTPackedIndexedDataset(
             pack_metadata_file_path=effective_metadata_path,
             pad_cu_seqlens=pad_cu_seqlens,
             pad_seq_to_mult=pad_seq_to_mult,
@@ -597,7 +615,7 @@ class GPTSFTDatasetBuilder:
 
         Skips preparation if:
         - packed_sequence_size <= 0 (packing disabled)
-        - packed data files already exist (parquet or legacy .npy), unless
+        - packed data files already exist (IndexedDataset, Parquet, or legacy .npy), unless
           ``hf_rewrite`` requested regeneration
         """
         if self.packed_sequence_size <= 0:
@@ -649,7 +667,7 @@ class GPTSFTDatasetBuilder:
         if packed_path_str.lower().endswith(".npy"):
             warnings.warn(
                 "Automatic .npy packed sequence preparation is deprecated and will be removed in the next release. "
-                "Please use packed parquet format instead.",
+                "Please use packed SFT .bin/.idx format instead.",
                 DeprecationWarning,
                 stacklevel=3,
             )
@@ -673,6 +691,7 @@ class GPTSFTDatasetBuilder:
     def _packed_path_exists(self, path: Union[str, Path]) -> bool:
         """Check if a packed data path exists.
 
+        For packed IndexedDataset: check both .bin and .idx exist
         For .npy files: check file exists
         For packed parquet specs: check if resolution returns non-empty
 
@@ -683,6 +702,9 @@ class GPTSFTDatasetBuilder:
             True if the packed data exists
         """
         path_str = str(path)
+
+        if is_packed_indexed_dataset(path_str):
+            return True
 
         # For packed parquet specs, check if resolution returns files
         if is_packed_parquet_spec(path_str):
@@ -702,6 +724,20 @@ class GPTSFTDatasetBuilder:
     def _remove_packed_path(self, path: Union[str, Path]) -> None:
         """Remove one builder-managed packed artifact if it exists."""
         path_str = str(path)
+        if is_packed_indexed_dataset(path_str):
+            prefix = normalize_packed_indexed_prefix(path_str)
+            indexed_paths = (f"{prefix}.bin", f"{prefix}.idx")
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                for indexed_path in indexed_paths:
+                    path_obj = msc.Path(indexed_path)
+                    if path_obj.exists():
+                        path_obj.unlink()
+            else:
+                for indexed_path in indexed_paths:
+                    Path(indexed_path).unlink(missing_ok=True)
+            return
+
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
             path_obj = msc.Path(path_str)
@@ -852,7 +888,7 @@ class GPTSFTDatasetBuilder:
         if self.packed_sequence_size > 0:
             if self.offline_packing_specs.packed_train_data_path is not None:
                 return self.offline_packing_specs.packed_train_data_path
-            return self.default_pack_path / f"training_{self.packed_sequence_size}.idx.parquet"
+            return self.default_pack_path / f"training_{self.packed_sequence_size}.sft"
         else:
             raise ValueError("`train_path_packed` invalid since packed sequence size is not specified.")
 
@@ -872,7 +908,7 @@ class GPTSFTDatasetBuilder:
         if self.packed_sequence_size > 0:
             if self.offline_packing_specs.packed_val_data_path is not None:
                 return self.offline_packing_specs.packed_val_data_path
-            return self.default_pack_path / f"validation_{self.packed_sequence_size}.idx.parquet"
+            return self.default_pack_path / f"validation_{self.packed_sequence_size}.sft"
         else:
             raise ValueError("`validation_path_packed` invalid since packed sequence size is not specified.")
 

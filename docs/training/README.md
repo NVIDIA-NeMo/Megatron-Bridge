@@ -33,6 +33,7 @@ This directory contains comprehensive documentation for training and customizing
 | **[Configuration Container Overview](config-container-overview.md)** | Central configuration object for all training settings | First time setting up training |
 | **[Entry Points](entry-points.md)** | Training entry points and execution flow | Understanding how training starts |
 | **[Data Preparation](data-preparation.md)** | Dataset formats for pretraining, SFT, PEFT, and VLM fine-tuning | Preparing data or choosing dataset config fields |
+| **[Packed SFT Indexed Dataset](packed-sft-indexed-dataset.md)** | Prepare and consume `.sft.bin/.sft.idx` data | Moving packed SFT from Parquet to MCore indexed storage |
 | **[Training Loop Settings](training-loop-settings.md)** | Training loop parameters and configuration | Configuring batch sizes, iterations, validation |
 
 ### Optimization and Performance

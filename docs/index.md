@@ -78,6 +78,7 @@ training/cpu-offloading.md
 training/moe-optimization.md
 training/peft.md
 training/packed-sequences.md
+training/packed-sft-indexed-dataset.md
 training/multi-token-prediction.md
 training/callbacks.md
 ```

@@ -409,10 +409,9 @@ def calculate_avg_seqlen(
     """Calculate average sequence length statistics from a packed dataset.
 
     Args:
-        dataset_file: Path to the packed dataset. Either a legacy ``.npy`` file, or a
-            parquet spec (``.parquet`` / ``.pq``) which may be a single file, a glob
-            pattern, or a directory -- resolved via ``resolve_packed_parquet_paths``
-            so this matches the specs accepted by the FLOP-accounting existence gate.
+        dataset_file: Path to packed SFT ``.bin/.idx``, legacy ``.npy``, or
+            Parquet data. Indexed and Parquet inputs may be a single dataset,
+            glob pattern, or directory.
         gbs: Global batch size used to determine how many rows to process.
         max_seq_len: Maximum sequence length (reserved for future use).
         drop_remainder: If True, drop rows that don't fill a complete batch.
@@ -427,12 +426,12 @@ def calculate_avg_seqlen(
     Raises:
         ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
     """
-    # Same predicate the packed-parquet loader (and flop_utils._packed_data_exists)
-    # uses, so the format detected here matches the spec accepted by the existence
-    # gate -- covers single file, glob pattern, and directory specs.
+    from megatron.bridge.data.packing.indexed import PackedSFTIndexedDataset, is_packed_indexed_dataset
     from megatron.bridge.data.packing.paths import is_packed_parquet_spec, resolve_packed_parquet_paths
 
-    if is_packed_parquet_spec(dataset_file):
+    if is_packed_indexed_dataset(dataset_file):
+        data = PackedSFTIndexedDataset(dataset_file)
+    elif is_packed_parquet_spec(dataset_file):
         import pyarrow.parquet as pq
 
         # Resolve the spec (single file / glob / directory) to concrete shard paths

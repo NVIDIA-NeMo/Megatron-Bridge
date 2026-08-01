@@ -137,15 +137,22 @@ def test_hf_rewrite_rejects_explicit_packed_paths(tmp_path):
     [
         ("training.idx.parquet", False, False),
         ("training.idx.parquet", True, True),
+        ("training.sft", False, False),
+        ("training.sft", True, True),
         ("training.npy", False, True),
     ],
 )
 def test_packed_metadata_forwarding_depends_on_format_and_padding(
     monkeypatch, tmp_path, filename, pad_cu_seqlens, expects_metadata
 ):
-    """Test Parquet and legacy packed formats receive metadata when required."""
+    """Test packed formats receive metadata only when their reader requires it."""
     packed_path = tmp_path / filename
-    packed_path.touch()
+    if filename.endswith(".sft"):
+        from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+        write_packed_indexed_dataset([{"input_ids": [1, 2], "loss_mask": [0, 1], "seq_start_id": [0]}], packed_path)
+    else:
+        packed_path.touch()
     metadata_path = tmp_path / "metadata.jsonl"
     captured = {}
 
@@ -155,10 +162,17 @@ def test_packed_metadata_forwarding_depends_on_format_and_padding(
 
     if filename.endswith(".npy"):
         from megatron.bridge.data.packing import gpt_sft as packed_module
+    elif filename.endswith(".sft"):
+        from megatron.bridge.data.packing import indexed as packed_module
     else:
         from megatron.bridge.data.packing import parquet as packed_module
 
-    dataset_class_name = "GPTSFTPackedDataset" if filename.endswith(".npy") else "GPTSFTPackedParquetDataset"
+    if filename.endswith(".npy"):
+        dataset_class_name = "GPTSFTPackedDataset"
+    elif filename.endswith(".sft"):
+        dataset_class_name = "GPTSFTPackedIndexedDataset"
+    else:
+        dataset_class_name = "GPTSFTPackedParquetDataset"
     monkeypatch.setattr(packed_module, dataset_class_name, _build)
 
     build_gpt_sft_split(

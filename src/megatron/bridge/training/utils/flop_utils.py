@@ -32,22 +32,24 @@ _lora_seq_stats_cache: dict = {}
 
 
 def _packed_data_exists(path: str | None) -> bool:
-    """Return True if a packed dataset file exists, for both parquet and npy formats.
+    """Return True when an indexed, Parquet, or legacy NumPy pack exists.
 
-    Parquet specs may be a single file, a glob, or a directory, so they are detected
-    with ``is_packed_parquet_spec`` and validated via the packed-parquet resolver
-    rather than a bare ``Path.exists()`` check (which would fail for globs/directories
-    and silently disable LoRA-aware FLOP accounting). This mirrors the format detection
-    in ``calculate_avg_seqlen`` so a spec that passes this gate also reads correctly.
+    Indexed and Parquet specs may be a single dataset, glob, or directory, so
+    each format uses its own resolver instead of a bare ``Path.exists()``
+    check. This mirrors ``calculate_avg_seqlen`` so an accepted path is also
+    readable by LoRA-aware FLOP accounting.
     """
     if not path:
         return False
     try:
+        from megatron.bridge.data.packing.indexed import is_packed_indexed_dataset
         from megatron.bridge.data.packing.paths import (
             is_packed_parquet_spec,
             resolve_packed_parquet_paths,
         )
 
+        if is_packed_indexed_dataset(path):
+            return True
         if is_packed_parquet_spec(path):
             return len(resolve_packed_parquet_paths(path)) > 0
     except Exception:
@@ -695,11 +697,16 @@ def num_floating_point_operations(
             dataset_root = getattr(dataset_cfg, "dataset_root", None) or getattr(dataset_cfg, "hf_output_root", None)
             seq_size = getattr(packed_specs, "packed_sequence_size", None)
             if dataset_root is not None and seq_size is not None:
-                # Prefer the current parquet format; fall back to the deprecated .npy.
-                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.idx.parquet"))
+                # Prefer the default indexed format, then the explicit Parquet
+                # compatibility path, and finally deprecated NumPy data.
+                matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.sft.idx"))
+                if matches:
+                    packed_data_path = str(matches[0])[: -len(".idx")]
+                else:
+                    matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.idx.parquet"))
                 if not matches:
                     matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
-                if matches:
+                if matches and packed_data_path is None:
                     packed_data_path = str(matches[0])
         if is_lora and is_squad and is_llama3_70b and _packed_data_exists(packed_data_path):
             gbs = cfg.train.global_batch_size

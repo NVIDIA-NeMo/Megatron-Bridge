@@ -140,8 +140,8 @@ class TestSegmentTreeMatchesLinearScan:
 #   seqlen_sq_accum   = (9+9) + 16         = 34
 # -> (count, total, sq_individual, sq_per_row) = (3/2, 10/2, 34/3, 34/2)
 _AVG_SEQLEN_ROWS = [
-    {"input_ids": list(range(8)), "seq_start_id": [0, 4]},
-    {"input_ids": list(range(5)), "seq_start_id": [0]},
+    {"input_ids": list(range(8)), "loss_mask": [1] * 8, "seq_start_id": [0, 4]},
+    {"input_ids": list(range(5)), "loss_mask": [1] * 5, "seq_start_id": [0]},
 ]
 _AVG_SEQLEN_EXPECTED = (3 / 2, 10 / 2, 34 / 3, 34 / 2)
 
@@ -160,7 +160,7 @@ def _write_avg_seqlen_parquet(path, rows) -> None:
 
 
 class TestCalculateAvgSeqlen:
-    """calculate_avg_seqlen must load npy and parquet (single/glob/dir) identically."""
+    """All supported packed formats must produce identical sequence statistics."""
 
     def _assert_expected(self, stats):
         assert stats == pytest.approx(_AVG_SEQLEN_EXPECTED)
@@ -169,6 +169,22 @@ class TestCalculateAvgSeqlen:
         path = tmp_path / "training_4096.npy"
         np.save(path, np.array(_AVG_SEQLEN_ROWS, dtype=object))
         stats = calculate_avg_seqlen(str(path), gbs=1, max_seq_len=8, drop_remainder=True)
+        self._assert_expected(stats)
+
+    def test_indexed_single_prefix(self, tmp_path):
+        from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+        prefix = tmp_path / "training_4096.sft"
+        write_packed_indexed_dataset(_AVG_SEQLEN_ROWS, prefix)
+        stats = calculate_avg_seqlen(str(prefix), gbs=1, max_seq_len=8, drop_remainder=True)
+        self._assert_expected(stats)
+
+    def test_indexed_directory_spec(self, tmp_path):
+        from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+        write_packed_indexed_dataset(_AVG_SEQLEN_ROWS[:1], tmp_path / "shard_000.sft")
+        write_packed_indexed_dataset(_AVG_SEQLEN_ROWS[1:], tmp_path / "shard_001.sft")
+        stats = calculate_avg_seqlen(str(tmp_path), gbs=1, max_seq_len=8, drop_remainder=True)
         self._assert_expected(stats)
 
     def test_parquet_single_file(self, tmp_path):
