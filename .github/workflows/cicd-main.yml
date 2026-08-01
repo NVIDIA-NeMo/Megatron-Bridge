@@ -1250,4 +1250,3 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
-
