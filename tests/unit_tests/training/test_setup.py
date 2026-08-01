@@ -17,7 +17,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1
 
+import megatron.bridge.training.setup as setup_module
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -394,3 +396,7 @@ def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():
         _update_model_config_funcs([rebuilt_model], transformer_config, ddp_config, optimizer=None)
 
     assert transformer_config.no_sync_func.__self__ is rebuilt_model
+
+
+def test_megatron_fsdp_type_check_uses_v1_wrapper():
+    assert setup_module.megatron_FSDP is FullyShardedDataParallelV1
