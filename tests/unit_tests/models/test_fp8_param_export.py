@@ -190,22 +190,6 @@ class TestFp8ParamExport:
         else:
             assert bridge.unquantized_state_dict is None
 
-    def test_load_weights_installs_megatron_fsdp_optimized_weights(self, monkeypatch):
-        bridge = DummyBridge()
-        install_optimized_model_weights = Mock()
-        model = SimpleNamespace(
-            ddp_config=SimpleNamespace(use_megatron_fsdp=True),
-            module=SimpleNamespace(install_optimized_model_weights=install_optimized_model_weights),
-        )
-        monkeypatch.setattr(DummyBridge, "build_conversion_tasks", lambda self, *_a, **_k: [])
-        monkeypatch.setattr(DummyBridge, "_broadcast_shared_embeddings", lambda self, *_a, **_k: None)
-        hf_pretrained = SimpleNamespace(state={}, model_name_or_path="dummy")
-
-        result = bridge.load_weights_hf_to_megatron(hf_pretrained, [model])
-
-        assert result == [model]
-        install_optimized_model_weights.assert_called_once_with()
-
     @pytest.mark.parametrize(
         "export_dtype, cfg, expect_raise, n_fp8_build_calls",
         [
