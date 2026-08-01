@@ -145,7 +145,7 @@ class ExaoneMoeDecoderLayer(TransformerLayer):
         )
 
 
-def _build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSpec":
+def build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSpec":
     """Build EXAONE MoE decoder specs while keeping MTP sub-layers dense."""
     block_submodules = get_gpt_decoder_block_spec(cfg, use_transformer_engine=HAVE_TE, **kwargs)
 
@@ -168,7 +168,7 @@ def _build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSp
 class ExaoneMoeModelProvider(GPTModelProvider):
     """Model provider for EXAONE MoE models."""
 
-    transformer_layer_spec: "ModuleSpec" | Callable[["GPTModelProvider"], "ModuleSpec"] = _build_exaone_moe_layer_spec
+    transformer_layer_spec: "ModuleSpec" | Callable[["GPTModelProvider"], "ModuleSpec"] = build_exaone_moe_layer_spec
 
     # Model
     normalization: str = "RMSNorm"

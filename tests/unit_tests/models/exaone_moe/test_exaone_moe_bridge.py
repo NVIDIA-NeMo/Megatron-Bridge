@@ -27,6 +27,7 @@ from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import (
     ExaoneMoeModelProvider,
     _layer_specific_config,
     _MTPDenseLayerSpecsList,
+    build_exaone_moe_layer_spec,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -228,6 +229,10 @@ class TestExaoneMoeBridge:
         assert provider.mtp_use_repeated_layer is True
         assert provider.mtp_layer_types == ["sliding_attention"]
         assert provider.mtp_sliding_windows == [128]
+
+        exported_config = ExaoneMoeBridge.megatron_to_hf_config(provider)
+        assert exported_config["num_nextn_predict_layers"] == 1
+        assert exported_config["mtp_num_speculative_steps"] == 4
         assert provider.moe_router_load_balancing_type == "none"
         assert provider.moe_aux_loss_coeff == 0.0
         assert provider.params_dtype is torch.bfloat16
@@ -269,6 +274,12 @@ class TestExaoneMoeBridge:
         assert block_spec.layer_specs[-1].module is ExaoneMoeDecoderLayer
         assert block_spec.layer_specs[-1].submodules.mlp.func == MLP.as_mlp_submodule
         assert block_spec.layer_specs[-1] is not block_spec.layer_specs[provider.num_layers - 1]
+
+    def test_layer_spec_builder_is_public_for_checkpoint_config_reload(self):
+        provider = ExaoneMoeModelProvider()
+
+        assert provider.transformer_layer_spec is build_exaone_moe_layer_spec
+        assert not provider.transformer_layer_spec.__name__.startswith("_")
 
     @pytest.mark.parametrize(
         ("config_overrides", "message"),

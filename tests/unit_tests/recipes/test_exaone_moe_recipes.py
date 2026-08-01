@@ -33,7 +33,7 @@ def _patch_recipe_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_k_exaone_2_0_pipeline_layout_balances_decoder_and_mtp_layers() -> None:
     recipe_module = importlib.import_module("megatron.bridge.recipes.exaone.h100.exaone_moe")
 
-    layout = recipe_module._get_k_exaone_2_0_pipeline_layout(16, None)
+    layout = recipe_module.get_k_exaone_2_0_pipeline_layout(16, None)
 
     assert layout is not None
     assert len(layout) == 16
@@ -42,6 +42,14 @@ def test_k_exaone_2_0_pipeline_layout_balances_decoder_and_mtp_layers() -> None:
     assert layout[0].count("embedding") == 1
     assert layout[-1].count("loss") == 1
     assert layout[-1].count("mtp") == 4
+
+
+def test_k_exaone_2_0_pipeline_layout_builder_is_public_for_checkpoint_reload() -> None:
+    recipe_module = importlib.import_module("megatron.bridge.recipes.exaone.h100.exaone_moe")
+
+    builder = recipe_module.get_k_exaone_2_0_pipeline_layout
+
+    assert not builder.__name__.startswith("_")
 
 
 @pytest.mark.parametrize(

@@ -31,7 +31,7 @@ _K_EXAONE_2_0_NUM_LAYERS = 78
 _K_EXAONE_2_0_MTP_NUM_LAYERS = 4
 
 
-def _get_k_exaone_2_0_pipeline_layout(pp_size: int, vp_size: int | None) -> list[list[str]] | None:
+def get_k_exaone_2_0_pipeline_layout(pp_size: int, vp_size: int | None) -> list[list[str]] | None:
     """Build a balanced pipeline layout for K-EXAONE 2.0."""
     effective_vp_size = 1 if vp_size is None else vp_size
     total_stages = pp_size * effective_vp_size
@@ -131,8 +131,8 @@ def _apply_k_exaone_2_0_topology(
     cfg.model.expert_model_parallel_size = expert_model_parallel_size
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.pipeline_dtype = torch.bfloat16
-    cfg.model._pipeline_model_parallel_layout_builder = _get_k_exaone_2_0_pipeline_layout
-    cfg.model.pipeline_model_parallel_layout = _get_k_exaone_2_0_pipeline_layout(
+    cfg.model._pipeline_model_parallel_layout_builder = get_k_exaone_2_0_pipeline_layout
+    cfg.model.pipeline_model_parallel_layout = get_k_exaone_2_0_pipeline_layout(
         pipeline_model_parallel_size,
         cfg.model.virtual_pipeline_model_parallel_size,
     )

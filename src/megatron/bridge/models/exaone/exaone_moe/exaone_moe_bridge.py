@@ -37,6 +37,22 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 class ExaoneMoeBridge(MegatronModelBridge):
     """Megatron Bridge for Hugging Face EXAONE MoE causal language models."""
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: ExaoneMoeModelProvider) -> dict:
+        """Preserve EXAONE's distinction between physical and repeated MTP layers."""
+        hf_config = super().megatron_to_hf_config(provider)
+        mtp_num_speculative_steps = int(getattr(provider, "mtp_num_layers", 0) or 0)
+        mtp_layer_types = getattr(provider, "mtp_layer_types", None)
+        if mtp_layer_types is not None:
+            physical_mtp_layers = len(mtp_layer_types)
+        elif getattr(provider, "mtp_use_repeated_layer", False) and mtp_num_speculative_steps:
+            physical_mtp_layers = 1
+        else:
+            physical_mtp_layers = mtp_num_speculative_steps
+        hf_config["num_nextn_predict_layers"] = physical_mtp_layers
+        hf_config["mtp_num_speculative_steps"] = mtp_num_speculative_steps
+        return hf_config
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> ExaoneMoeModelProvider:
         hf_config = hf_pretrained.config
         self.hf_config = hf_config
