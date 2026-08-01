@@ -57,6 +57,27 @@ def _fsdp_metrics():
     }
 
 
+def test_verified_inference_accepts_canonical_bash_launcher():
+    module = _load_validator()
+    errors = []
+    item = {
+        "expected_result": 'The exact 1-token result produced completion "ok".',
+    }
+
+    module._validate_inference(
+        item,
+        item_name="inference",
+        status="verified",
+        errors=errors,
+        command_override=(
+            "./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 "
+            "--task vlm-generation --prompt hello --max_new_tokens 1"
+        ),
+    )
+
+    assert errors == []
+
+
 def test_fsdp_index_mirrors_concrete_hardware_leaf():
     module = _load_validator()
     verification_index, items, hardware_groups = _complete_index_inputs(module)

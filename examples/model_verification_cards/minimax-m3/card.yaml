@@ -140,7 +140,8 @@ items:
     precision: bf16
     bridge_commit: 9bd762e26525ab40703f9dac0b8a935b2fc78c19  # pragma: allowlist secret
     command: >
-      uv run python scripts/inference/vlm_generation.py
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      --task vlm-generation
       --hf_model_path MiniMaxAI/MiniMax-M3
       --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
       --megatron_model_path

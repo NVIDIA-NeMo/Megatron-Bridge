@@ -1086,8 +1086,10 @@ def _validate_inference(
         command_tokens = shlex.split(command)
     except ValueError:
         command_tokens = []
-    if command_tokens[:2] != ["uv", "run"]:
-        errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
+    uses_uv = command_tokens[:2] == ["uv", "run"]
+    uses_inference_launcher = command_tokens[:1] == ["./scripts/inference/infer.sh"]
+    if not uses_uv and not uses_inference_launcher:
+        errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run or ./scripts/inference/infer.sh")
     prompts = _argument_values(command, "--prompt")
     if len(prompts) != 1:
         errors.append(f"{_pointer(*resolved_command_path)}: specify --prompt exactly once")
