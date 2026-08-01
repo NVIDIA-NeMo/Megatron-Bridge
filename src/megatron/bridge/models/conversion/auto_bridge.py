@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from collections.abc import Callable
 from contextlib import nullcontext
 from functools import cached_property, partial
@@ -25,6 +26,8 @@ from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optiona
 import torch
 import torch.distributed as dist
 import transformers
+from megatron.core import parallel_state
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 if TYPE_CHECKING:
@@ -32,6 +35,7 @@ if TYPE_CHECKING:
 
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from megatron.training.models.base import ModelConfig
 from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
@@ -51,6 +55,7 @@ from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_co
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
+from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
 
 logger = logging.getLogger(__name__)
@@ -1680,6 +1685,192 @@ class AutoBridge(Generic[MegatronModelT]):
             _load_and_export_adapter(model)
 
     def push_to_hub(self, path: str | Path) -> None: ...
+
+    def get_model_config(self) -> ModelConfig:
+        """Convert the Hugging Face architecture to a builder-backed config.
+
+        Builder-backed config support is being rolled out incrementally by
+        model family. This API is available only for families that have
+        migrated to a compatible ``ModelConfig``. Continue to use
+        :meth:`to_megatron_provider` for families that have not yet migrated.
+
+        This method performs configuration conversion only. It does not load
+        weights, initialize distributed state, finalize the config, or build a
+        model.
+
+        Returns:
+            Serializable model config linked to its model builder.
+
+        Raises:
+            ModelConfigNotSupportedError: If the selected model family explicitly
+                disables the builder path.
+        """
+        hf_config = (
+            self.hf_pretrained.config
+            if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES)
+            else self.hf_pretrained
+        )
+        model_config = self._model_bridge.hf_config_to_model_config(hf_config)
+
+        hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
+        if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
+            hf_name_or_path = getattr(self.hf_pretrained, "name_or_path", None)
+        self._set_source_metadata(model_config, hf_model_id=hf_name_or_path, hf_model_revision=self.hf_model_revision)
+
+        return model_config
+
+    @staticmethod
+    def _set_source_metadata(
+        model_config: ModelConfig,
+        *,
+        hf_model_id: str | Path | None,
+        hf_model_revision: str | None,
+    ) -> None:
+        """Record Hugging Face source provenance in the config's checkpoint metadata.
+
+        The source ``hf_model_id`` and ``hf_model_revision`` are stored under the
+        inherited serializable ``extra_checkpoint_metadata`` mapping rather than as
+        dedicated config fields, so they round-trip through ``run_config.yaml``
+        without adding model-specific fields to builder-backed configs.
+
+        Args:
+            model_config: Builder-backed config to annotate in place.
+            hf_model_id: Source model id or path. Ignored when falsy.
+            hf_model_revision: Source revision. When falsy, any recorded revision
+                is removed so it does not leak from a previous source.
+        """
+        metadata = model_config.extra_checkpoint_metadata
+        if metadata is None:
+            metadata = {}
+            model_config.extra_checkpoint_metadata = metadata
+        if hf_model_id:
+            metadata["hf_model_id"] = str(hf_model_id)
+        if hf_model_revision:
+            metadata["hf_model_revision"] = hf_model_revision
+        else:
+            metadata.pop("hf_model_revision", None)
+
+    def get_model(
+        self,
+        model_config: ModelConfig | None = None,
+        *,
+        load_weights: bool = True,
+        hf_path: str | Path | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
+        **kwargs: Any,
+    ) -> list[MegatronModelT]:
+        """Build a Megatron model through its configured ``ModelBuilder``.
+
+        Like :meth:`get_model_config`, this builder-backed API is being rolled
+        out incrementally and supports only migrated model families. Continue
+        to use :meth:`to_megatron_model` for families that have not yet
+        migrated.
+
+        Args:
+            model_config: Optional config with user overrides already applied.
+                When omitted, :meth:`get_model_config` supplies the defaults.
+            load_weights: Load Hugging Face weights before distributed wrapping.
+            hf_path: Optional Hugging Face checkpoint path to load instead of
+                the bridge's original source.
+            pg_collection: Existing process groups. Standalone single-process
+                groups are initialized when omitted.
+            **kwargs: Arguments for ``ModelBuilder.build_distributed_models``.
+
+        Returns:
+            Distributed model stages created by the configured builder.
+
+        Raises:
+            ModelConfigNotSupportedError: If defaults are requested for a model
+                family that has not migrated to builder-backed configs.
+        """
+        if model_config is None:
+            model_config = self.get_model_config()
+
+        transformer_config = getattr(model_config, "transformer", None)
+        if not isinstance(transformer_config, TransformerConfig):
+            raise TypeError(f"{type(model_config).__name__} does not define a nested TransformerConfig.")
+        if hf_path is not None and not load_weights:
+            raise ValueError("hf_path is only valid when load_weights=True.")
+        if load_weights and hf_path is None and not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
+            raise ValueError(
+                "AutoBridge.from_hf_config() does not include weights. "
+                "Pass load_weights=False or provide hf_path to load weights."
+            )
+
+        original_perform_initialization = transformer_config.perform_initialization
+        original_pre_wrap_hooks = list(model_config.pre_wrap_hooks)
+        original_extra_metadata = model_config.extra_checkpoint_metadata
+        original_extra_metadata_snapshot = (
+            dict(original_extra_metadata) if original_extra_metadata is not None else None
+        )
+        succeeded = False
+        try:
+            if load_weights:
+                transformer_config.perform_initialization = False
+                if hf_path is None:
+                    pretrained = self.hf_pretrained
+                else:
+                    pretrained = self._pretrained_wrapper_cls.from_pretrained(
+                        hf_path,
+                        trust_remote_code=self.trust_remote_code,
+                    )
+                    self._set_source_metadata(model_config, hf_model_id=hf_path, hf_model_revision=None)
+                model_config.pre_wrap_hooks[:] = [
+                    partial(self._model_bridge.load_weights_hf_to_megatron, pretrained),
+                    *original_pre_wrap_hooks,
+                ]
+
+            model_config.finalize()
+            builder = model_config.get_builder_cls()(model_config)
+            if pg_collection is None:
+                pg_collection = self._get_or_initialize_pg_collection(transformer_config)
+            kwargs.setdefault("data_parallel_random_init", False)
+            models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            succeeded = True
+        finally:
+            transformer_config.perform_initialization = original_perform_initialization
+            model_config.pre_wrap_hooks[:] = original_pre_wrap_hooks
+            if not succeeded:
+                model_config.extra_checkpoint_metadata = (
+                    dict(original_extra_metadata_snapshot) if original_extra_metadata_snapshot is not None else None
+                )
+
+        return models
+
+    @staticmethod
+    def _get_or_initialize_pg_collection(
+        transformer_config: TransformerConfig,
+        *,
+        seed: int = 0,
+    ) -> ProcessGroupCollection:
+        """Return model-parallel process groups for standalone construction."""
+        if not dist.is_initialized():
+            os.environ.setdefault("RANK", "0")
+            os.environ.setdefault("WORLD_SIZE", "1")
+            os.environ.setdefault("MASTER_ADDR", "localhost")
+            os.environ.setdefault("MASTER_PORT", "12355")
+
+            use_cpu = transformer_config.use_cpu_initialization or not torch.cuda.is_available()
+            backend = "gloo" if use_cpu else "nccl"
+            if backend == "nccl":
+                torch.cuda.set_device(get_local_rank_preinit())
+            dist.init_process_group(backend=backend)
+
+        if not parallel_state.is_initialized():
+            parallel_state.initialize_model_parallel(
+                tensor_model_parallel_size=transformer_config.tensor_model_parallel_size,
+                pipeline_model_parallel_size=transformer_config.pipeline_model_parallel_size,
+                virtual_pipeline_model_parallel_size=transformer_config.virtual_pipeline_model_parallel_size,
+                context_parallel_size=transformer_config.context_parallel_size or 1,
+                expert_model_parallel_size=transformer_config.expert_model_parallel_size or 1,
+                expert_tensor_parallel_size=transformer_config.expert_tensor_parallel_size,
+            )
+            if torch.cuda.is_available():
+                from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+                model_parallel_cuda_manual_seed(seed)
+
+        return ProcessGroupCollection.use_mpu_process_groups()
 
     def to_megatron_model(
         self,

@@ -24,6 +24,7 @@ from unittest.mock import Mock, PropertyMock, patch
 import pytest
 import torch
 import transformers
+from megatron.core import parallel_state
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import (
     AutoProcessor,
@@ -44,6 +45,7 @@ from megatron.bridge.models.conversion.auto_bridge import (
     _resolve_pretrained_wrapper_cls,
     _saved_config_disables_mtp,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
@@ -59,6 +61,21 @@ def create_mock_pretrained_causal_lm():
             pass  # Skip actual initialization
 
     return MockPreTrainedCausalLM()
+
+
+def _make_tiny_llama_config(**overrides) -> LlamaConfig:
+    config_kwargs = {
+        "architectures": ["LlamaForCausalLM"],
+        "hidden_size": 64,
+        "intermediate_size": 128,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 4,
+        "max_position_embeddings": 256,
+        "vocab_size": 128,
+    }
+    config_kwargs.update(overrides)
+    return LlamaConfig(**config_kwargs)
 
 
 def _save_minimal_fast_tokenizer(path: Path) -> PreTrainedTokenizerFast:
@@ -618,6 +635,153 @@ class TestAutoBridge:
         assert not hasattr(provider_input, "state")
         assert provider_input.config is vlm_config
         assert provider_input.model_name_or_path == model_id
+
+    def test_get_model_config_uses_builder_mapping(self):
+        """Config-only Llama conversion returns a serializable builder config."""
+        config = _make_tiny_llama_config(name_or_path="local/llama")
+
+        model_config = AutoBridge.from_hf_config(config).get_model_config()
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.extra_checkpoint_metadata["hf_model_id"] == "local/llama"
+        assert model_config.hidden_size == 64
+        assert model_config.seq_length == 256
+
+    def test_builder_api_uses_concise_public_names(self):
+        """The builder path exposes get_model_config() and get_model() only."""
+        assert callable(AutoBridge.get_model_config)
+        assert callable(AutoBridge.get_model)
+        assert not hasattr(AutoBridge, "get_megatron_model")
+
+    def test_get_model_executes_weight_hook_and_restores_config(self):
+        """Builder construction observes weight-loading and initialization semantics."""
+        config = _make_tiny_llama_config()
+        hf_pretrained = create_mock_pretrained_causal_lm()
+        hf_pretrained.config = config
+        bridge = AutoBridge(hf_pretrained)
+        model_config = AutoBridge.from_hf_config(config).get_model_config()
+        original_hook = Mock(side_effect=lambda models: models)
+        model_config.pre_wrap_hooks.append(original_hook)
+        model_sentinel = Mock()
+        pg_sentinel = Mock()
+        call_order = []
+        build_kwargs = {}
+
+        class RecordingBuilder:
+            def __init__(self, config):
+                self.config = config
+
+            def build_distributed_models(self, *, pg_collection, **kwargs):
+                assert pg_collection is pg_sentinel
+                assert self.config.transformer.perform_initialization is False
+                build_kwargs.update(kwargs)
+                models = [model_sentinel]
+                for hook in self.config.pre_wrap_hooks:
+                    models = hook(models)
+                return models
+
+        mock_model_bridge = Mock()
+
+        def load_weights(pretrained, models):
+            assert pretrained is hf_pretrained
+            call_order.append("load")
+            return models
+
+        def run_original_hook(models):
+            call_order.append("original")
+            return models
+
+        mock_model_bridge.load_weights_hf_to_megatron.side_effect = load_weights
+        original_hook.side_effect = run_original_hook
+
+        with (
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock, return_value=mock_model_bridge),
+            patch.object(BridgeGPTModelConfig, "get_builder_cls", return_value=RecordingBuilder),
+        ):
+            models = bridge.get_model(model_config, pg_collection=pg_sentinel)
+
+        assert models == [model_sentinel]
+        assert call_order == ["load", "original"]
+        assert build_kwargs["data_parallel_random_init"] is False
+        assert model_config.transformer.perform_initialization is True
+        assert model_config.pre_wrap_hooks == [original_hook]
+
+    def test_get_model_restores_source_metadata_after_build_failure(self):
+        """A failed explicit-path build must not leave partial source metadata."""
+        config = _make_tiny_llama_config()
+        bridge = AutoBridge.from_hf_config(config)
+        bridge.trust_remote_code = True
+        model_config = bridge.get_model_config()
+        model_config.extra_checkpoint_metadata = {
+            "hf_model_id": "original/llama",
+            "hf_model_revision": "original-revision",
+        }
+        loaded_pretrained = create_mock_pretrained_causal_lm()
+
+        class FailingBuilder:
+            def __init__(self, config):
+                self.config = config
+
+            def build_distributed_models(self, **kwargs):
+                assert self.config.extra_checkpoint_metadata["hf_model_id"] == "replacement/llama"
+                assert "hf_model_revision" not in self.config.extra_checkpoint_metadata
+                raise RuntimeError("expected build failure")
+
+        with (
+            patch.object(PreTrainedCausalLM, "from_pretrained", return_value=loaded_pretrained) as from_pretrained,
+            patch.object(BridgeGPTModelConfig, "get_builder_cls", return_value=FailingBuilder),
+            pytest.raises(RuntimeError, match="expected build failure"),
+        ):
+            bridge.get_model(
+                model_config,
+                hf_path="replacement/llama",
+                pg_collection=Mock(),
+            )
+
+        from_pretrained.assert_called_once_with("replacement/llama", trust_remote_code=True)
+        assert model_config.extra_checkpoint_metadata["hf_model_id"] == "original/llama"
+        assert model_config.extra_checkpoint_metadata["hf_model_revision"] == "original-revision"
+        assert model_config.transformer.perform_initialization is True
+        assert model_config.pre_wrap_hooks == []
+
+    def test_get_model_rejects_missing_config_only_weights(self):
+        """Config-only construction requires an explicit random-init choice."""
+        config = _make_tiny_llama_config()
+        bridge = AutoBridge.from_hf_config(config)
+
+        with pytest.raises(ValueError, match="does not include weights"):
+            bridge.get_model(bridge.get_model_config(), pg_collection=Mock())
+
+    def test_get_model_builds_tiny_llama_with_mcore_builder(self):
+        """The migrated Llama config constructs a real CPU Megatron model."""
+        config = _make_tiny_llama_config()
+        bridge = AutoBridge.from_hf_config(config)
+        model_config = bridge.get_model_config()
+        model_config.transformer_impl = "local"
+        model_config.use_cpu_initialization = True
+        model_config.bias_activation_fusion = False
+        model_config.masked_softmax_fusion = False
+        model_config.persist_layer_norm = False
+        model_config.bias_dropout_fusion = False
+        model_config.apply_rope_fusion = False
+        model_config.gradient_accumulation_fusion = False
+        model_config.cross_entropy_loss_fusion = False
+
+        try:
+            models = bridge.get_model(
+                model_config,
+                load_weights=False,
+                wrap_with_ddp=False,
+                mixed_precision_wrapper=None,
+            )
+        finally:
+            if parallel_state.is_initialized():
+                parallel_state.destroy_model_parallel()
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
+
+        assert len(models) == 1
+        assert models[0].config is model_config.transformer
 
     def test_from_pretrained_with_additional_kwargs(self):
         """Test from_pretrained with various kwargs."""

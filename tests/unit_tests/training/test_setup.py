@@ -326,6 +326,7 @@ class TestBuildDistributedModel:
     def test_build_with_model_config(self, _mock_gpt_cls):
         """Test that builder.build_distributed_models is called for ModelConfig."""
         cfg, model_cfg = self._make_cfg_with_model_config()
+        assert not hasattr(model_cfg, "provide_distributed_model")
 
         mock_builder_cls = MagicMock()
         mock_builder = MagicMock()

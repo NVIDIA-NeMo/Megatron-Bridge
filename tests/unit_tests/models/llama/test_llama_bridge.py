@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import tempfile
+from dataclasses import fields
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -24,6 +25,7 @@ from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
@@ -91,6 +93,10 @@ class TestLlamaBridgeConfigConverter:
         """Test that LlamaBridge is properly registered."""
         assert issubclass(LlamaBridge, MegatronModelBridge)
 
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        """Llama should not maintain a separate provider construction path."""
+        assert "provider_bridge" not in LlamaBridge.__dict__
+
     def test_provider_bridge_stores_rope_scaling_for_llama31(self, mock_pretrained_llama):
         """Test that provider_bridge enables rope_scaling for Llama 3.1/3.2."""
         bridge = LlamaBridge()
@@ -100,6 +106,116 @@ class TestLlamaBridgeConfigConverter:
         assert isinstance(result, GPTModelProvider)
         assert result.rope_scaling is True
         assert result.rope_scaling_factor == 32.0
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self, mock_pretrained_llama, llama_config):
+        """The builder config path must not route through the legacy provider."""
+        bridge = LlamaBridge()
+
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(
+                bridge,
+                "hf_config_to_provider_kwargs",
+                side_effect=AssertionError("provider kwargs path used"),
+            ),
+        ):
+            result = bridge.hf_config_to_model_config(mock_pretrained_llama.config)
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        assert result.num_layers == llama_config.num_hidden_layers
+        assert result.hidden_size == llama_config.hidden_size
+        assert result.ffn_hidden_size == llama_config.intermediate_size
+        assert result.num_attention_heads == llama_config.num_attention_heads
+        assert result.num_query_groups == llama_config.num_key_value_heads
+        assert result.seq_length == llama_config.max_position_embeddings
+        assert result.rotary_base == rope_theta_from_hf(llama_config)
+        assert result.vocab_size == llama_config.vocab_size
+        assert result.layernorm_epsilon == llama_config.rms_norm_eps
+        assert result.activation_func is F.silu
+        assert result.normalization == "RMSNorm"
+        assert result.position_embedding_type == "rope"
+        assert result.rope_scaling is True
+        assert result.rope_scaling_factor == 32.0
+
+    @pytest.mark.parametrize(
+        "rope_scaling",
+        [
+            None,
+            {"type": "linear", "factor": 8.0},
+            {
+                "rope_type": "llama3",
+                "factor": 32.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+            },
+        ],
+        ids=["default", "linear", "llama3"],
+    )
+    def test_model_config_matches_provider_runtime_config(self, rope_scaling):
+        """Builder and provider paths agree on every comparable runtime field."""
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            attention_bias=False,
+            attention_dropout=0.0,
+            hidden_size=64,
+            intermediate_size=128,
+            max_position_embeddings=131072,
+            mlp_bias=False,
+            num_attention_heads=8,
+            num_hidden_layers=2,
+            num_key_value_heads=4,
+            rms_norm_eps=1e-5,
+            rope_scaling=rope_scaling,
+            rope_theta=500000.0,
+            tie_word_embeddings=True,
+            torch_dtype="bfloat16",
+            vocab_size=128,
+        )
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = LlamaBridge()
+
+        mapped_kwargs = bridge.hf_config_to_model_config_kwargs(config)
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        comparable_fields = sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"})
+
+        assert set(mapped_kwargs) <= set(comparable_fields)
+        assert len(comparable_fields) > len(mapped_kwargs)
+        for field_name in comparable_fields:
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+
+        # The provider stores its model-construction callable directly; the new
+        # config intentionally delegates layer-spec selection to its builder.
+        assert model_config.transformer_layer_spec is None
+        assert callable(provider.transformer_layer_spec)
+
+    def test_model_config_preserves_linear_rope_scaling(self):
+        """Linear RoPE scaling maps to the builder config without provider use."""
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            max_position_embeddings=256,
+            vocab_size=128,
+            rope_scaling={"type": "linear", "factor": 8.0},
+        )
+
+        result = LlamaBridge().hf_config_to_model_config(config)
+
+        assert result.position_embedding_type == "rope"
+        assert result.seq_len_interpolation_factor == 8.0
+        assert result.rope_scaling is False
+        assert result.rope_scaling_factor == 1.0
 
     def test_provider_bridge_preserves_linear_rope_scaling(self):
         """Test that linear RoPE scaling is preserved in the Megatron provider."""
@@ -115,11 +231,13 @@ class TestLlamaBridgeConfigConverter:
             rope_scaling={"type": "linear", "factor": 8.0},
         )
 
-        provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
 
         assert provider.position_embedding_type == "rope"
         assert provider.seq_len_interpolation_factor == 8.0
         assert provider.rope_scaling is False
+        assert provider.rope_scaling_factor == 1.0
 
     def test_provider_bridge_architecture_mapping(self, mock_pretrained_llama, llama_config):
         """Test that architecture parameters are correctly mapped from HF config."""
