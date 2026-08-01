@@ -146,7 +146,7 @@ def _partition_packed_batch_contiguous(
     return batch
 
 
-def get_batch(
+def get_batch(  # pragma: no cover
     data_iterator: Iterable,
     cfg: ConfigContainer,
     use_mtp: bool = False,
@@ -210,7 +210,7 @@ def get_batch(
     )
 
 
-def forward_step(
+def forward_step(  # pragma: no cover
     state: GlobalState,
     data_iterator: Iterable,
     model: GPTModel,

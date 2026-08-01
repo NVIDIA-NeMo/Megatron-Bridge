@@ -76,3 +76,40 @@ class TestPartitionPackedBatchContiguous:
         batch = {"tokens": None, "labels": None, "loss_mask": None, "cu_seqlens": cu_seqlens}
         result = self._run(monkeypatch, batch, cp_size=2)
         assert result is batch
+
+
+class TestPackedMetadataForForward:
+    """Tests for _packed_metadata_for_forward."""
+
+    def test_returns_none_for_empty_batch(self):
+        batch = {"tokens": None, "labels": None}
+        from megatron.bridge.models.deepseek.deepseek_v4_step import _packed_metadata_for_forward
+
+        assert _packed_metadata_for_forward(batch) is None
+
+    def test_legacy_path_extracts_cu_seqlens_and_cp_partition_mode(self):
+        from megatron.bridge.models.deepseek.deepseek_v4_step import _packed_metadata_for_forward
+
+        batch = {
+            "cu_seqlens": torch.tensor([[0, 4, 8]], dtype=torch.int32),
+            "max_seqlen": torch.tensor([[8]]),
+            "cp_partition_mode": "contiguous",
+            "total_tokens": 8,
+        }
+        meta = _packed_metadata_for_forward(batch)
+        assert meta is not None
+        assert meta["cp_partition_mode"] == "contiguous"
+        assert "cu_seqlens" in meta
+
+    def test_current_path_with_cu_seqlens_q(self):
+        from megatron.bridge.models.deepseek.deepseek_v4_step import _packed_metadata_for_forward
+
+        batch = {
+            "cu_seqlens_q": torch.tensor([[0, 4]], dtype=torch.int32),
+            "max_seqlen_q": torch.tensor([[4]]),
+            "cp_partition_mode": "contiguous",
+        }
+        meta = _packed_metadata_for_forward(batch)
+        assert meta is not None
+        assert meta.get("cp_partition_mode") == "contiguous"
+        assert "cu_seqlens_q" in meta
