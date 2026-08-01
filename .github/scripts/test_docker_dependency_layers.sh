@@ -10,6 +10,8 @@ baseline_line=$(grep -n 'Install the main-branch environment from an immutable b
 dispatched_copy_line=$(grep -n '^COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM$' "$dockerfile" | cut -d: -f1)
 delta_line=$(grep -n 'syncing the dispatched dependency delta' "$dockerfile" | cut -d: -f1)
 validator=".github/scripts/validate_mcore_repo.sh"
+temporary_dir=$(mktemp -d)
+trap 'rm -rf "$temporary_dir"' EXIT
 
 [[ -n "$baseline_arg_line" ]]
 [[ -n "$baseline_clone_line" ]]
@@ -45,7 +47,23 @@ test "$(grep -c 'git fetch "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'git checkout "$MCORE_REF"' "$workflow")" = 2
 
 "$validator" https://github.com/NVIDIA/Megatron-LM.git
-"$validator" https://github.com/example-contributor/Megatron-LM.git
+mkdir -p "$temporary_dir/bin"
+cat >"$temporary_dir/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"repos/example-contributor/Megatron-LM"* ]]; then
+  echo example-contributor/Megatron-LM
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$temporary_dir/bin/gh"
+PATH="$temporary_dir/bin:$PATH" GH_TOKEN=test "$validator" \
+  https://github.com/example-contributor/Megatron-LM.git
+if PATH="$temporary_dir/bin:$PATH" GH_TOKEN=test "$validator" \
+  https://github.com/not-a-fork/Megatron-LM.git; then
+  echo "MCore repository validation accepted a non-fork" >&2
+  exit 1
+fi
 if "$validator" 'https://github.com/example/Megatron-LM.git;touch /tmp/injected'; then
   echo "MCore repository validation accepted shell metacharacters" >&2
   exit 1
@@ -56,19 +74,19 @@ if "$validator" https://example.com/example/Megatron-LM.git; then
 fi
 
 if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-  temporary_dir=$(mktemp -d)
-  trap 'rm -rf "$temporary_dir"' EXIT
-  cat >"$temporary_dir/Dockerfile" <<'EOF'
+  docker_test_dir="$temporary_dir/docker"
+  mkdir -p "$docker_test_dir"
+  cat >"$docker_test_dir/Dockerfile" <<'EOF'
 FROM alpine:3.22
 ARG BASELINE_REF
 RUN echo "baseline-$BASELINE_REF" >/baseline
 COPY dispatched-source.txt /dispatched-source.txt
 EOF
-  echo first >"$temporary_dir/dispatched-source.txt"
-  DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BASELINE_REF=main -t mbridge-cache-order-test "$temporary_dir" \
-    >"$temporary_dir/first.log" 2>&1
-  echo second >"$temporary_dir/dispatched-source.txt"
-  DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BASELINE_REF=main -t mbridge-cache-order-test "$temporary_dir" \
-    >"$temporary_dir/second.log" 2>&1
-  grep -A2 'baseline-$BASELINE_REF' "$temporary_dir/second.log" | grep -q CACHED
+  echo first >"$docker_test_dir/dispatched-source.txt"
+  DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BASELINE_REF=main -t mbridge-cache-order-test "$docker_test_dir" \
+    >"$docker_test_dir/first.log" 2>&1
+  echo second >"$docker_test_dir/dispatched-source.txt"
+  DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BASELINE_REF=main -t mbridge-cache-order-test "$docker_test_dir" \
+    >"$docker_test_dir/second.log" 2>&1
+  grep -A2 'baseline-$BASELINE_REF' "$docker_test_dir/second.log" | grep -q CACHED
 fi

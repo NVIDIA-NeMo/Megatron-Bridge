@@ -252,6 +252,7 @@ jobs:
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           MCORE_BRANCH: ${{ github.event.inputs.mcore_branch || 'unknown' }}
           MCORE_REF: ${{ github.event.inputs.mcore_ref }}
           MCORE_REPO: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}
@@ -375,6 +376,7 @@ jobs:
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
         env:
+          GH_TOKEN: ${{ github.token }}
           MCORE_BRANCH: ${{ github.event.inputs.mcore_branch || 'unknown' }}
           MCORE_REF: ${{ github.event.inputs.mcore_ref }}
           MCORE_REPO: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}
