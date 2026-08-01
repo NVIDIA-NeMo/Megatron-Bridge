@@ -97,9 +97,14 @@ def _l1_distance_per_token(draft_logits: torch.Tensor, target_logits: torch.Tens
 
 
 def _reduce_den(value: torch.Tensor, dp_group) -> torch.Tensor:
-    """Sum a denominator over the data-parallel group (no-op without a live group)."""
+    """Sum a denominator over ``dp_group``. No reduction when ``dp_group`` is ``None``.
+
+    The caller must pass the intended data-parallel group explicitly; ``None`` is
+    local-only. (Do not fall back to the default process group, whose members are
+    not the DP replicas under Megatron-Core parallelism.)
+    """
     out = value.detach().clone()
-    if dp_group is not None or (dist.is_available() and dist.is_initialized()):
+    if dp_group is not None:
         dist.all_reduce(out, op=dist.ReduceOp.SUM, group=dp_group)
     return out
 
@@ -171,7 +176,7 @@ def dspark_loss(
 
     # Divide by the (optionally DP-reduced) denominators; the backward gradient is
     # scaled by world_size so the DP-averaged gradient matches the global loss.
-    world_size = dist.get_world_size(dp_group) if (dist.is_available() and dist.is_initialized()) else 1
+    world_size = dist.get_world_size(dp_group) if dp_group is not None else 1
     ce_g, l1_g, conf_g = (_reduce_den(d, dp_group) for d in (ce_den, l1_den, conf_den))
     ce_loss = ce_num / (ce_g + 1e-6)
     l1_loss = l1_num / (l1_g + 1e-6) if l1_g.item() > 0 else zero
