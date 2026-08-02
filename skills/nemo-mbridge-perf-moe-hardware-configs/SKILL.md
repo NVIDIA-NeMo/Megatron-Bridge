@@ -4,6 +4,7 @@ description: Representative, point-in-time MoE training playbooks by hardware an
 license: Apache-2.0
 when_to_use: Hardware-specific MoE playbooks or throughput estimates; 'MoE on H100', 'GB200 config', 'expected throughput', 'MoE hardware playbook', 'parallelism for B200'.
 ---
+<!-- NVSkills signature refresh request: 2026-08-02T19:32:21Z. No instruction changes. -->
 
 # MoE Hardware Configuration Reference
 

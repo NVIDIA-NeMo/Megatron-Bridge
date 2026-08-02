@@ -3,7 +3,7 @@ name: nemo-mbridge-recipe-recommender
 license: Apache-2.0
 description: Recommend and customize Megatron Bridge library and benchmark recipes for a user's model, GPU count, hardware, sequence length, and pretrain/SFT/PEFT goal. Use when selecting a starting recipe, comparing library and benchmark configs, resizing parallelism for a GPU allocation, or distinguishing convergence changes, semantics-preserving execution tuning, and benchmark-only shortcuts.
 ---
-<!-- NVSkills signature refresh request: 2026-07-24T22:01:49Z. No instruction changes. -->
+<!-- NVSkills signature refresh request: 2026-08-02T19:32:21Z. No instruction changes. -->
 
 # Auto Recipe — Recipe Index & Recommendation
 

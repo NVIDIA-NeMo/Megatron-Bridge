@@ -4,6 +4,7 @@ description: Evidence-gated workflow for MoE performance optimization in Megatro
 license: Apache-2.0
 when_to_use: Full MoE throughput tuning sweep, or diagnosing a MoE throughput regression after a commit or config change; 'optimize MoE throughput', 'MoE perf tuning', 'Three Walls', 'memory wall', 'communication wall', 'compute wall'.
 ---
+<!-- NVSkills signature refresh request: 2026-08-02T19:32:21Z. No instruction changes. -->
 
 # MoE Training Optimization Workflow
 
