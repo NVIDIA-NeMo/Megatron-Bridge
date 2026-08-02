@@ -17,6 +17,7 @@ from typing import Callable, Optional
 
 import pytest
 
+from megatron.bridge.models.conversion import AutoBridge
 from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
 from megatron.bridge.recipes.llama import (
     llama32_1b_pretrain_config,
@@ -90,8 +91,14 @@ def run_distill_recipe_test(
     try:
         # Load student config - pretrain configs use parameterless API
         config: ConfigContainer = student_config_func()
+        config.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(
+            load_weights=False
+        )
         # Load teacher config - pretrain configs use parameterless API
         teacher_config = teacher_config_func()
+        teacher_config.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_provider(
+            load_weights=False
+        )
 
         # Set up output directories after instantiation
         run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
