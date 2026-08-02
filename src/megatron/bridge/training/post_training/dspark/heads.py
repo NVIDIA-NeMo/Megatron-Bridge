@@ -54,7 +54,16 @@ class VanillaMarkov(nn.Module):
         self.markov_w2 = nn.Linear(self.markov_rank, self.vocab_size, bias=False)
 
     def get_prev_embeddings(self, token_ids: torch.Tensor) -> torch.Tensor:
-        """Look up ``markov_w1`` for ``token_ids`` (any shape) -> ``[..., markov_rank]``."""
+        """Look up ``markov_w1`` for ``token_ids`` (any shape) -> ``[..., markov_rank]``.
+
+        ``token_ids`` must already be valid rows in ``[0, vocab_size)``. The
+        teacher-forcing producer owns replacing sentinel pads (e.g. ``-1`` /
+        ``-100`` at positions outside the supervision mask) with any valid id
+        before calling, mirroring how :func:`~.loss.dspark_loss` sanitizes
+        ``target_ids``. The lookup stays strict on purpose: a sentinel that
+        reaches it is a producer bug, and clamping here would silently train
+        on row 0 instead of failing loudly.
+        """
         return self.markov_w1(token_ids.long())
 
     def project_bias(self, latent_states: torch.Tensor) -> torch.Tensor:

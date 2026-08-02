@@ -161,6 +161,34 @@ def test_single_rank_distributed_allows_local_loss(monkeypatch):
     assert torch.isfinite(loss)
 
 
+def _masked_outputs(*, poison: bool):
+    out = _outputs(with_target=True, with_confidence=True)
+    out.eval_mask[:, :, -1] = False  # trailing position unsupervised
+    if poison:
+        with torch.no_grad():
+            out.draft_logits[:, :, -1] = float("-inf")
+        out.aligned_target_logits[:, :, -1] = float("nan")
+        out.target_ids[:, :, -1] = -1
+        out.confidence_pred[:, :, -1] = float("nan")
+    return out
+
+
+def test_masked_positions_tolerate_sentinel_ids_and_nonfinite_padding():
+    # Padded layouts fill unsupervised positions with sentinel ids (-1/-100) and
+    # non-finite logits; they must neither crash nor leak NaN into loss or grads.
+    clean = _masked_outputs(poison=False)
+    ref_loss, ref_metrics = dspark_loss(clean, ce_alpha=0.1, l1_alpha=0.9, confidence_alpha=1.0)
+    poisoned = _masked_outputs(poison=True)
+    loss, metrics = dspark_loss(poisoned, ce_alpha=0.1, l1_alpha=0.9, confidence_alpha=1.0)
+    assert torch.isfinite(loss)
+    assert loss.item() == pytest.approx(ref_loss.item(), rel=1e-6)
+    for key in ("ce_loss", "l1_loss", "confidence_loss", "accept_rate", "tau"):
+        assert metrics[key].item() == pytest.approx(ref_metrics[key].item(), rel=1e-6), key
+    loss.backward()
+    assert torch.isfinite(poisoned.draft_logits.grad).all()
+    assert torch.all(poisoned.draft_logits.grad[:, :, -1] == 0)
+
+
 def test_eval_mask_zero_positions_do_not_contribute():
     out = _outputs(with_target=True, with_confidence=False)
     out.eval_mask = torch.zeros(B, N, L, dtype=torch.bool)
