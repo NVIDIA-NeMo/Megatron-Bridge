@@ -28,10 +28,15 @@ if grep -q -- '--mount=type=secret,id=GH_TOKEN' "$dockerfile"; then
   echo "Baseline MCore clone must not require a GitHub token" >&2
   exit 1
 fi
-if grep -q 'uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM' "$dockerfile"; then
-  echo "Editable MCore path must not be redundantly reinstalled after uv sync" >&2
-  exit 1
-fi
+mcore_reinstall_line=$(grep -n 'uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM' "$dockerfile" | cut -d: -f1)
+helper_assertion_line=$(grep -n "find 3rdparty/Megatron-LM/megatron/core/datasets -maxdepth 1 -name 'helpers_cpp\*\.so'" "$dockerfile" | cut -d: -f1)
+final_copy_line=$(grep -n '^COPY --chmod=644 \. /opt/Megatron-Bridge$' "$dockerfile" | cut -d: -f1)
+[[ -n "$mcore_reinstall_line" ]]
+[[ -n "$helper_assertion_line" ]]
+[[ -n "$final_copy_line" ]]
+((delta_line < mcore_reinstall_line))
+((mcore_reinstall_line < helper_assertion_line))
+((helper_assertion_line < final_copy_line))
 grep -q 'BASELINE_MCORE_REF=$(git -C 3rdparty/Megatron-LM rev-parse HEAD)' "$workflow"
 grep -q 'BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}' "$workflow"
 grep -q 'if \[ -n "$BASELINE_MCORE_REF" \]; then' "$dockerfile"
