@@ -1126,17 +1126,20 @@ def _validate_inference(
         command_tokens = shlex.split(command)
     except ValueError:
         command_tokens = []
-    expected_launcher_task = {
-        "inference": "vlm-generation",
-        "sft_export_inference": "hf-inference",
-    }.get(item_name)
-    uses_inference_launcher = expected_launcher_task is not None and _is_inference_launcher(
-        command, task=expected_launcher_task
+    allowed_launcher_tasks = {
+        "inference": {"text-generation", "vlm-generation"},
+        "sft_export_inference": {"hf-inference"},
+    }.get(item_name, set())
+    uses_inference_launcher = any(
+        _is_inference_launcher(command, task=task) for task in allowed_launcher_tasks
     )
     if uses_inference_launcher:
         _validate_synchronous_inference_launcher(command, path=resolved_command_path, errors=errors)
     if not uses_inference_launcher and command_tokens[:2] != ["uv", "run"]:
-        errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
+        errors.append(
+            f"{_pointer(*resolved_command_path)}: inference must use ./scripts/inference/infer.sh "
+            "or a local uv run helper"
+        )
     prompts = _argument_values(command, "--prompt")
     if len(prompts) != 1:
         errors.append(f"{_pointer(*resolved_command_path)}: specify --prompt exactly once")

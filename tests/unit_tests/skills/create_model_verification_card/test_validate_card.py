@@ -87,7 +87,9 @@ def test_base_inference_rejects_hf_export_launcher():
         errors=errors,
     )
 
-    assert errors == ["/items/inference/command: inference must use uv run"]
+    assert errors == [
+        "/items/inference/command: inference must use ./scripts/inference/infer.sh or a local uv run helper"
+    ]
 
 
 def test_inference_accepts_natural_eos_before_maximum():

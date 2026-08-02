@@ -12,22 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
 
+from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import (
+    Qwen3VLForTokenClassification,
+    _token_classification_output_processor,
+)
+from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
+    Qwen35TokenClassificationBridge,
+    Qwen35VLBridge,
+    Qwen35VLMoEBridge,
+)
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
     _TRANSFORMERS_HAS_QWEN3_5_MOE,
+    _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION,
+    Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
 )
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.instantiate_utils import instantiate
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
@@ -265,6 +281,191 @@ class TestQwen35VLBridgeMappingRegistry:
     def test_mapping_registry_has_vision_patch_embed(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("patch_embed" in n for n in names)
+
+
+# =====================================================================
+# Tests for Qwen35TokenClassificationBridge
+# =====================================================================
+
+
+@pytest.mark.skipif(
+    not _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION,
+    reason="transformers does not have Qwen3.5 token-classification support",
+)
+class TestQwen35TokenClassificationBridge:
+    @pytest.fixture
+    def mock_pretrained(self):
+        vl_pretrained = _make_mock_pretrained(_make_dense_text_config(), _make_vision_config())
+        pretrained = Mock(spec=PreTrainedTokenClassification)
+        pretrained.config = vl_pretrained.config
+        pretrained.config.num_labels = 3
+        pretrained.config.classifier_dropout = 0.2
+        return pretrained
+
+    def test_provider_persists_classification_head_config(self, mock_pretrained):
+        bridge = Qwen35TokenClassificationBridge()
+
+        provider = bridge.provider_bridge(mock_pretrained)
+
+        assert isinstance(provider, Qwen35TokenClassificationModelProvider)
+        assert provider.num_labels == 3
+        assert provider.classifier_dropout == 0.2
+        assert provider.mtp_num_layers == 0
+        assert provider.mtp_enabled is False
+        assert provider.share_embeddings_and_output_weights is False
+        serialized_fields = {field.name for field in fields(provider)}
+        assert {"num_labels", "classifier_dropout"} <= serialized_fields
+        serialized = ConfigContainer._convert_value_to_dict(provider)
+        assert serialized["_target_"].endswith("Qwen35TokenClassificationModelProvider")
+        assert serialized["num_labels"] == 3
+        assert serialized["classifier_dropout"] == 0.2
+        restored = instantiate(serialized)
+        assert isinstance(restored, Qwen35TokenClassificationModelProvider)
+        assert restored.num_labels == 3
+        assert restored.classifier_dropout == 0.2
+
+    def test_provider_reconstructs_classification_head(self, mock_pretrained):
+        provider = Qwen35TokenClassificationBridge().provider_bridge(mock_pretrained)
+        restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+        restored.init_method = lambda weight: torch.nn.init.constant_(weight, 0.125)
+        restored.perform_initialization = True
+        tp_group = object()
+        model = SimpleNamespace(
+            pg_collection=SimpleNamespace(tp=tp_group),
+            language_model=SimpleNamespace(
+                post_process=True,
+                output_layer=torch.nn.Linear(provider.hidden_size, provider.vocab_size),
+            ),
+        )
+
+        with patch.object(Qwen35VLModelProvider, "provide", return_value=model):
+            result = restored.provide(pre_process=False, post_process=True)
+
+        assert result is model
+        assert restored.MODEL_CLASS is Qwen3VLForTokenClassification
+        assert isinstance(model.language_model.output_layer, LinearForLastLayer)
+        assert model.language_model.output_layer.out_features == 3
+        assert model.language_model.output_layer.bias is not None
+        assert model.language_model.output_layer.tp_group is tp_group
+        assert torch.equal(
+            model.language_model.output_layer.weight,
+            torch.full_like(model.language_model.output_layer.weight, 0.125),
+        )
+        assert torch.equal(
+            model.language_model.output_layer.bias,
+            torch.zeros_like(model.language_model.output_layer.bias),
+        )
+        assert model.language_model.output_layer.dropout.p == 0.2
+        assert model.language_model.output_layer.output_in_fp32 is False
+
+    def test_mapping_registry_uses_score_and_omits_lm_and_mtp(self, mock_pretrained):
+        bridge = Qwen35TokenClassificationBridge()
+
+        names = []
+        for mapping in bridge.mapping_registry().mappings:
+            names.append(str(mapping.megatron_param))
+            names.append(str(mapping.hf_param))
+
+        assert "score.weight" in names
+        assert "score.bias" in names
+        assert "language_model.output_layer.weight" in names
+        assert "language_model.output_layer.bias" in names
+        assert not any("lm_head" in name for name in names)
+        assert not any("mtp." in name for name in names)
+
+    def test_mapping_registry_always_includes_hf_score_bias(self, mock_pretrained):
+        mock_pretrained.config.token_classification_bias = False
+        bridge = Qwen35TokenClassificationBridge()
+
+        hf_params = [str(mapping.hf_param) for mapping in bridge.mapping_registry().mappings]
+
+        assert "score.weight" in hf_params
+        assert "score.bias" in hf_params
+
+    def test_classification_head_mappings_roundtrip_exactly(self) -> None:
+        registry = Qwen35TokenClassificationBridge().mapping_registry()
+        head = LinearForLastLayer(
+            input_size=4,
+            output_size=3,
+            sequence_parallel=False,
+            bias=True,
+            output_in_fp32=False,
+        )
+        source_weights = {
+            "score.weight": torch.arange(12, dtype=torch.float32).view(3, 4),
+            "score.bias": torch.tensor([0.5, 1.5, 2.5]),
+        }
+
+        for megatron_name, hf_name, parameter in (
+            ("language_model.output_layer.weight", "score.weight", head.weight),
+            ("language_model.output_layer.bias", "score.bias", head.bias),
+        ):
+            mapping = registry.megatron_to_hf_lookup(megatron_name)
+            assert mapping is not None
+            converted = mapping.hf_to_megatron(source_weights[hf_name], head)
+            parameter.data.copy_(converted)
+            exported = mapping.megatron_to_hf(parameter.data, head)
+            assert torch.equal(exported[hf_name], source_weights[hf_name])
+
+
+def test_token_classification_output_processor_handles_ignore_index() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=2,
+        sequence_parallel=False,
+        bias=True,
+        output_in_fp32=False,
+    )
+    with torch.no_grad():
+        head.weight.copy_(torch.eye(2))
+        head.bias.zero_()
+    hidden_states = torch.tensor([[[2.0, 0.0]], [[1.0, 1.0]], [[0.0, 2.0]]])
+    labels = torch.tensor([[0, -100, 1]])
+
+    losses = _token_classification_output_processor(
+        hidden_states=hidden_states,
+        output_layer=head,
+        output_weight=None,
+        labels=labels,
+        runtime_gather_output=None,
+    )
+
+    assert losses.shape == labels.shape
+    assert losses[0, 1] == 0
+    assert losses[0, 0] > 0
+    assert losses[0, 2] > 0
+
+
+def test_token_classification_loss_uses_fp32_logits() -> None:
+    logits = torch.ones(2, 1, 3, dtype=torch.bfloat16)
+    output_layer = Mock(return_value=(logits, None))
+    labels = torch.tensor([[0, 1]])
+
+    with patch(
+        "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification.F.cross_entropy",
+        return_value=torch.zeros(2),
+    ) as cross_entropy:
+        losses = _token_classification_output_processor(
+            hidden_states=torch.ones(2, 1, 4, dtype=torch.bfloat16),
+            output_layer=output_layer,
+            output_weight=None,
+            labels=labels,
+            runtime_gather_output=None,
+        )
+
+    assert cross_entropy.call_args.args[0].dtype == torch.float32
+    assert losses.shape == labels.shape
+
+
+def test_token_classification_model_injects_output_processor() -> None:
+    model = Qwen3VLForTokenClassification.__new__(Qwen3VLForTokenClassification)
+    expected = torch.ones(1)
+
+    with patch.object(Qwen3VLModel, "forward", return_value=expected) as base_forward:
+        result = model.forward(input_ids=torch.ones(1, 1, dtype=torch.long))
+
+    assert result is expected
+    assert base_forward.call_args.kwargs["output_processor"] is _token_classification_output_processor
 
 
 # =====================================================================

@@ -122,18 +122,18 @@ def test_parser_forwards_model_checkpoint_prompt_and_engine_args():
 
 @pytest.mark.parametrize(
     ("task_name", "expected_path"),
-    [
-        ("text-generation", "/opt/Megatron-Bridge/scripts/inference/text_generation.py"),
-        ("vlm-generation", "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_vlm.py"),
-        (
-            "model-comparison",
-            "/opt/Megatron-Bridge/examples/conversion/compare_hf_and_megatron/compare.py",
-        ),
-        (
-            "hf-inference",
-            "/opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py",
-        ),
-    ],
+        [
+            ("text-generation", "/opt/Megatron-Bridge/scripts/inference/text_generation.py"),
+            ("vlm-generation", "/opt/Megatron-Bridge/scripts/inference/vlm_generation.py"),
+            (
+                "model-comparison",
+                "/opt/Megatron-Bridge/examples/conversion/compare_hf_and_megatron/compare.py",
+            ),
+            (
+                "hf-inference",
+                "/opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py",
+            ),
+        ],
 )
 def test_parser_selects_repository_inference_task(task_name, expected_path):
     module = _load_setup_inference_module()
