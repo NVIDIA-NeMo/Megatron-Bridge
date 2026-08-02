@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@d241fcfa92900f804cd425c7abc11855e5532064 # v0.80.1
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@e58e3b6631161a5de373d4acc45523a8b647be5d # main
     with:
       default_runner_prefix: ubuntu-latest
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
