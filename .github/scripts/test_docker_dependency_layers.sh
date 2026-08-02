@@ -28,7 +28,10 @@ if grep -q -- '--mount=type=secret,id=GH_TOKEN' "$dockerfile"; then
   echo "Baseline MCore clone must not require a GitHub token" >&2
   exit 1
 fi
-grep -q 'uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM' "$dockerfile"
+if grep -q 'uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM' "$dockerfile"; then
+  echo "Editable MCore path must not be redundantly reinstalled after uv sync" >&2
+  exit 1
+fi
 grep -q 'BASELINE_MCORE_REF=$(git -C 3rdparty/Megatron-LM rev-parse HEAD)' "$workflow"
 grep -q 'BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}' "$workflow"
 grep -q 'if \[ -n "$BASELINE_MCORE_REF" \]; then' "$dockerfile"

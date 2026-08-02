@@ -157,11 +157,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: syncing the dispatched dependency delta"; \
         uv sync --only-group build && \
-        uv sync --link-mode copy --all-extras --all-groups --no-group diffusion && \
-        uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM; \
-    elif [ -n "$BASELINE_MCORE_REF" ]; then \
-        uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM; \
-    else \
+        uv sync --link-mode copy --all-extras --all-groups --no-group diffusion; \
+    elif [ -z "$BASELINE_MCORE_REF" ]; then \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
     fi && \
