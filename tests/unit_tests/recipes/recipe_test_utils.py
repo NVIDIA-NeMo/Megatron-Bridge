@@ -145,12 +145,16 @@ class _OfflineModelProvider:
         self.vocab_size = 256000
         self.yarn_original_max_position_embeddings = 32768
 
+    def to_text_provider(self) -> "_OfflineModelProvider":
+        """Match multimodal provider conversion without initializing a model."""
+        return self
+
     def finalize(self) -> None:
         """Match the model-provider interface without initializing a model."""
 
 
 class _OfflineAutoBridge:
-    """Build a local provider without reading a Hugging Face configuration."""
+    """Build a local model configuration without reading a Hugging Face configuration."""
 
     @classmethod
     def from_hf_config(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
@@ -164,6 +168,10 @@ class _OfflineAutoBridge:
 
     def to_megatron_provider(self, *args: object, **kwargs: object) -> _OfflineModelProvider:
         del args, kwargs
+        return _OfflineModelProvider()
+
+    def get_model_config(self) -> _OfflineModelProvider:
+        """Return a mutable stand-in for builder-backed recipe construction."""
         return _OfflineModelProvider()
 
 

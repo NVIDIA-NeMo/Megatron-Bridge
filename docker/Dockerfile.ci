@@ -16,7 +16,10 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
+ARG APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH=True
+
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
+    if [ "$APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH" != "True" ]; then exit 0; fi; \
     TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
     patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
     python - <<'PY'
@@ -65,8 +68,7 @@ ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
     curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
     uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
-    # Address CVE-2025-68973
-    apt-get update && apt install -y --only-upgrade gnupg && \
+    apt-get update && apt install -y --only-upgrade gnupg openssl libssl3t64 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     if [ "$INSTALL_DEEPEP" = "True" ]; then \

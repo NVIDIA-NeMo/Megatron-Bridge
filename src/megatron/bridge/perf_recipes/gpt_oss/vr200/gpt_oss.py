@@ -37,7 +37,7 @@ def gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
@@ -51,6 +51,9 @@ def gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
@@ -98,6 +101,9 @@ def gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
@@ -129,7 +135,7 @@ def gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
@@ -143,6 +149,9 @@ def gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }

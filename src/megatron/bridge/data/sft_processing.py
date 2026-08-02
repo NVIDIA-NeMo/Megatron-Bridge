@@ -293,18 +293,22 @@ def sft_example_metadata(
 
 
 def _tokenize_text(tokenizer_or_processor: Any, text: str) -> list[int]:
-    tokenizer = get_processor_tokenizer(tokenizer_or_processor)
     try:
-        if hasattr(tokenizer, "encode"):
-            token_ids = tokenizer.encode(text, add_special_tokens=False)
-        elif callable(tokenizer):
-            token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
-        elif hasattr(tokenizer, "text_to_ids"):
-            token_ids = tokenizer.text_to_ids(text)
-        elif hasattr(tokenizer, "tokenize"):
-            token_ids = tokenizer.tokenize(text)
+        tokenizer_library = getattr(tokenizer_or_processor, "library", None)
+        if tokenizer_library in {"sentencepiece", "tiktoken"}:
+            token_ids = tokenizer_or_processor.tokenize(text)
         else:
-            raise TypeError(f"Unsupported tokenizer type: {type(tokenizer_or_processor).__name__}")
+            tokenizer = get_processor_tokenizer(tokenizer_or_processor)
+            if hasattr(tokenizer, "encode"):
+                token_ids = tokenizer.encode(text, add_special_tokens=False)
+            elif callable(tokenizer):
+                token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+            elif hasattr(tokenizer, "text_to_ids"):
+                token_ids = tokenizer.text_to_ids(text)
+            elif hasattr(tokenizer, "tokenize"):
+                token_ids = tokenizer.tokenize(text)
+            else:
+                raise TypeError(f"Unsupported tokenizer type: {type(tokenizer_or_processor).__name__}")
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         raise ValueError("Unable to tokenize prompt-completion text.") from error
     if isinstance(token_ids, torch.Tensor):
@@ -319,13 +323,17 @@ def _tokenize_text(tokenizer_or_processor: Any, text: str) -> list[int]:
 def _is_space_sensitive(tokenizer_or_processor: Any) -> bool:
     """Return whether a leading word-boundary space changes tokenization."""
     tokenizer = get_processor_tokenizer(tokenizer_or_processor)
-    try:
-        declared = getattr(tokenizer, "space_sensitive", None)
-    except (AttributeError, NotImplementedError):
-        declared = None
-    if declared is not None:
-        return bool(declared)
-    return _tokenize_text(tokenizer, "x y") != [*_tokenize_text(tokenizer, "x"), *_tokenize_text(tokenizer, "y")]
+    for owner in (tokenizer_or_processor, tokenizer):
+        try:
+            declared = getattr(owner, "space_sensitive", None)
+        except (AttributeError, NotImplementedError):
+            declared = None
+        if declared is not None:
+            return bool(declared)
+    return _tokenize_text(tokenizer_or_processor, "x y") != [
+        *_tokenize_text(tokenizer_or_processor, "x"),
+        *_tokenize_text(tokenizer_or_processor, "y"),
+    ]
 
 
 def _token_id(tokenizer_or_processor: Any, *names: str) -> int | None:

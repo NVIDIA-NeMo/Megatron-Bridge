@@ -39,6 +39,7 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
         train=SimpleNamespace(
             iterations_to_skip={1},
             micro_batch_size=4,
+            exit_signal_handler=False,
             exit_signal=signal.SIGTERM,
         )
     )

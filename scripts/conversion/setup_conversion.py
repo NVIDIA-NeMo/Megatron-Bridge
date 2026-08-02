@@ -94,6 +94,8 @@ def _validate_args(args: argparse.Namespace) -> None:
 
     if args.command == "roundtrip" and args.device != "gpu":
         raise ValueError("Round-trip validation requires the GPU backend.")
+    if args.command == "import" and args.device == "cpu" and args.low_memory_save:
+        raise ValueError("--low-memory-save is only supported by the GPU backend.")
 
     if args.device == "cpu":
         if args.nodes != 1:
@@ -147,12 +149,13 @@ def _build_executor(
     task_count = args.gpus_per_node if args.device == "gpu" else 1
     launcher = run.Torchrun() if args.executor == "local" and args.device == "gpu" else None
     if args.executor == "local":
-        return run.LocalExecutor(
-            nodes=1,
+        executor = run.LocalExecutor(
             ntasks_per_node=task_count,
             launcher=launcher,
             packager=run.Packager(),
         )
+        executor.nodes = 1
+        return executor
 
     gpu_kwargs = {}
     if args.device == "gpu" and not args.no_gpu_resource_request:

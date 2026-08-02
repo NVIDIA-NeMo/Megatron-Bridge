@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from megatron.core.transformer import TransformerConfig
+from scripts.performance.utils.utils import finalize_config_overrides
 
 from megatron.bridge.training.flex_dispatcher_backend import (
     apply_flex_dispatcher_backend,
@@ -183,6 +185,48 @@ class TestApplyDeepEP:
         # Verify configs were NOT set
         assert config.moe_token_dispatcher_type != "flex"
         assert config.moe_shared_expert_overlap != False
+
+
+class TestFlexDispatcherFallback:
+    """Test unsupported flex backends stay disabled after config finalization."""
+
+    @pytest.mark.parametrize(
+        ("backend", "major", "device_name"),
+        [
+            pytest.param("deepep", 10, "NVIDIA GB200", id="deepep-gb200"),
+            pytest.param("hybridep", 11, "NVIDIA X200", id="hybridep-unsupported"),
+        ],
+    )
+    @patch("torch.cuda.get_device_properties")
+    def test_unsupported_backend_falls_back_to_alltoall(
+        self,
+        mock_get_device_properties,
+        backend,
+        major,
+        device_name,
+    ):
+        mock_properties = MagicMock()
+        mock_properties.major = major
+        mock_properties.name = device_name
+        mock_get_device_properties.return_value = mock_properties
+        config = SimpleNamespace(
+            model=SimpleNamespace(
+                num_moe_experts=8,
+                moe_token_dispatcher_type="alltoall",
+                moe_flex_dispatcher_backend=backend,
+                moe_shared_expert_overlap=True,
+            ),
+            ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+        )
+
+        apply_flex_dispatcher_backend(config.model, moe_flex_dispatcher_backend=backend)
+        finalize_config_overrides(config)
+        validate_flex_dispatcher_backend(config.model)
+
+        assert config.model.moe_token_dispatcher_type == "alltoall"
+        assert config.model.moe_flex_dispatcher_backend is None
+        assert config.model.moe_shared_expert_overlap is True
+        mock_get_device_properties.assert_called_once_with(0)
 
 
 class TestValidateDeepEP:
