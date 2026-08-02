@@ -73,20 +73,30 @@ if "$validator" https://example.com/example/Megatron-LM.git; then
   exit 1
 fi
 
-if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-  docker_test_dir="$temporary_dir/docker"
-  mkdir -p "$docker_test_dir"
-  cat >"$docker_test_dir/Dockerfile" <<'EOF'
-FROM alpine:3.22
-ARG BASELINE_REF
-RUN echo "baseline-$BASELINE_REF" >/baseline
-COPY dispatched-source.txt /dispatched-source.txt
+# The baseline dependency layer must be structurally independent of the mutable
+# dispatched checkout. CI validates the ordering statically so this regression
+# check never pulls or executes an external container image.
+assert_baseline_precedes_dispatched_copy() {
+  local candidate="$1"
+  local baseline_sync_line
+  local mutable_copy_line
+
+  baseline_sync_line=$(grep -n 'uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion' "$candidate" | head -1 | cut -d: -f1)
+  mutable_copy_line=$(grep -n '^COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM$' "$candidate" | head -1 | cut -d: -f1)
+  [[ -n "$baseline_sync_line" && -n "$mutable_copy_line" ]] || return 1
+  ((baseline_sync_line < mutable_copy_line))
+}
+
+if ! assert_baseline_precedes_dispatched_copy "$dockerfile"; then
+  echo "Mutable MCore enters the Dockerfile before the baseline layer is complete" >&2
+  exit 1
+fi
+
+cat >"$temporary_dir/early-copy.Dockerfile" <<'EOF'
+COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM
+RUN uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion
 EOF
-  echo first >"$docker_test_dir/dispatched-source.txt"
-  DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BASELINE_REF=main -t mbridge-cache-order-test "$docker_test_dir" \
-    >"$docker_test_dir/first.log" 2>&1
-  echo second >"$docker_test_dir/dispatched-source.txt"
-  DOCKER_BUILDKIT=1 docker build --progress=plain --build-arg BASELINE_REF=main -t mbridge-cache-order-test "$docker_test_dir" \
-    >"$docker_test_dir/second.log" 2>&1
-  grep -A2 'baseline-$BASELINE_REF' "$docker_test_dir/second.log" | grep -q CACHED
+if assert_baseline_precedes_dispatched_copy "$temporary_dir/early-copy.Dockerfile"; then
+  echo "Cache-order regression accepted an early mutable MCore copy" >&2
+  exit 1
 fi
