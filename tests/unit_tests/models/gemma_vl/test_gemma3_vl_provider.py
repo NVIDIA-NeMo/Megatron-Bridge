@@ -13,12 +13,22 @@
 # limitations under the License.
 
 import math
+from unittest.mock import patch
 
+import pytest
 import torch
+from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from transformers import SiglipVisionConfig
 
+from megatron.bridge.models.gemma.gemma3_provider import (
+    Gemma3SelfAttention,
+    Gemma3TEDotProductAttention,
+    gemma3_layer_spec,
+)
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLMultimodalProjectorConfig
+from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
+from megatron.bridge.utils.instantiate_utils import instantiate
 
 
 class TestGemma3VLModelProvider:
@@ -63,6 +73,8 @@ class TestGemma3VLModelProvider:
         )
 
         # Check VL-specific defaults
+        assert provider.is_vision_language is True
+        assert provider.attention_backend is AttnBackend.fused
         assert provider.scatter_embedding_sequence_parallel is False
         assert isinstance(provider.vision_config, SiglipVisionConfig)
         assert isinstance(provider.vision_projector_config, Gemma3VLMultimodalProjectorConfig)
@@ -79,6 +91,78 @@ class TestGemma3VLModelProvider:
         assert provider.freeze_language_model is False
         assert provider.freeze_vision_model is False
         assert provider.freeze_vision_projection is False
+
+    def test_gemma3_vl_attention_consumes_attention_bias(self):
+        """Test that Gemma3 VL attention selects the fused attention-bias path."""
+        provider = Gemma3VLModelProvider(
+            num_layers=28,
+            hidden_size=2560,
+            num_attention_heads=10,
+            window_size=1024,
+        )
+
+        layer_spec = gemma3_layer_spec(provider)
+        assert layer_spec.submodules.self_attention.params["attn_mask_type"] is AttnMaskType.no_mask
+
+        with patch.object(Gemma3TEDotProductAttention.__bases__[0], "__init__", return_value=None) as init:
+            Gemma3TEDotProductAttention(
+                config=provider,
+                layer_number=1,
+                attn_mask_type=AttnMaskType.causal,
+                attention_type="self",
+            )
+
+        assert init.call_args.kwargs["attn_mask_type"] is AttnMaskType.no_mask
+        assert init.call_args.kwargs["config"].window_size is None
+
+    def test_gemma3_vl_attention_selects_per_layer_bias(self):
+        """Test that local and global layers receive their matching precomputed bias."""
+        provider = Gemma3VLModelProvider(
+            num_layers=28,
+            hidden_size=2560,
+            num_attention_heads=10,
+        )
+        attention = object.__new__(Gemma3SelfAttention)
+        object.__setattr__(attention, "config", provider)
+        local_bias = torch.tensor(1.0)
+        global_bias = torch.tensor(2.0)
+        rotary_pos_emb = torch.zeros(2, 1)
+
+        with patch.object(Gemma3SelfAttention.__bases__[0], "forward", return_value=None) as forward:
+            object.__setattr__(attention, "layer_number", 1)
+            attention.forward(
+                hidden_states=torch.zeros(1),
+                attention_mask=None,
+                rotary_pos_emb=rotary_pos_emb,
+                attention_bias=(local_bias, global_bias),
+            )
+            assert forward.call_args.kwargs["attention_bias"] is local_bias
+
+            object.__setattr__(attention, "layer_number", 6)
+            attention.forward(
+                hidden_states=torch.zeros(1),
+                attention_mask=None,
+                rotary_pos_emb=rotary_pos_emb,
+                attention_bias=(local_bias, global_bias),
+            )
+            assert forward.call_args.kwargs["attention_bias"] is global_bias
+
+    def test_legacy_checkpoint_attention_settings_are_dropped(self):
+        """Test that old checkpoint values cannot disable the VL mask."""
+        legacy_config = {
+            "_target_": "megatron.bridge.models.gemma_vl.gemma3_vl_provider.Gemma3VLModelProvider",
+            "num_layers": 28,
+            "hidden_size": 2560,
+            "num_attention_heads": 10,
+            "is_vision_language": False,
+            "attention_backend": AttnBackend.flash,
+        }
+
+        sanitized_config = apply_run_config_backward_compat(legacy_config)
+        provider = instantiate(sanitized_config)
+
+        assert provider.is_vision_language is True
+        assert provider.attention_backend is AttnBackend.fused
 
     def test_gemma3_vl_custom_vision_config(self):
         """Test Gemma3VLModelProvider with custom vision configuration."""
@@ -104,6 +188,56 @@ class TestGemma3VLModelProvider:
         assert provider.vision_config.num_attention_heads == 16
         assert provider.vision_config.image_size == 448
         assert provider.vision_config.patch_size == 14
+
+    def test_gemma3_vl_rejects_context_parallelism(self):
+        """Test that unsupported context parallelism fails before model construction."""
+        provider = Gemma3VLModelProvider(
+            num_layers=28,
+            hidden_size=2560,
+            num_attention_heads=10,
+            context_parallel_size=2,
+        )
+
+        with pytest.raises(ValueError, match="does not support context parallelism"):
+            provider.provide()
+
+    def test_gemma3_vl_rejects_causal_override(self):
+        """Test that runtime overrides cannot disable the VL attention mask."""
+        provider = Gemma3VLModelProvider(
+            num_layers=28,
+            hidden_size=2560,
+            num_attention_heads=10,
+        )
+        provider.is_vision_language = False
+
+        with pytest.raises(ValueError, match="requires is_vision_language=True"):
+            provider.provide()
+
+    def test_gemma3_vl_accepts_auto_attention_override(self):
+        """Test that automatic backend selection preserves the VL attention bias."""
+        provider = Gemma3VLModelProvider(
+            num_layers=28,
+            hidden_size=2560,
+            num_attention_heads=10,
+        )
+        provider.attention_backend = AttnBackend.auto
+
+        with patch("megatron.bridge.models.gemma_vl.gemma3_vl_provider.Gemma3VLModel") as model:
+            provider.provide()
+
+        model.assert_called_once()
+
+    def test_gemma3_vl_rejects_flash_attention_override(self):
+        """Test that runtime overrides cannot select a backend that drops the VL mask."""
+        provider = Gemma3VLModelProvider(
+            num_layers=28,
+            hidden_size=2560,
+            num_attention_heads=10,
+        )
+        provider.attention_backend = AttnBackend.flash
+
+        with pytest.raises(ValueError, match="requires automatic or fused attention"):
+            provider.provide()
 
     def test_gemma3_vl_custom_vision_projector_config(self):
         """Test Gemma3VLModelProvider with custom vision projector configuration."""

@@ -1,9 +1,9 @@
 # Inference launcher
 
-`infer.sh` submits Bridge-backed offline text generation from a Slurm login
-node. It uses NeMo Run's Slurm executor and launches one srun-native process per
-GPU; users should not enter an allocation or wrap it in `srun`, `torchrun`, or
-`sbatch`.
+`infer.sh` submits Bridge-backed offline text or vision-language generation and
+HF/Megatron model comparison from a Slurm login node. It uses NeMo Run's Slurm
+executor and launches one srun-native process per GPU; users should not enter an
+allocation or wrap it in `srun`, `torchrun`, or `sbatch`.
 
 ```bash
 ./scripts/inference/infer.sh \
@@ -22,8 +22,41 @@ GPU; users should not enter an allocation or wrap it in `srun`, `torchrun`, or
 
 The launcher owns only Slurm resources, the container, mounts, explicitly
 forwarded environment variables, and submission behavior. All other arguments
-are forwarded unchanged to `text_generation.py`, which owns model loading,
-parallelism, prompts, sampling, and inference-engine configuration.
+are forwarded unchanged to the selected inference entry point. Text generation
+uses `text_generation.py`; `--task vlm-generation` selects
+`vlm_generation.py` for multimodal generation, and `--task model-comparison`
+selects `examples/conversion/compare_hf_and_megatron/compare.py` for forward-logit
+parity.
+
+```bash
+./scripts/inference/infer.sh \
+  --task vlm-generation \
+  --nodes 1 --gpus-per-node 4 \
+  --account ACCOUNT --partition PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+  --env HF_TOKEN \
+  --hf_model_path Qwen/Qwen2.5-VL-3B-Instruct \
+  --image_path /shared/image.jpg \
+  --prompt "Describe this image." \
+  --tp 4
+```
+
+For a one-step Hugging Face/Megatron forward-logit comparison, select the
+comparison task and pass the comparison entry point's arguments unchanged:
+
+```bash
+./scripts/inference/infer.sh \
+  --task model-comparison \
+  --nodes 1 --gpus-per-node 2 \
+  --account ACCOUNT --partition PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+  --env HF_TOKEN \
+  --hf_model_path Qwen/Qwen3-1.7B \
+  --prompt "Hello world" \
+  --tp 2
+```
 
 ## Model and checkpoint inputs
 
@@ -51,9 +84,8 @@ visible at the same path from every allocated compute node. Repeat `--prompt`
 for inline prompts, or pass a mounted line-oriented or JSONL file with
 `--prompt-file`. JSONL records may use a `text`, `prompt`, or `input` field.
 
-Run `uv run python scripts/inference/text_generation.py --help` in a configured
-Megatron Bridge environment for the full model, checkpoint, prompt, sampling,
-parallelism, and engine CLI.
+Run the selected entry point with `--help` in a configured Megatron Bridge
+environment for its full CLI.
 
 ## Environment and cluster options
 

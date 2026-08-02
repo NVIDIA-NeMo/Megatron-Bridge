@@ -157,14 +157,11 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
     #   Optional[CallWrapper] or CallWrapper after binding arguments
     # - Our _pretrain function expects the CallWrapper as a keyword argument named
     #   'inprocess_call_wrapper', but NVRx may pass it differently
-    # - This adapter ensures compatibility by extracting the CallWrapper and passing
-    #   it correctly to the actual training function
-    def _adapter(*args, **kwargs):
-        # Extract the injected CallWrapper from kwargs if NVRx placed it there
-        call_wrapper = kwargs.pop("inprocess_call_wrapper", None)
-
+    # - This adapter exposes the annotated parameter NVRx needs for injection and
+    #   passes it correctly to the actual training function
+    def _adapter(*args, inprocess_call_wrapper: Optional[inprocess.CallWrapper] = None, **kwargs):
         # Call the actual training function with the CallWrapper as expected keyword arg
-        result = train_fn(*args, inprocess_call_wrapper=call_wrapper, **kwargs)
+        result = train_fn(*args, inprocess_call_wrapper=inprocess_call_wrapper, **kwargs)
         return result
 
     new_train_fn = inprocess.Wrapper(

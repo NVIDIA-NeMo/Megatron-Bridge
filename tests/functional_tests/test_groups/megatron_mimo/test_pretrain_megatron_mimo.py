@@ -120,6 +120,9 @@ def _make_language_config(
         cross_entropy_loss_fusion=not deterministic,
     )
     if num_moe_experts is not None:
+        # MegatronMIMO VLM language configs are bias-free. Keep this smoke test
+        # focused on non-colocated MoE training rather than expert-bias behavior.
+        cfg.add_bias_linear = False
         cfg.moe_ffn_hidden_size = cfg.ffn_hidden_size
         cfg.moe_router_topk = 1
     if deterministic:

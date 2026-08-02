@@ -374,7 +374,13 @@ def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
     if not isinstance(model_section, dict):
         return None
 
-    hf_model_id = model_section.get("hf_model_id")
+    # Builder-backed configs record source provenance under extra_checkpoint_metadata.
+    extra_metadata = model_section.get("extra_checkpoint_metadata")
+    hf_model_id = extra_metadata.get("hf_model_id") if isinstance(extra_metadata, dict) else None
+    if not hf_model_id:
+        # Backward compatibility: the legacy provider path and older checkpoints
+        # serialize a flat hf_model_id directly under the model section.
+        hf_model_id = model_section.get("hf_model_id")
     if not hf_model_id:
         return None
 

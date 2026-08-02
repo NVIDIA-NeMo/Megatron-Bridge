@@ -46,7 +46,7 @@ def create_mock_tokenizer():
     return mock_tokenizer
 
 
-def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default"):
+def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default", global_sample_mapping=False):
     """Create a GPT SFT dataset for testing with mocked tokenizer.
 
     When ``max_num_samples`` is None the dataset builds no ``samples_mapping``,
@@ -78,6 +78,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default"):
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
             memmap_workers=1,
+            global_sample_mapping=global_sample_mapping,
         )
     elif dataset_type == "packed":
         # Create a mock packed dataset file
@@ -136,6 +137,12 @@ class TestDataGPTSFTDataset:
     def test_build_samples_mapping(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path)
         dataset._build_samples_mapping()
+
+    def test_global_sample_mapping_respects_max_num_samples(self, tmp_path):
+        dataset, dataset_length = get_gpt_sft(tmp_path, max_num_samples=2, global_sample_mapping=True)
+
+        assert dataset_length > 2
+        assert len(dataset) == 2
 
     def test_gpt_sft_dataset(self, tmp_path):
         dataset, dataset_length = get_gpt_sft(tmp_path)

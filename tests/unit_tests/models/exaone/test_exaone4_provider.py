@@ -18,7 +18,7 @@ from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.mlp import MLP
 
 from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
-from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 

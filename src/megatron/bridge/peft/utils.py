@@ -104,6 +104,16 @@ def _te_grouped_linear_uses_explicit_m_splits(
     return "m_splits" in inspect.signature(autograd_function.forward).parameters
 
 
+@cache
+def _te_grouped_linear_uses_output_buffers(
+    autograd_function: type[torch.autograd.Function],
+) -> bool:
+    """Return whether TE's grouped-linear autograd takes output buffer tensors."""
+
+    parameters = inspect.signature(autograd_function.forward).parameters
+    return "out" in parameters and "dgrad_out" in parameters
+
+
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
     """Return the process-group collection attached to a module or its config."""
 
@@ -2067,7 +2077,16 @@ class GroupedExpertLinearAdapter(nn.Module):
                     helper.save_original_input,
                     False,
                 )
-                autograd_args = (x, te_m_splits, te_non_tensor_args, *weights_and_biases)
+                output_buffers = (
+                    (None, None) if _te_grouped_linear_uses_output_buffers(TEPytorchGroupedLinearAutograd) else ()
+                )
+                autograd_args = (
+                    x,
+                    te_m_splits,
+                    te_non_tensor_args,
+                    *output_buffers,
+                    *weights_and_biases,
+                )
             else:
                 if "_fp8_workspaces" in vars(helper):
                     cache_weight = False

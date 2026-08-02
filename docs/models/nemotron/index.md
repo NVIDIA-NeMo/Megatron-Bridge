@@ -16,12 +16,12 @@ nemotron-3-omni.md
 
 | Variant | Guide |
 |---------|-------|
-| Llama Nemotron | [llama-nemotron.md](llama-nemotron.md) |
-| Nemotron H and Nemotron Nano v2 | [nemotronh.md](nemotronh.md) |
+| Llama Nemotron (deprecated) | [llama-nemotron.md](llama-nemotron.md) |
+| Nemotron H and Nemotron Nano v2 (deprecated) | [nemotronh.md](nemotronh.md) |
 | Nemotron-3 Nano | [nemotron3-nano.md](nemotron3-nano.md) |
 | Nemotron-3 Super | [nemotron3-super.md](nemotron3-super.md) |
 | Nemotron-3 Ultra | [nemotron3-ultra.md](nemotron3-ultra.md) |
-| Nemotron Nano V2 VL | [nemotron-nano-v2-vl.md](nemotron-nano-v2-vl.md) |
+| Nemotron Nano V2 VL (deprecated) | [nemotron-nano-v2-vl.md](nemotron-nano-v2-vl.md) |
 | Nemotron-3 Nano Omni | [nemotron-3-omni.md](nemotron-3-omni.md) |
 
 ## Examples
