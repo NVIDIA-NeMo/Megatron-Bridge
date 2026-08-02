@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
     ConfigContainer,
+    _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
@@ -30,6 +31,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     nemotron_3_ultra_pretrain_config,
     nemotronh_56b_pretrain_config,
 )
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
@@ -309,6 +311,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, BF16."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -324,7 +327,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
 
     cfg.comm_overlap.tp_comm_overlap = True
 
@@ -359,6 +362,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, MXFP8."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -374,7 +378,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
 
     cfg.comm_overlap.tp_comm_overlap = True
 
@@ -409,6 +413,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, NVFP4."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("nvfp4")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -424,7 +429,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
 
     cfg.comm_overlap.tp_comm_overlap = True
 

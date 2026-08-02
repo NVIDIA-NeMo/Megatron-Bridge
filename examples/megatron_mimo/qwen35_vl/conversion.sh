@@ -18,15 +18,19 @@
 # Wraps the generic, model-agnostic CLI at
 #   examples/conversion/convert_megatron_mimo.py
 # with Qwen3.5-VL defaults: two MIMO components (`language` + `images`)
-# whose names must match the route table declared by the registered
-# Qwen3.5-VL MIMO adapter
-# (src/megatron/bridge/models/megatron_mimo/conversion/adapters/qwen35_vl.py).
+# whose names must match the route table derived from the Qwen3.5-VL bridge's
+# `mimo_source_prefixes` and the provider's `modality_keys`
+# (src/megatron/bridge/models/qwen_vl/qwen35_vl_bridge.py).
 #
 # Usage:
 #   bash examples/megatron_mimo/qwen35_vl/conversion.sh
 #
 # Override defaults via environment variables, e.g.:
 #   MODEL_NAME=Qwen3.5-27B LANGUAGE_TP=4 VISION_TP=1 \
+#     bash examples/megatron_mimo/qwen35_vl/conversion.sh
+#
+# MoE variants need expert parallelism, e.g.:
+#   MODEL_NAME=Qwen3.5-35B-A3B LANGUAGE_DP=4 LANGUAGE_EP=4 VISION_TP=1 \
 #     bash examples/megatron_mimo/qwen35_vl/conversion.sh
 #
 # Mirrors the non-MIMO Qwen3.5-VL entry point at
@@ -38,16 +42,18 @@ set -xeuo pipefail
 # Workspace directory for checkpoints and results.
 WORKSPACE=${WORKSPACE:-/workspace}
 
-# Supported dense Qwen3.5-VL variants. MoE variants
-# (Qwen3.5-35B-A3B / 122B-A10B / 397B-A17B) are out of v1 scope.
+# Supported Qwen3.5-VL variants: dense plus the MoE variants.
 MODEL_NAME=${MODEL_NAME:-Qwen3.5-0.8B}
 
 case "${MODEL_NAME}" in
     Qwen3.5-0.8B|Qwen3.5-2B|Qwen3.5-4B|Qwen3.5-9B|Qwen3.5-27B)
         ;;
+    Qwen3.5-35B-A3B|Qwen3.5-122B-A10B|Qwen3.5-397B-A17B)
+        ;;
     *)
         echo "Unsupported MODEL_NAME=${MODEL_NAME}." \
-             "MIMO v1 supports dense variants only: Qwen3.5-{0.8B,2B,4B,9B,27B}."
+             "Supported: dense Qwen3.5-{0.8B,2B,4B,9B,27B} and MoE" \
+             "Qwen3.5-{35B-A3B,122B-A10B,397B-A17B}."
         exit 1
         ;;
 esac
@@ -60,6 +66,12 @@ LANGUAGE_TP=${LANGUAGE_TP:-1}
 VISION_TP=${VISION_TP:-1}
 LANGUAGE_DP=${LANGUAGE_DP:-1}
 VISION_DP=${VISION_DP:-1}
+# Expert parallelism for the language component. MoE variants need EP > 1:
+# with EP=1 every language rank holds a full copy of the expert weights, which
+# does not fit for the MoE sizes. Encoder components must stay dense (EP=1),
+# and the config requires LANGUAGE_TP * LANGUAGE_DP to be divisible by
+# LANGUAGE_EP, so scale DP with EP (e.g. LANGUAGE_EP=4 with LANGUAGE_DP=4).
+LANGUAGE_EP=${LANGUAGE_EP:-1}
 LANGUAGE_RANK_OFFSET=${LANGUAGE_RANK_OFFSET:-0}
 VISION_RANK_OFFSET=${VISION_RANK_OFFSET:-$((LANGUAGE_RANK_OFFSET + LANGUAGE_TP * LANGUAGE_DP))}
 
@@ -78,7 +90,7 @@ uv run python -m torch.distributed.run --nproc_per_node="${NPROC_PER_NODE}" \
     examples/conversion/convert_megatron_mimo.py import \
         --hf-model "Qwen/${MODEL_NAME}" \
         --megatron-path "${MEGATRON_PATH}" \
-        --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},rank_offset=${LANGUAGE_RANK_OFFSET}" \
+        --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},ep=${LANGUAGE_EP},rank_offset=${LANGUAGE_RANK_OFFSET}" \
         --component "images=tp=${VISION_TP},dp=${VISION_DP},rank_offset=${VISION_RANK_OFFSET}" \
         --torch-dtype "${TORCH_DTYPE}"
 
@@ -90,6 +102,6 @@ uv run python -m torch.distributed.run --nproc_per_node="${NPROC_PER_NODE}" \
         --hf-model "Qwen/${MODEL_NAME}" \
         --megatron-path "${MEGATRON_PATH}" \
         --hf-path "${HF_PATH}" \
-        --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},rank_offset=${LANGUAGE_RANK_OFFSET}" \
+        --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},ep=${LANGUAGE_EP},rank_offset=${LANGUAGE_RANK_OFFSET}" \
         --component "images=tp=${VISION_TP},dp=${VISION_DP},rank_offset=${VISION_RANK_OFFSET}" \
         --torch-dtype "${TORCH_DTYPE}"

@@ -814,8 +814,15 @@ def nemotron_omni_collate_fn(
     video_nframes: int = 8,
     use_temporal_video_embedder: bool = False,
     patch_dim: int = 16,
+    collapse_image_tokens: bool = False,
 ) -> dict[str, Any]:
-    """Build one model-ready Omni batch from either HF or Energon examples."""
+    """Build one model-ready Omni batch from either HF or Energon examples.
+
+    The canonical :class:`NemotronOmniModel` consumes the processor-expanded
+    token sequence, with one image placeholder for every projected feature.
+    Use :func:`nemotron_omni_llava_collate_fn` for the legacy LLaVA
+    collapse/expand contract.
+    """
     _validate_nemotron_omni_visual_keys(visual_keys)
     del start_of_response_token, min_pixels, max_pixels
     if not examples:
@@ -884,9 +891,10 @@ def nemotron_omni_collate_fn(
             for example, input_ids in zip(mask_examples, batch["input_ids"], strict=True)
         ]
     )
-    adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
-    batch["input_ids"] = adjusted["input_ids"]
-    batch["attention_mask"] = adjusted["attention_mask"]
+    if collapse_image_tokens:
+        adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
+        batch["input_ids"] = adjusted["input_ids"]
+        batch["attention_mask"] = adjusted["attention_mask"]
 
     if use_per_image_token_counts:
         _pack_dynamic_images(batch, patch_dim=patch_dim)
@@ -898,7 +906,7 @@ def nemotron_omni_collate_fn(
 
     has_modalities = batch.get("visual_inputs") is not None or batch.get("sound_clips") is not None
     post_merge_row_lengths = None
-    if has_modalities and (sequence_length is not None or enable_in_batch_packing):
+    if collapse_image_tokens and has_modalities and (sequence_length is not None or enable_in_batch_packing):
         post_merge_row_lengths = _model_merge_row_lengths(
             batch,
             processor,
@@ -921,16 +929,34 @@ def nemotron_omni_collate_fn(
     if pad_token_id is None:
         pad_token_id = processor.tokenizer.eos_token_id or 0
     if enable_in_batch_packing:
-        if post_merge_row_lengths is None:
-            post_merge_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
-        _pack_omni_rows_to_mcore_thd(
-            batch,
-            post_merge_row_lengths,
-            sequence_length=sequence_length,
-            pad_to_max_length=pad_to_max_length,
-            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-            pad_token_id=int(pad_token_id),
-        )
+        if collapse_image_tokens:
+            if post_merge_row_lengths is None:
+                post_merge_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
+            _pack_omni_rows_to_mcore_thd(
+                batch,
+                post_merge_row_lengths,
+                sequence_length=sequence_length,
+                pad_to_max_length=pad_to_max_length,
+                pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                pad_token_id=int(pad_token_id),
+            )
+        else:
+            # The canonical model receives one placeholder per projected media
+            # feature, so media insertion is length preserving. Build the final
+            # THD token stream here; the model only applies rank-local CP
+            # indices after replacing placeholders with media embeddings.
+            prepare_sequence_batch(
+                batch,
+                sequence_length=sequence_length,
+                enable_in_batch_packing=True,
+                in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                pad_token_id=int(pad_token_id),
+                ignore_index=IGNORE_INDEX,
+            )
+            # Do not synthesize PackedSeqParams.tokens_per_sample: canonical
+            # packing is compact and rows may have different physical lengths.
+            # Exact per-row seq_aux_loss restoration requires the planned
+            # MCore boundary-aware unflattening support.
     else:
         compact_sequence_length = sequence_length
         compact_pad_to_max_length = pad_to_max_length
@@ -954,3 +980,17 @@ def nemotron_omni_collate_fn(
             ignore_index=IGNORE_INDEX,
         )
     return batch
+
+
+def nemotron_omni_llava_collate_fn(*args, **kwargs) -> dict[str, torch.Tensor]:
+    """Collate inputs for the explicit legacy LLaVA collapse/expand path."""
+
+    kwargs["collapse_image_tokens"] = True
+    return nemotron_omni_collate_fn(*args, **kwargs)
+
+
+def nemotron_omni_expanded_collate_fn(*args, **kwargs) -> dict[str, Any]:
+    """Collate processor-expanded inputs for the canonical Nemotron Omni model."""
+
+    kwargs["collapse_image_tokens"] = False
+    return nemotron_omni_collate_fn(*args, **kwargs)

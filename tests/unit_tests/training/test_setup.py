@@ -27,6 +27,7 @@ from megatron.bridge.training.setup import (
     _bind_dataset_provider_context,
     _build_distributed_model,
     _register_pre_wrap_hook,
+    _register_setup_pre_wrap_hook,
     _should_load_checkpoint,
     _update_model_config_funcs,
     _validate_and_set_vocab_size,
@@ -195,6 +196,28 @@ class TestValidateAndSetVocabSize:
         assert vocab_size == 40960
         assert should_pad_vocab is False
 
+    def test_pretraining_uses_tokenizer_vocab_over_larger_model_vocab(self):
+        """Tokenizer-derived pretraining vocab ignores the source model vocabulary."""
+        vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
+            model_vocab_size=248320,
+            tokenizer_vocab_size=32000,
+            use_tokenizer_vocab_size=True,
+        )
+
+        assert vocab_size == 32000
+        assert should_pad_vocab is True
+
+    def test_checkpoint_compatibility_override_preserves_model_vocab(self):
+        """Disabling the policy preserves the explicit vocabulary used by an existing checkpoint."""
+        vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
+            model_vocab_size=248320,
+            tokenizer_vocab_size=32000,
+            use_tokenizer_vocab_size=False,
+        )
+
+        assert vocab_size == 248320
+        assert should_pad_vocab is False
+
     def test_vocab_size_equal_to_tokenizer_returns_same_value(self):
         """Test that vocab_size equal to tokenizer returns the same value and disables padding."""
         vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
@@ -270,6 +293,19 @@ class TestRegisterPreWrapHook:
         _register_pre_wrap_hook(mock_provider, hook)
         mock_provider.register_pre_wrap_hook.assert_called_once_with(hook)
 
+    def test_setup_hook_replacement_preserves_model_config_user_hooks(self):
+        """Replacing setup-owned hooks must not remove caller registrations."""
+        cfg = _make_gpt_model_config()
+        user_hook = Mock(side_effect=lambda models: models)
+        stale_setup_hook = Mock(side_effect=lambda models: models)
+        current_setup_hook = Mock(side_effect=lambda models: models)
+        _register_pre_wrap_hook(cfg, user_hook)
+
+        _register_setup_pre_wrap_hook(cfg, stale_setup_hook, setup_hook_name="peft")
+        _register_setup_pre_wrap_hook(cfg, current_setup_hook, setup_hook_name="peft")
+
+        assert cfg.pre_wrap_hooks == [user_hook, current_setup_hook]
+
 
 class TestBuildDistributedModel:
     """Test cases for the _build_distributed_model function."""
@@ -290,6 +326,7 @@ class TestBuildDistributedModel:
     def test_build_with_model_config(self, _mock_gpt_cls):
         """Test that builder.build_distributed_models is called for ModelConfig."""
         cfg, model_cfg = self._make_cfg_with_model_config()
+        assert not hasattr(model_cfg, "provide_distributed_model")
 
         mock_builder_cls = MagicMock()
         mock_builder = MagicMock()

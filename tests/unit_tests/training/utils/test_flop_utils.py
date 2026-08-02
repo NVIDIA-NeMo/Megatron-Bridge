@@ -108,6 +108,11 @@ class MockModelConfig:
     linear_value_head_dim: int = 128
     linear_num_key_heads: int = 16
     linear_num_value_heads: int = 48
+    # Kimi K3 KDA (Kimi Delta Attention) settings
+    kimi_kda_layers: tuple[int, ...] = ()
+    kimi_linear_num_heads: int = 96
+    kimi_linear_head_dim: int = 128
+    kimi_linear_conv_kernel_size: int = 4
     # Optional ViT vision config (for VLM FLOPS tests)
     vision_config: object | None = None
 
@@ -2115,6 +2120,159 @@ class TestMLAFlops:
         assert f_long > 2 * f_short, (
             f"Expected superlinear seq scaling but got f(s=256)={f_long:.6e} vs 2*f(s=128)={2 * f_short:.6e}"
         )
+
+
+@pytest.mark.unit
+class TestKimiK3KdaFlops:
+    """Tests for Kimi K3's KDA (Kimi Delta Attention) hybrid attention schedule.
+
+    The K3 provider subclasses ``MLAModelProvider``, so the MLA branch costs every
+    layer as full multi-latent attention. Layers listed in ``kimi_kda_layers`` are
+    linear-attention blocks and must be re-costed with the KDA per-layer formula.
+    """
+
+    @staticmethod
+    def _kda_per_layer(
+        hidden: int,
+        num_kda_heads: int,
+        head_dim: int,
+        conv_kernel_dim: int,
+    ) -> float:
+        """Mirror the KDA per-layer formula in flop_utils.py — regression coverage."""
+        projection_size = num_kda_heads * head_dim
+        return (
+            3
+            * 2
+            * (
+                hidden * projection_size * 5
+                + hidden * num_kda_heads
+                + hidden * head_dim
+                + head_dim * projection_size
+                + conv_kernel_dim * 3 * projection_size
+                + num_kda_heads * (head_dim**2) * 4
+            )
+        )
+
+    def _base_kwargs(self, **overrides):
+        """Small K3-shaped MLA config (dense, no MoE/MTP) so the math stays checkable."""
+        defaults = dict(
+            num_layers=4,
+            hidden_size=256,
+            seq_length=128,
+            ffn_hidden_size=512,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=32,
+            vocab_size=32000,  # already divisible by 128 → padded == vocab
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,  # ffn_expansion_factor = 2, simpler MLP math
+            multi_latent_attention=True,
+            q_lora_rank=64,
+            kv_lora_rank=32,
+            qk_head_dim=32,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=32,
+            kimi_linear_num_heads=8,
+            kimi_linear_head_dim=32,
+            kimi_linear_conv_kernel_size=4,
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_kda_layers_change_flops(self):
+        """Marking layers as KDA must not leave the pure-MLA total unchanged."""
+        mla_only = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs())), batch_size=1
+        )
+        hybrid = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(kimi_kda_layers=(1, 2, 3)))),
+            batch_size=1,
+        )
+        assert hybrid != mla_only
+        assert hybrid > 0
+
+    def test_kda_exact_self_attn_term(self):
+        """Hybrid MLA/KDA self_attn_term is the exact per-layer weighted sum."""
+        batch_size = 1
+        kw = self._base_kwargs(kimi_kda_layers=(1, 3))
+        cfg = MockConfigContainer(model=MockModelConfig(**kw))
+        actual = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        mla_per_layer = (
+            3
+            * 2
+            * TestMLAFlops._mla_inner(
+                hidden=kw["hidden_size"],
+                n_heads=kw["num_attention_heads"],
+                seq_length=kw["seq_length"],
+                q_lora_rank=kw["q_lora_rank"],
+                kv_lora_rank=kw["kv_lora_rank"],
+                qk_head_dim=kw["qk_head_dim"],
+                qk_pos_emb_head_dim=kw["qk_pos_emb_head_dim"],
+                v_head_dim=kw["v_head_dim"],
+            )
+        )
+        kda_per_layer = self._kda_per_layer(
+            hidden=kw["hidden_size"],
+            num_kda_heads=kw["kimi_linear_num_heads"],
+            head_dim=kw["kimi_linear_head_dim"],
+            conv_kernel_dim=kw["kimi_linear_conv_kernel_size"],
+        )
+        # 4 layers total, 2 of them KDA.
+        expected_self_attn = kda_per_layer * 2 + mla_per_layer * 2
+        expected_mlp = 3 * 2 * kw["hidden_size"] * (kw["ffn_hidden_size"] * 2) * kw["num_layers"]
+        expected_logit = 3 * 2 * kw["hidden_size"] * kw["vocab_size"] * 1
+        expected_total = batch_size * kw["seq_length"] * (expected_mlp + expected_self_attn + expected_logit)
+
+        assert actual == pytest.approx(expected_total, rel=1e-12)
+
+    def test_more_kda_layers_lowers_flops_at_long_context(self):
+        """KDA has no quadratic term, so it undercuts MLA once the sequence is long."""
+        # The crossover is sequence-dependent: KDA's projections are fixed cost while
+        # MLA's core-attention term grows with seq_length, so this only holds at long context.
+        few = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=8192, kimi_kda_layers=(1,)))),
+            batch_size=1,
+        )
+        many = num_floating_point_operations(
+            MockConfigContainer(
+                model=MockModelConfig(**self._base_kwargs(seq_length=8192, kimi_kda_layers=(1, 2, 3)))
+            ),
+            batch_size=1,
+        )
+        assert many < few
+
+    def test_kda_is_linear_in_sequence_length(self):
+        """An all-KDA schedule drops the quadratic core-attention term entirely."""
+        all_kda = dict(kimi_kda_layers=(1, 2, 3, 4))
+        short = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=128, **all_kda))), batch_size=1
+        )
+        long = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=256, **all_kda))), batch_size=1
+        )
+        assert long == pytest.approx(2 * short, rel=1e-12)
+
+    def test_mtp_layers_follow_final_decoder_layer_type(self):
+        """MTP reuses the last decoder layer spec, so its attention type must match."""
+        kw_kda_last = self._base_kwargs(kimi_kda_layers=(1, 4), mtp_num_layers=1)
+        kw_mla_last = self._base_kwargs(kimi_kda_layers=(1, 2), mtp_num_layers=1)
+        kda_last = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_kda_last)), batch_size=1
+        )
+        mla_last = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_mla_last)), batch_size=1
+        )
+        # Same decoder KDA count (2), but the MTP layer inherits a different type.
+        assert kda_last != mla_last
+
+    @pytest.mark.parametrize("bad_layers", [(0, 1), (1, 5), (-1,)])
+    def test_out_of_range_kda_layers_raise(self, bad_layers):
+        """`kimi_kda_layers` holds 1-indexed layer numbers; out-of-range entries fail loudly."""
+        cfg = MockConfigContainer(model=MockModelConfig(**self._base_kwargs(kimi_kda_layers=bad_layers)))
+        with pytest.raises(ValueError, match="kimi_kda_layers contains layer numbers outside"):
+            num_floating_point_operations(cfg, batch_size=1)
 
 
 @pytest.mark.unit

@@ -121,7 +121,6 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
     ("recipe_name", "step_name"),
     [
         ("gpt_oss_20b_pretrain_config", "llm_step"),
-        ("nemotron_nano_v2_vl_12b_sft_config", "llava_step"),
         ("nemotron_omni_cord_v2_sft_config", "nemotron_omni_step"),
         ("qwen2_audio_7b_sft_config", "audio_lm_step"),
         ("qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config", "qwen3_omni_step"),
