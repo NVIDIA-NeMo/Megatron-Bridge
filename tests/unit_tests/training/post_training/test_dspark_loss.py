@@ -79,6 +79,27 @@ def test_three_terms_combine_with_alphas():
     loss.backward()
 
 
+def test_l1_loss_is_total_variation_not_full_l1():
+    # Disjoint saturated distributions: draft puts all mass on token 0, the target
+    # on token 1, so the raw L1 distance is 2.0 and the TV distance is 1.0. The
+    # trained/reported term must be the TV value, not the full L1.
+    draft = torch.full((1, 1, 1, V), -30.0)
+    draft[..., 0] = 30.0
+    draft.requires_grad_()
+    target = torch.full((1, 1, 1, V), -30.0)
+    target[..., 1] = 30.0
+    out = DSparkForwardOutput(
+        draft_logits=draft,
+        target_ids=torch.zeros(1, 1, 1, dtype=torch.long),
+        eval_mask=torch.ones(1, 1, 1, dtype=torch.bool),
+        block_keep_mask=torch.ones(1, 1, dtype=torch.bool),
+        aligned_target_logits=target,
+    )
+    loss, metrics = dspark_loss(out, ce_alpha=0.0, l1_alpha=1.0, confidence_alpha=0.0, loss_decay_gamma=None)
+    assert metrics["l1_loss"].item() == pytest.approx(1.0, abs=1e-5)
+    assert loss.item() == pytest.approx(1.0, abs=1e-5)
+
+
 def test_missing_target_logits_raises_when_tv_requested():
     out = _outputs(with_target=False, with_confidence=False)
     with pytest.raises(ValueError, match="aligned_target_logits is required"):

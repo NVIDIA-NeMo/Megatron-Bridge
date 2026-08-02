@@ -81,19 +81,19 @@ def _loss_weight_mask(eval_mask: torch.Tensor, block_size: int, loss_decay_gamma
     return weight
 
 
-def _l1_distance_per_token(draft_logits: torch.Tensor, target_logits: torch.Tensor) -> torch.Tensor:
-    """FP32 probability L1 distance ``||softmax(draft) - softmax(target)||_1`` per position.
+def _tv_distance_per_token(draft_logits: torch.Tensor, target_logits: torch.Tensor) -> torch.Tensor:
+    """FP32 total-variation distance ``0.5 * ||softmax(draft) - softmax(target)||_1`` per position.
 
     Args:
         draft_logits: ``[..., vocab]``.
         target_logits: ``[..., vocab]``.
 
     Returns:
-        Per-position L1 distance ``[...]`` (twice the total-variation distance).
+        Per-position TV distance ``[...]``, in ``[0, 1]``.
     """
     draft_probs = torch.softmax(draft_logits.float(), dim=-1)
     target_probs = torch.softmax(target_logits.float(), dim=-1)
-    return (draft_probs - target_probs).abs().sum(dim=-1)
+    return 0.5 * (draft_probs - target_probs).abs().sum(dim=-1)
 
 
 def _reduce_den(value: torch.Tensor, dp_group) -> torch.Tensor:
@@ -160,10 +160,10 @@ def dspark_loss(
     conf_num = conf_den = zero
     accept_rate = None
     if target_logits is not None and (l1_alpha > 0 or has_confidence):
-        l1_dist = _l1_distance_per_token(draft_logits, target_logits)  # [B, N, L] == 2 * TV
-        accept_rate = (1.0 - 0.5 * l1_dist).clamp_(0.0, 1.0)
+        tv_dist = _tv_distance_per_token(draft_logits, target_logits)  # [B, N, L]
+        accept_rate = (1.0 - tv_dist).clamp_(0.0, 1.0)
         if l1_alpha > 0:
-            l1_num = (l1_dist * weight).sum()
+            l1_num = (tv_dist * weight).sum()
             l1_den = weight.sum()
         if has_confidence:
             conf_num = (
