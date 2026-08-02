@@ -52,8 +52,9 @@ def _grad_over(head, sl, batch, dp_group):
         batch: ``(base_logits, prev_ids, target_ids, aligned_target_logits,
             eval_mask, block_keep_mask)`` for the full batch; each is
             ``[total_blocks, num_blocks, block_size(, vocab)]``.
-        dp_group: Data-parallel process group for the loss denominator reduction,
-            or ``None`` for the single-process reference.
+        dp_group: Data-parallel process group for the loss denominator reduction.
+            The single-process reference passes a size-1 group (``dp_group=None``
+            raises inside an initialized multi-rank job).
 
     Returns:
         ``markov_w2.weight.grad`` after one backward.
@@ -98,7 +99,11 @@ def _worker(rank: int, world_size: int, port: int) -> None:
             torch.ones(total, num_blocks, dtype=torch.bool).to(dev),  # block keep mask
         )
 
-        grad_ref = _grad_over(head, slice(0, total), batch, dp_group=None)
+        # dspark_loss refuses dp_group=None on a multi-rank job; a size-1 group
+        # gives the identical unreduced numerics for the reference gradient.
+        # new_group must be called by every rank for every group, in the same order.
+        self_groups = [torch.distributed.new_group([r]) for r in range(world_size)]
+        grad_ref = _grad_over(head, slice(0, total), batch, dp_group=self_groups[rank])
 
         sl = slice(rank * blocks_per_rank, (rank + 1) * blocks_per_rank)
         grad_local = _grad_over(head, sl, batch, dp_group=torch.distributed.group.WORLD)

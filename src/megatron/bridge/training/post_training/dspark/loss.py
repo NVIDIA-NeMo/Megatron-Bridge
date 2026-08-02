@@ -30,7 +30,8 @@ The per-term losses are computed as ``(numerator, denominator)`` sums so that a
 data-parallel training step can all-reduce the denominators over its DP group
 before dividing once (avoiding per-micro-batch token-count bias). Pass
 ``dp_group`` for that reduction; the default (``None``) computes the local loss,
-which is what single-process unit tests exercise. This module depends only on
+which is what single-process unit tests exercise (multi-rank jobs must pass the
+group explicitly). This module depends only on
 ``torch`` and ``torch.distributed``; wiring it to a Megatron-Core forward step and
 the correct DP group is a separate integration concern.
 """
@@ -129,15 +130,27 @@ def dspark_loss(
         confidence_alpha: Confidence-BCE weight (used only when
             ``outputs.confidence_pred`` is set).
         loss_decay_gamma: Per-position decay; ``None`` disables it.
-        dp_group: Optional data-parallel process group over which the loss
-            denominators are summed before dividing. ``None`` computes the local
-            (single-process) loss.
+        dp_group: Data-parallel process group over which the loss denominators
+            are summed before dividing. ``None`` computes the local loss;
+            multi-rank torch.distributed jobs must pass their DP group explicitly
+            (a size-1 group if there is no data parallelism).
 
     Returns:
         Tuple ``(loss, metrics)``. ``loss`` is the scalar training loss; ``metrics``
         holds the detached per-term losses (``ce_loss`` / ``l1_loss`` /
         ``confidence_loss``) and acceptance diagnostics (``accept_rate``, ``tau``).
+
+    Raises:
+        RuntimeError: If torch.distributed is initialized with more than one rank
+            and ``dp_group`` is ``None``.
     """
+    if dp_group is None and dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+        raise RuntimeError(
+            "dspark_loss: torch.distributed is initialized but dp_group is None. The loss would be "
+            "normalized by this rank's local token count only, silently biasing the objective. Pass "
+            "the data-parallel process group explicitly (a group of size 1 if there is no data "
+            "parallelism)."
+        )
     draft_logits = outputs.draft_logits
     _, _, block_size, vocab_size = draft_logits.shape
     # A position is supervised iff it is eval-masked AND its anchor is kept:
