@@ -6,7 +6,7 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Standalone pretrain_fsdp.GB200 and pretrain_fsdp.H100 recipes use
-  the same sequence-length-8192, GBS/MBS 512/1, TP1/PP4/VPP3/EP64 benchmark
+  the same sequence-length-8192, GBS/MBS 512/1, TP1/PP4/EP64 benchmark
   workload where the hardware permits; both remain unverified. Nemotron 3
   Ultra 550B-A55B has public BF16 H100 pretraining, packed full-SFT, and packed
   PEFT recipes. Its pinned 24-GPU BF16
@@ -377,7 +377,7 @@ items:
         peak_reserved_memory_gib: null
       expected_result: >
         On 256 GB200 GPUs, the exact canonical mock-data FSDP recipe must
-        complete all 50 optimizer steps at TP1/PP4/VPP3/CP1/EP64/ETP1,
+        complete all 50 optimizer steps at TP1/PP4/CP1/EP64/ETP1,
         GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
         NaN iterations, all four training metrics, and peak allocated and
         reserved memory. MXFP8, HybridEP, the fused grouped MLP path, selective
@@ -404,7 +404,7 @@ items:
         peak_reserved_memory_gib: null
       expected_result: >
         On 256 H100 GPUs, the exact canonical mock-data FSDP recipe must
-        complete all 50 optimizer steps at TP1/PP4/VPP3/CP1/EP64/ETP1,
+        complete all 50 optimizer steps at TP1/PP4/CP1/EP64/ETP1,
         GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
         NaN iterations, all four training metrics, and peak allocated and
         reserved memory. BF16, HybridEP, selective MoE-activation recompute,

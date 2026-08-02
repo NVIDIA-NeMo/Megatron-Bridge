@@ -69,7 +69,6 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     *,
     num_gpus: int,
     pipeline_model_parallel_size: int,
-    virtual_pipeline_model_parallel_size: int,
     global_batch_size: int,
 ) -> ConfigContainer:
     """Build a TP1 Nemotron 3 Ultra H100 BF16 FSDP candidate."""
@@ -78,7 +77,7 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         compute_dtype="bf16",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=pipeline_model_parallel_size,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=None,
         expert_model_parallel_size=64,
         global_batch_size=global_batch_size,
         # EDP is one at EP64 on these topologies, so partial optimizer instances
@@ -91,11 +90,10 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
 
 
 def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_pp2_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 128× H100, TP1/PP2/VPP2 BF16 FSDP."""
+    """Nemotron 3 Ultra pretrain: 128× H100, TP1/PP2 BF16 FSDP."""
     cfg = _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         num_gpus=128,
         pipeline_model_parallel_size=2,
-        virtual_pipeline_model_parallel_size=2,
         global_batch_size=256,
     )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -122,11 +120,10 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_pp2_config() -> ConfigContai
 
 
 def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× H100, TP1/PP4/VPP3 BF16 FSDP."""
+    """Nemotron 3 Ultra pretrain: 256× H100, TP1/PP4 BF16 FSDP."""
     cfg = _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         num_gpus=256,
         pipeline_model_parallel_size=4,
-        virtual_pipeline_model_parallel_size=3,
         global_batch_size=512,
     )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

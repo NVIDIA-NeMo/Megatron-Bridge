@@ -323,7 +323,7 @@ def _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
         compute_dtype="fp8_mx",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=2,
-        virtual_pipeline_model_parallel_size=2,
+        virtual_pipeline_model_parallel_size=None,
         expert_model_parallel_size=64,
         global_batch_size=global_batch_size,
         optimizer_shard_group_size=64,
@@ -337,7 +337,7 @@ def _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
 
 
 def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_config() -> ConfigContainer:
-    """Nemotron 3 Ultra: 128× GB200, TP1/PP2/VPP2 MXFP8 FSDP without CPU offload."""
+    """Nemotron 3 Ultra: 128× GB200, TP1/PP2 MXFP8 FSDP without CPU offload."""
     cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
         num_gpus=128,
         global_batch_size=256,
@@ -402,7 +402,7 @@ def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContai
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_config() -> ConfigContainer:
-    """Nemotron 3 Ultra: 256× GB200, TP1/PP2/VPP2 MXFP8 FSDP without CPU offload."""
+    """Nemotron 3 Ultra: 256× GB200, TP1/PP2 MXFP8 FSDP without CPU offload."""
     cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
         num_gpus=256,
         global_batch_size=512,
@@ -467,13 +467,13 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContai
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp4_config() -> ConfigContainer:
-    """Nemotron 3 Ultra: 256× GB200, TP1/PP4/VPP3 MXFP8 FSDP without CPU offload."""
+    """Nemotron 3 Ultra: 256× GB200, TP1/PP4 MXFP8 FSDP without CPU offload."""
     cfg = _nemotron_3_ultra_perf_fsdp_config(
         num_gpus=256,
         compute_dtype="fp8_mx",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=4,
-        virtual_pipeline_model_parallel_size=3,
+        virtual_pipeline_model_parallel_size=None,
         expert_model_parallel_size=64,
         global_batch_size=512,
         optimizer_shard_group_size=64,

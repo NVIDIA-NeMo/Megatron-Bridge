@@ -114,17 +114,17 @@ def test_gb200_ultra_recipes_embed_performance_defaults(
         "nccl_user_buffers",
     ),
     [
-        (nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_config, 2, 2, 256, 1, "no_shard", False),
-        (nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_ub_config, 2, 2, 256, 1, "no_shard", True),
-        (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_config, 2, 2, 512, 2, "optim", False),
-        (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_ub_config, 2, 2, 512, 2, "optim", True),
-        (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp4_config, 4, 3, 512, 1, "no_shard", False),
+        (nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_config, 2, None, 256, 1, "no_shard", False),
+        (nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_ub_config, 2, None, 256, 1, "no_shard", True),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_config, 2, None, 512, 2, "optim", False),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_ub_config, 2, None, 512, 2, "optim", True),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp4_config, 4, None, 512, 1, "no_shard", False),
     ],
 )
 def test_gb200_ultra_no_offload_candidates(
     recipe_factory,
     pipeline_parallel_size: int,
-    virtual_pipeline_parallel_size: int,
+    virtual_pipeline_parallel_size: int | None,
     global_batch_size: int,
     num_optimizer_instances: int,
     outer_dp_sharding_strategy: str,
@@ -164,14 +164,14 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
 @pytest.mark.parametrize(
     ("recipe_factory", "pipeline_parallel_size", "virtual_pipeline_parallel_size", "global_batch_size"),
     [
-        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_pp2_config, 2, 2, 256),
-        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, 3, 512),
+        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_pp2_config, 2, None, 256),
+        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, None, 512),
     ],
 )
 def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     recipe_factory,
     pipeline_parallel_size: int,
-    virtual_pipeline_parallel_size: int,
+    virtual_pipeline_parallel_size: int | None,
     global_batch_size: int,
 ) -> None:
     cfg = recipe_factory()
