@@ -81,3 +81,14 @@ def test_compare_detects_field_mismatch(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="row 2, field 'loss_mask'"):
         module.validate_parity(str(parquet_path), str(indexed_prefix), max_rows=0)
+
+
+def test_compare_detects_row_count_mismatch_with_positive_limit(tmp_path) -> None:
+    module = _load_module()
+    parquet_path = tmp_path / "train.idx.parquet"
+    indexed_prefix = tmp_path / "train.sft"
+    write_packed_parquet(_rows()[:1], parquet_path)
+    write_packed_indexed_dataset(_rows()[:2], indexed_prefix)
+
+    with pytest.raises(ValueError, match="Row count mismatch within comparison range"):
+        module.validate_parity(str(parquet_path), str(indexed_prefix), max_rows=100)

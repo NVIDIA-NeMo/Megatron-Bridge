@@ -22,8 +22,9 @@ from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
     GPTSFTDatasetConfig,
 )
-from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder
+from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder, build_gpt_sft_split
 from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.data.packing.indexed import GPTSFTPackedIndexedDataset, write_packed_indexed_dataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -214,6 +215,34 @@ class TestGPTSFTDatasetBuilder:
         assert datasets[0] is not None
         assert datasets[1] is not None
         assert datasets[2] is not None
+
+    def test_build_indexed_dataset_from_msc_url(self, ensure_test_data):
+        MultiStorageClientFeature.disable()
+        local_prefix = f"{ensure_test_data}/datasets/finetune_msc/remote.sft"
+        PosixPath(local_prefix).parent.mkdir(parents=True, exist_ok=True)
+        write_packed_indexed_dataset(
+            [{"input_ids": [10, 11, 12], "loss_mask": [0, 1, 0], "seq_start_id": [0]}],
+            local_prefix,
+        )
+        prefix = f"msc://default{local_prefix}"
+        tokenizer = build_tokenizer(TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=128))
+
+        dataset = build_gpt_sft_split(
+            prefix,
+            tokenizer=tokenizer,
+            seq_length=8,
+            memmap_workers=1,
+            seed=1234,
+            packed_sequence_size=8,
+            object_storage_cache_path=f"{ensure_test_data}/packed-sft-index-cache",
+            object_storage_bin_chunk_nbytes=1024,
+            dataset_kwargs={"pad_seq_length_to_mult": 1},
+        )
+
+        assert isinstance(dataset, GPTSFTPackedIndexedDataset)
+        assert MultiStorageClientFeature.is_enabled()
+        assert dataset[0]["input_ids"].tolist() == [10, 11, 12]
+        MultiStorageClientFeature.disable()
 
 
 class TestGPTSFTDatasetBuilderWithChatTemplates:

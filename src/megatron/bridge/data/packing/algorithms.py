@@ -16,6 +16,7 @@
 
 import collections
 import logging
+from pathlib import Path
 from typing import Dict, List, Sequence, Tuple, TypeVar
 
 import numpy as np
@@ -404,7 +405,13 @@ def get_seqlen_list(elem: Dict) -> Tuple[List[int], int]:
 
 
 def calculate_avg_seqlen(
-    dataset_file: str, gbs: int, max_seq_len: int, drop_remainder: bool
+    dataset_file: str,
+    gbs: int,
+    max_seq_len: int,
+    drop_remainder: bool,
+    *,
+    object_storage_cache_path: str | Path | None = None,
+    object_storage_bin_chunk_nbytes: int = 256 * 1024 * 1024,
 ) -> Tuple[float, float, float, float]:
     """Calculate average sequence length statistics from a packed dataset.
 
@@ -415,6 +422,8 @@ def calculate_avg_seqlen(
         gbs: Global batch size used to determine how many rows to process.
         max_seq_len: Maximum sequence length (reserved for future use).
         drop_remainder: If True, drop rows that don't fill a complete batch.
+        object_storage_cache_path: Shared local index-cache path for remote indexed data.
+        object_storage_bin_chunk_nbytes: Range-read chunk size for remote indexed data.
 
     Returns:
         A tuple of (avg_seqlen_count, avg_seqlen_total, avg_seqlen_sq_individual, avg_seqlen_sq_per_row):
@@ -430,7 +439,11 @@ def calculate_avg_seqlen(
     from megatron.bridge.data.packing.paths import is_packed_parquet_spec, resolve_packed_parquet_paths
 
     if is_packed_indexed_dataset(dataset_file):
-        data = PackedSFTIndexedDataset(dataset_file)
+        data = PackedSFTIndexedDataset(
+            dataset_file,
+            object_storage_cache_path=object_storage_cache_path,
+            object_storage_bin_chunk_nbytes=object_storage_bin_chunk_nbytes,
+        )
     elif is_packed_parquet_spec(dataset_file):
         import pyarrow.parquet as pq
 

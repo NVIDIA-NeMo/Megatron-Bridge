@@ -2850,6 +2850,8 @@ class TestLoraSquadPackedFlopBranch:
             offline_packing_specs=SimpleNamespace(
                 packed_train_data_path=packed_train_data_path,
                 packed_sequence_size=seq_len,
+                object_storage_cache_path=None,
+                object_storage_bin_chunk_nbytes=256 * 1024 * 1024,
             ),
             dataset_root=str(dataset_root),
         )
@@ -2899,6 +2901,27 @@ class TestLoraSquadPackedFlopBranch:
         mock_calc.assert_called_once()
         assert mock_calc.call_args.args[0].endswith("training_512.sft")
         assert flops > 0
+
+    def test_forwards_object_storage_reader_settings(self, tmp_path):
+        from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+        prefix = tmp_path / "training_512.sft"
+        write_packed_indexed_dataset(
+            [{"input_ids": [1, 2], "loss_mask": [0, 1], "seq_start_id": [0]}],
+            prefix,
+        )
+        cfg = self._cfg(tmp_path, seq_len=512, packed_train_data_path=str(prefix))
+        cfg.dataset.offline_packing_specs.object_storage_cache_path = "/shared/index-cache"
+        cfg.dataset.offline_packing_specs.object_storage_bin_chunk_nbytes = 1024
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            num_floating_point_operations(cfg, batch_size=1)
+
+        assert mock_calc.call_args.kwargs["object_storage_cache_path"] == "/shared/index-cache"
+        assert mock_calc.call_args.kwargs["object_storage_bin_chunk_nbytes"] == 1024
 
     def test_falls_back_to_npy_when_no_parquet(self, tmp_path):
         # No parquet present -> discovery must fall back to the deprecated .npy.

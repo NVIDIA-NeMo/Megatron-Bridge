@@ -103,6 +103,43 @@ A prefix, either pair filename, a glob, or a directory of canonical
 `*.sft.bin/*.sft.idx` pairs is accepted. Directory and glob inputs are read in
 sorted shard order. Every pair must be complete.
 
+For `msc://` prefixes, MCore streams `.bin` ranges and caches each `.idx`
+locally. Bridge enables MCore's Multi-Storage Client integration when it sees
+the prefix; this only toggles MCore's feature flag. Before launch, install and
+configure the storage provider and named profile according to the
+[Multi-Storage Client configuration guide](https://nvidia.github.io/multi-storage-client/). Bridge does not create
+profiles or credentials. It uses
+`$NEMO_DATASETS_CACHE/packed_sft_index_cache` (or the corresponding default
+NeMo cache) unless an explicit cache is configured. In multi-node jobs the
+cache path must be visible to every rank:
+
+```python
+offline_packing_specs=PackedSequenceSpecs(
+    packed_sequence_size=4096,
+    packed_train_data_path="msc://profile/sft/training_4096.sft",
+    packed_val_data_path="msc://profile/sft/validation_4096.sft",
+    object_storage_cache_path="/shared/cache/packed-sft-indices",
+    # MCore defaults to 256 MiB range-read chunks; tune only after measuring.
+    object_storage_bin_chunk_nbytes=256 * 1024 * 1024,
+)
+```
+
+The canonical builder downloads remote indices on rank zero before its
+distributed barrier and automatically disables mmap for remote `.bin` files.
+Remote artifacts are read-only: prepare the pair locally, then upload both
+files before constructing the recipe. For example:
+
+```python
+import multistorageclient as msc
+
+msc.upload_file("msc://profile/sft/training_4096.sft.bin", "/data/packed/training_4096.sft.bin")
+msc.upload_file("msc://profile/sft/training_4096.sft.idx", "/data/packed/training_4096.sft.idx")
+```
+
+Do not upload `.idx` until `.bin` has completed. Direct packing or rewriting to
+an object-storage prefix is rejected because a two-object replacement cannot
+provide the local pair's reader/writer atomicity.
+
 ## Launch Training
 
 The normal recipe launcher consumes the indexed pair through the configured
@@ -147,12 +184,20 @@ throughput on the target filesystem before making capacity decisions.
 Each IndexedDataset item is one complete packed row. Its int32 payload contains
 a versioned header, the sequence start offsets, and one word per token. The
 lower 31 bits store the token ID and the high bit stores the binary loss mask.
-The reader validates the magic value, version, mask, token range, and strictly
-increasing boundaries before constructing a training sample.
+The writer validates mask and token ranges. The reader validates the magic
+value, version, row dimensions, and strictly increasing boundaries before
+constructing a training sample.
+
+Writers validate every row under the versioned schema, build a temporary pair,
+take an exclusive filesystem lock, and publish `.idx` last as the completion
+point. Local readers take the shared side of that lock while opening both files.
+If either publication step raises, the writer restores the previous pair. The
+internal `.sft.lock` sidecar intentionally remains for later readers and
+writers.
 
 This is a packed-SFT schema, not an ordinary pretraining token stream. Both use
-the MCore `.bin/.idx` container and mmap reader, but their payloads are not
-interchangeable.
+the MCore `.bin/.idx` container; local data uses mmap and remote data uses range
+reads. Their payloads are not interchangeable.
 
 ## Compatibility Notes
 

@@ -1,6 +1,6 @@
 # Text-only SFT Dataset Tutorial
 
-Choose this transitional path when you have local text JSONL, or when you want to normalize a Hugging Face text source into reusable JSONL before SFT or PEFT. It also supports offline packed-Parquet processing and finite `num_epochs` training. The planned prepared `.bin`/`.idx` SFT workflow tracked by Issue #4664 will replace packed Parquet as the recommended scalable prepared-data path. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) if you are deciding between this path and direct SFT.
+Choose this path when you have local text JSONL, or when you want to normalize a Hugging Face text source into reusable JSONL before SFT or PEFT. It supports offline packing into MCore `.sft.bin/.sft.idx` pairs and finite `num_epochs` training. Packed Parquet remains available only as an explicitly configured compatibility format. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) if you are deciding between this path and direct SFT.
 
 You configure the data with `GPTSFTDatasetConfig`; the training framework uses `GPTSFTDatasetBuilder` to bind the tokenizer, materialize sources when needed, prepare offline packing, and construct `GPTSFTDataset` splits.
 
@@ -105,7 +105,7 @@ The builder loads the source, applies the optional registered row adapter, norma
 
 ## Enable offline packing
 
-Offline packing preprocesses examples into packed Parquet plus metadata and reuses it across runs:
+Offline packing preprocesses examples into MCore `.sft.bin/.sft.idx` pairs plus metadata and reuses them across runs:
 
 ```python
 from megatron.bridge.data.packing import PackedSequenceSpecs
@@ -155,7 +155,7 @@ GPTSFTDatasetBuilder(config=dataset, tokenizer=tokenizer).prepare_data()
 PY
 ```
 
-This writes default `.idx.parquet` packed splits and metadata under the dataset root. `scripts/training/prepare_gpt_sft_packed_data.py` is also available when the selected named recipe's dataset schema matches the input files.
+This writes default `.sft.bin/.sft.idx` packed splits and metadata under the dataset root. `scripts/training/prepare_gpt_sft_packed_data.py` is also available when the selected named recipe's dataset schema matches the input files. Existing Parquet packs remain supported when configured explicitly.
 
 Packed SFT requires micro batch size 1. With context parallelism, sequence lengths must be divisible by twice the CP size, `calculate_per_token_loss=True`, and `ddp.average_in_collective=False`. CUDA graphs require padded packed metadata.
 

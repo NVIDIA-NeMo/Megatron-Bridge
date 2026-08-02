@@ -35,6 +35,8 @@ class PackedSequenceSpecs:
     packed_metadata_path: str | Path | None = None
     pad_cu_seqlens: bool = False
     pad_seq_to_mult: int | None = 1
+    object_storage_cache_path: str | Path | None = None
+    object_storage_bin_chunk_nbytes: int = 256 * 1024 * 1024
 
     def __post_init__(self) -> None:
         """Validate alignment settings and any explicitly supplied artifacts."""
@@ -44,6 +46,12 @@ class PackedSequenceSpecs:
             self._validate_packed_path("packed_val_data_path", self.packed_val_data_path)
         if self.pad_seq_to_mult is not None and self.pad_seq_to_mult <= 0:
             raise ValueError("pad_seq_to_mult must be a positive integer when provided.")
+        if self.object_storage_cache_path is not None:
+            cache_path = str(self.object_storage_cache_path).strip()
+            if not cache_path or cache_path.startswith(("msc://", "s3://")):
+                raise ValueError("object_storage_cache_path must be a non-empty local path when provided.")
+        if self.object_storage_bin_chunk_nbytes <= 0:
+            raise ValueError("object_storage_bin_chunk_nbytes must be greater than 0.")
 
     def _validate_packed_path(self, attr_name: str, path_value: str | Path) -> None:
         """Validate an explicitly supplied packed artifact path."""

@@ -23,8 +23,13 @@ existing packed Parquet semantics while using MCore's mmap-backed storage.
 from __future__ import annotations
 
 import bisect
+import contextlib
+import fcntl
 import glob
+import logging
 import os
+import time
+import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,7 +42,13 @@ from megatron.core.datasets.indexed_dataset import (
     get_bin_path,
     get_idx_path,
 )
-from megatron.core.datasets.object_storage_utils import ObjectStorageConfig
+from megatron.core.datasets.object_storage_utils import (
+    ObjectStorageConfig,
+    cache_index_file,
+    get_index_cache_path,
+    is_object_storage_path,
+    parse_s3_path,
+)
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
@@ -48,11 +59,14 @@ if TYPE_CHECKING:
 
 
 PACKED_SFT_SUFFIX = ".sft"
+DEFAULT_OBJECT_STORAGE_BIN_CHUNK_NBYTES = 256 * 1024 * 1024
 _ROW_MAGIC = 0x53465442  # ASCII "SFTB".
 _FORMAT_VERSION = 1
 _HEADER_WORDS = 3
 _TOKEN_BITS_MASK = np.uint32(0x7FFFFFFF)
 _LOSS_MASK_SHIFT = np.uint32(31)
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_packed_indexed_prefix(path: str | Path) -> str:
@@ -61,6 +75,12 @@ def normalize_packed_indexed_prefix(path: str | Path) -> str:
     if path_str.lower().endswith((".bin", ".idx")):
         return path_str[:-4]
     return path_str
+
+
+def is_packed_indexed_spec(spec: str | Path) -> bool:
+    """Return whether a path syntactically names canonical packed SFT indexed data."""
+    spec_str = str(spec).lower()
+    return spec_str.endswith((PACKED_SFT_SUFFIX, f"{PACKED_SFT_SUFFIX}.bin", f"{PACKED_SFT_SUFFIX}.idx"))
 
 
 def _glob_prefixes(pattern: str) -> list[str]:
@@ -75,7 +95,43 @@ def _glob_prefixes(pattern: str) -> list[str]:
     else:
         matches = glob.glob(pattern)
     prefixes = {normalize_packed_indexed_prefix(path) for path in matches}
-    return sorted(prefix for prefix in prefixes if IndexedDataset.exists(prefix))
+    return sorted(prefix for prefix in prefixes if _packed_indexed_pair_exists(prefix))
+
+
+def _s3_object_exists(path: str) -> bool:
+    """Check one S3 object without relying on MCore's pinned existence helper."""
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+    except ModuleNotFoundError as error:
+        raise RuntimeError("Reading packed SFT data from s3:// requires boto3 and botocore") from error
+
+    bucket, key = parse_s3_path(path)
+    client = boto3.client("s3")
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+    except ClientError as error:
+        response = error.response
+        error_code = str(response.get("Error", {}).get("Code", ""))
+        status_code = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if error_code in {"404", "NoSuchKey", "NotFound"} or status_code == 404:
+            return False
+        raise
+    finally:
+        close = getattr(client, "close", None)
+        if close is not None:
+            close()
+    return True
+
+
+def _packed_indexed_pair_exists(prefix: str) -> bool:
+    """Return whether both files in one local, MSC, or S3 pair exist."""
+    if prefix.startswith("s3://"):
+        return _s3_object_exists(get_bin_path(prefix)) and _s3_object_exists(get_idx_path(prefix))
+    if prefix.startswith("msc://"):
+        msc = MultiStorageClientFeature.import_package()
+        return msc.Path(get_bin_path(prefix)).exists() and msc.Path(get_idx_path(prefix)).exists()
+    return IndexedDataset.exists(prefix)
 
 
 def resolve_packed_indexed_prefixes(spec: str | Path) -> list[str]:
@@ -92,6 +148,8 @@ def resolve_packed_indexed_prefixes(spec: str | Path) -> list[str]:
         ValueError: If no complete dataset pair can be resolved.
     """
     spec_str = str(spec)
+    if spec_str.startswith("msc://") and not MultiStorageClientFeature.is_enabled():
+        MultiStorageClientFeature.enable()
     if "*" in spec_str or "?" in spec_str:
         suffix = "" if spec_str.lower().endswith((".bin", ".idx")) else ".idx"
         prefixes = _glob_prefixes(f"{spec_str}{suffix}")
@@ -113,12 +171,53 @@ def resolve_packed_indexed_prefixes(spec: str | Path) -> list[str]:
         return prefixes
 
     prefix = normalize_packed_indexed_prefix(spec_str)
-    if not IndexedDataset.exists(prefix):
+    if not _packed_indexed_pair_exists(prefix):
         raise ValueError(
             f"Packed SFT IndexedDataset is incomplete or missing for prefix '{prefix}'; "
             f"expected both '{get_bin_path(prefix)}' and '{get_idx_path(prefix)}'"
         )
     return [prefix]
+
+
+def _refresh_directory_metadata(spec: str | Path) -> None:
+    """Refresh the nearest local ancestor after a stale shared-filesystem miss."""
+    spec_str = str(spec)
+    if is_object_storage_path(spec_str):
+        return
+    base = spec_str.split("*", 1)[0].split("?", 1)[0]
+    directory = Path(base if os.path.isdir(base) else os.path.dirname(base))
+    while True:
+        try:
+            os.listdir(directory)
+            return
+        except OSError:
+            parent = directory.parent
+            if parent == directory:
+                return
+            directory = parent
+
+
+def resolve_packed_indexed_prefixes_with_retry(
+    spec: str | Path,
+    *,
+    max_attempts: int = 10,
+    backoff_s: float = 1.0,
+) -> list[str]:
+    """Resolve packed indexed data with bounded NFS metadata refresh and retry."""
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be greater than 0")
+    last_error: ValueError | None = None
+    for attempt in range(max_attempts):
+        try:
+            return resolve_packed_indexed_prefixes(spec)
+        except ValueError as error:
+            last_error = error
+            if attempt == max_attempts - 1:
+                break
+            _refresh_directory_metadata(spec)
+            time.sleep(backoff_s * (attempt + 1))
+    assert last_error is not None
+    raise last_error
 
 
 def is_packed_indexed_dataset(spec: str | Path) -> bool:
@@ -127,6 +226,54 @@ def is_packed_indexed_dataset(spec: str | Path) -> bool:
         return bool(resolve_packed_indexed_prefixes(spec))
     except ValueError:
         return False
+
+
+def default_packed_index_cache_path() -> Path:
+    """Return the standard local index-cache directory for remote packed data."""
+    nemo_home = Path(os.getenv("NEMO_HOME", Path.home() / ".cache" / "nemo"))
+    datasets_cache = Path(os.getenv("NEMO_DATASETS_CACHE", nemo_home / "datasets"))
+    cache_path = datasets_cache / "packed_sft_index_cache"
+    cache_path.mkdir(parents=True, exist_ok=True)
+    return cache_path
+
+
+def make_object_storage_config(
+    cache_path: str | Path | None,
+    *,
+    bin_chunk_nbytes: int = DEFAULT_OBJECT_STORAGE_BIN_CHUNK_NBYTES,
+) -> ObjectStorageConfig:
+    """Build MCore's object-storage reader config from declarative values."""
+    if bin_chunk_nbytes <= 0:
+        raise ValueError("object_storage_bin_chunk_nbytes must be greater than 0")
+    if cache_path is not None and is_object_storage_path(str(cache_path)):
+        raise ValueError("object_storage_cache_path must be a local path visible to every rank")
+    resolved_cache_path = default_packed_index_cache_path() if cache_path is None else Path(cache_path)
+    resolved_cache_path.mkdir(parents=True, exist_ok=True)
+    return ObjectStorageConfig(
+        path_to_idx_cache=str(resolved_cache_path),
+        bin_chunk_nbytes=bin_chunk_nbytes,
+    )
+
+
+def cache_packed_indexed_dataset_indices(
+    path_spec: str | Path,
+    *,
+    cache_path: str | Path | None,
+    bin_chunk_nbytes: int = DEFAULT_OBJECT_STORAGE_BIN_CHUNK_NBYTES,
+) -> None:
+    """Cache remote index files before all distributed ranks construct readers."""
+    prefixes = resolve_packed_indexed_prefixes(path_spec)
+    remote_prefixes = [prefix for prefix in prefixes if is_object_storage_path(prefix)]
+    if not remote_prefixes:
+        return
+    object_storage_config = make_object_storage_config(
+        cache_path,
+        bin_chunk_nbytes=bin_chunk_nbytes,
+    )
+    for prefix in remote_prefixes:
+        idx_path = get_idx_path(prefix)
+        local_idx_path = get_index_cache_path(idx_path, object_storage_config)
+        cache_index_file(idx_path, local_idx_path)
 
 
 def _as_integral_vector(value: Sequence[int | float] | np.ndarray, *, field: str) -> np.ndarray:
@@ -215,18 +362,123 @@ def decode_packed_row(encoded: np.ndarray, *, row_index: int) -> dict[str, np.nd
     }
 
 
+def _unlink_path(path: str) -> None:
+    """Remove a local path when it exists."""
+    Path(path).unlink(missing_ok=True)
+
+
+def _cleanup_path(path: str) -> None:
+    """Remove a temporary path without masking the primary write error."""
+    try:
+        _unlink_path(path)
+    except OSError:
+        logger.warning("Could not clean up temporary packed SFT path %s", path, exc_info=True)
+
+
+def _replace_path(source: str, destination: str) -> None:
+    """Atomically replace one local path."""
+    os.replace(source, destination)
+
+
+@contextlib.contextmanager
+def _publication_lock(prefix: str, *, exclusive: bool):
+    """Coordinate local readers and writers while a pair is opened or published."""
+    lock_path = f"{prefix}.lock"
+    with open(lock_path, "a+b") as lock_file:
+        lock_mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(lock_file.fileno(), lock_mode)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _publish_temporary_pair(temporary_prefix: str, final_prefix: str) -> None:
+    """Publish the data file first and roll back both files on failure."""
+    temporary_bin = get_bin_path(temporary_prefix)
+    temporary_idx = get_idx_path(temporary_prefix)
+    final_bin = get_bin_path(final_prefix)
+    final_idx = get_idx_path(final_prefix)
+    backup_prefix = f"{final_prefix}.backup-{uuid.uuid4().hex}"
+    backup_bin = get_bin_path(backup_prefix)
+    backup_idx = get_idx_path(backup_prefix)
+
+    with _publication_lock(final_prefix, exclusive=True):
+        old_bin_backed_up = False
+        old_idx_backed_up = False
+        new_bin_published = False
+        new_idx_published = False
+        publication_succeeded = False
+        rollback_succeeded = False
+        try:
+            # Remove the old commit point before moving its data. Readers take
+            # the shared side of this lock while opening both files.
+            if Path(final_idx).exists():
+                _replace_path(final_idx, backup_idx)
+                old_idx_backed_up = True
+            if Path(final_bin).exists():
+                _replace_path(final_bin, backup_bin)
+                old_bin_backed_up = True
+            _replace_path(temporary_bin, final_bin)
+            new_bin_published = True
+            _replace_path(temporary_idx, final_idx)
+            new_idx_published = True
+        except Exception as publication_error:
+            try:
+                if old_bin_backed_up:
+                    _replace_path(backup_bin, final_bin)
+                elif new_bin_published:
+                    _cleanup_path(final_bin)
+                if old_idx_backed_up:
+                    _replace_path(backup_idx, final_idx)
+                elif new_idx_published:
+                    _cleanup_path(final_idx)
+            except Exception as rollback_error:
+                publication_error.add_note(f"Rollback also failed: {rollback_error}")
+                raise publication_error from rollback_error
+            rollback_succeeded = True
+            raise
+        else:
+            publication_succeeded = True
+        finally:
+            # Preserve backups for manual recovery if rollback itself raises.
+            if publication_succeeded or rollback_succeeded:
+                _cleanup_path(backup_bin)
+                _cleanup_path(backup_idx)
+
+
 def write_packed_indexed_dataset(
     rows: Sequence[Mapping[str, Sequence[int | float] | np.ndarray]], output_path: str | Path
 ) -> str:
-    """Write packed SFT rows to one MCore ``.bin/.idx`` pair."""
+    """Write packed SFT rows to a transactionally published MCore pair."""
     if not rows:
         raise ValueError("Cannot write an empty packed SFT IndexedDataset")
+
     prefix = normalize_packed_indexed_prefix(output_path)
-    builder = IndexedDatasetBuilder(get_bin_path(prefix), dtype=np.int32)
+    if is_object_storage_path(prefix):
+        raise ValueError(
+            "Direct writes to object storage are not supported for packed SFT IndexedDataset; "
+            "write a local pair and upload both files before training"
+        )
+
+    # Validate before creating any output, so a malformed later row cannot
+    # truncate an existing valid pair.
     for row in rows:
-        builder.add_item(torch.from_numpy(encode_packed_row(row)))
-        builder.end_document()
-    builder.finalize(get_idx_path(prefix))
+        encode_packed_row(row)
+
+    temporary_prefix = f"{prefix}.tmp-{uuid.uuid4().hex}"
+    temporary_bin = get_bin_path(temporary_prefix)
+    temporary_idx = get_idx_path(temporary_prefix)
+    try:
+        builder = IndexedDatasetBuilder(temporary_bin, dtype=np.int32)
+        for row in rows:
+            builder.add_item(torch.from_numpy(encode_packed_row(row)))
+            builder.end_document()
+        builder.finalize(temporary_idx)
+        _publish_temporary_pair(temporary_prefix, prefix)
+    finally:
+        _cleanup_path(temporary_bin)
+        _cleanup_path(temporary_idx)
     return prefix
 
 
@@ -239,18 +491,39 @@ class PackedSFTIndexedDataset(Sequence[dict[str, np.ndarray | list[int]]]):
         *,
         mmap: bool = True,
         object_storage_config: ObjectStorageConfig | None = None,
+        object_storage_cache_path: str | Path | None = None,
+        object_storage_bin_chunk_nbytes: int = DEFAULT_OBJECT_STORAGE_BIN_CHUNK_NBYTES,
     ) -> None:
         """Initialize the packed indexed reader."""
-        self.prefixes = resolve_packed_indexed_prefixes(path_spec)
-        self.datasets = [
-            IndexedDataset(prefix, mmap=mmap, object_storage_config=object_storage_config) for prefix in self.prefixes
-        ]
+        self.prefixes = resolve_packed_indexed_prefixes_with_retry(path_spec)
+        has_remote_prefix = any(is_object_storage_path(prefix) for prefix in self.prefixes)
+        if has_remote_prefix and object_storage_config is None:
+            object_storage_config = make_object_storage_config(
+                object_storage_cache_path,
+                bin_chunk_nbytes=object_storage_bin_chunk_nbytes,
+            )
+
+        self.datasets = []
+        for prefix in self.prefixes:
+            is_remote = is_object_storage_path(prefix)
+            lock_context = contextlib.nullcontext() if is_remote else _publication_lock(prefix, exclusive=False)
+            with lock_context:
+                dataset = IndexedDataset(
+                    prefix,
+                    mmap=mmap and not is_remote,
+                    object_storage_config=object_storage_config if is_remote else None,
+                )
+                if len(dataset) == 0:
+                    raise ValueError(f"Packed SFT IndexedDataset shard is empty: {prefix}")
+                try:
+                    decode_packed_row(dataset[0], row_index=0)
+                except ValueError as error:
+                    raise ValueError(f"Invalid packed SFT IndexedDataset shard '{prefix}': {error}") from error
+            self.datasets.append(dataset)
+
         self.offsets = [0]
         for dataset in self.datasets:
             self.offsets.append(self.offsets[-1] + len(dataset))
-        if self.offsets[-1] == 0:
-            raise ValueError(f"Packed SFT IndexedDataset is empty: {path_spec}")
-        decode_packed_row(self.datasets[0][0], row_index=0)
 
     def __len__(self) -> int:
         """Return the row count across all shards."""
@@ -283,12 +556,16 @@ class GPTSFTPackedIndexedDataset(GPTSFTPackedDataset):
         pack_metadata_file_path: str | None = None,
         mmap: bool = True,
         object_storage_config: ObjectStorageConfig | None = None,
+        object_storage_cache_path: str | Path | None = None,
+        object_storage_bin_chunk_nbytes: int = DEFAULT_OBJECT_STORAGE_BIN_CHUNK_NBYTES,
         **kwargs: object,
     ) -> None:
         """Initialize an indexed packed GPT SFT dataset."""
         self._path_spec = file_path
         self._mmap = mmap
         self._object_storage_config = object_storage_config
+        self._object_storage_cache_path = object_storage_cache_path
+        self._object_storage_bin_chunk_nbytes = object_storage_bin_chunk_nbytes
         super().__init__(
             file_path=file_path,
             tokenizer=tokenizer,
@@ -301,14 +578,23 @@ class GPTSFTPackedIndexedDataset(GPTSFTPackedDataset):
     def _load_dataset(self) -> None:
         """Load the versioned packed SFT IndexedDataset rows."""
         self.indexed_dataset = PackedSFTIndexedDataset(
-            self._path_spec, mmap=self._mmap, object_storage_config=self._object_storage_config
+            self._path_spec,
+            mmap=self._mmap,
+            object_storage_config=self._object_storage_config,
+            object_storage_cache_path=self._object_storage_cache_path,
+            object_storage_bin_chunk_nbytes=self._object_storage_bin_chunk_nbytes,
         )
 
     def __getitem__(self, index: int) -> dict[str, np.ndarray | list[int]]:
         """Load and decode one packed training sample."""
         is_padding_sample = index < 0
         if self.samples_mapping is not None:
-            index = int(self.samples_mapping[index])
+            mapped_index = self.samples_mapping[index]
+            if isinstance(mapped_index, np.ndarray):
+                mapped_index = mapped_index.reshape(-1)[0]
+            elif isinstance(mapped_index, (tuple, list)):
+                mapped_index = mapped_index[0]
+            index = int(mapped_index)
         row = self.indexed_dataset[index]
         input_ids = row["input_ids"]
         loss_mask = row["loss_mask"]

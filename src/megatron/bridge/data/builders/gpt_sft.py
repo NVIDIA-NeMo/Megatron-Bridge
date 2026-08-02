@@ -17,7 +17,9 @@
 import hashlib
 import json
 import logging
+import os
 import re
+import time
 import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -32,8 +34,12 @@ from megatron.bridge.data.base import DataloaderConfig, validate_declarative_map
 from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTDataset, get_dataset_root
 from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.packing.indexed import (
+    cache_packed_indexed_dataset_indices,
     is_packed_indexed_dataset,
+    is_packed_indexed_spec,
     normalize_packed_indexed_prefix,
+    resolve_packed_indexed_prefixes,
+    resolve_packed_indexed_prefixes_with_retry,
 )
 from megatron.bridge.data.packing.paths import (
     is_packed_parquet_spec,
@@ -73,6 +79,44 @@ _SEMANTIC_DATASET_KWARGS = {
     "truncation_method",
     "use_hf_tokenizer_chat_template",
 }
+
+
+def _path_is_directory(path: str) -> bool:
+    """Return whether a local or enabled-MSC path is a directory."""
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        path_obj = msc.Path(path)
+        return path_obj.is_dir() if hasattr(path_obj, "is_dir") else False
+    return Path(path).is_dir()
+
+
+def _resolve_packed_directory_format_with_retry(
+    path: str,
+    *,
+    max_attempts: int = 10,
+    backoff_s: float = 1.0,
+) -> Literal["indexed", "parquet"] | None:
+    """Resolve an ambiguous packed directory without favoring one retry loop."""
+    for attempt in range(max_attempts):
+        try:
+            if resolve_packed_indexed_prefixes(path):
+                return "indexed"
+        except ValueError:
+            pass
+        try:
+            if resolve_packed_parquet_paths(path):
+                return "parquet"
+        except ValueError:
+            pass
+        if attempt == max_attempts - 1:
+            break
+        if not path.startswith(("msc://", "s3://")):
+            try:
+                os.listdir(path)
+            except OSError:
+                pass
+        time.sleep(backoff_s * (attempt + 1))
+    return None
 
 
 def _default_gpt_sft_preprocessing() -> PromptCompletionSFTPreprocessingConfig:
@@ -434,14 +478,34 @@ def build_gpt_sft_split(
     pack_metadata_path: str | Path | None = None,
     pad_cu_seqlens: bool = False,
     pad_seq_to_mult: int | None = None,
+    object_storage_cache_path: str | Path | None = None,
+    object_storage_bin_chunk_nbytes: int = 256 * 1024 * 1024,
     is_test: bool = False,
     dataset_kwargs: dict[str, Any] | None = None,
 ) -> Any | None:
     """Build one GPT SFT split from a local JSONL or packed-data path."""
     path_str = str(path)
-    if is_packed_indexed_dataset(path_str):
+    if path_str.startswith("msc://") and not MultiStorageClientFeature.is_enabled():
+        MultiStorageClientFeature.enable()
+    path_is_indexed = is_packed_indexed_spec(path_str)
+    path_is_parquet = False
+    if path_is_indexed:
+        try:
+            # Match the Parquet path's stale-NFS protection: another node can
+            # retain a negative dentry after rank zero publishes the pair.
+            path_exists = bool(resolve_packed_indexed_prefixes_with_retry(path_str))
+        except ValueError:
+            path_exists = False
+    elif _path_is_directory(path_str):
+        packed_format = _resolve_packed_directory_format_with_retry(path_str)
+        path_is_indexed = packed_format == "indexed"
+        path_is_parquet = packed_format == "parquet"
+        path_exists = packed_format is not None
+    elif is_packed_indexed_dataset(path_str):
+        path_is_indexed = True
         path_exists = True
     elif is_packed_parquet_spec(path_str):
+        path_is_parquet = True
         try:
             # Retry with directory-metadata refresh: on NFS filesystems a non-producer
             # node can transiently see zero files right after rank 0 wrote them (#4207).
@@ -506,18 +570,20 @@ def build_gpt_sft_split(
             **options,
         )
 
-    if is_packed_indexed_dataset(path_str):
+    if path_is_indexed:
         from megatron.bridge.data.packing.indexed import GPTSFTPackedIndexedDataset
 
         return GPTSFTPackedIndexedDataset(
             pack_metadata_file_path=effective_metadata_path,
             pad_cu_seqlens=pad_cu_seqlens,
             pad_seq_to_mult=pad_seq_to_mult,
+            object_storage_cache_path=object_storage_cache_path,
+            object_storage_bin_chunk_nbytes=object_storage_bin_chunk_nbytes,
             **dataset_init_kwargs,
             **options,
         )
 
-    if is_packed_parquet_spec(path_str):
+    if path_is_parquet:
         from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetDataset
 
         return GPTSFTPackedParquetDataset(
@@ -560,6 +626,8 @@ class GPTSFTDatasetBuilder:
             raise ValueError("GPTSFTDatasetBuilder requires an initialized tokenizer.")
         config.validate()
         dataset_root = resolve_gpt_sft_dataset_root(config)
+        if str(dataset_root).startswith("msc://") and not MultiStorageClientFeature.is_enabled():
+            MultiStorageClientFeature.enable()
         self._source_root = Path(dataset_root) if config.hf_dataset is not None else None
 
         if MultiStorageClientFeature.is_enabled():
@@ -588,6 +656,14 @@ class GPTSFTDatasetBuilder:
         self._num_tokenizer_workers = (
             -1 if config.offline_packing_specs is None else config.offline_packing_specs.num_tokenizer_workers
         )
+        self._object_storage_cache_path = (
+            None if config.offline_packing_specs is None else config.offline_packing_specs.object_storage_cache_path
+        )
+        self._object_storage_bin_chunk_nbytes = (
+            256 * 1024 * 1024
+            if config.offline_packing_specs is None
+            else config.offline_packing_specs.object_storage_bin_chunk_nbytes
+        )
         self._rewrite_packed_data = config.hf_dataset is not None and config.hf_rewrite
         self._packing_fingerprint = _packing_fingerprint(config, config.dataset_kwargs)
 
@@ -609,6 +685,22 @@ class GPTSFTDatasetBuilder:
             assert self._source_root is not None
             materialize_hf_dataset(self.config, self._source_root)
         self.prepare_packed_data()
+        self._cache_remote_packed_indices()
+
+    def _cache_remote_packed_indices(self) -> None:
+        """Stage remote MCore index files before the distributed build barrier."""
+        if self.packed_sequence_size <= 0:
+            return
+        packed_paths = [self.train_path_packed]
+        if self.do_validation:
+            packed_paths.append(self.validation_path_packed)
+        for packed_path in packed_paths:
+            if is_packed_indexed_dataset(packed_path):
+                cache_packed_indexed_dataset_indices(
+                    packed_path,
+                    cache_path=self._object_storage_cache_path,
+                    bin_chunk_nbytes=self._object_storage_bin_chunk_nbytes,
+                )
 
     def prepare_packed_data(self) -> None:
         """Prepare packed sequence data files if configured.
@@ -724,7 +816,7 @@ class GPTSFTDatasetBuilder:
     def _remove_packed_path(self, path: Union[str, Path]) -> None:
         """Remove one builder-managed packed artifact if it exists."""
         path_str = str(path)
-        if is_packed_indexed_dataset(path_str):
+        if is_packed_indexed_spec(path_str) or is_packed_indexed_dataset(path_str):
             prefix = normalize_packed_indexed_prefix(path_str)
             indexed_paths = (f"{prefix}.bin", f"{prefix}.idx")
             if MultiStorageClientFeature.is_enabled():
@@ -785,6 +877,8 @@ class GPTSFTDatasetBuilder:
             pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
             pad_cu_seqlens=self._pad_cu_seqlens,
             pad_seq_to_mult=self._pad_seq_to_mult,
+            object_storage_cache_path=self._object_storage_cache_path,
+            object_storage_bin_chunk_nbytes=self._object_storage_bin_chunk_nbytes,
             dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
         )
 
@@ -799,6 +893,8 @@ class GPTSFTDatasetBuilder:
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
                 pad_cu_seqlens=self._pad_cu_seqlens,
                 pad_seq_to_mult=self._pad_seq_to_mult,
+                object_storage_cache_path=self._object_storage_cache_path,
+                object_storage_bin_chunk_nbytes=self._object_storage_bin_chunk_nbytes,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )

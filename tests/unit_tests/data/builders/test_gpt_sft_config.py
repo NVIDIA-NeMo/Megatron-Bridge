@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -47,7 +48,12 @@ def _hf_config(tmp_path, **source_overrides):
 
 
 def test_config_round_trip_is_declarative_and_serializable(tmp_path):
-    specs = PackedSequenceSpecs(packed_sequence_size=128, pad_seq_to_mult=8)
+    specs = PackedSequenceSpecs(
+        packed_sequence_size=128,
+        pad_seq_to_mult=8,
+        object_storage_cache_path=tmp_path / "index-cache",
+        object_storage_bin_chunk_nbytes=1024,
+    )
     config = GPTSFTDatasetConfig(
         seq_length=128,
         hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
@@ -67,8 +73,23 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     assert isinstance(restored.hf_dataset, HFDatasetSourceConfig)
     assert restored.hf_dataset.dataset_name == "squad"
     assert restored.offline_packing_specs.packed_sequence_size == 128
+    assert restored.offline_packing_specs.object_storage_cache_path == tmp_path / "index-cache"
+    assert restored.offline_packing_specs.object_storage_bin_chunk_nbytes == 1024
     assert isinstance(restored.preprocessing, PromptCompletionSFTPreprocessingConfig)
     assert "tokenizer" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"object_storage_cache_path": ""}, "non-empty local path"),
+        ({"object_storage_cache_path": "msc://profile/cache"}, "non-empty local path"),
+        ({"object_storage_bin_chunk_nbytes": 0}, "greater than 0"),
+    ],
+)
+def test_packed_specs_validate_object_storage_settings(kwargs, error):
+    with pytest.raises(ValueError, match=error):
+        PackedSequenceSpecs(packed_sequence_size=128, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -185,12 +206,17 @@ def test_packed_metadata_forwarding_depends_on_format_and_padding(
         pack_metadata_path=metadata_path,
         pad_cu_seqlens=pad_cu_seqlens,
         pad_seq_to_mult=4,
+        object_storage_cache_path=tmp_path / "index-cache",
+        object_storage_bin_chunk_nbytes=1024,
         dataset_kwargs={"chat": True, "use_hf_tokenizer_chat_template": True},
     )
 
     expected = metadata_path if expects_metadata else None
     assert captured["pack_metadata_file_path"] == expected
     assert captured["pad_seq_to_mult"] == 4
+    if filename.endswith(".sft"):
+        assert captured["object_storage_cache_path"] == tmp_path / "index-cache"
+        assert captured["object_storage_bin_chunk_nbytes"] == 1024
 
 
 def test_build_gpt_sft_split_routes_chat_options(monkeypatch, tmp_path):
@@ -221,6 +247,40 @@ def test_build_gpt_sft_split_routes_chat_options(monkeypatch, tmp_path):
     assert result == str(dataset_path)
     assert captured["use_hf_tokenizer_chat_template"] is True
     assert captured["tool_schemas"] == {"type": "function"}
+
+
+def test_build_gpt_sft_split_retries_ambiguous_indexed_directory(monkeypatch, tmp_path):
+    packed_directory = tmp_path / "packed"
+    packed_directory.mkdir()
+    indexed_attempts = []
+
+    def resolve_indexed(_path):
+        indexed_attempts.append(None)
+        if len(indexed_attempts) == 1:
+            raise ValueError("stale directory entry")
+        return [str(packed_directory / "training.sft")]
+
+    def resolve_parquet(_path):
+        raise ValueError("no parquet files")
+
+    monkeypatch.setattr(builder_mod, "resolve_packed_indexed_prefixes", resolve_indexed)
+    monkeypatch.setattr(builder_mod, "resolve_packed_parquet_paths", resolve_parquet)
+    monkeypatch.setattr(builder_mod.time, "sleep", lambda _seconds: None)
+    from megatron.bridge.data.packing import indexed as packed_module
+
+    monkeypatch.setattr(packed_module, "GPTSFTPackedIndexedDataset", lambda **kwargs: kwargs["file_path"])
+
+    result = build_gpt_sft_split(
+        packed_directory,
+        tokenizer=object(),
+        seq_length=128,
+        memmap_workers=1,
+        seed=1234,
+        packed_sequence_size=128,
+    )
+
+    assert result == str(packed_directory)
+    assert len(indexed_attempts) == 2
 
 
 def test_local_source_rejects_hf_only_settings(tmp_path):
@@ -582,8 +642,11 @@ def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch
         do_test=False,
     )
     builder = GPTSFTDatasetBuilder(config=config, tokenizer=SimpleNamespace(_tokenizer=object()))
-    builder.train_path_packed.touch()
-    builder.validation_path_packed.touch()
+    from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+    row = {"input_ids": [1, 2], "loss_mask": [0, 1], "seq_start_id": [0]}
+    write_packed_indexed_dataset([row], builder.train_path_packed)
+    write_packed_indexed_dataset([row], builder.validation_path_packed)
     builder.pack_metadata.write_text('[{"stale": true}]')
     pack_calls = []
 
@@ -612,8 +675,11 @@ def test_hf_rewrite_removes_disabled_validation_pack(monkeypatch, tmp_path):
         do_test=False,
     )
     builder = GPTSFTDatasetBuilder(config=config, tokenizer=SimpleNamespace(_tokenizer=object()))
-    builder.train_path_packed.touch()
-    builder.validation_path_packed.touch()
+    from megatron.bridge.data.packing.indexed import write_packed_indexed_dataset
+
+    row = {"input_ids": [1, 2], "loss_mask": [0, 1], "seq_start_id": [0]}
+    write_packed_indexed_dataset([row], builder.train_path_packed)
+    write_packed_indexed_dataset([row], builder.validation_path_packed)
     builder.pack_metadata.write_text('[{"stale": true}]')
     pack_calls = []
 
@@ -626,7 +692,8 @@ def test_hf_rewrite_removes_disabled_validation_pack(monkeypatch, tmp_path):
     builder.prepare_data()
 
     assert len(pack_calls) == 1
-    assert not builder.validation_path_packed.exists()
+    assert not Path(f"{builder.validation_path_packed}.bin").exists()
+    assert not Path(f"{builder.validation_path_packed}.idx").exists()
     assert json.loads(builder.pack_metadata.read_text()) == []
 
 

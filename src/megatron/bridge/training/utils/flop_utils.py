@@ -691,6 +691,8 @@ def num_floating_point_operations(
             else None
         )
         packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
+        object_storage_cache_path = getattr(packed_specs, "object_storage_cache_path", None)
+        object_storage_bin_chunk_nbytes = getattr(packed_specs, "object_storage_bin_chunk_nbytes", 256 * 1024 * 1024)
         # If not explicitly set, try to find the file via dataset_root (the GPTSFTDatasetBuilder
         # computes this path dynamically, but dataset_root is available from the config).
         if packed_data_path is None and packed_specs is not None:
@@ -714,7 +716,12 @@ def num_floating_point_operations(
             cache_key = (packed_data_path, gbs, seq_len)
             if cache_key not in _lora_seq_stats_cache:
                 _lora_seq_stats_cache[cache_key] = calculate_avg_seqlen(
-                    packed_data_path, gbs, seq_len, drop_remainder=True
+                    packed_data_path,
+                    gbs,
+                    seq_len,
+                    drop_remainder=True,
+                    object_storage_cache_path=object_storage_cache_path,
+                    object_storage_bin_chunk_nbytes=object_storage_bin_chunk_nbytes,
                 )
             _, avg_tokens, _, avg_seqlen2 = _lora_seq_stats_cache[cache_key]
 

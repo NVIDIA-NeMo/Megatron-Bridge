@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -21,6 +22,7 @@ import pytest
 import torch
 
 from megatron.bridge.data.builders.gpt_sft import build_gpt_sft_split
+from megatron.bridge.data.packing import indexed as indexed_module
 from megatron.bridge.data.packing.indexed import (
     GPTSFTPackedIndexedDataset,
     PackedSFTIndexedDataset,
@@ -28,6 +30,7 @@ from megatron.bridge.data.packing.indexed import (
     encode_packed_row,
     is_packed_indexed_dataset,
     resolve_packed_indexed_prefixes,
+    resolve_packed_indexed_prefixes_with_retry,
     write_packed_indexed_dataset,
 )
 
@@ -51,12 +54,12 @@ def _make_tokenizer() -> MagicMock:
     return tokenizer
 
 
-def _make_training_dataset(path: str) -> GPTSFTPackedIndexedDataset:
+def _make_training_dataset(path: str, *, max_num_samples: int | None = None) -> GPTSFTPackedIndexedDataset:
     return GPTSFTPackedIndexedDataset(
         file_path=path,
         tokenizer=_make_tokenizer(),
         max_seq_length=16,
-        max_num_samples=None,
+        max_num_samples=max_num_samples,
         pad_to_max_length=False,
         pad_seq_length_to_mult=1,
         add_bos=False,
@@ -121,6 +124,176 @@ def test_writer_reader_and_path_resolution(tmp_path) -> None:
         assert actual["seq_start_id"] == expected["seq_start_id"]
 
 
+def test_invalid_overwrite_preserves_existing_pair(tmp_path) -> None:
+    prefix = tmp_path / "train.sft"
+    original_rows = [_make_row(), _make_row(offset=100)]
+    write_packed_indexed_dataset(original_rows, prefix)
+    original_bin = (tmp_path / "train.sft.bin").read_bytes()
+    original_idx = (tmp_path / "train.sft.idx").read_bytes()
+    invalid_row = _make_row(offset=200)
+    invalid_row["loss_mask"][0] = 2
+
+    with pytest.raises(ValueError, match="binary"):
+        write_packed_indexed_dataset([_make_row(offset=300), invalid_row], prefix)
+
+    assert (tmp_path / "train.sft.bin").read_bytes() == original_bin
+    assert (tmp_path / "train.sft.idx").read_bytes() == original_idx
+    assert not list(tmp_path.glob("train.sft.tmp-*"))
+
+
+def test_finalize_failure_preserves_existing_pair_and_cleans_temporary_files(tmp_path, monkeypatch) -> None:
+    prefix = tmp_path / "train.sft"
+    write_packed_indexed_dataset([_make_row()], prefix)
+    original_bin = (tmp_path / "train.sft.bin").read_bytes()
+    original_idx = (tmp_path / "train.sft.idx").read_bytes()
+
+    def fail_finalize(self, idx_path):
+        self.data_file.close()
+        raise OSError("injected finalize failure")
+
+    monkeypatch.setattr(indexed_module.IndexedDatasetBuilder, "finalize", fail_finalize)
+
+    with pytest.raises(OSError, match="injected"):
+        write_packed_indexed_dataset([_make_row(offset=100)], prefix)
+
+    assert (tmp_path / "train.sft.bin").read_bytes() == original_bin
+    assert (tmp_path / "train.sft.idx").read_bytes() == original_idx
+    assert not list(tmp_path.glob("train.sft.tmp-*"))
+
+
+def test_temporary_cleanup_failure_does_not_mask_primary_error(tmp_path, monkeypatch) -> None:
+    def fail_finalize(self, idx_path):
+        self.data_file.close()
+        raise OSError("injected finalize failure")
+
+    original_unlink = indexed_module._unlink_path
+
+    def fail_temporary_cleanup(path):
+        if ".tmp-" in path:
+            raise OSError("injected cleanup failure")
+        original_unlink(path)
+
+    monkeypatch.setattr(indexed_module.IndexedDatasetBuilder, "finalize", fail_finalize)
+    monkeypatch.setattr(indexed_module, "_unlink_path", fail_temporary_cleanup)
+
+    with pytest.raises(OSError, match="injected finalize failure"):
+        write_packed_indexed_dataset([_make_row()], tmp_path / "train.sft")
+
+
+@pytest.mark.parametrize("failing_suffix", [".bin", ".idx"])
+def test_publication_failure_restores_existing_pair(tmp_path, monkeypatch, failing_suffix) -> None:
+    prefix = tmp_path / "train.sft"
+    write_packed_indexed_dataset([_make_row()], prefix)
+    original_bin = (tmp_path / "train.sft.bin").read_bytes()
+    original_idx = (tmp_path / "train.sft.idx").read_bytes()
+    original_replace = indexed_module._replace_path
+    failure_injected = False
+
+    def fail_temporary_publish(source, destination):
+        nonlocal failure_injected
+        if not failure_injected and ".tmp-" in source and source.endswith(failing_suffix):
+            failure_injected = True
+            raise OSError(f"injected {failing_suffix} publication failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(indexed_module, "_replace_path", fail_temporary_publish)
+
+    with pytest.raises(OSError, match="publication failure"):
+        write_packed_indexed_dataset([_make_row(offset=100)], prefix)
+
+    assert (tmp_path / "train.sft.bin").read_bytes() == original_bin
+    assert (tmp_path / "train.sft.idx").read_bytes() == original_idx
+    assert not list(tmp_path.glob("train.sft.tmp-*"))
+    assert not list(tmp_path.glob("train.sft.backup-*"))
+
+
+@pytest.mark.parametrize("failing_suffix", [".bin", ".idx"])
+def test_backup_failure_leaves_existing_pair_untouched(tmp_path, monkeypatch, failing_suffix) -> None:
+    prefix = tmp_path / "train.sft"
+    write_packed_indexed_dataset([_make_row()], prefix)
+    original_bin = (tmp_path / "train.sft.bin").read_bytes()
+    original_idx = (tmp_path / "train.sft.idx").read_bytes()
+    original_replace = indexed_module._replace_path
+
+    def fail_backup(source, destination):
+        if source == f"{prefix}{failing_suffix}" and ".backup-" in destination:
+            raise OSError(f"injected {failing_suffix} backup failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(indexed_module, "_replace_path", fail_backup)
+
+    with pytest.raises(OSError, match="backup failure"):
+        write_packed_indexed_dataset([_make_row(offset=100)], prefix)
+
+    assert (tmp_path / "train.sft.bin").read_bytes() == original_bin
+    assert (tmp_path / "train.sft.idx").read_bytes() == original_idx
+    assert not list(tmp_path.glob("train.sft.tmp-*"))
+    assert not list(tmp_path.glob("train.sft.backup-*"))
+
+
+def test_writer_rejects_direct_object_storage_output() -> None:
+    with pytest.raises(ValueError, match="write a local pair"):
+        write_packed_indexed_dataset([_make_row()], "msc://profile/train.sft")
+
+
+def test_multi_shard_reader_validates_every_shard(tmp_path) -> None:
+    write_packed_indexed_dataset([_make_row()], tmp_path / "shard_000.sft")
+    invalid_prefix = tmp_path / "shard_001.sft"
+    builder = indexed_module.IndexedDatasetBuilder(f"{invalid_prefix}.bin", dtype=np.int32)
+    builder.add_item(torch.tensor([1, 2, 3, 4, 5], dtype=torch.int32))
+    builder.end_document()
+    builder.finalize(f"{invalid_prefix}.idx")
+
+    with pytest.raises(ValueError, match="shard_001.*invalid magic"):
+        PackedSFTIndexedDataset(tmp_path)
+
+
+def test_indexed_resolution_retries_after_stale_visibility(monkeypatch) -> None:
+    calls = []
+
+    def resolve(_spec):
+        calls.append(None)
+        if len(calls) < 3:
+            raise ValueError("stale")
+        return ["train.sft"]
+
+    monkeypatch.setattr(indexed_module, "resolve_packed_indexed_prefixes", resolve)
+    monkeypatch.setattr(indexed_module, "_refresh_directory_metadata", lambda _spec: None)
+
+    assert resolve_packed_indexed_prefixes_with_retry("train.sft", max_attempts=3, backoff_s=0) == ["train.sft"]
+    assert len(calls) == 3
+
+
+def test_remote_reader_disables_mmap_and_builds_object_storage_config(monkeypatch) -> None:
+    encoded = encode_packed_row(_make_row())
+    observed = []
+
+    class FakeIndexedDataset:
+        def __init__(self, prefix, *, mmap, object_storage_config):
+            observed.append((prefix, mmap, object_storage_config))
+
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            assert index == 0
+            return encoded
+
+    config = SimpleNamespace(path_to_idx_cache="/cache", bin_chunk_nbytes=123)
+    monkeypatch.setattr(indexed_module, "resolve_packed_indexed_prefixes", lambda _spec: ["msc://p/train.sft"])
+    monkeypatch.setattr(indexed_module, "make_object_storage_config", lambda *args, **kwargs: config)
+    monkeypatch.setattr(indexed_module, "IndexedDataset", FakeIndexedDataset)
+
+    dataset = PackedSFTIndexedDataset(
+        "msc://p/train.sft",
+        object_storage_cache_path="/cache",
+        object_storage_bin_chunk_nbytes=123,
+    )
+
+    assert len(dataset) == 1
+    assert observed == [("msc://p/train.sft", False, config)]
+
+
 def test_packed_sequence_specs_accepts_complete_indexed_pair(tmp_path) -> None:
     from megatron.bridge.data.packing import PackedSequenceSpecs
 
@@ -168,6 +341,24 @@ def test_negative_index_zeroes_loss_mask(tmp_path) -> None:
     write_packed_indexed_dataset([_make_row()], prefix)
     dataset = _make_training_dataset(str(prefix))
     assert dataset[-1]["loss_mask"].tolist() == [0] * 6
+
+
+def test_samples_mapping_uses_mapped_row_index(tmp_path) -> None:
+    prefix = tmp_path / "train.sft"
+    write_packed_indexed_dataset([_make_row(), _make_row(offset=100)], prefix)
+    dataset = _make_training_dataset(str(prefix))
+    dataset.samples_mapping = np.asarray([[1, 0, 1]], dtype=np.int64)
+
+    assert dataset[0]["input_ids"].tolist() == _make_row(offset=100)["input_ids"]
+
+
+def test_single_row_single_sample_mapping_remains_one_dimensional(tmp_path) -> None:
+    prefix = tmp_path / "train.sft"
+    write_packed_indexed_dataset([_make_row()], prefix)
+    dataset = _make_training_dataset(str(prefix), max_num_samples=1)
+
+    assert dataset.samples_mapping.shape == (1,)
+    assert dataset[0]["input_ids"].tolist() == _make_row()["input_ids"]
 
 
 def test_parquet_and_indexed_produce_identical_samples_and_batches(tmp_path) -> None:

@@ -98,9 +98,14 @@ def validate_parity(parquet_path: str, indexed_path: str, *, max_rows: int) -> i
     """Validate row-level equality between Parquet and indexed datasets."""
     indexed = PackedSFTIndexedDataset(indexed_path)
     parquet_rows = _parquet_row_count(parquet_path)
-    if max_rows <= 0 and parquet_rows != len(indexed):
-        raise ValueError(f"Row count mismatch: parquet={parquet_rows}, indexed={len(indexed)}")
-    rows_to_compare = min(_limited_count(parquet_rows, max_rows), _limited_count(len(indexed), max_rows))
+    parquet_rows_to_compare = _limited_count(parquet_rows, max_rows)
+    indexed_rows_to_compare = _limited_count(len(indexed), max_rows)
+    if parquet_rows_to_compare != indexed_rows_to_compare:
+        raise ValueError(
+            "Row count mismatch within comparison range: "
+            f"parquet={parquet_rows}, indexed={len(indexed)}, max_rows={max_rows}"
+        )
+    rows_to_compare = parquet_rows_to_compare
     parquet_iterator = _iter_parquet_rows(parquet_path)
     for row_index in range(rows_to_compare):
         parquet_row = next(parquet_iterator)

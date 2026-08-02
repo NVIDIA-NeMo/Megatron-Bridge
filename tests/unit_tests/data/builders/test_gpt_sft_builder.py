@@ -138,6 +138,7 @@ def test_builder_prepares_and_loads_indexed_packed_data(tmp_path):
         config=GPTSFTDatasetConfig(
             dataset_root=tmp_path,
             seq_length=32,
+            max_train_samples=2,
             enable_offline_packing=True,
             offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=32,
@@ -155,6 +156,7 @@ def test_builder_prepares_and_loads_indexed_packed_data(tmp_path):
     assert builder.validation_path_packed.with_suffix(".sft.bin").is_file()
     assert builder.validation_path_packed.with_suffix(".sft.idx").is_file()
     assert isinstance(train_dataset, GPTSFTPackedIndexedDataset)
+    assert len(train_dataset) == 2
     assert isinstance(validation_dataset, GPTSFTPackedIndexedDataset)
     assert test_dataset is not None
     batch = train_dataset.collate_fn([train_dataset[0]])
