@@ -118,6 +118,11 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     cfg.dataset.seq_length = 8192
     cfg.dataset.enable_in_batch_packing = True
     cfg.dataset.in_batch_packing_pad_to_multiple_of = 8
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
