@@ -346,6 +346,16 @@ def read_metadata(tracker_filename: str) -> tuple[int, bool]:
     return max_iter, release
 
 
+def _get_model_parallel_sizes(model_config: dict[str, Any]) -> tuple[int, int]:
+    """Read tensor and pipeline parallel sizes from provider or builder configs."""
+    transformer_config = model_config.get("transformer")
+    parallel_config = transformer_config if isinstance(transformer_config, dict) else model_config
+    return (
+        parallel_config["tensor_model_parallel_size"],
+        parallel_config["pipeline_model_parallel_size"],
+    )
+
+
 def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
     """Extract and convert legacy Megatron-LM args from checkpoint state_dict to Megatron-Bridge config format.
 
@@ -2749,10 +2759,7 @@ def _load_checkpoint_from_path(
             tp_pp_match = True
             mismatch_msg = ""
         else:
-            ckpt_tp_pp = (
-                run_config["model"]["tensor_model_parallel_size"],
-                run_config["model"]["pipeline_model_parallel_size"],
-            )
+            ckpt_tp_pp = _get_model_parallel_sizes(run_config["model"])
             run_tp_pp = (
                 cfg.model.tensor_model_parallel_size,
                 cfg.model.pipeline_model_parallel_size,
@@ -2869,10 +2876,7 @@ def _load_checkpoint_from_path(
             run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
             if file_exists(run_config_filename):
                 run_config = read_run_config(run_config_filename)
-                ckpt_tp_pp = (
-                    run_config["model"]["tensor_model_parallel_size"],
-                    run_config["model"]["pipeline_model_parallel_size"],
-                )
+                ckpt_tp_pp = _get_model_parallel_sizes(run_config["model"])
                 run_tp_pp = (
                     cfg.model.tensor_model_parallel_size,
                     cfg.model.pipeline_model_parallel_size,

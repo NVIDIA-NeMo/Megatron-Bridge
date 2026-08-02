@@ -34,6 +34,7 @@ from megatron.bridge.training.checkpointing import (
     _clear_auto_bridge_cache,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
+    _get_model_parallel_sizes,
     _get_non_persistent_iteration,
     _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
@@ -72,6 +73,23 @@ class _DummyClass:
 
 
 _dummy_obj = _DummyClass()
+
+
+class TestModelParallelSizes:
+    """Tests for provider and builder run-config parallelism layouts."""
+
+    def test_reads_legacy_provider_layout(self):
+        model_config = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 4}
+
+        assert _get_model_parallel_sizes(model_config) == (2, 4)
+
+    def test_reads_builder_transformer_layout(self):
+        model_config = {
+            "_builder_": "megatron.training.models.gpt.GPTModelBuilder",
+            "transformer": {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 4},
+        }
+
+        assert _get_model_parallel_sizes(model_config) == (2, 4)
 
 
 class TestCheckpointUtilities:

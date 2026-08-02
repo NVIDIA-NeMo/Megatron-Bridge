@@ -82,6 +82,17 @@ main() {
     unset PIP_CONSTRAINT
 
     if [[ "$USE_UV" == "true" ]]; then
+        # MCore dev requires TransformerEngine as part of its dev extra. TE's bundled NCCL-EP
+        # extension needs newer NCCL device headers than the NGC 25.05 installation-test image
+        # provides. Disable only that optional extension when the gitlink is the recorded dev ref.
+        submodule_sha="$(git -C 3rdparty/Megatron-LM rev-parse HEAD 2>/dev/null || true)"
+        dev_sha="$(tr -d '[:space:]' <.dev.commit)"
+        main_sha="$(tr -d '[:space:]' <.main.commit)"
+        if [[ -n "$submodule_sha" && "$submodule_sha" == "$dev_sha" && "$dev_sha" != "$main_sha" ]]; then
+            export NVTE_WITH_NCCL_EP="${NVTE_WITH_NCCL_EP:-0}"
+            echo "🔧 MCore dev compatibility: NVTE_WITH_NCCL_EP=$NVTE_WITH_NCCL_EP"
+        fi
+
         if [[ "$BASE_IMAGE" == "pytorch" ]]; then
             UV_ARGS=(
                 "--no-install-package" "torch"

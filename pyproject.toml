@@ -252,10 +252,10 @@ build = [
 # them at test time with scripts/install_diffusion_deps.sh. This group is kept for
 # documentation only; `uv sync --group diffusion` will NOT install them on Linux.
 diffusion = ["imageio", "imageio-ffmpeg", "av"]
-# flash-mla has no PyPI wheel and is built from source by uv (no-build-isolation) during the
-# image's `uv sync --all-groups`. Megatron-LM declares it in the same group, but uv does not
-# install a path dependency's groups, so it is declared here too.
-no_pypi_wheels = ["flash_mla"]
+# flash-mla and fast-hadamard-transform have no usable PyPI wheels and are built from source by uv
+# (no-build-isolation) during the image's `uv sync --all-groups`. Megatron-LM declares them in the
+# same group, but uv does not install a path dependency's groups, so they are declared here too.
+no_pypi_wheels = ["flash_mla", "fast-hadamard-transform"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"

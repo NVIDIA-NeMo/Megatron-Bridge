@@ -117,13 +117,17 @@ ARG UV_CACHE_PRUNE_ARGS
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
-    export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE \
+        FAST_HADAMARD_TRANSFORM_FORCE_BUILD=TRUE && \
     # flash-mla (Megatron-LM's no_pypi_wheels group) has no PyPI wheel and is built from source by
     # the uv sync below. Point the compilers at the CCCL/libcu++ headers (under cccl/ in this base
     # image, not the default CUDA include path) and scope the build to the target archs.
     export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
         CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
         CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
+    # Do not reuse a wheel previously downloaded by the dependency's setup.py. The force-build
+    # variable is not part of uv's cache key, so evict the package before rebuilding locked source.
+    uv cache clean fast-hadamard-transform && \
     # Reinstall nvidia-cutlass-dsl in system site packages
     # uv install can run into non-deterministic install issues
     # Keep this pin compatible with cuDNN Frontend; mismatched versions can break
