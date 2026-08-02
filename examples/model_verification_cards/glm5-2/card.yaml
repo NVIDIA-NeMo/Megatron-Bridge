@@ -11,9 +11,9 @@ summary: >
   inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with
   a reloadable middle checkpoint and verified continuation. GB200 support
   verification currently covers bounded pretraining, bounded full SFT, 128K
-  packed long-context SFT, bounded PEFT, and bounded checkpoint resume;
-  deterministic legacy Megatron inference and post-SFT export/reload
-  inference remain pending.
+  packed long-context SFT, bounded PEFT, bounded checkpoint resume, and
+  deterministic legacy Megatron inference; post-SFT export/reload inference
+  remains pending.
 verification_index:
   model_level:
     verified:
@@ -22,7 +22,6 @@ verification_index:
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
-    unverified:
       - inference
   training:
     GB200:
@@ -127,26 +126,27 @@ items:
       0.500000, and mean absolute logit difference is 0.063958.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: cd09c801474e5573ffceccf236b48b543c7a0b4a  # pragma: allowlist secret
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=104
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=32
       examples/conversion/hf_to_megatron_generate_text.py
       --hf_model_path zai-org/GLM-5.2
       --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
-      --megatron_model_path work/model-verification/glm5-2/gpu-megatron
       --prompt "Write one concise sentence explaining why deterministic tests matter:"
       --apply-chat-template --thinking-mode disabled --max_new_tokens 16
-      --legacy-full-prefix --tp 1 --pp 13 --ep 8 --etp 1
-    last_verified: null
+      --legacy-full-prefix --tp 1 --pp 4 --ep 8 --etp 1
+      --pipeline-model-parallel-layout
+      "Etttttt|tttttttttttttttttttttttt|tttttttttttttttttttttttt|ttttttttttttttttttttttttL"
+    last_verified: 2026-08-02
     expected_result: |-
-      The command must use greedy legacy full-prefix decoding, emit exactly 16
-      new tokens, and complete without constructing an MCore inference context.
-      The --legacy-full-prefix path uses non-cached autoregressive generation
-      and recomputes the accumulated prefix at every decoding step because
-      cached inference is not yet supported for AbsorbedMLA. A clean-commit
-      rerun is required before restoring verified status. The earlier pre-flag
-      GLM-5.2 run produced this 16-token completion:
+      One deterministic BF16 run imports the pinned complete HF model directly
+      into Megatron across 32 ranks at TP1/PP4/EP8/ETP1. It exits successfully
+      after exactly 16 new greedy tokens without constructing an MCore inference
+      context. The legacy path recomputes the accumulated prefix at every step
+      because cached inference is not yet supported for AbsorbedMLA. The literal
+      completion was:
       "1.  **Analyze the Request:**
           *   **Topic:**"
 
