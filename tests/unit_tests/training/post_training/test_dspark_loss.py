@@ -106,6 +106,44 @@ def test_missing_target_logits_raises_when_tv_requested():
         dspark_loss(out, l1_alpha=0.9)
 
 
+def test_dropped_blocks_do_not_contribute_to_loss_or_gradient():
+    out = _outputs(with_target=True, with_confidence=True)
+    out.block_keep_mask[:, 0] = False
+    loss, _ = dspark_loss(out, ce_alpha=0.1, l1_alpha=0.9, confidence_alpha=1.0)
+    loss.backward()
+    grad = out.draft_logits.grad
+    assert grad is not None
+    assert torch.all(grad[:, 0] == 0)  # dropped block: no gradient
+    assert grad[:, 1:].abs().sum().item() > 0  # kept blocks still train
+
+    # Dropping a block must be equivalent to zeroing its eval_mask entirely.
+    out2 = _outputs(with_target=True, with_confidence=True)
+    out2.eval_mask[:, 0] = False
+    loss2, _ = dspark_loss(out2, ce_alpha=0.1, l1_alpha=0.9, confidence_alpha=1.0)
+    assert loss.item() == pytest.approx(loss2.item(), rel=1e-6)
+
+
+def test_accept_rate_and_tau_exclude_dropped_blocks():
+    # Kept blocks match the target exactly (accept_rate 1); the dropped block is
+    # far off and must not drag the diagnostics down.
+    torch.manual_seed(0)
+    draft = torch.randn(B, N, L, V)
+    aligned = draft.clone()
+    aligned[:, 0] = -7.0 * draft[:, 0]
+    keep = torch.ones(B, N, dtype=torch.bool)
+    keep[:, 0] = False
+    out = DSparkForwardOutput(
+        draft_logits=draft,
+        target_ids=torch.randint(0, V, (B, N, L)),
+        eval_mask=torch.ones(B, N, L, dtype=torch.bool),
+        block_keep_mask=keep,
+        aligned_target_logits=aligned,
+    )
+    _, metrics = dspark_loss(out, ce_alpha=0.0, l1_alpha=1.0, confidence_alpha=0.0)
+    assert metrics["accept_rate"].item() == pytest.approx(1.0, abs=1e-5)
+    assert metrics["tau"].item() == pytest.approx(L + 1.0, abs=1e-4)
+
+
 def test_eval_mask_zero_positions_do_not_contribute():
     out = _outputs(with_target=True, with_confidence=False)
     out.eval_mask = torch.zeros(B, N, L, dtype=torch.bool)

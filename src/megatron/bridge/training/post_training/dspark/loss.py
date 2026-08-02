@@ -57,7 +57,8 @@ class DSparkForwardOutput:
             ``[batch, num_blocks, block_size]``.
         eval_mask: Bool/float supervision mask ``[batch, num_blocks, block_size]``
             (a block is a contiguous, in-bounds, loss-enabled prefix).
-        block_keep_mask: Kept-anchor mask ``[batch, num_blocks]``.
+        block_keep_mask: Kept-anchor mask ``[batch, num_blocks]``; dropped anchors
+            are excluded from the loss and the acceptance metrics.
         confidence_pred: Optional per-position acceptance logit
             ``[batch, num_blocks, block_size]``.
         aligned_target_logits: Optional target next-token logits
@@ -72,11 +73,11 @@ class DSparkForwardOutput:
     aligned_target_logits: torch.Tensor | None = None
 
 
-def _loss_weight_mask(eval_mask: torch.Tensor, block_size: int, loss_decay_gamma: float | None) -> torch.Tensor:
-    """``eval_mask`` (float) scaled by the per-position decay ``exp(-k / gamma)``."""
-    weight = eval_mask.to(torch.float32)
+def _loss_weight_mask(mask: torch.Tensor, block_size: int, loss_decay_gamma: float | None) -> torch.Tensor:
+    """``mask`` (float) scaled by the per-position decay ``exp(-k / gamma)``."""
+    weight = mask.to(torch.float32)
     if loss_decay_gamma is not None and loss_decay_gamma > 0:
-        positions = torch.arange(block_size, device=eval_mask.device).view(1, 1, -1)
+        positions = torch.arange(block_size, device=mask.device).view(1, 1, -1)
         weight = weight * torch.exp(-positions.float() / float(loss_decay_gamma))
     return weight
 
@@ -139,7 +140,11 @@ def dspark_loss(
     """
     draft_logits = outputs.draft_logits
     _, _, block_size, vocab_size = draft_logits.shape
-    weight = _loss_weight_mask(outputs.eval_mask, block_size, loss_decay_gamma)  # [B, N, L]
+    # A position is supervised iff it is eval-masked AND its anchor is kept:
+    # dropped anchors (block_keep_mask == 0) must not receive gradient, whatever
+    # their eval_mask says. One mask drives the loss weight and the metrics.
+    supervised = outputs.eval_mask.to(torch.float32) * outputs.block_keep_mask.to(torch.float32).unsqueeze(-1)
+    weight = _loss_weight_mask(supervised, block_size, loss_decay_gamma)  # [B, N, L]
 
     # Cross-entropy against the teacher-forced next tokens.
     ce_per_token = F.cross_entropy(
@@ -189,11 +194,13 @@ def dspark_loss(
         "confidence_loss": (conf_num / (conf_den + 1e-6)).detach() if conf_den.item() > 0 else zero,
     }
     with torch.no_grad():
-        metrics.update(_acceptance_metrics(outputs, accept_rate))
+        metrics.update(_acceptance_metrics(outputs, accept_rate=accept_rate, supervised=supervised))
     return loss, metrics
 
 
-def _acceptance_metrics(outputs: DSparkForwardOutput, accept_rate: torch.Tensor | None) -> dict[str, torch.Tensor]:
+def _acceptance_metrics(
+    outputs: DSparkForwardOutput, *, accept_rate: torch.Tensor | None, supervised: torch.Tensor
+) -> dict[str, torch.Tensor]:
     """Analytical acceptance diagnostics.
 
     ``accept_rate`` (``= 1 - TV``) is the per-position acceptance probability. A
@@ -202,9 +209,11 @@ def _acceptance_metrics(outputs: DSparkForwardOutput, accept_rate: torch.Tensor 
     anchor token.
 
     Args:
-        outputs: The forward outputs (for the masks).
+        outputs: The forward outputs (for the zero scalar's device/dtype).
         accept_rate: Per-position acceptance ``[batch, num_blocks, block_size]`` or
             ``None`` when no teacher signal is available.
+        supervised: Float mask ``[batch, num_blocks, block_size]`` of positions
+            that count (eval-masked positions of kept anchors).
 
     Returns:
         ``{"accept_rate": scalar, "tau": scalar}`` (zeros when ``accept_rate`` is None).
@@ -212,10 +221,9 @@ def _acceptance_metrics(outputs: DSparkForwardOutput, accept_rate: torch.Tensor 
     zero = outputs.draft_logits.new_zeros((), dtype=torch.float32)
     if accept_rate is None:
         return {"accept_rate": zero, "tau": zero}
-    eval_mask = outputs.eval_mask.to(torch.float32)
-    valid_accept = accept_rate * eval_mask
-    accept_rate_mean = valid_accept.sum() / eval_mask.sum().clamp_min(1.0)
-    valid_blocks = (outputs.block_keep_mask.bool() & outputs.eval_mask.bool().any(dim=-1)).to(torch.float32)
+    valid_accept = accept_rate * supervised
+    accept_rate_mean = valid_accept.sum() / supervised.sum().clamp_min(1.0)
+    valid_blocks = supervised.bool().any(dim=-1).to(torch.float32)
     tau_per_block = valid_accept.cumprod(dim=-1).sum(dim=-1) + 1.0
     tau_mean = (tau_per_block * valid_blocks).sum() / valid_blocks.sum().clamp_min(1.0)
     return {"accept_rate": accept_rate_mean, "tau": tau_mean}
