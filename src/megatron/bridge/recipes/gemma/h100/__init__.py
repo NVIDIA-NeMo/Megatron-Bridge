@@ -15,6 +15,7 @@
 from megatron.bridge.recipes.gemma.h100.gemma2 import *  # noqa: F403
 from megatron.bridge.recipes.gemma.h100.gemma3 import *  # noqa: F403
 from megatron.bridge.recipes.gemma.h100.gemma4 import *  # noqa: F403
+from megatron.bridge.recipes.gemma.h100.gemma_text import *  # noqa: F403
 
 
 __all__ = [
@@ -31,4 +32,7 @@ __all__ = [
     "gemma3_1b_pretrain_1gpu_h100_bf16_config",
     "gemma3_1b_sft_1gpu_h100_bf16_config",
     "gemma4_e4b_pretrain_2gpu_h100_bf16_config",
+    "gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config",
+    "gemma4_31b_pretrain_8gpu_h100_bf16_config",
+    "gemma_2b_pretrain_1gpu_h100_bf16_config",
 ]

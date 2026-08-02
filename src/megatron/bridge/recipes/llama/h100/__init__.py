@@ -34,6 +34,7 @@ __all__ = [
     "llama32_3b_peft_1gpu_h100_bf16_config",
     "llama32_3b_pretrain_1gpu_h100_bf16_config",
     "llama32_3b_sft_1gpu_h100_bf16_config",
+    "llama33_70b_pretrain_32gpu_h100_bf16_config",
     "llama3_70b_peft_8gpu_h100_bf16_config",
     "llama3_70b_pretrain_256gpu_h100_bf16_64k_config",
     "llama3_70b_pretrain_32gpu_h100_bf16_16k_config",
