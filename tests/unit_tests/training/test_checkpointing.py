@@ -1492,6 +1492,61 @@ class TestLoadCheckpoint:
 
         mock_load_hf.assert_not_called()
 
+    def test_builder_run_config_layout_change_ignores_rng_state(self, load_checkpoint_fixtures):
+        """Builder-backed nested transformer config participates in TP/PP matching."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+        cfg.checkpoint.load_optim = False
+        cfg.model.tensor_model_parallel_size = 2
+        cfg.model.pipeline_model_parallel_size = 1
+        cfg.peft = None
+
+        pg_collection = Mock()
+        pg_collection.tp.size.return_value = 2
+        pg_collection.pp.size.return_value = 1
+        reader = Mock()
+        reader.read_metadata.return_value.state_dict_metadata = {}
+
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch(
+                "megatron.bridge.training.checkpointing.read_run_config",
+                return_value={
+                    "model": {
+                        "transformer": {
+                            "tensor_model_parallel_size": 1,
+                            "pipeline_model_parallel_size": 1,
+                        }
+                    }
+                },
+            ),
+            patch("megatron.bridge.training.checkpointing._get_filesystem_reader", return_value=reader),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value="fresh") as get_rng,
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}
+            ) as generate,
+            patch(
+                "megatron.bridge.training.checkpointing._load_base_checkpoint",
+                side_effect=[
+                    ({}, "/checkpoints/iter_0000003", False, CheckpointType.FSDP_DTENSOR),
+                    (None, "", False, None),
+                ],
+            ),
+        ):
+            _load_checkpoint_from_path(
+                "/checkpoints/iter_0000003",
+                load_checkpoint_fixtures["mock_state"],
+                load_checkpoint_fixtures["mock_model"],
+                load_checkpoint_fixtures["mock_optimizer"],
+                load_checkpoint_fixtures["mock_scheduler"],
+                pg_collection=pg_collection,
+            )
+
+        get_rng.assert_not_called()
+        assert generate.call_args.kwargs["rng_state"] is None
+
     def test_fsdp_layout_change_ignores_rng_state(self, load_checkpoint_fixtures):
         """FSDP resharding must not partially restore TP/PP-keyed RNG state."""
         cfg = load_checkpoint_fixtures["mock_cfg"]

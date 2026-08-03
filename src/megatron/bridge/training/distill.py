@@ -32,6 +32,8 @@ def distill(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
-    assert isinstance(config.model, DistillationProvider), "Distillation requires a DistillationProvider"
+    assert isinstance(config.model, DistillationProvider) or getattr(
+        config.model, "_is_distillation_provider", False
+    ), "Distillation requires a DistillationProvider"
 
     return pretrain(config, forward_step_modelopt)

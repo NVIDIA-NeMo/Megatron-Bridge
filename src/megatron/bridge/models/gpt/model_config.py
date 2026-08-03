@@ -55,12 +55,16 @@ class BridgeGPTModelConfig(GPTModelConfig):
             object.__setattr__(self, name, value)
         elif name in transformer_fields:
             setattr(transformer, name, value)
-        elif name == "builder" or name.startswith("_"):
+        elif name == "builder" or name.startswith("_") or name in vars(self):
             object.__setattr__(self, name, value)
         else:
             raise AttributeError(
                 f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
             )
+
+        teacher = vars(self).get("teacher")
+        if teacher is not None and name != "teacher" and hasattr(teacher, name):
+            setattr(teacher, name, value)
 
     def get_builder_cls(self) -> type:
         """Resolve the configured builder through Bridge's target allowlist."""

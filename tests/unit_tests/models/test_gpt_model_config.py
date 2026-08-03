@@ -58,6 +58,19 @@ def test_flat_assignment_routes_to_declared_field_owner() -> None:
         config.phantom_override = True
 
 
+def test_runtime_distillation_state_allows_updates_and_mirrors_declared_fields() -> None:
+    student = _make_model_config()
+    teacher = _make_model_config()
+    object.__setattr__(student, "teacher", teacher)
+    object.__setattr__(student, "kd_config", None)
+
+    student.kd_config = "updated"
+    student.tensor_model_parallel_size = 2
+
+    assert student.kd_config == "updated"
+    assert teacher.tensor_model_parallel_size == 2
+
+
 def test_model_config_round_trip_restores_runtime_activation() -> None:
     config = _make_model_config()
 

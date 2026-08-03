@@ -18,9 +18,26 @@ import pytest
 import torch
 
 from megatron.bridge.models.distillation_provider import DistillationProvider, convert_to_distillation_provider
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
+
+
+def _make_builder_config() -> BridgeGPTModelConfig:
+    return BridgeGPTModelConfig(
+        transformer=TransformerConfig(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            ffn_hidden_size=256,
+            transformer_impl="local",
+        ),
+        vocab_size=256,
+        seq_length=128,
+        position_embedding_type="rope",
+    )
 
 
 class TestDistillationProvider:
@@ -214,6 +231,71 @@ class TestDistillationProvider:
         teacher = GPTModelProvider(num_layers=24, **kwargs)
         student_base = GPTModelProvider(num_layers=12, **kwargs)
         return student_base, teacher
+
+    def test_builder_config_conversion_preserves_config_and_serialization(self):
+        """Builder-backed distillation keeps the config type and runtime state out of serialization."""
+        student = _make_builder_config()
+        teacher = _make_builder_config()
+        existing_hook = Mock()
+        student.pre_wrap_hooks.append(existing_hook)
+
+        converted = convert_to_distillation_provider(student, teacher, kd_config=ModelOptDistillConfig())
+        serialized = converted.as_dict()
+
+        assert converted is student
+        assert converted.teacher is teacher
+        assert converted._is_distillation_provider
+        assert converted.pre_wrap_hooks[0] is existing_hook
+        assert len(converted.pre_wrap_hooks) == 2
+        assert serialized["_target_"] == (
+            "megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig"
+        )
+        assert serialized["_builder_"] == converted.builder
+        assert "teacher" not in serialized
+        assert "kd_config" not in serialized
+        assert "_is_distillation_provider" not in serialized
+
+    def test_builder_config_mirrors_parallelism_to_teacher(self):
+        """Flat builder-backed overrides remain synchronized across student and teacher."""
+        student = convert_to_distillation_provider(_make_builder_config(), _make_builder_config())
+
+        student.tensor_model_parallel_size = 2
+        student.seq_length = 256
+
+        assert student.teacher.tensor_model_parallel_size == 2
+        assert student.teacher.seq_length == 256
+
+    def test_builder_config_hook_builds_unwrapped_teacher(self):
+        """The builder path builds the teacher with existing hooks and without DDP."""
+        student = _make_builder_config()
+        teacher = _make_builder_config()
+        teacher_model = Mock()
+        teacher_builder = Mock()
+        teacher_builder.build_distributed_models.return_value = [teacher_model]
+        teacher_builder_cls = Mock(return_value=teacher_builder)
+        student_model = Mock()
+        kd_model = Mock()
+
+        converted = convert_to_distillation_provider(student, teacher, kd_config=ModelOptDistillConfig())
+        with (
+            patch.object(type(teacher), "get_builder_cls", return_value=teacher_builder_cls),
+            patch(
+                "megatron.bridge.models.distillation_provider.ProcessGroupCollection.use_mpu_process_groups",
+                return_value="pgs",
+            ),
+            patch("megatron.bridge.models.distillation_provider.unwrap_model", side_effect=lambda model: model),
+            patch("megatron.bridge.models.distillation_provider.mtd.convert", return_value=kd_model),
+            patch("megatron.bridge.models.distillation_provider.mtd_mcore.setup_distillation_config") as setup_kd,
+            patch("megatron.bridge.models.distillation_provider.mtd_mcore.adjust_distillation_model_for_mcore"),
+        ):
+            setup_kd.return_value = Mock(criterion="criterion", loss_balancer="balancer")
+            result = converted.pre_wrap_hooks[-1]([student_model])
+
+        teacher_builder_cls.assert_called_once_with(teacher)
+        teacher_builder.build_distributed_models.assert_called_once_with("pgs", wrap_with_ddp=False)
+        assert callable(teacher.init_method)
+        assert callable(teacher.output_layer_init_method)
+        assert result == [kd_model]
 
     def test_convert_hook_registered_last_for_qad_ordering(self):
         """_convert_hook is appended last so a prepend=True QAD hook runs before the KD conversion."""
