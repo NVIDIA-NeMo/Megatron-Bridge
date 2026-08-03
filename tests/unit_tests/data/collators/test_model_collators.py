@@ -904,6 +904,48 @@ def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch)
     assert processor.tokenizer.padding_side == "left"
 
 
+def test_glm4v_collate_flattens_structured_assistant_content(monkeypatch):
+    class _GlmProcessor:
+        class _Tokenizer:
+            padding_side = "left"
+            pad_token_id = 0
+
+        def __init__(self):
+            self.tokenizer = self._Tokenizer()
+            self.conversations = None
+
+        def apply_chat_template(self, conversations, **kwargs):
+            self.conversations = conversations
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "attention_mask": torch.ones((1, 3), dtype=torch.long),
+                "mm_token_type_ids": torch.zeros((1, 3), dtype=torch.long),
+            }
+
+    monkeypatch.setattr(
+        glm_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
+    )
+    monkeypatch.setattr(glm_vl_collate, "_glm4v_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(
+        glm_vl_collate,
+        "_build_glm4v_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: torch.ones_like(input_ids, dtype=torch.float32),
+    )
+    assistant_content = [{"type": "text", "text": "A picture."}]
+    example = {
+        "conversation": [
+            {"role": "user", "content": "Describe."},
+            {"role": "assistant", "content": assistant_content},
+        ]
+    }
+    processor = _GlmProcessor()
+
+    glm_vl_collate.glm4v_collate_fn([example], processor)
+
+    assert processor.conversations[0][-1]["content"] == "A picture."
+    assert example["conversation"][-1]["content"] == assistant_content
+
+
 @pytest.mark.parametrize(
     ("input_ids", "expected_mask"),
     [
