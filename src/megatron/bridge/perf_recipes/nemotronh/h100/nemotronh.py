@@ -98,6 +98,13 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "layernorm"]
 
+    # The full 8K grouped-MoE FC2 output misses H100 capacity by less than
+    # 0.2 GiB after activation-only recompute. Split the supported training MLP
+    # path into two sequence chunks to halve each routed-expert working set.
+    # Unlike whole-MoE checkpointing, chunking leaves the MTP latent projection
+    # on its normal backward path so FSDP observes its fused FP32 wgrad.
+    cfg.model.mlp_chunks_for_training = 2
+
     # The op-fuser ScaledSReLU path exceeds H100 activation memory before the
     # first optimizer step. Keep TE grouped linears and the fused weighted
     # squared-ReLU implementation, but use their supported non-op-fuser path.
