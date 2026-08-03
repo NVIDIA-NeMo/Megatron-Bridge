@@ -418,7 +418,7 @@ items:
         replay. TE grouped linears and fused weighted squared-ReLU must remain active
         through the non-op-fuser path. Eight CUDA device connections must retain
         Megatron-FSDP stream independence while bounding Hopper driver resources.
-        One-MiB NCCL pair buffers must bound communication workspace, with no CPU
+        256-KiB NCCL pair buffers must bound communication workspace, with no CPU
         activation offload.
         Gradient and loss NaN checks must remain enabled.
         Standard all-to-all avoids replaying stateful HybridEP communication;
