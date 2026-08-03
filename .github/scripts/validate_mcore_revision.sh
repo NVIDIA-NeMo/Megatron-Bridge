@@ -13,8 +13,7 @@ fi
 
 refs=$(git ls-remote "$repo" "refs/heads/main" "refs/heads/pull-request/*" "refs/pull/*/merge")
 main_sha=$(awk '$2 == "refs/heads/main" {print $1}' <<<"$refs")
-if [[ -n "$main_sha" ]]; then
-  git fetch --quiet --filter=blob:none --no-tags "$repo" "$main_sha" "$revision"
+if [[ -n "$main_sha" ]] && git fetch --quiet --filter=blob:none --no-tags "$repo" "$main_sha" "$revision"; then
   if git merge-base --is-ancestor "$revision" "$main_sha"; then
     exit 0
   fi
@@ -33,7 +32,7 @@ while IFS=$'\t' read -r merge_sha merge_ref; do
   pr_number="${BASH_REMATCH[1]}"
   mirror_sha=$(awk -v ref="refs/heads/pull-request/${pr_number}" '$2 == ref {print $1}' <<<"$refs")
   [[ -n "$mirror_sha" ]] || continue
-  git fetch --quiet --depth 1 "$repo" "$merge_sha" "$mirror_sha"
+  git fetch --quiet --filter=blob:none --no-tags "$repo" "$merge_sha" "$mirror_sha"
   parents=$(git rev-list --parents -n 1 "$merge_sha")
   if grep -qw "$mirror_sha" <<<"$parents"; then
     exit 0

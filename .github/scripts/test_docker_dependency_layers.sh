@@ -86,51 +86,58 @@ if "$repo_validator" https://example.com/example/Megatron-LM.git; then
   exit 1
 fi
 
+revision_repo="file://$temporary_dir/Megatron-LM.git"
+revision_worktree="$temporary_dir/revision-worktree"
+git init --bare -q "$temporary_dir/Megatron-LM.git"
+git init -q "$revision_worktree"
+git -C "$revision_worktree" config user.name test
+git -C "$revision_worktree" config user.email test@example.com
+printf 'base\n' >"$revision_worktree/file"
+git -C "$revision_worktree" add file
+git -C "$revision_worktree" commit -q -m base
+ancestor_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+printf 'main\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam main
+main_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" branch contributor "$ancestor_sha"
+git -C "$revision_worktree" switch -q contributor
+printf 'approved\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam approved
+mirror_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" switch -q --detach "$main_sha"
+git -C "$revision_worktree" merge -q --no-ff -s ours "$mirror_sha" -m merge
+merge_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" switch -q --detach "$main_sha"
+printf 'orphan\n' >"$revision_worktree/orphan"
+git -C "$revision_worktree" add orphan
+git -C "$revision_worktree" commit -q -m orphan
+orphan_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" push -q "$revision_repo" "$main_sha:refs/heads/main"
+git -C "$revision_worktree" push -q "$revision_repo" "$mirror_sha:refs/heads/pull-request/123"
+git -C "$revision_worktree" push -q "$revision_repo" "$merge_sha:refs/pull/123/merge"
+git -C "$revision_worktree" push -q "$revision_repo" "$orphan_sha:refs/pull/456/merge"
+
 mkdir -p "$temporary_dir/revision-bin"
-cat >"$temporary_dir/revision-bin/git" <<'EOF'
+cat >"$temporary_dir/revision-bin/repo-validator" <<EOF
 #!/usr/bin/env bash
-if [[ "$*" == "ls-remote https://github.com/NVIDIA/Megatron-LM.git refs/heads/main refs/heads/pull-request/* refs/pull/*/merge" ]]; then
-  printf '%s\t%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main
-  printf '%s\t%s\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/heads/pull-request/123
-  printf '%s\t%s\n' cccccccccccccccccccccccccccccccccccccccc refs/pull/123/merge
-  printf '%s\t%s\n' dddddddddddddddddddddddddddddddddddddddd refs/pull/456/merge
-  exit 0
-fi
-if [[ "$1" == "fetch" ]]; then
-  exit 0
-fi
-if [[ "$*" == "merge-base --is-ancestor aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]; then
-  exit 0
-fi
-if [[ "$*" == "rev-list --parents -n 1 cccccccccccccccccccccccccccccccccccccccc" ]]; then
-  printf '%s %s %s\n' cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-  exit 0
-fi
-if [[ "$*" == "rev-list --parents -n 1 dddddddddddddddddddddddddddddddddddddddd" ]]; then
-  printf '%s %s\n' dddddddddddddddddddddddddddddddddddddddd aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  exit 0
-fi
-exit 1
+[[ "\${1:-}" == "$revision_repo" ]]
 EOF
-chmod +x "$temporary_dir/revision-bin/git"
-PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
-  https://github.com/NVIDIA/Megatron-LM.git aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
-  https://github.com/NVIDIA/Megatron-LM.git bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
-  https://github.com/NVIDIA/Megatron-LM.git cccccccccccccccccccccccccccccccccccccccc
-if PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
-  https://github.com/NVIDIA/Megatron-LM.git dddddddddddddddddddddddddddddddddddddddd; then
-  echo "MCore revision validation accepted a PR merge without an approved mirror" >&2
+chmod +x "$temporary_dir/revision-bin/repo-validator"
+sed "s#\.github/scripts/validate_mcore_repo\.sh#$temporary_dir/revision-bin/repo-validator#" \
+  "$revision_validator" >"$temporary_dir/revision-validator"
+chmod +x "$temporary_dir/revision-validator"
+"$temporary_dir/revision-validator" "$revision_repo" "$ancestor_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$mirror_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$merge_sha"
+if "$temporary_dir/revision-validator" "$revision_repo" "$orphan_sha"; then
+  echo "MCore revision validation accepted a PR merge without an approved mirror parent" >&2
   exit 1
 fi
-if PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
-  https://github.com/NVIDIA/Megatron-LM.git eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; then
+if "$temporary_dir/revision-validator" "$revision_repo" 0000000000000000000000000000000000000000; then
   echo "MCore revision validation accepted an unapproved SHA" >&2
   exit 1
 fi
-if PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
-  https://github.com/NVIDIA/Megatron-LM.git not-a-full-sha; then
+if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
   echo "MCore revision validation accepted a malformed SHA" >&2
   exit 1
 fi
