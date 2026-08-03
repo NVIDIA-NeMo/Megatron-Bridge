@@ -16,15 +16,112 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from transformers import LlamaConfig
 
-from megatron.bridge.models.distillation_provider import DistillationProvider, convert_to_distillation_provider
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.distillation_provider import (
+    DistillationModelConfig,
+    DistillationProvider,
+    convert_to_distillation_provider,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
+def _llama_builder_config(hidden_size: int, num_hidden_layers: int):
+    """Create a builder-backed Llama config with non-default runtime fields."""
+    hf_config = LlamaConfig(
+        architectures=["LlamaForCausalLM"],
+        hidden_size=hidden_size,
+        intermediate_size=hidden_size * 4,
+        max_position_embeddings=16384,
+        num_attention_heads=8,
+        num_hidden_layers=num_hidden_layers,
+        num_key_value_heads=4,
+        rope_scaling={
+            "rope_type": "llama3",
+            "factor": 32.0,
+            "high_freq_factor": 4.0,
+            "low_freq_factor": 1.0,
+            "original_max_position_embeddings": 8192,
+        },
+        rope_theta=500000.0,
+        tie_word_embeddings=True,
+        vocab_size=128256,
+    )
+    return AutoBridge.from_hf_config(hf_config).get_model_config()
+
+
 class TestDistillationProvider:
     """Test cases for DistillationProvider class."""
+
+    def test_builder_config_preserves_runtime_fields(self):
+        """Builder distillation keeps the exact student and teacher configs."""
+        student = _llama_builder_config(hidden_size=1024, num_hidden_layers=8)
+        teacher = _llama_builder_config(hidden_size=2048, num_hidden_layers=16)
+        student_fields = {
+            "rotary_base": student.rotary_base,
+            "rope_scaling": student.rope_scaling,
+            "rope_scaling_factor": student.rope_scaling_factor,
+            "share_embeddings_and_output_weights": student.share_embeddings_and_output_weights,
+        }
+
+        converted = convert_to_distillation_provider(student, teacher)
+        converted.finalize()
+
+        assert converted is not student
+        assert isinstance(converted, DistillationModelConfig)
+        serialized = converted.as_dict()
+        assert serialized["_target_"] == f"{type(student).__module__}.{type(student).__qualname__}"
+        assert "teacher" not in serialized
+        assert converted.teacher is teacher
+        assert converted.rotary_base == student_fields["rotary_base"]
+        assert converted.rope_scaling == student_fields["rope_scaling"]
+        assert converted.rope_scaling_factor == student_fields["rope_scaling_factor"]
+        assert converted.share_embeddings_and_output_weights is student_fields["share_embeddings_and_output_weights"]
+        assert converted.pre_wrap_hooks[-1] == converted._convert_hook
+        converted.seq_length = 4096
+        assert converted.teacher.seq_length == 4096
+
+    def test_builder_config_converts_student_in_place(self):
+        """Builder conversion preserves the chunk identity expected by training."""
+        student = _llama_builder_config(hidden_size=1024, num_hidden_layers=8)
+        teacher = _llama_builder_config(hidden_size=2048, num_hidden_layers=16)
+        converted = convert_to_distillation_provider(student, teacher)
+        student_model = Mock()
+        teacher_model = Mock()
+        student_model.config = student.transformer
+        teacher_model.config = teacher.transformer
+        student_chunk = Mock()
+        teacher_chunk = Mock()
+        student_chunk.module = student_model
+        teacher_chunk.module = teacher_model
+        teacher_builder = Mock()
+        teacher_builder.build_distributed_models.return_value = [teacher_chunk]
+        kd_model = Mock()
+
+        with (
+            patch.object(type(teacher), "get_builder_cls", return_value=Mock(return_value=teacher_builder)),
+            patch("megatron.bridge.models.distillation_provider.ProcessGroupCollection.use_mpu_process_groups"),
+            patch("megatron.bridge.models.distillation_provider.mtd.convert", return_value=kd_model),
+            patch("megatron.bridge.models.distillation_provider.mtd_mcore.setup_distillation_config") as setup,
+            patch("megatron.bridge.models.distillation_provider.mtd_mcore.adjust_distillation_model_for_mcore"),
+        ):
+            setup.return_value = Mock(criterion=None, loss_balancer=None)
+            result = converted._convert_hook([student_chunk])
+
+        assert result == [kd_model]
+
+    def test_builder_config_rejects_mismatched_parallelism(self):
+        """Builder distillation validates settings shared by both models."""
+        student = _llama_builder_config(hidden_size=1024, num_hidden_layers=8)
+        teacher = _llama_builder_config(hidden_size=2048, num_hidden_layers=16)
+        teacher.tensor_model_parallel_size = 2
+
+        with pytest.raises(ValueError, match="tensor_model_parallel_size"):
+            converted = convert_to_distillation_provider(student, teacher)
+            converted.finalize()
 
     def test_initialization_with_teacher(self):
         """Test DistillationProvider can be initialized with a teacher."""
@@ -130,6 +227,10 @@ class TestDistillationProvider:
         with pytest.raises(ValueError):
             convert_to_distillation_provider(student_base, teacher)
 
+    @patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
+    @patch("megatron.bridge.models.model_provider.parallel_state.is_initialized", return_value=True)
+    @patch("megatron.bridge.models.model_provider.torch.distributed.is_initialized", return_value=True)
+    @patch("megatron.bridge.models.model_provider.torch.cuda.set_device")
     @patch("modelopt.torch.distill.plugins.megatron.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024)
     @patch("megatron.bridge.models.gpt_provider.MCoreGPTModel")
@@ -138,6 +239,10 @@ class TestDistillationProvider:
         mock_mcore_gpt,
         mock_calc_vocab,
         mock_mtd_parallel_state,
+        mock_set_device,
+        mock_distributed_initialized,
+        mock_model_parallel_initialized,
+        mock_pg_collection,
     ):
         """Test the KD conversion runs (in the deferred pre-wrap hook) and yields a DistillationModel."""
         mock_mtd_parallel_state.is_pipeline_first_stage.return_value = True
@@ -168,9 +273,17 @@ class TestDistillationProvider:
         student = convert_to_distillation_provider(student_base, teacher, kd_config=ModelOptDistillConfig())
 
         # Attach minimal pg_collection needed by provider.provide
-        pg = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+        process_group = Mock()
+        process_group.size.return_value = 1
+        process_group.rank.return_value = 0
+        pg = type(
+            "PG",
+            (),
+            {"pp": process_group, "tp": process_group, "cp": process_group, "dp": process_group},
+        )()
         teacher._pg_collection = pg
         student._pg_collection = pg
+        mock_pg_collection.return_value = pg
 
         # Mock the provide method calls and modelopt functions
         mock_student_model = Mock()

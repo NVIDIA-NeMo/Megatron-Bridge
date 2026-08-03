@@ -16,9 +16,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import pytest
-from transformers import LlamaConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
 from megatron.bridge.recipes.llama import (
     llama32_1b_pretrain_config,
@@ -33,22 +31,6 @@ from tests.functional_tests.utils import (
     initialize_distributed,
     verify_checkpoint_files,
 )
-
-
-def _to_legacy_llama_provider(model_config):
-    """Convert a builder-backed Llama config to the provider used by distillation."""
-    hf_config = LlamaConfig(
-        architectures=["LlamaForCausalLM"],
-        hidden_size=model_config.hidden_size,
-        intermediate_size=model_config.ffn_hidden_size,
-        max_position_embeddings=model_config.seq_length,
-        num_attention_heads=model_config.num_attention_heads,
-        num_hidden_layers=model_config.num_layers,
-        num_key_value_heads=model_config.num_query_groups,
-        rms_norm_eps=model_config.layernorm_epsilon,
-        vocab_size=model_config.vocab_size,
-    )
-    return AutoBridge.from_hf_config(hf_config).to_megatron_provider(load_weights=False)
 
 
 LLAMA_DISTILL_RECIPES = [
@@ -119,10 +101,7 @@ def run_distill_recipe_test(
         config.checkpoint.load = str(checkpoint_dir)
         config.logger.tensorboard_dir = str(tensorboard_dir)
 
-        # Distillation still uses the legacy provider API while the recipes use builder configs.
-        student_provider = _to_legacy_llama_provider(config.model)
-        teacher_provider = _to_legacy_llama_provider(teacher_config.model)
-        config.model = convert_to_distillation_provider(student_provider, teacher_provider)
+        config.model = convert_to_distillation_provider(config.model, teacher_config.model)
 
         # Set default distillation configuration
         config.model.kd_config = ModelOptDistillConfig()

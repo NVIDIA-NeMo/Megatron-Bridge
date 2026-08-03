@@ -13,13 +13,16 @@
 # limitations under the License.
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any, Optional
 
 import modelopt.torch.distill as mtd
 import modelopt.torch.distill.plugins.megatron as mtd_mcore
 from megatron.core.models.common.language_module.language_module import LanguageModule
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.utils import unwrap_model
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
@@ -31,6 +34,110 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _clone_model_config(config: ModelConfig) -> ModelConfig:
+    """Clone a model config without resolving proxied ``__deepcopy__`` methods."""
+    config_copy = type(config).__new__(type(config))
+    memo = {id(config): config_copy}
+    for name, value in config.__dict__.items():
+        object.__setattr__(config_copy, name, deepcopy(value, memo))
+    return config_copy
+
+
+class DistillationModelConfig:
+    """Builder-backed model config for knowledge distillation.
+
+    Instances retain the student's concrete config class and builder while
+    registering a pre-wrap hook that builds the teacher from its own config and
+    applies ModelOpt distillation after both models are constructed.
+    """
+
+    _SHARED_ATTRIBUTES = (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "context_parallel_size",
+        "seq_length",
+        "pipeline_dtype",
+    )
+
+    def _initialize_distillation(
+        self,
+        teacher: ModelConfig,
+        kd_config: Optional["ModelOptDistillConfig"],
+        distill_submodule: Optional[str],
+    ) -> None:
+        """Attach teacher state and validate the shared distributed settings."""
+        object.__setattr__(self, "teacher", teacher)
+        object.__setattr__(self, "kd_config", kd_config)
+        object.__setattr__(self, "distill_submodule", distill_submodule)
+        object.__setattr__(self, "_mirror_to_teacher", True)
+
+        self.cross_entropy_fusion_impl = "native"
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize as the original student config for checkpoint restoration."""
+        result = super().as_dict()
+        student_class = self._student_config_class
+        result["_target_"] = f"{student_class.__module__}.{student_class.__qualname__}"
+        return result
+
+    def finalize(self) -> None:
+        """Finalize student and teacher configs without mirroring derived values."""
+        object.__setattr__(self, "_mirror_to_teacher", False)
+        try:
+            super().finalize()
+            if hasattr(self.teacher, "finalize"):
+                self.teacher.finalize()
+        finally:
+            object.__setattr__(self, "_mirror_to_teacher", True)
+        for attribute_name in self._SHARED_ATTRIBUTES:
+            if getattr(self, attribute_name) != getattr(self.teacher, attribute_name):
+                raise ValueError(f"Student and teacher configs must have the same {attribute_name}.")
+
+    def _convert_hook(self, model_chunks: list) -> list:
+        """Build the teacher and convert the student after model construction."""
+        assert len(model_chunks) == 1, "ModelOpt KD does not support virtual pipeline (>1 model chunk)."
+        student_model = unwrap_model(model_chunks[0])
+
+        teacher_builder = self.teacher.get_builder_cls()(self.teacher)
+        teacher_chunks = teacher_builder.build_distributed_models(
+            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
+        )
+        assert len(teacher_chunks) == 1, "ModelOpt KD does not support virtual pipeline (>1 model chunk)."
+        teacher_model = unwrap_model(teacher_chunks[0])
+
+        if self.distill_submodule is not None:
+            self.full_model = student_model
+            student_model = getattr(student_model, self.distill_submodule)
+            teacher_model = getattr(teacher_model, self.distill_submodule)
+
+        kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
+        modelopt_cfg = {
+            "teacher_model": teacher_model,
+            "criterion": kd_cfg.criterion,
+            "loss_balancer": kd_cfg.loss_balancer,
+        }
+        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
+        if self.distill_submodule is not None:
+            assert getattr(self.full_model, self.distill_submodule) is kd_model
+            model_chunks[0] = self.full_model
+        else:
+            model_chunks[0] = kd_model
+        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
+        return model_chunks
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in {"teacher", "kd_config", "distill_submodule", "full_model", "_mirror_to_teacher"}:
+            object.__setattr__(self, name, value)
+            return
+
+        super().__setattr__(name, value)
+        teacher = getattr(self, "teacher", None)
+        if self._mirror_to_teacher and teacher is not None and hasattr(teacher, name):
+            setattr(teacher, name, value)
 
 
 @dataclass
@@ -160,12 +267,12 @@ class DistillationProvider(TransformerConfig):
 
 
 def convert_to_distillation_provider(
-    student_provider: GPTModelProvider | HybridModelProvider,
-    teacher_provider: GPTModelProvider | HybridModelProvider,
+    student_provider: GPTModelProvider | HybridModelProvider | ModelConfig,
+    teacher_provider: GPTModelProvider | HybridModelProvider | ModelConfig,
     kd_config: Optional["ModelOptDistillConfig"] = None,
     *,
     distill_submodule: Optional[str] = None,
-) -> "DistillationProvider":
+) -> "DistillationProvider | DistillationModelConfig":
     """Convert a given model provider to a DistillationProvider.
 
     The KD conversion runs in a pre-wrap hook (after the student's weights are loaded), not in
@@ -182,8 +289,24 @@ def convert_to_distillation_provider(
             submodule is trained).
     """
 
+    if isinstance(student_provider, ModelConfig):
+        assert isinstance(teacher_provider, ModelConfig), "Teacher config must be a ModelConfig."
+        student_class = type(student_provider)
+        student_copy = _clone_model_config(student_provider)
+        distillation_class = type(
+            f"Distillation{student_class.__name__}",
+            (DistillationModelConfig, student_class),
+            {"__module__": __name__},
+        )
+        student_copy.__class__ = distillation_class
+        object.__setattr__(student_copy, "_student_config_class", student_class)
+        student_copy._initialize_distillation(teacher_provider, kd_config, distill_submodule)
+        hooks = [*student_copy.pre_wrap_hooks, student_copy._convert_hook]
+        object.__setattr__(student_copy, "pre_wrap_hooks", hooks)
+        return student_copy
+
     assert isinstance(student_provider, (GPTModelProvider, HybridModelProvider)), (
-        "Student provider must be a subclass of GPTModelProvider or HybridModelProvider."
+        "Student provider must be a subclass of GPTModelProvider, HybridModelProvider, or ModelConfig."
     )
     assert isinstance(teacher_provider, (GPTModelProvider, HybridModelProvider)), (
         "Teacher provider must be a subclass of GPTModelProvider or HybridModelProvider."

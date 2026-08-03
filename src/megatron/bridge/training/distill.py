@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.distillation_provider import DistillationProvider
+from megatron.bridge.models.distillation_provider import DistillationModelConfig, DistillationProvider
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step_modelopt
 from megatron.bridge.training.pretrain import pretrain
@@ -32,6 +32,8 @@ def distill(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
-    assert isinstance(config.model, DistillationProvider), "Distillation requires a DistillationProvider"
+    assert isinstance(config.model, (DistillationProvider, DistillationModelConfig)), (
+        "Distillation requires a DistillationProvider or DistillationModelConfig"
+    )
 
     return pretrain(config, forward_step_modelopt)
