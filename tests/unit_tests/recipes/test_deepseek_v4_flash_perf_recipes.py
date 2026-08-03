@@ -81,6 +81,7 @@ def test_deepseek_v4_flash_gb300_configs_match_benchmark_rows(
     assert cfg.model.cuda_graph_warmup_steps == 1
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
     assert cfg.model.quant_recipe is None
     assert cfg.model.moe_router_padding_for_fp8 is False
