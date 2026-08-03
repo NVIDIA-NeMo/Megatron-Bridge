@@ -32,8 +32,12 @@ class DummyBridge(MegatronModelBridge):
         return MegatronMappingRegistry()
 
 
-def test_build_conversion_tasks_keeps_output_bias_when_embeddings_are_tied(monkeypatch):
-    """Tied embeddings remove only output_layer.weight, not an independent output bias."""
+def _setup_tied_output_bridge(monkeypatch, *, share_embeddings_and_output_weights, global_param_names=None):
+    """Build a minimal single-rank bridge whose model has both an output weight and bias.
+
+    Returns ``(bridge, model, hf_pretrained)`` with every distributed/Megatron helper
+    stubbed out so the task-construction paths can be exercised without a process group.
+    """
     from megatron.bridge.models.conversion import model_bridge as model_bridge_module
 
     class TiedOutputBridge(DummyBridge):
@@ -51,7 +55,7 @@ def test_build_conversion_tasks_keeps_output_bias_when_embeddings_are_tied(monke
     model_config = SimpleNamespace(
         num_moe_experts=0,
         pipeline_model_parallel_size=1,
-        share_embeddings_and_output_weights=True,
+        share_embeddings_and_output_weights=share_embeddings_and_output_weights,
     )
     parameters = {
         "output_layer.weight": torch.ones(2, 2),
@@ -67,7 +71,7 @@ def test_build_conversion_tasks_keeps_output_bias_when_embeddings_are_tied(monke
     monkeypatch.setattr(
         bridge,
         "_megatron_global_param_names_all_pp_ranks",
-        lambda _model: ["output_layer.weight", "output_layer.bias"],
+        lambda _model: list(global_param_names if global_param_names is not None else parameters),
     )
     monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _model: [model])
     monkeypatch.setattr(
@@ -82,9 +86,74 @@ def test_build_conversion_tasks_keeps_output_bias_when_embeddings_are_tied(monke
         lambda _model, name, _vp_stage: (SimpleNamespace(config=model_config), parameters[name]),
     )
     monkeypatch.setattr(model_bridge_module.parallel_state, "get_pipeline_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(model_bridge_module.parallel_state, "get_pipeline_model_parallel_group", lambda: None)
+
+    return bridge, model, hf_pretrained
+
+
+def test_build_conversion_tasks_keeps_output_bias_when_embeddings_are_tied(monkeypatch):
+    """Tied embeddings remove only output_layer.weight, not an independent output bias."""
+    bridge, model, hf_pretrained = _setup_tied_output_bridge(monkeypatch, share_embeddings_and_output_weights=True)
 
     tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
 
+    assert len(tasks) == 1
+    assert tasks[0] is not None
+    assert tasks[0].global_param_name == "output_layer.bias"
+
+
+def test_build_conversion_tasks_keeps_output_weight_when_embeddings_are_untied(monkeypatch):
+    """Without weight tying the output weight is a real parameter and must be converted."""
+    bridge, model, hf_pretrained = _setup_tied_output_bridge(monkeypatch, share_embeddings_and_output_weights=False)
+
+    tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
+
+    assert [task.global_param_name for task in tasks] == ["output_layer.weight", "output_layer.bias"]
+
+
+@pytest.mark.parametrize(
+    ("name", "is_filtered"),
+    [
+        ("output_layer.weight", True),
+        ("decoder.output_layer.weight", True),
+        ("output_layer.bias", False),
+        # Substring matches that the previous `"output_layer" not in name` filter wrongly dropped.
+        ("output_layer.weight_scale_inv", False),
+        ("lm_head.output_layer_norm.weight", False),
+    ],
+)
+def test_build_conversion_tasks_tied_filter_only_targets_output_layer_weight(monkeypatch, name, is_filtered):
+    """Only a trailing `output_layer.weight` is removed under weight tying."""
+    bridge, model, hf_pretrained = _setup_tied_output_bridge(
+        monkeypatch, share_embeddings_and_output_weights=True, global_param_names=[name]
+    )
+    monkeypatch.setattr(
+        bridge,
+        "mapping_registry",
+        lambda: MegatronMappingRegistry(AutoMapping(name, "lm_head.weight")),
+    )
+
+    tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
+
+    assert (len(tasks) == 0) is is_filtered
+
+
+def test_build_export_fp8_tasks_keeps_output_bias_when_embeddings_are_tied(monkeypatch):
+    """The FP8 export path applies the same narrowed tied-weight filter as the import path."""
+    bridge, model, hf_pretrained = _setup_tied_output_bridge(monkeypatch, share_embeddings_and_output_weights=True)
+
+    detected_names = []
+
+    def _fake_detect_fp8_params(_megatron_model, _model_config, sorted_names, _pp_group, _fp8_scale_inv_attr):
+        detected_names.append(list(sorted_names))
+        return {}
+
+    monkeypatch.setattr(bridge, "_detect_fp8_params", _fake_detect_fp8_params)
+
+    tasks = bridge.build_export_fp8_tasks(hf_pretrained, [model])
+
+    # The filtered name list is what drives both FP8 detection and the final task ordering.
+    assert detected_names == [["output_layer.bias"]]
     assert len(tasks) == 1
     assert tasks[0] is not None
     assert tasks[0].global_param_name == "output_layer.bias"
