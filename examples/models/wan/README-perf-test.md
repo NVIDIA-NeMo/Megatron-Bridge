@@ -46,7 +46,7 @@ export PYTHONPATH="${DFM_PATH}/.:/opt/Megatron-Bridge/.:/opt/Megatron-LM"
 
 # Python deps
 python3 -m pip install --upgrade diffusers==0.35.1
-pip install easydict imageio imageio-ffmpeg
+bash scripts/install_diffusion_deps.sh
 ```
 
 ## Pretraining
