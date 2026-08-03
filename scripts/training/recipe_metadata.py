@@ -65,6 +65,14 @@ LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset()
 PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
 TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
 
+# Exact source-specific overrides take precedence over family defaults. The
+# Qwen3-VL Energon recipe emits canonical THD metadata through ``vlm_step``;
+# the other Qwen3-VL recipes retain their legacy model-specific step.
+RECIPE_FORWARD_STEPS = {
+    "qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config": "vlm_step",
+    "qwen3_vl_8b_peft_energon_config": "vlm_step",
+}
+
 # Put specific multimodal families before the text default. This registry is
 # source-agnostic: library and benchmark recipes with the same identity use
 # the same forward step.
@@ -168,6 +176,8 @@ def resolved_benchmark_recipe_metadata(recipe_name: str) -> BenchmarkRecipeMetad
 
 def recipe_step(recipe_name: str) -> str:
     """Return the default forward-step registry name for any recipe."""
+    if recipe_name in RECIPE_FORWARD_STEPS:
+        return RECIPE_FORWARD_STEPS[recipe_name]
     for prefix, step_name in RECIPE_FORWARD_STEP_PREFIXES:
         if recipe_name.startswith(prefix):
             return step_name

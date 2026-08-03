@@ -1146,6 +1146,9 @@ class ConfigContainer(Container):
             raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
 
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
 
@@ -1171,6 +1174,29 @@ class ConfigContainer(Container):
                 "EnergonDatasetConfig.micro_batch_size must match train.micro_batch_size "
                 f"({self.dataset.micro_batch_size} != {self.train.micro_batch_size})."
             )
+
+        if enable_energon_packing:
+            if not getattr(self.model, "supports_energon_native_sequence_packing", False):
+                raise ValueError("Energon native sequence packing currently supports only dense Qwen3-VL models.")
+            if self.train.micro_batch_size != 1:
+                raise ValueError("Energon native sequence packing requires train.micro_batch_size=1.")
+            if not self.model.calculate_per_token_loss:
+                raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
+            if self.ddp.average_in_collective:
+                raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
+            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
+                raise ValueError("Energon native sequence packing does not support MTP.")
+            if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
+                self.model, "vision_cuda_graph_impl", None
+            ) not in (None, "none"):
+                raise ValueError("Energon native sequence packing does not support CUDA graphs.")
+            dist_train = getattr(self.model, "dist_train", None)
+            if dist_train is not None and getattr(dist_train, "use_dist_train", False):
+                raise ValueError("Energon native sequence packing does not support Qwen3-VL DistTrain.")
+            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+                raise ValueError("Energon native sequence packing does not yet support pipeline parallelism.")
+            if getattr(self.model, "expert_model_parallel_size", 1) > 1:
+                raise ValueError("Energon native sequence packing does not yet support expert parallelism.")
 
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
@@ -1201,7 +1227,7 @@ class ConfigContainer(Container):
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if enable_in_batch_packing:
+        if enable_in_batch_packing or enable_energon_packing:
             self.model._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple

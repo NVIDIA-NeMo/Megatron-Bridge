@@ -467,6 +467,9 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        global_state._flops_vision_patch_sum = 0
+        global_state._flops_vision_patch_sq_sum = 0
+        global_state._flops_vision_merged_token_sum = 0
         global_state._flops_requires_global_reduce = False
 
         (
@@ -579,19 +582,34 @@ def train(
         # fixed-length stats from the local DP rank; THD batches request one exact SUM
         # all-reduce over the pure DP group because packed sub-sequence lengths can
         # differ by rank.
-        seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
+        (
+            seqlen_sum,
+            seqlen_squared_sum,
+            num_vision_patches,
+            vision_patch_sum,
+            vision_patch_squared_sum,
+            vision_merged_token_sum,
+        ) = flop_utils.resolve_global_flops_stats(
             global_state,
             data_parallel_size=dp_size,
             vp_size=config.model.virtual_pipeline_model_parallel_size,
             dp_group=pg_collection.dp,
         )
+        has_exact_vision_stats = vision_patch_sum > 0
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
             config,
             batch_size=batch_size,
             seqlen_sum=seqlen_sum,
             seqlen_squared_sum=seqlen_squared_sum,
-            num_vision_patches=num_vision_patches,
+            num_vision_patches=0 if has_exact_vision_stats else num_vision_patches,
         )
+        if has_exact_vision_stats:
+            num_floating_point_operations_in_batch += flop_utils.vit_flops_from_patch_stats(
+                config,
+                patch_sum=vision_patch_sum,
+                patch_squared_sum=vision_patch_squared_sum,
+                merged_token_sum=vision_merged_token_sum,
+            )
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
