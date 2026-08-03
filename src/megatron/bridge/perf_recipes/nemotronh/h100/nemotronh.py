@@ -98,13 +98,14 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "layernorm"]
 
-    # Four chunks reduced the grouped-MoE FC2 allocation to 44 MiB, but the
-    # first forward still left only 58 MiB fragmented device memory. Split the
-    # supported training MLP path into eight sequence chunks to halve that
-    # remaining chunk-local routed-expert working set.
+    # Eight chunks reduced grouped-expert FC1 outputs to 54--60 MiB, but the
+    # first forward still could not fit the current 320 MiB FSDP expert-weight
+    # gather on every rank. Split the supported training MLP path into sixteen
+    # sequence chunks to halve the remaining chunk-local routed-expert working
+    # set and leave more room for that unavoidable on-demand gather.
     # Unlike whole-MoE checkpointing, chunking leaves the MTP latent projection
     # on its normal backward path so FSDP observes its fused FP32 wgrad.
-    cfg.model.mlp_chunks_for_training = 8
+    cfg.model.mlp_chunks_for_training = 16
 
     # The op-fuser ScaledSReLU path exceeds H100 activation memory before the
     # first optimizer step. Keep TE grouped linears and the fused weighted
