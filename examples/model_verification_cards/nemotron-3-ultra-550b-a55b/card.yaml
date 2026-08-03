@@ -411,7 +411,9 @@ items:
         gradient communication, and Megatron-FSDP must remain active with
         selective whole-MoE and layernorm recompute, a one-element FSDP
         communication unit that disables next-bucket parameter prefetch, and
-        the CUDA stream-ordered allocator, but no CPU activation offload.
+        native expandable allocator segments. TE grouped linears and fused
+        weighted squared-ReLU must remain active through the non-op-fuser path,
+        with no CPU activation offload.
         Gradient and loss NaN checks must remain enabled.
         Whole-MoE recompute is paired with standard all-to-all because replaying
         the stateful HybridEP path during backward is unsupported; the narrower
