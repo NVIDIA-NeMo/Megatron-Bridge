@@ -197,6 +197,7 @@ def _pretrain(
 
         _finish_train(state, checkpoint_manager)
     except BaseException:
+        logger.exception("Pretraining failed")
         if inprocess_call_wrapper is None:
             _cleanup_after_pretrain_failure(state, should_destroy_process_group)
         raise

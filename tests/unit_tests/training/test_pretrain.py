@@ -68,6 +68,28 @@ class TestDestroyProcessGroupIfNeeded:
 class TestPretrainProcessGroupOwnership:
     """Test process group ownership across exceptional pretrain exits."""
 
+    def test_failure_is_logged_before_distributed_cleanup(self):
+        """Test the original failure is visible even if process-group cleanup blocks."""
+        state = MagicMock()
+        events = []
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch("megatron.bridge.training.pretrain.destroy_global_state"),
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch("megatron.bridge.training.pretrain.setup", side_effect=RuntimeError("setup failed")),
+            patch("megatron.bridge.training.pretrain.logger.exception") as mock_log_exception,
+        ):
+            mock_dist.is_initialized.side_effect = [False, True]
+            mock_log_exception.side_effect = lambda *_args, **_kwargs: events.append("log")
+            mock_dist.destroy_process_group.side_effect = lambda: events.append("destroy")
+
+            with pytest.raises(RuntimeError, match="setup failed"):
+                _pretrain(state, MagicMock())
+
+        assert events == ["log", "destroy"]
+        mock_log_exception.assert_called_once_with("Pretraining failed")
+
     def test_framework_owned_process_group_is_destroyed_when_setup_raises(self):
         """Test Bridge destroys a process group initialized during failed setup."""
         state = MagicMock()
