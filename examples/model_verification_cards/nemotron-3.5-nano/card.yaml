@@ -680,21 +680,6 @@ items:
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config
         --max_steps 50
-        model.moe_hybridep_num_sms=32
-        model.moe_permute_fusion_into_hybridep=true
-        env_vars.NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=64
-        env_vars.NVTE_BWD_LAYERNORM_SM_MARGIN=10
-        env_vars.NVTE_FWD_LAYERNORM_SM_MARGIN=10
-        +env_vars.NVTE_CPU_OFFLOAD_V1=1
-        model.recompute_modules=[moe_act,layernorm]
-        model.fine_grained_activation_offloading=true
-        model.offload_modules=[expert_fc1]
-        model.activation_offload_fraction=1.0
-        model.delay_offload_until_cuda_graph=true
-        optimizer.use_precision_aware_optimizer=true
-        optimizer.exp_avg_dtype=bfloat16
-        optimizer.exp_avg_sq_dtype=bfloat16
-        model.moe_router_fusion=true
       last_verified: 2026-08-03
       metrics:
         initial_loss: 12.16197
