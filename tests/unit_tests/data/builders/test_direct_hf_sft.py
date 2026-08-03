@@ -99,22 +99,6 @@ def test_config_validates_source_and_padding():
         config.validate()
 
 
-def test_config_validates_pad_token_id():
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
-        pad_token_id=-1,
-    )
-
-    with pytest.raises(ValueError, match="pad_token_id"):
-        config.validate()
-
-    config.pad_token_id = None
-    config.validate()
-    config.pad_token_id = 248044
-    config.validate()
-
-
 def test_config_allows_disabled_split_sources_for_later_config_overrides():
     config = DirectHFSFTDatasetConfig(
         seq_length=16,

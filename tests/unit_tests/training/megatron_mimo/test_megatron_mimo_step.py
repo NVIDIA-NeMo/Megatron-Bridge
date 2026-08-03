@@ -227,9 +227,7 @@ class TestForwardStep:
         from megatron.bridge.training.megatron_mimo_step import forward_step
 
         mock_state = MagicMock()
-        mock_state.cfg.dataset = SimpleNamespace(
-            enable_in_batch_packing=True, defer_in_batch_packing_to_step=True, pad_token_id=0
-        )
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
         mock_model = MagicMock()
         mock_role = MagicMock()
         mock_role.has_language_module = True
@@ -244,7 +242,7 @@ class TestForwardStep:
         mock_get_batch.return_value = {
             "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
             "position_ids": torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
-            "attention_mask": None,
+            "attention_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
             "labels": torch.tensor([[2, 3, 4, 0], [5, 6, 0, 0]]),
             "loss_mask": torch.ones(2, 4),
             "modality_inputs": None,
@@ -264,28 +262,19 @@ class TestResolveStepPacking:
     """Dataset-config gating for MegatronMIMO step-time packing."""
 
     def test_disabled_by_default(self):
-        assert resolve_step_packing(SimpleNamespace()) == (False, 0)
+        assert resolve_step_packing(SimpleNamespace()) is False
 
     def test_disabled_ignores_other_fields(self):
-        cfg = SimpleNamespace(enable_in_batch_packing=False, defer_in_batch_packing_to_step=False, pad_token_id=None)
-        assert resolve_step_packing(cfg) == (False, 0)
+        cfg = SimpleNamespace(enable_in_batch_packing=False, defer_in_batch_packing_to_step=False)
+        assert resolve_step_packing(cfg) is False
 
     def test_enabled_with_defer_and_pad_id(self):
-        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True, pad_token_id=248044)
-        assert resolve_step_packing(cfg) == (True, 248044)
-
-    def test_zero_pad_id_is_valid(self):
-        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True, pad_token_id=0)
-        assert resolve_step_packing(cfg) == (True, 0)
+        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        assert resolve_step_packing(cfg) is True
 
     def test_collate_time_packing_rejected(self):
-        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=False, pad_token_id=248044)
+        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=False)
         with pytest.raises(ValueError, match="defer_in_batch_packing_to_step"):
-            resolve_step_packing(cfg)
-
-    def test_missing_pad_id_rejected(self):
-        cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True, pad_token_id=None)
-        with pytest.raises(ValueError, match="pad_token_id"):
             resolve_step_packing(cfg)
 
     def test_reads_real_dataset_config(self):
@@ -296,6 +285,5 @@ class TestResolveStepPacking:
             source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
             enable_in_batch_packing=True,
             defer_in_batch_packing_to_step=True,
-            pad_token_id=0,
         )
-        assert resolve_step_packing(cfg) == (True, 0)
+        assert resolve_step_packing(cfg) is True

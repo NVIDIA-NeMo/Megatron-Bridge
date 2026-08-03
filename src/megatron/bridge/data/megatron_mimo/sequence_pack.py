@@ -36,7 +36,6 @@ def assemble_packed_sequence(
     tokens: Optional[torch.Tensor],
     lengths: List[int],
     *,
-    pad_token_id: int = 0,
     labels: Optional[torch.Tensor] = None,
     loss_mask: Optional[torch.Tensor] = None,
     position_ids: Optional[torch.Tensor] = None,
@@ -52,10 +51,6 @@ def assemble_packed_sequence(
         group: Row indices (into the source tensors) of the examples in this pack, in pack order.
         tokens: Padded ``[B, S]`` token ids, or ``None`` (last-stage label-only pack).
         lengths: Real (unpadded) length per row.
-        pad_token_id: Fill value for the ``input_ids`` buffer. The pack is tight (segments
-            are concatenated with no inter-segment padding and ``T`` equals their summed
-            length), so every position is overwritten and this value never appears in the
-            output; it is kept for parity with the unpacked path.
         labels: Optional padded ``[B, S]`` labels (pad value ``-100``).
         loss_mask: Optional padded ``[B, S]`` loss mask (pad value ``0``).
         position_ids: Optional padded position ids. Both 2-D ``[B, S]`` and Qwen-VL MRoPE
@@ -122,7 +117,7 @@ def assemble_packed_sequence(
         packed_position_ids = _concat(position_ids, 0)
 
     return {
-        "input_ids": _concat(tokens, pad_token_id),
+        "input_ids": _concat(tokens, 0),
         "labels": _concat(labels, -100),
         "loss_mask": _concat(loss_mask, 0),
         "position_ids": packed_position_ids,
@@ -134,7 +129,6 @@ def assemble_packed_sequence(
 def pack_language_shard(
     data_batch: Dict[str, Any],
     *,
-    pad_token_id: int = 0,
     lengths: torch.Tensor | None = None,
 ) -> "tuple[Dict[str, Any], Dict[str, Any]] | tuple[Dict[str, Any], None]":
     """Pack a per-DP-shard language batch ``[bs, S]`` into a single packed sequence ``[1, T]``.
@@ -166,8 +160,6 @@ def pack_language_shard(
         data_batch: This rank's sliced language batch with ``input_ids`` ``[bs, S]`` and/or
             ``labels`` / ``loss_mask`` ``[bs, S]``, plus optional ``position_ids`` (``[bs, S]``
             or MRoPE ``[3, bs, S]``).
-        pad_token_id: Fill value for the packed ``input_ids`` buffer (overwritten by the tight
-            pack; kept for parity with the unpacked path).
         lengths: Per-sample real token lengths ``[bs]`` from the caller. When ``None`` the batch
             is returned unchanged (no supported length source).
 
@@ -209,7 +201,6 @@ def pack_language_shard(
         group,
         input_ids if isinstance(input_ids, torch.Tensor) else None,
         lengths,
-        pad_token_id=pad_token_id,
         labels=labels,
         loss_mask=loss_mask,
         position_ids=position_ids,

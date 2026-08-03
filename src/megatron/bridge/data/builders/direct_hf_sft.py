@@ -74,9 +74,6 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
-    pad_token_id: int | None = None
-    """Collator pad id; required when a step packs deferred batches and derives per-sample
-    real lengths via ``input_ids != pad_token_id`` (e.g. MegatronMIMO)."""
 
     def validate(self) -> None:
         """Validate declarative source and dataset settings."""
@@ -96,8 +93,6 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             raise ValueError("pad_to_multiple_of must be greater than 0.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
-        if self.pad_token_id is not None and (not isinstance(self.pad_token_id, int) or self.pad_token_id < 0):
-            raise ValueError(f"pad_token_id must be a non-negative int when set, got {self.pad_token_id!r}.")
 
     def _inherit_source_adapter_kwargs(self, split_source: HFDatasetSourceConfig) -> None:
         """Fill unset adapter arguments on another split of the training source."""

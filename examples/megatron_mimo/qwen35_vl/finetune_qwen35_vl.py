@@ -130,6 +130,7 @@ class MIMOBatchSpec:
     labels: bool = True
     loss_mask: bool = True
     modality_inputs: bool = True
+    attention_mask: bool = False
 
     def describe(self) -> str:
         enabled = [
@@ -140,6 +141,7 @@ class MIMOBatchSpec:
                 ("labels", self.labels),
                 ("loss_mask", self.loss_mask),
                 ("modality_inputs", self.modality_inputs),
+                ("attention_mask", self.attention_mask),
             )
             if value
         ]
@@ -278,21 +280,20 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
     is_first_pp = pp_rank == 0
     is_last_pp = pp_rank == pp_size - 1
 
-    # In-batch sequence packing needs input_ids on EVERY language PP stage: forward_step derives the
-    # per-sample real lengths from input_ids (the only tensor that counts image-placeholder tokens)
-    # before nulling it, so every stage packs to the SAME [1, T] as the packed hidden states crossing
-    # the pipeline. Without it, stages > 0 fall back to lengths=None and the packed shapes mismatch.
     dataset_cfg = getattr(cfg, "dataset", None)
     packing_active = bool(getattr(dataset_cfg, "enable_in_batch_packing", False))
 
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
         return MIMOBatchSpec(
-            input_ids=is_first_pp or packing_active,
+            input_ids=is_first_pp,
             # Qwen3.5-VL mRoPE needs position_ids on every language PP stage.
             position_ids=True,
             labels=is_last_pp,
             loss_mask=is_last_pp,
             modality_inputs=False,
+            # Packing derives per-sample lengths from the tokenizer's own mask (the packer
+            # nulls it again before the model, which requires attention_mask=None under CP).
+            attention_mask=packing_active,
         )
 
     return MIMOBatchSpec(
@@ -319,6 +320,8 @@ def _project_adapted_batch(
         adapted["loss_mask"] = None
     if not batch_spec.modality_inputs:
         adapted["modality_inputs"] = None
+    if not batch_spec.attention_mask:
+        adapted["attention_mask"] = None
     return adapted
 
 
@@ -410,7 +413,9 @@ def _build_dataset_config(args: argparse.Namespace) -> DirectHFSFTDatasetConfig:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
-        enable_in_batch_packing=False,
+        # MegatronMIMO packs in the step, after the module-DP slice (deferred packing).
+        enable_in_batch_packing=args.pack_sequences_in_batch,
+        defer_in_batch_packing_to_step=True,
         do_validation=do_validation,
         do_test=False,
         trust_remote_code=args.trust_remote_code,
@@ -710,7 +715,7 @@ def _adapt_qwen35_hf_batch(
         {
             "input_ids": input_ids.contiguous(),
             "position_ids": None if position_ids is None else position_ids.contiguous(),
-            "attention_mask": None,
+            "attention_mask": None if attention_mask is None else attention_mask.contiguous(),
             "labels": None if labels is None else labels.contiguous(),
             "loss_mask": None if loss_mask is None else loss_mask.contiguous(),
             "modality_inputs": modality_inputs,
@@ -1303,11 +1308,6 @@ def main() -> None:
         _log(f"checkpoint dir: {args.checkpoint_dir}")
         _log("building training config")
         cfg = _build_config(model_provider=model_provider, dataset_config=dataset_config, args=args)
-        if args.pack_sequences_in_batch:
-            # MegatronMIMO packs in the step, after the module-DP slice (deferred packing).
-            cfg.dataset.enable_in_batch_packing = True
-            cfg.dataset.defer_in_batch_packing_to_step = True
-            cfg.dataset.pad_token_id = hf_spec.pad_token_id
 
         _log("launching pretrain_megatron_mimo")
         pretrain_megatron_mimo(

@@ -278,39 +278,3 @@ def slice_batch_for_megatron_mimo(
             sliced[key] = value
 
     return sliced
-
-
-def real_token_lengths(
-    input_ids: torch.Tensor,
-    *,
-    pad_token_id: int,
-    attention_mask: "torch.Tensor | None" = None,
-) -> torch.Tensor:
-    """Per-sample real (non-pad) token length for a ``[B, S]`` batch.
-
-    Length-source priority (authoritative first):
-
-    1. ``attention_mask.sum(dim=1)`` when an ``attention_mask`` of matching ``[B, S]`` shape
-       is present. Callers whose masks do not cover modality placeholder tokens (common for
-       VLM batches) must pass ``attention_mask=None`` so the pad-id fallback is used.
-    2. else ``(input_ids != pad_token_id).sum(dim=1)`` — the configured pad id.
-
-    ``loss_mask`` is deliberately **not** used: it is a supervision mask (zeros
-    supervised-but-not-loss tokens such as the prompt) and would under-count the real
-    sequence length.
-
-    Args:
-        input_ids: Padded token ids ``[B, S]``.
-        pad_token_id: Pad id used for the fallback ``!= pad`` length.
-        attention_mask: Optional ``[B, S]`` padding mask (1 = real, 0 = pad).
-
-    Returns:
-        An ``int64`` tensor of shape ``[B]`` with each sample's real length.
-    """
-    if (
-        isinstance(attention_mask, torch.Tensor)
-        and attention_mask.dim() == 2
-        and attention_mask.shape == input_ids.shape
-    ):
-        return attention_mask.to(torch.bool).sum(dim=1).to(torch.long)
-    return (input_ids != pad_token_id).sum(dim=1).to(torch.long)

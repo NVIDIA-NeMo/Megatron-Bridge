@@ -31,7 +31,7 @@ class TestAssemblePackedSequence:
         rows = [[1, 2, 3], [4, 5], [6, 7, 8, 9]]  # lengths 3,2,4
         lengths = [3, 2, 4]
         tokens = _padded(rows, S=8, pad=0)
-        out = assemble_packed_sequence([0, 1, 2], tokens, lengths, pad_token_id=0)
+        out = assemble_packed_sequence([0, 1, 2], tokens, lengths)
         assert out["cu_seqlens"].tolist() == [0, 3, 5, 9]
         assert out["cu_seqlens"].dtype == torch.int32
         assert out["input_ids"].shape == (1, 9)
@@ -110,7 +110,7 @@ class TestMRoPEAndPackLanguageShard:
             "position_ids": torch.arange(3 * 2 * 4).reshape(3, 2, 4),  # MRoPE
             "modality_inputs": {"images": "carry"},
         }
-        packed, kw = pack_language_shard(batch, pad_token_id=0, lengths=torch.tensor([3, 2]))
+        packed, kw = pack_language_shard(batch, lengths=torch.tensor([3, 2]))
         assert packed["input_ids"].shape == (1, 5)
         assert packed["input_ids"].tolist() == [[1, 2, 3, 4, 5]]
         assert packed["labels"].tolist() == [[1, 2, 3, 4, 5]]
@@ -127,7 +127,7 @@ class TestMRoPEAndPackLanguageShard:
         from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
 
         b = {"labels": None}
-        out, kw = pack_language_shard(b, pad_token_id=0)
+        out, kw = pack_language_shard(b)
         assert out is b and kw is None
 
     def test_pack_language_shard_stage_gt0_packs_with_input_ids_nulled(self):
@@ -144,7 +144,7 @@ class TestMRoPEAndPackLanguageShard:
             "loss_mask": torch.ones(2, 4),
             "position_ids": torch.arange(3 * 2 * 4).reshape(3, 2, 4),  # MRoPE [3, B=2, S=4]
         }
-        packed, kw = pack_language_shard(batch, pad_token_id=0, lengths=torch.tensor([3, 2]))
+        packed, kw = pack_language_shard(batch, lengths=torch.tensor([3, 2]))
         T = 5  # 3 + 2
         assert kw is not None
         assert kw["cu_seqlens_q"].tolist() == [0, 3, T]
@@ -160,26 +160,12 @@ class TestMRoPEAndPackLanguageShard:
 class TestPadTokenIdAndLengthSource:
     """F4: the caller-provided lengths (priority-0) drive the tight pack regardless of pad id."""
 
-    def test_pack_respects_nonzero_pad_token_id(self):
-        from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
-
-        pad = 248044
-        # Two samples padded with a non-zero pad id; real lengths 3 and 2.
-        input_ids = torch.tensor([[1, 2, 3, pad, pad], [4, 5, pad, pad, pad]])
-        packed, kw = pack_language_shard({"input_ids": input_ids}, pad_token_id=pad, lengths=torch.tensor([3, 2]))
-        # cu boundaries are the REAL lengths (3, 2), not S=5.
-        assert kw["cu_seqlens_q"].tolist() == [0, 3, 5]
-        # THD input_ids contain no pad id, total == sum(real lengths).
-        assert pad not in packed["input_ids"].flatten().tolist()
-        assert packed["input_ids"].shape == (1, 5)
-        assert packed["input_ids"].tolist() == [[1, 2, 3, 4, 5]]
-
     def test_packing_kwargs_has_padded_cu_seqlens(self):
         # F9 / CP>1: padded cu_seqlens populated (coincide with unpadded; tight pack).
         from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
 
         input_ids = torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]])  # real 3, 2
-        _, kw = pack_language_shard({"input_ids": input_ids}, pad_token_id=0, lengths=torch.tensor([3, 2]))
+        _, kw = pack_language_shard({"input_ids": input_ids}, lengths=torch.tensor([3, 2]))
         for k in ("cu_seqlens_q_padded", "cu_seqlens_kv_padded"):
             assert k in kw
             assert kw[k].dtype == torch.int32
@@ -201,14 +187,13 @@ class TestPPConsistentPacking:
         lengths = torch.tensor([3, 2])  # real 3, 2 -> T = 5
 
         input_ids = torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]])
-        first, kw_first = pack_language_shard({"input_ids": input_ids}, pad_token_id=0, lengths=lengths)
+        first, kw_first = pack_language_shard({"input_ids": input_ids}, lengths=lengths)
         first_T = first["input_ids"].shape[1]
 
         labels = torch.tensor([[1, 2, 3, -100], [4, 5, -100, -100]])
         loss_mask = torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]])
         last, kw_last = pack_language_shard(
             {"input_ids": None, "labels": labels, "loss_mask": loss_mask},
-            pad_token_id=0,
             lengths=lengths,
         )
         assert last["labels"].shape == (1, first_T)
@@ -222,6 +207,26 @@ class TestPPConsistentPacking:
         pos = torch.arange(3 * 3 * 4).reshape(3, 3, 4)
         with pytest.raises(ValueError, match="expected \\[3\\]"):
             pack_language_shard({"input_ids": None, "position_ids": pos}, lengths=torch.tensor([4, 4]))
+
+    def test_mid_sequence_eos_survives_packing_with_mask_lengths(self):
+        """pad==eos case: with lengths taken from the batch's attention_mask, eos tokens inside
+        the content survive the pack and only the padding tail is dropped."""
+        from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
+
+        pad = 7
+        batch = {
+            "input_ids": torch.tensor([[10, 11, pad, 20, 21, pad, pad, pad]]),
+            "labels": torch.tensor([[11, pad, 20, 21, pad, -100, -100, -100]]),
+            "loss_mask": torch.ones(1, 8),
+            "position_ids": torch.arange(8).unsqueeze(0),
+            "attention_mask": torch.tensor([[1, 1, 1, 1, 1, 0, 0, 0]]),
+        }
+        lengths = batch["attention_mask"].to(torch.bool).sum(dim=1)
+        packed, kwargs = pack_language_shard(batch, lengths=lengths)
+
+        assert packed["input_ids"].tolist() == [[10, 11, pad, 20, 21]]
+        assert packed["labels"].tolist() == [[11, pad, 20, 21, pad]]
+        assert kwargs["cu_seqlens_q"].tolist() == [0, 5]
 
 
 @pytest.mark.unit
@@ -254,7 +259,7 @@ class TestMRoPEPackedParityWithQwen:
         dense_pos, _ = get_rope_index(
             merge, img, vid, vs, input_ids=dense_ids, image_grid_thw=grid_thw, attention_mask=dense_mask
         )
-        packed = assemble_packed_sequence([0, 1], dense_ids, lengths, position_ids=dense_pos, pad_token_id=pad)
+        packed = assemble_packed_sequence([0, 1], dense_ids, lengths, position_ids=dense_pos)
 
         # Monolithic path: positions computed on the packed [1, T] layout.
         total = sum(lengths)
