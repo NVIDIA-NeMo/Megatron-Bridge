@@ -12,6 +12,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).parents[3]
 TEXT_ONLY_SFT_TUTORIAL = REPO_ROOT / "tutorials/data/text-only-sft"
 HF_TEXT_ONLY_TUTORIAL = REPO_ROOT / "tutorials/data/hf-text-only"
+PACKED_SFT_INDEXED_TUTORIAL = REPO_ROOT / "docs/training/packed-sft-indexed-dataset.md"
 
 
 def _load_rows(path: Path) -> list[dict]:
@@ -67,6 +68,28 @@ def test_text_only_sft_tutorial_documents_indexed_packing_default():
     readme = (TEXT_ONLY_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
     assert ".sft.bin/.sft.idx" in readme
     assert "default `.idx.parquet`" not in readme
+
+
+def test_packed_sft_indexed_tutorial_covers_the_end_to_end_workflow():
+    tutorial = PACKED_SFT_INDEXED_TUTORIAL.read_text(encoding="utf-8")
+
+    for section in (
+        "## Background",
+        "## Prerequisites",
+        "## End-to-End Local Quickstart",
+        "## Integrate with a Python Recipe",
+        "## Read Prebuilt Data from Object Storage",
+        "## Migrate from Packed Parquet",
+        "## Troubleshooting",
+    ):
+        assert section in tutorial
+    assert "prepare_example_data.py" in tutorial
+    assert "prepare_gpt_sft_packed_data.py" in tutorial
+    assert "scripts/training/run_recipe.py" in tutorial
+    assert "checkpoint.pretrained_checkpoint" in tutorial
+    assert "checkpoint.load=null" in tutorial
+    assert "global_batch_size" in tutorial
+    assert "uv sync --extra parquet" in tutorial
 
 
 def test_hf_text_only_tutorial_documents_hosted_native_messages_source():

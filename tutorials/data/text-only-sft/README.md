@@ -161,6 +161,11 @@ Packed SFT requires micro batch size 1. With context parallelism, sequence lengt
 
 For the complete constraints and runtime behavior, see [Packed Sequences](../../../docs/training/packed-sequences.md). Contributors can also use the [sequence-packing validation guide](../../../skills/nemo-mbridge-perf-sequence-packing/SKILL.md) when changing or validating this path.
 
+For a complete indexed-data walkthrough—from background and JSONL preparation
+through `.sft.bin/.sft.idx` inspection, recipe integration, training launch,
+remote storage, and Parquet migration—see
+[Packed SFT with MCore Indexed Datasets](../../../docs/training/packed-sft-indexed-dataset.md).
+
 `train.num_epochs` is supported for this finite dataset only with `dataloader_type="batch"`; Bridge derives the iteration count from the true training split size and keeps the final incomplete global batch.
 
 ## Available knobs
