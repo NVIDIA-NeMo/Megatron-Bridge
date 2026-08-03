@@ -98,12 +98,14 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.model.recompute_modules = ["moe", "layernorm"]
 
     # The 256-GPU BF16 verification exposed a NaN global gradient norm when
-    # gradients were accumulated and reduced in BF16. Megatron-FSDP recommends
-    # FP32 main gradients for accuracy at scale, and this topology has enough
-    # memory headroom for the wider gradient buffer.
+    # gradients were materialized in BF16 before being copied into the FSDP
+    # buffer. Megatron-FSDP recommends FP32 main gradients for accuracy at
+    # scale, and its TE fusion writes wgrads directly into that FP32 buffer.
+    # This topology has enough memory headroom for the wider gradient buffer.
     cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.float32
     cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.model.gradient_accumulation_fusion = True
 
     # Performance defaults disable these checks, but an invalid gradient must
     # fail the verification run before the optimizer can corrupt the model.

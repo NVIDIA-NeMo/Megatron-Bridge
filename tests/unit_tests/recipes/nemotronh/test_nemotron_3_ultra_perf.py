@@ -209,6 +209,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.ddp.megatron_fsdp_use_decoupled_grad is True
     assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
     assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.float32
+    assert cfg.model.gradient_accumulation_fusion is True
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.ddp.check_for_large_grads is True
     assert cfg.ddp.overlap_param_gather is True
