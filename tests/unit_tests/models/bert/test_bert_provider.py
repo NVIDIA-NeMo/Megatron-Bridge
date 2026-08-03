@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -86,6 +87,36 @@ class TestBertModelProvider:
             vp_stage=1,
             pg_collection=None,
         )
+
+    @pytest.mark.parametrize(("is_first", "is_last"), [(True, True), (True, False), (False, True), (False, False)])
+    def test_provide_derives_pipeline_stage_flags_from_process_groups(self, is_first, is_last):
+        """Test that omitted pre/post_process flags are derived from the pipeline process group.
+
+        Under pipeline parallelism only the first stage owns the embedding and only the last
+        stage owns the masked-LM head; getting this wrong silently builds the wrong sub-model.
+        """
+        pp_group = object()
+        provider = BertModelProvider(
+            num_layers=2,
+            hidden_size=32,
+            num_attention_heads=4,
+            vocab_size=128,
+            transformer_layer_spec=ModuleSpec(module=torch.nn.Identity),
+        )
+        provider._pg_collection = SimpleNamespace(pp=pp_group)
+
+        with (
+            patch.object(bert_provider, "is_pp_first_stage", return_value=is_first) as first_stage,
+            patch.object(bert_provider, "is_pp_last_stage", return_value=is_last) as last_stage,
+            patch.object(bert_provider, "MCoreBertModel") as model_cls,
+        ):
+            provider.provide()
+
+        first_stage.assert_called_once_with(pp_group)
+        last_stage.assert_called_once_with(pp_group)
+        assert model_cls.call_args.kwargs["pre_process"] is is_first
+        assert model_cls.call_args.kwargs["post_process"] is is_last
+        assert model_cls.call_args.kwargs["pg_collection"] is provider._pg_collection
 
     def test_provide_resolves_callable_layer_spec_and_pads_vocab(self):
         """Test callable layer specs and optional vocabulary padding."""

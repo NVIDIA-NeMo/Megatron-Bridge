@@ -20,7 +20,11 @@ from transformers import MegatronBertConfig, MegatronBertForMaskedLM
 
 from megatron.bridge.models.bert.bert_bridge import BertBridge
 from megatron.bridge.models.bert.bert_provider import BertModelProvider
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import (
+    MegatronModelBridge,
+    WeightConversionTask,
+    get_model_bridge,
+)
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 
 
@@ -55,6 +59,16 @@ class TestBertBridge:
         assert BertBridge.PROVIDER_CLASS is BertModelProvider
         assert BertBridge.SOURCE_NAME == "MegatronBertForMaskedLM"
 
+    def test_bridge_dispatch_from_architecture(self):
+        """Test that the dispatch registry resolves MegatronBertForMaskedLM to BertBridge.
+
+        `AutoBridge` selects the bridge through this dispatcher, so a missing or
+        misspelled registration would only surface at conversion time.
+        """
+        bridge = get_model_bridge("MegatronBertForMaskedLM", hf_config=self._hf_config())
+
+        assert isinstance(bridge, BertBridge)
+
     @pytest.mark.parametrize("tie_word_embeddings", [True, False])
     def test_provider_bridge_field_mapping(self, tie_word_embeddings):
         """Test that HF config fields land correctly on the BertModelProvider."""
@@ -81,6 +95,56 @@ class TestBertBridge:
         assert provider.hidden_dropout == hf_config.hidden_dropout_prob
         assert provider.attention_dropout == hf_config.attention_probs_dropout_prob
 
+    def test_provider_bridge_vocab_padding_is_disabled(self):
+        """Test that the provider keeps the HF vocabulary size verbatim.
+
+        BERT's masked-LM head is tied to the embedding, so padding the vocabulary would
+        silently change the exported `vocab_size` and break HF round-trips.
+        """
+        hf_config = self._hf_config(vocab_size=30_522)
+        provider = BertBridge().provider_bridge(self._mock_pretrained(hf_config))
+
+        assert provider.should_pad_vocab is False
+        assert provider.vocab_size == 30_522
+        # 30522 = 2 x 3 x 5087, so the largest power-of-two divisor is 2.
+        assert provider.make_vocab_size_divisible_by == 2
+
+    @pytest.mark.parametrize(
+        ("torch_dtype", "expected_dtype", "expected_fp16", "expected_bf16"),
+        [
+            ("float32", torch.float32, False, False),
+            ("float16", torch.float16, True, False),
+            ("bfloat16", torch.bfloat16, False, True),
+        ],
+    )
+    def test_provider_bridge_dtype_mapping(self, torch_dtype, expected_dtype, expected_fp16, expected_bf16):
+        """Test that the HF checkpoint dtype selects the matching Megatron precision flags."""
+        hf_config = self._hf_config(torch_dtype=torch_dtype)
+        provider = BertBridge().provider_bridge(self._mock_pretrained(hf_config))
+
+        assert provider.params_dtype == expected_dtype
+        assert provider.fp16 is expected_fp16
+        assert provider.bf16 is expected_bf16
+
+    def test_provider_bridge_defaults_to_float32_without_dtype(self):
+        """Test that a config that never declares a dtype falls back to float32."""
+        provider = BertBridge().provider_bridge(self._mock_pretrained(self._hf_config()))
+
+        assert provider.params_dtype == torch.float32
+        assert provider.fp16 is False
+        assert provider.bf16 is False
+
+    @pytest.mark.parametrize(
+        ("torch_dtype", "expected"),
+        [("float32", "float32"), ("float16", "float16"), ("bfloat16", "bfloat16")],
+    )
+    def test_megatron_to_hf_config_exports_dtype(self, torch_dtype, expected):
+        """Test that the exported HF config advertises the provider's precision."""
+        hf_config = self._hf_config(torch_dtype=torch_dtype)
+        provider = BertBridge().provider_bridge(self._mock_pretrained(hf_config))
+
+        assert BertBridge.megatron_to_hf_config(provider)["torch_dtype"] == expected
+
     def test_megatron_to_hf_config_roundtrip(self):
         """Test that megatron_to_hf_config maps the provider fields back to HF names."""
         hf_config = self._hf_config(hidden_dropout_prob=0.2, attention_probs_dropout_prob=0.3)
@@ -106,7 +170,9 @@ class TestBertBridge:
         ("overrides", "match"),
         [
             ({"hidden_act": "relu"}, "hidden_act='gelu'"),
+            ({"hidden_act": "silu"}, "hidden_act='gelu'"),
             ({"is_decoder": True}, "encoder-only"),
+            ({"add_cross_attention": True}, "encoder-only"),
             ({"is_decoder": True, "add_cross_attention": True}, "encoder-only"),
         ],
     )
@@ -148,6 +214,43 @@ class TestBertBridge:
             assert mapping is not None, f"no mapping found for {megatron_param}"
             assert mapping.hf_param == expected_hf_param
             assert expected_hf_param in hf_param_names
+
+    @pytest.mark.parametrize("suffix", ["weight", "bias"])
+    def test_mapping_registry_resolves_fused_qkv(self, suffix):
+        """Test that the fused Megatron QKV param resolves to the three separate HF projections.
+
+        The QKV fusion is the only mapping where a naming mistake cannot be caught by the
+        "every HF parameter is mapped" check, because q/k/v all resolve through one mapping.
+        """
+        hf_param_names = set(MegatronBertForMaskedLM(self._hf_config()).state_dict().keys())
+        registry = BertBridge().mapping_registry()
+
+        mapping = registry.megatron_to_hf_lookup(f"encoder.layers.1.self_attention.linear_qkv.{suffix}")
+
+        assert mapping is not None
+        assert mapping.hf_param == {
+            "q": f"bert.encoder.layer.1.attention.self.query.{suffix}",
+            "k": f"bert.encoder.layer.1.attention.self.key.{suffix}",
+            "v": f"bert.encoder.layer.1.attention.self.value.{suffix}",
+        }
+        assert set(mapping.hf_param.values()) <= hf_param_names
+
+    @pytest.mark.parametrize(
+        "hf_param",
+        [
+            "bert.encoder.layer.0.attention.self.query.weight",
+            "bert.encoder.layer.0.attention.self.key.weight",
+            "bert.encoder.layer.0.attention.self.value.weight",
+        ],
+    )
+    def test_mapping_registry_reverse_resolves_qkv_to_fused_param(self, hf_param):
+        """Test that each HF attention projection maps back to the single fused Megatron param."""
+        registry = BertBridge().mapping_registry()
+
+        mapping = registry.hf_to_megatron_lookup(hf_param)
+
+        assert mapping is not None
+        assert mapping.megatron_param == "encoder.layers.0.self_attention.linear_qkv.weight"
 
     def test_mapping_registry_covers_all_unique_hf_parameters(self):
         """Test that every independently serialized HF parameter has a reverse mapping."""
