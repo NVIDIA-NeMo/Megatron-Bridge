@@ -16,6 +16,9 @@
 import torch
 
 from megatron.bridge.perf_recipes._common import _benchmark_common
+from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
+)
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
@@ -25,6 +28,11 @@ from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+
+
+def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_gb200_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, GB200 config."""
+    return deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
 
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
