@@ -50,6 +50,7 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cfg.tokenizer.use_tokenizer_vocab_size = False
 
     cfg.checkpoint.save = None
+    cfg.checkpoint.load = None
 
     cfg.logger.log_interval = 1
     cfg.logger.tensorboard_dir = None

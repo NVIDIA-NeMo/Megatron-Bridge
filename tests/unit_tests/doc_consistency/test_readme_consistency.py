@@ -59,6 +59,8 @@ QWEN3_DOCS = (
 )
 QWEN3_ALIASES = RECIPES_DIR / "qwen" / "qwen3.py"
 QWEN3_H100_RECIPES = RECIPES_DIR / "qwen" / "h100" / "qwen3.py"
+QWEN3_MOE_ALIASES = RECIPES_DIR / "qwen" / "qwen3_moe.py"
+QWEN3_MOE_H100_RECIPES = RECIPES_DIR / "qwen" / "h100" / "qwen3_moe.py"
 VALOR_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "valor32k-avqa" / "data-preparation.md"
 SPHINX_TUTORIAL_LINK_DOCS = (
     REPO_ROOT / "docs" / "training" / "data-preparation.md",
@@ -344,6 +346,53 @@ def test_qwen3_recipe_examples_use_current_factory_api():
         assert examples.count("config.optimizer.lr =") == 2
         assert examples.count("config.scheduler.lr_decay_iters = 1000") == 2
         assert "config.scheduler.max_lr" not in examples
+
+
+def test_qwen3_moe_recipe_examples_match_source_signatures():
+    """Qwen3-MoE examples must pass only keywords accepted by public recipes."""
+    recipe_names = {
+        "qwen3_30b_a3b_peft_config",
+        "qwen3_30b_a3b_pretrain_config",
+        "qwen3_30b_a3b_sft_config",
+        "qwen3_235b_a22b_pretrain_config",
+    }
+    alias_targets: dict[str, str] = {}
+    for node in ast.parse(_read(QWEN3_MOE_ALIASES), filename=str(QWEN3_MOE_ALIASES)).body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for imported_name in node.names:
+            if imported_name.asname in recipe_names:
+                alias_targets[imported_name.asname] = imported_name.name
+    assert set(alias_targets) == recipe_names
+
+    accepted_keywords: dict[str, set[str]] = {}
+    for node in ast.parse(_read(QWEN3_MOE_H100_RECIPES), filename=str(QWEN3_MOE_H100_RECIPES)).body:
+        if not isinstance(node, ast.FunctionDef) or node.name not in alias_targets.values():
+            continue
+        assert node.args.kwarg is None
+        accepted_keywords[node.name] = {
+            argument.arg for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+        }
+    assert set(accepted_keywords) == set(alias_targets.values())
+
+    for path in QWEN3_DOCS:
+        qwen3_moe_docs = _read(path).split("\n## Qwen3 MoE\n", 1)[1].split("\n## Qwen3\n", 1)[0]
+        examples = qwen3_moe_docs.split("#### Pre-training Examples", 1)[1].split("### Hugging Face Model Cards", 1)[0]
+        calls: dict[str, list[set[str | None]]] = {name: [] for name in recipe_names}
+        for code in re.findall(r"```python\n(.*?)```", examples, re.DOTALL):
+            tree = ast.parse(code, filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in calls:
+                    calls[node.func.id].append({keyword.arg for keyword in node.keywords})
+
+        for recipe_name in recipe_names:
+            assert len(calls[recipe_name]) == 1, (
+                f"{path.relative_to(REPO_ROOT)} should call {recipe_name} exactly once: {calls[recipe_name]}"
+            )
+            unsupported = calls[recipe_name][0] - accepted_keywords[alias_targets[recipe_name]]
+            assert not unsupported, (
+                f"{path.relative_to(REPO_ROOT)} calls {recipe_name} with unsupported keywords: {sorted(unsupported)}"
+            )
 
 
 def test_qwen3_recipe_examples_match_source_signatures_and_nested_owners():

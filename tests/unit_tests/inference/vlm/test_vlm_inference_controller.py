@@ -149,6 +149,12 @@ class TestQwenVLTextGenerationController:
             assert tokens == [1, 2, 3]
             assert image_dict is None
 
+    def test_tokenize_prompt_image_requires_processor(self, controller):
+        controller.processor = None
+
+        with pytest.raises(ValueError, match="processor is required"):
+            controller.tokenize_prompt("test", "image")
+
     def test_tokenizer_detokenize_with_special_token_151652(self, controller, mock_tokenizer):
         """Test that token 151652 is followed by 151655 during detokenization."""
         tokens = [151652, 1]

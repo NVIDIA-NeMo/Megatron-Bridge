@@ -348,7 +348,12 @@ def get_batch(
 
 
 def _forward_step_common(
-    state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
+    state: GlobalState,
+    data_iterator: Iterable,
+    model: GPTModel,
+    return_schedule_plan: bool = False,
+    *,
+    _get_batch_fn=None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Forward training step.
 
@@ -378,7 +383,7 @@ def _forward_step_common(
             attention_mask,
             position_ids,
             packed_seq_metadata,
-        ) = get_batch(
+        ) = (_get_batch_fn or get_batch)(
             data_iterator,
             state.cfg,
             use_mtp,

@@ -16,7 +16,10 @@ import importlib
 from typing import Callable
 
 import pytest
+from transformers import LlamaConfig
 
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -25,6 +28,11 @@ _LLAMA_RECIPE_FUNCS = [
     getattr(_llama_module, name)
     for name in getattr(_llama_module, "__all__", [])
     if callable(getattr(_llama_module, name, None)) and not name.startswith("llama2")
+]
+_ALL_LLAMA_RECIPE_FUNCS = [
+    getattr(_llama_module, name)
+    for name in getattr(_llama_module, "__all__", [])
+    if callable(getattr(_llama_module, name, None))
 ]
 
 
@@ -88,12 +96,41 @@ class _FakeBridge:
     def __init__(self):
         pass
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Llama recipes must use get_model_config(), not the legacy provider API")
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self) -> BridgeGPTModelConfig:
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=32,
+            num_attention_heads=8,
+            num_key_value_heads=8,
+            max_position_embeddings=131072,
+            vocab_size=128256,
+        )
+        model_config = AutoBridge.from_hf_config(config).get_model_config()
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        return model_config
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Llama recipes must not call the legacy provider API")
 
 
 @pytest.fixture(autouse=True)
@@ -150,6 +187,19 @@ def _assert_basic_config(cfg):
     else:
         # Some other dataset type
         assert cfg.dataset is not None
+
+
+@pytest.mark.parametrize("recipe_func", _ALL_LLAMA_RECIPE_FUNCS)
+def test_each_llama_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every Llama recipe should configure a ModelConfig without provider fallback."""
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _BuilderOnlyBridge)
+
+    if "peft" in recipe_func.__name__.lower():
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
 
 
 @pytest.mark.parametrize("recipe_func", _LLAMA_RECIPE_FUNCS)
