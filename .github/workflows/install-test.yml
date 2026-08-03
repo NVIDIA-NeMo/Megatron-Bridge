@@ -207,10 +207,12 @@ jobs:
 
       - name: Verify MCore version before install
         if: ${{ github.event.inputs.mcore_commit != '' }}
+        env:
+          MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}
         run: |
           cd 3rdparty/Megatron-LM
           ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+          EXPECTED_COMMIT="$MCORE_COMMIT"
 
           echo "🧪 INSTALL TEST - MCore verification:"
           echo "Expected: ${EXPECTED_COMMIT}"

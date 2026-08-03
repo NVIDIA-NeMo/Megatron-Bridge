@@ -61,7 +61,7 @@ grep -q 'if \[\[ ! "$MCORE_COMMIT" =~ ^\[0-9a-f\]{40}\$ \]\]; then' "$install_wo
 grep -q 'validate_mcore_repo.sh "$MCORE_REPO"' "$install_workflow"
 grep -q 'git fetch "$MCORE_REPO" "$MCORE_COMMIT"' "$install_workflow"
 grep -q 'git checkout "$MCORE_COMMIT"' "$install_workflow"
-if grep -q 'git fetch ${{ github.event.inputs.mcore_repo' "$install_workflow"; then
+if grep -qE '(git fetch|EXPECTED_COMMIT=).*\$\{\{ github\.event\.inputs\.mcore_(repo|commit)' "$install_workflow"; then
   echo "Install workflow interpolates dispatch inputs into its shell" >&2
   exit 1
 fi
