@@ -82,6 +82,18 @@ def test_deepseek_v4_flash_gb300_configs_match_benchmark_rows(
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert cfg.env_vars["NCCL_GRAPH_REGISTER"] == 0
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
+
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 
     assert cfg.model.quant_recipe is None
     assert cfg.model.moe_router_padding_for_fp8 is False
