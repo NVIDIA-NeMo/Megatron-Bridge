@@ -9,10 +9,11 @@ summary: >
   export, and deterministic multimodal inference are verified. Manual forward
   comparison remains unverified because the recorded run compared a
   tensor-parallel padding position rather than the prompt's next token. Full
-  SFT remains unverified because the default and selective-MLP configurations
-  exceed H100 memory, while full-layer recompute is too slow for the 10-step
-  verification window. Long-context SFT and PEFT are pending. The published
-  Bridge recipes do not currently provide VLM pretraining.
+  SFT remains unverified: the current two-node EP8 recipe does not complete its
+  first optimizer step, while the supported single-node TP4/PP2/EP1 fallback
+  completes one finite step but stalls during the second. Long-context SFT and
+  PEFT are pending. The published Bridge recipes do not currently provide VLM
+  pretraining.
 verification_index:
   model_level:
     verified:
@@ -143,8 +144,8 @@ items:
       --tp 2 --pp 1 --ep 4 --etp 1
     last_verified: 2026-07-23
     expected_result: >
-      One BF16 deterministic greedy run used an exact 32-token generation
-      limit and terminated on EOS after 29 generated tokens. The JSON-escaped
+      One BF16 deterministic greedy run terminated on EOS after 29 generated
+      tokens. The JSON-escaped
       literal completion was "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
       animal on the candy is a
       turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u002f\u002fthought\n\u003cchannel|\u003eThe
@@ -178,7 +179,7 @@ items:
       precision: bf16
       enabled_features: {}
       command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe gemma4_vl_26b_sft_config --mode sft --dataset cord-v2
         --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
         --max_steps 10 --seq_length 4096
@@ -186,6 +187,7 @@ items:
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         --save_dir work/model-verification/gemma-4-26b-a4b-it/sft-checkpoints
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/sft-post-setup.yaml
       last_verified: null
       metrics:
         initial_loss: null
@@ -193,13 +195,19 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        On 2026-07-23 the default 8-GPU TP2/PP1/EP8/ETP1 run and a GBS4
-        selective-MLP recompute run both failed before the first completed
-        optimizer step. Each rank had about 77.84 to 78.70 GiB in use and
-        needed an additional 1 to 2 GiB. Full 30-layer recompute crossed that
-        memory peak, but one GBS4 optimizer step did not finish during more
-        than nine observed minutes. No valid 10-step metrics or iter_0000010
-        checkpoint were produced, so SFT remains unverified.
+        On 2026-08-03 this exact real-CORD TP2/PP1/EP8 run loaded the immutable
+        BF16 checkpoint, persisted its post-setup configuration, and entered
+        iteration zero, but completed no optimizer step during 39 observed
+        minutes. A subset of ranks remained active while the others waited,
+        with no log growth, OOM, or traceback. A separate README-supported
+        single-node TP4/PP2/EP1 run with selective recompute and a frozen vision
+        encoder completed one optimizer step in 54,344.4 ms with lm loss
+        1.293086, grad norm 46.201, 1.8 TFLOP/s/GPU, zero skipped iterations,
+        and zero NaN iterations. Its second step then made no observable
+        progress for more than nine minutes while all four ranks on the second
+        pipeline stage remained active and the first stage waited. No valid
+        10-step metrics or iter_0000010 checkpoint were produced, so SFT
+        remains unverified.
 
   sft_export_inference:
     H100:
