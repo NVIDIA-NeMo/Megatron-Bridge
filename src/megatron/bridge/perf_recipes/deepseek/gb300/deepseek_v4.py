@@ -54,7 +54,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_aux_loss_coeff = 1.0e-4
 
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act", "layernorm", "mla_up_proj", "shared_experts", "mhc"]
+    cfg.model.recompute_modules = ["moe_act", "layernorm", "mla_up_proj"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
