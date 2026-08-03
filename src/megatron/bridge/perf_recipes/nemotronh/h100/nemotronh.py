@@ -87,13 +87,13 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         enable_fine_grained_param_gather=True,
     )
     # TE's moe_act recompute path requires the CuteDSL fused grouped MLP,
-    # which is only supported on SM100+. Whole-MoE recompute also cannot be
-    # used here because replaying HybridEP dispatch during backward corrupts
-    # DeepEP's dispatch state. Recompute only the shared expert and discard
-    # layernorm outputs to reduce the 8K BF16 activation footprint without
-    # replaying routed-expert communication.
+    # which is only supported on SM100+. Use the stateless all-to-all token
+    # dispatcher so whole-MoE checkpoint replay can provide enough memory
+    # headroom for the 8K BF16 workload without replaying DeepEP state.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["shared_experts", "layernorm"]
+    cfg.model.recompute_modules = ["moe", "layernorm"]
     return cfg
 
 
@@ -115,11 +115,6 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config() -> ConfigContai
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for eight-GPU H100 NVLink domains.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -145,11 +140,6 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for eight-GPU H100 NVLink domains.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

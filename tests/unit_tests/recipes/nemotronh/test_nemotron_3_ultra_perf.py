@@ -191,14 +191,14 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.train.micro_batch_size == 1
     assert cfg.logger.log_throughput is True
 
-    assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
     assert cfg.model.moe_router_padding_for_quantization is False
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.fine_grained_activation_offloading is False
     assert cfg.model.offload_modules == []
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["shared_experts", "layernorm"]
+    assert cfg.model.recompute_modules == ["moe", "layernorm"]
 
     assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
@@ -217,9 +217,10 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
 
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
-    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
     assert "NVTE_CPU_OFFLOAD_V1" not in cfg.env_vars
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 

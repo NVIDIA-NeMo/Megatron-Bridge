@@ -388,7 +388,6 @@ items:
       status: unverified
       precision: bf16
       enabled_features:
-        moe_dispatcher: hybridep
         megatron_fsdp: optim_grads_params
       command: >
         ./scripts/training/train.sh --nodes 32 --gpus-per-node 8
@@ -407,10 +406,11 @@ items:
         complete all 50 optimizer steps at TP4/PP1/CP1/EP64/ETP1,
         GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
         NaN iterations, all four training metrics, and peak allocated and
-        reserved memory. BF16, HybridEP, fine-grained parameter gather, and
-        Megatron-FSDP must remain active with selective shared-expert and
-        layernorm recompute but without CPU activation offload. Recomputing the
-        whole MoE is excluded because it replays HybridEP dispatch during
-        backward; the narrower MoE-activation path is also disabled because its
-        fused path requires SM100+. The H100 result is standalone and is not
-        numerically comparable with the GB200 MXFP8 result.
+        reserved memory. BF16, standard all-to-all MoE dispatch, fine-grained
+        parameter gather, and Megatron-FSDP must remain active with selective
+        whole-MoE and layernorm recompute but without CPU activation offload.
+        Whole-MoE recompute is paired with standard all-to-all because replaying
+        the stateful HybridEP path during backward is unsupported; the narrower
+        MoE-activation path is also disabled because its fused path requires
+        SM100+. The H100 result is standalone and is not numerically comparable
+        with the GB200 MXFP8 result.
