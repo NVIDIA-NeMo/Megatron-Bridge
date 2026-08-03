@@ -1654,6 +1654,9 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
+    FullCudaGraphWrapper.cuda_graph["training"] = None
+    FullCudaGraphWrapper.result["training"] = None
+    FullCudaGraphWrapper.curr_iteration["training"] = 0
 
     # Explicitly delete optimizer CUDA graph
     if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
