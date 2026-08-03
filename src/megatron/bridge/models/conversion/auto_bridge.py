@@ -30,6 +30,7 @@ import transformers
 if TYPE_CHECKING:
     from megatron.bridge.peft.base import PEFT
 
+from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from safetensors.torch import save_file
@@ -1389,30 +1390,53 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     low_memory_save=True
             ... )
         """
-        # Load the HuggingFace model
-        bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
+        owns_distributed_state = not dist.is_initialized()
+        owns_model_parallel_state = not parallel_state.is_initialized()
+        body_failed = False
+        try:
+            # Load the HuggingFace model
+            bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
 
-        # Convert to Megatron model
-        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+            # Convert to Megatron model
+            megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
-        # Save as Megatron checkpoint
-        hf_tokenizer_kwargs = {}
-        if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
-            hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
-        if hf_tokenizer_kwargs is None:
+            # Save as Megatron checkpoint
             hf_tokenizer_kwargs = {}
-        if kwargs.get("revision") is not None:
-            hf_tokenizer_kwargs.setdefault("revision", kwargs["revision"])
-        # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
-        if kwargs.get("trust_remote_code"):
-            hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
-        bridge.save_megatron_model(
-            megatron_model,
-            megatron_path,
-            hf_tokenizer_path=hf_model_id,
-            hf_tokenizer_kwargs=hf_tokenizer_kwargs,
-            low_memory_save=low_memory_save,
-        )
+            if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
+                hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+            if hf_tokenizer_kwargs is None:
+                hf_tokenizer_kwargs = {}
+            if kwargs.get("revision") is not None:
+                hf_tokenizer_kwargs.setdefault("revision", kwargs["revision"])
+            # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
+            if kwargs.get("trust_remote_code"):
+                hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
+            bridge.save_megatron_model(
+                megatron_model,
+                megatron_path,
+                hf_tokenizer_path=hf_model_id,
+                hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+                low_memory_save=low_memory_save,
+            )
+        except BaseException:
+            body_failed = True
+            raise
+        finally:
+            try:
+                if owns_model_parallel_state:
+                    parallel_state.destroy_model_parallel()
+            except Exception:
+                if not body_failed:
+                    raise
+                logger.exception("Failed to release model-parallel state after checkpoint import failure")
+            finally:
+                try:
+                    if owns_distributed_state and dist.is_initialized():
+                        dist.destroy_process_group()
+                except Exception:
+                    if not body_failed:
+                        raise
+                    logger.exception("Failed to release the process group after checkpoint import failure")
 
     def export_ckpt(
         self,
