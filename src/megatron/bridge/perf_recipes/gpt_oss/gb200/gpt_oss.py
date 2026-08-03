@@ -64,7 +64,7 @@ def gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 1,
         "NCCL_CTA_POLICY": 1,
-        # HybridEP topology for the target system. Must divide the EP group size, which is 1 here.
+        # HybridEP topology for the target system.
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 2,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
@@ -125,7 +125,7 @@ def gpt_oss_20b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 1,
         "NCCL_CTA_POLICY": 1,
-        # HybridEP topology for the target system. Must divide the EP group size, which is 1 here.
+        # HybridEP topology for the target system.
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 1,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
