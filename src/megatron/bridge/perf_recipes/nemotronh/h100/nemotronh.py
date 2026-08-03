@@ -99,13 +99,14 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     # projection, whose 128-MiB GEMM output is the remaining H100 forward peak.
     # A two-layer checkpoint moved the failure from the full-sequence Mamba
     # projection to retained routed- and shared-expert activations in later
-    # layers. Checkpoint every main HybridStack layer so those activations do
-    # not accumulate across the 108-layer decoder. MCore deliberately skips
-    # block-method MTP recompute, leaving its latent projection on the normal
-    # fused-gradient path.
+    # layers. Checkpoint the first eight Mamba/expert pairs: the all-108-layer
+    # probe proved ample memory headroom but could not meet the four-hour
+    # verification window. MCore deliberately skips block-method MTP
+    # recompute, leaving its latent projection on the normal fused-gradient
+    # path.
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "block"
-    cfg.model.recompute_num_layers = 108
+    cfg.model.recompute_num_layers = 16
     cfg.model.recompute_modules = None
 
     # Thirty-two chunks reduced the first-forward routed-expert failures to
