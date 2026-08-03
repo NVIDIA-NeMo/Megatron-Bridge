@@ -54,6 +54,18 @@ test "$(grep -c 'if \[\[ ! "$MCORE_REF" =~ ^\[0-9a-f\]{40}\$ \]\]; then' "$workf
 test "$(grep -c 'git fetch "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'git checkout "$MCORE_REF"' "$workflow")" = 2
 
+install_workflow=".github/workflows/install-test.yml"
+grep -q '^          MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}$' "$install_workflow"
+grep -q '^          MCORE_REPO: ${{ github.event.inputs.mcore_repo' "$install_workflow"
+grep -q 'if \[\[ ! "$MCORE_COMMIT" =~ ^\[0-9a-f\]{40}\$ \]\]; then' "$install_workflow"
+grep -q 'validate_mcore_repo.sh "$MCORE_REPO"' "$install_workflow"
+grep -q 'git fetch "$MCORE_REPO" "$MCORE_COMMIT"' "$install_workflow"
+grep -q 'git checkout "$MCORE_COMMIT"' "$install_workflow"
+if grep -q 'git fetch ${{ github.event.inputs.mcore_repo' "$install_workflow"; then
+  echo "Install workflow interpolates dispatch inputs into its shell" >&2
+  exit 1
+fi
+
 "$validator" https://github.com/NVIDIA/Megatron-LM.git
 if "$validator" https://github.com/example-contributor/Megatron-LM.git; then
   echo "MCore repository validation accepted an untrusted contributor fork" >&2
