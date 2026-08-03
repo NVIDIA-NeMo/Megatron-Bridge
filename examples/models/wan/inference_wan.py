@@ -183,7 +183,7 @@ def generate(args):  # noqa: D103
         dist.init_process_group(backend="nccl", init_method="env://", rank=rank, world_size=world_size)
 
     inference_cfg = argparse.Namespace(
-        {
+        **{
             # t5
             "t5_dtype": torch.bfloat16,
             "text_len": 512,
