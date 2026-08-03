@@ -95,8 +95,15 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     # outside whole-MoE replay so its fused FP32 wgrad is visible to FSDP.
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    # The selective Mamba SSD chunk does not cover the full-sequence output
+    # projection, whose 128-MiB GEMM output is the remaining H100 forward peak.
+    # Checkpoint only the first Mamba/expert pair in each HybridStack. This
+    # releases their retained activations before later Mamba projections while
+    # avoiding the throughput cost of recomputing the full decoder.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "block"
+    cfg.model.recompute_num_layers = 2
+    cfg.model.recompute_modules = None
 
     # Thirty-two chunks reduced the first-forward routed-expert failures to
     # 20-MiB FC2 grouped-linear outputs, but a 256-KiB NCCL buffer did not leave

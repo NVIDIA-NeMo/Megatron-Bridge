@@ -409,13 +409,15 @@ items:
         reserved memory. BF16, standard all-to-all MoE dispatch, fine-grained
         parameter gather, FP32 fused weight-gradient accumulation and FP32
         gradient communication, and Megatron-FSDP must remain active with
-        selective MoE-activation and layernorm recompute, a one-element FSDP
-        communication unit that disables next-bucket parameter prefetch, and
-        the native expandable-segment allocator. The training MLP path must use
-        sixty-four sequence chunks to bound the grouped-MoE working set, and the
-        Mamba SSD path must use 256-token chunks to bound its chunk-state working
-        set, while leaving the MTP latent projection outside whole-MoE checkpoint
-        replay. TE grouped linears and fused weighted squared-ReLU must remain active
+        partial full-layer block recompute for the first Mamba/expert pair in
+        each HybridStack, a one-element FSDP communication unit that disables
+        next-bucket parameter prefetch, and the native expandable-segment
+        allocator. The training MLP path must use sixty-four sequence chunks to
+        bound the grouped-MoE working set, and the Mamba SSD path must use
+        256-token chunks to bound its chunk-state working set. The generic
+        hybrid-stack checkpoint must preserve every MTP latent-projection fused
+        gradient; the unsupported specialized whole-MoE replay path must not be
+        used. TE grouped linears and fused weighted squared-ReLU must remain active
         through the non-op-fuser path. Eight CUDA device connections must retain
         Megatron-FSDP stream independence while bounding Hopper driver resources.
         256-KiB NCCL pair buffers must bound communication workspace, with no CPU
