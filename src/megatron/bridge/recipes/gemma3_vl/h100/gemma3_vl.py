@@ -18,6 +18,7 @@ This module provides SFT and PEFT configurations for Gemma3-VL models (4B, 12B, 
 """
 
 import torch
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
@@ -69,7 +70,7 @@ def gemma3_vl_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = "flash"
+    cfg.model.attention_backend = AttnBackend.unfused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -111,6 +112,8 @@ def gemma3_vl_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    # Gemma 3 VL's image-bidirectional mask is not yet compatible with THD packing.
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False
@@ -179,7 +182,7 @@ def gemma3_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = "flash"
+    cfg.model.attention_backend = AttnBackend.unfused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -221,6 +224,8 @@ def gemma3_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    # Gemma 3 VL's image-bidirectional mask is not yet compatible with THD packing.
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False
@@ -289,7 +294,7 @@ def gemma3_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = "flash"
+    cfg.model.attention_backend = AttnBackend.unfused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -331,6 +336,8 @@ def gemma3_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    # Gemma 3 VL's image-bidirectional mask is not yet compatible with THD packing.
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False
@@ -408,7 +415,7 @@ def gemma3_vl_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = "flash"
+    cfg.model.attention_backend = AttnBackend.unfused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -450,6 +457,8 @@ def gemma3_vl_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    # Gemma 3 VL's image-bidirectional mask is not yet compatible with THD packing.
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False
@@ -527,7 +536,7 @@ def gemma3_vl_12b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = "flash"
+    cfg.model.attention_backend = AttnBackend.unfused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -569,6 +578,8 @@ def gemma3_vl_12b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    # Gemma 3 VL's image-bidirectional mask is not yet compatible with THD packing.
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False
@@ -646,7 +657,7 @@ def gemma3_vl_27b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = "flash"
+    cfg.model.attention_backend = AttnBackend.unfused
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
@@ -688,6 +699,8 @@ def gemma3_vl_27b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    # Gemma 3 VL's image-bidirectional mask is not yet compatible with THD packing.
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False

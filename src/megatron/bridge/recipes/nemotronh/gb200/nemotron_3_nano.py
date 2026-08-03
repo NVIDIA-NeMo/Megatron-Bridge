@@ -19,6 +19,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
+    nemotron_3_5_nano_pretrain_config,
     nemotron_3_5_nano_sft_openmathinstruct2_packed_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
@@ -29,8 +30,6 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
-# Placeholder until the public Nemotron 3.5 Nano repository is released.
-_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 
 
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
@@ -158,16 +157,51 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_4k_config() -> ConfigContainer:
-    """Return the Nemotron 3.5 Nano BF16 4K pretraining config."""
-    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
-    cfg.model.mtp_num_layers = 2
-    cfg.model.mtp_hybrid_override_pattern = "*E"
-    cfg.model.mtp_use_repeated_layer = True
-    cfg.model.keep_mtp_spec_in_bf16 = True
-    cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+def nemotron_3_5_nano_pretrain_8k_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Nano BF16 8K pretraining config."""
+    cfg = nemotron_3_5_nano_pretrain_config()
+
+    # Keep the H100 convergence contract intact and change only GB200
+    # execution/performance settings.
+    cfg.train.micro_batch_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.cp_comm_type = None
+    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.ddp.average_in_collective = False
+    cfg.checkpoint.save_interval = 50
+    cfg.env_vars["NVLINK_DOMAIN_SIZE"] = 72
+    cfg.env_vars["USE_MNNVL"] = 1
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_8k_fsdp_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Nano BF16 8K Megatron FSDP config."""
+    cfg = nemotron_3_5_nano_pretrain_8k_config()
+
+    # Megatron FSDP module hooks are incompatible with Transformer Engine CUDA
+    # graph capture. Keep all convergence settings inherited from the BF16
+    # reference recipe and change only FSDP and its required execution knobs.
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.megatron_fsdp_main_params_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.bfloat16
+
+    cfg.checkpoint.load = None
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
     return cfg
 
 
@@ -186,10 +220,6 @@ def nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config() -> ConfigContain
     cfg.model.recompute_num_layers = None
 
     cfg.train.empty_unused_memory_level = 0
-    # Match the validated GB200 BF16 pretraining reduction policy.
-    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.overlap_param_gather = True
     cfg.optimizer.overlap_param_gather = True
 
@@ -215,7 +245,8 @@ nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16
 
 
 __all__ = [
-    "nemotron_3_5_nano_pretrain_4k_config",
+    "nemotron_3_5_nano_pretrain_8k_config",
+    "nemotron_3_5_nano_pretrain_8k_fsdp_config",
     "nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
