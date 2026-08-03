@@ -143,7 +143,7 @@ override-dependencies = [
     "nvidia-cudnn-frontend==1.26.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
     "fastapi<0.139.2",                                      # 0.139.2 fails with ray 2.55.1 at least
-    "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
+    "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@1cc807efbd6cc001df359822d60bf6052dd66859"  # v1.1.0 commit; PyPI sdist is incomplete (see DSv4/GLM-5 READMEs)
 ]
 
 [[tool.uv.index]]
