@@ -207,13 +207,18 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.ddp.outer_dp_sharding_strategy == "no_shard"
     assert cfg.ddp.megatron_fsdp_enable_fine_grained_param_gather is True
     assert cfg.ddp.megatron_fsdp_use_decoupled_grad is True
+    assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.float32
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
     assert cfg.ddp.overlap_param_gather is True
     assert cfg.optimizer.overlap_param_gather is True
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.main_grads_dtype == torch.float32
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
     assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
 
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
