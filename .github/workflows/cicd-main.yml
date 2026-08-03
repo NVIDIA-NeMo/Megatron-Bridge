@@ -482,13 +482,7 @@ jobs:
           LEGACY_CACHE: ${{ matrix.registry }}/megatron-bridge:main-buildcache
           RUN_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache
         run: |
-          DONOR_CACHE="$RUN_CACHE"
-          if ! docker buildx imagetools inspect "$DONOR_CACHE" >/dev/null 2>&1; then
-            DONOR_CACHE="$BASELINE_CACHE"
-          fi
-          if ! docker buildx imagetools inspect "$DONOR_CACHE" >/dev/null 2>&1; then
-            DONOR_CACHE="$LEGACY_CACHE"
-          fi
+          DONOR_CACHE=$(.github/scripts/select_cache_donor.sh "$RUN_CACHE" "$BASELINE_CACHE" "$LEGACY_CACHE")
           echo "donor=$DONOR_CACHE" | tee -a "$GITHUB_OUTPUT"
 
       - name: Compute platform

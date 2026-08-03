@@ -50,11 +50,15 @@ class TestCudaGraphCleanup:
     def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect):
         """Cleanup must leave reusable full-graph mappings for the next training run."""
         from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+        from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
 
         graph = Mock()
-        FullCudaGraphWrapper.cuda_graph = {"training": graph, "validation": None}
-        FullCudaGraphWrapper.result = {"training": object(), "validation": None}
-        FullCudaGraphWrapper.curr_iteration = {"training": 3, "validation": 0}
+        FullCudaGraphWrapper.cuda_graph = {"training": graph, "validation": Mock()}
+        FullCudaGraphWrapper.result = {"training": object(), "validation": object()}
+        FullCudaGraphWrapper.curr_iteration = {"training": 3, "validation": 2}
+        OptimizerCudaGraphWrapper.cuda_graph = Mock()
+        OptimizerCudaGraphWrapper.result = object()
+        OptimizerCudaGraphWrapper.curr_iteration = 3
         helper = Mock()
         helper.graphs_created.return_value = False
 
@@ -63,6 +67,12 @@ class TestCudaGraphCleanup:
         assert FullCudaGraphWrapper.cuda_graph["training"] is None
         assert FullCudaGraphWrapper.result["training"] is None
         assert FullCudaGraphWrapper.curr_iteration["training"] == 0
+        assert FullCudaGraphWrapper.cuda_graph["validation"] is None
+        assert FullCudaGraphWrapper.result["validation"] is None
+        assert FullCudaGraphWrapper.curr_iteration["validation"] == 0
+        assert OptimizerCudaGraphWrapper.cuda_graph is None
+        assert OptimizerCudaGraphWrapper.result is None
+        assert OptimizerCudaGraphWrapper.curr_iteration == 0
         helper.delete_cuda_graphs.assert_not_called()
         mock_collect.assert_called_once()
 

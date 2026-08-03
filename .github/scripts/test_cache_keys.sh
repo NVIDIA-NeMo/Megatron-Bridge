@@ -51,3 +51,30 @@ assert_keys main-mcore-d2cf5974cdc0-317f4a21bbed main-baseline main '' d2cf5974c
 assert_keys main-baseline main-baseline main '' '' 317f4a21bbed0fb8a4ac48ddef68356268c79394 refs/heads/main push main
 assert_keys main-baseline main-baseline main '' '' 317f4a21bbed0fb8a4ac48ddef68356268c79394 refs/heads/main schedule main
 assert_keys main-deploy-release-1.2 main-baseline main '' '' 317f4a21bbed0fb8a4ac48ddef68356268c79394 refs/heads/deploy-release/1.2 push deploy-release/1.2
+
+assert_donor() {
+  local expected=$1
+  local available=$2
+  shift 2
+  local actual
+  actual=$(AVAILABLE_CACHES="$available" .github/scripts/select_cache_donor.sh "$@")
+  test "$actual" = "$expected"
+}
+
+mock_dir=$(mktemp -d)
+trap 'rm -rf "$mock_dir"' EXIT
+mkdir -p "$mock_dir/docker"
+cat >"$mock_dir/docker/docker" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "buildx imagetools inspect "* ]] || exit 2
+candidate=${*: -1}
+case ",${AVAILABLE_CACHES:-}," in
+  *",$candidate,"*) exit 0 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$mock_dir/docker/docker"
+PATH="$mock_dir/docker:$PATH"
+assert_donor run run run baseline legacy
+assert_donor baseline baseline run baseline legacy
+assert_donor legacy '' run baseline legacy
