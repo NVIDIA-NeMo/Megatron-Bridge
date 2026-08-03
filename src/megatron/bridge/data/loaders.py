@@ -418,6 +418,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
+            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and dataloader_type == "batch"),
             seed=sampler_seed,
         )
 

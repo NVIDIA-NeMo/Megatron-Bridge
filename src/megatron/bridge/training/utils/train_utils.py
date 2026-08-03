@@ -18,14 +18,12 @@ import math
 import os
 import time
 from collections import defaultdict
-from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 import torch.nn as nn
-from megatron.core import tensor_parallel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
@@ -33,6 +31,15 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
+from megatron.bridge.models.common.heads import (
+    LinearForLastLayer as LinearForLastLayer,
+)
+from megatron.bridge.models.common.heads import (
+    ModelHook,
+    ModelList,
+    create_value_head_hook,
+    ensure_model_list,
+)
 from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
@@ -47,95 +54,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-ModelList = list[MegatronModule]
-ModelHook = Callable[[ModelList], ModelList | None]
-
-
-class LinearForLastLayer(nn.Linear):
-    """Final replicated projection head compatible with Megatron output-layer calls.
-
-    Megatron-Core output layers receive a few runtime-only arguments. This head
-    accepts those arguments for call-site compatibility while using a standard
-    replicated linear projection.
-    """
-
-    def __init__(self, input_size: int, output_size: int, sequence_parallel: bool) -> None:
-        """Initialize a replicated final projection.
-
-        Args:
-            input_size: Hidden dimension of the transformer output.
-            output_size: Output dimension of the value/reward head.
-            sequence_parallel: Whether to gather sequence-parallel activations.
-        """
-        super().__init__(in_features=input_size, out_features=output_size, bias=False)
-        self.sequence_parallel = sequence_parallel
-        if sequence_parallel:
-            setattr(self.weight, "sequence_parallel", True)
-
-    def forward(
-        self,
-        input_: torch.Tensor,
-        weight: torch.Tensor | None = None,
-        runtime_gather_output: bool | None = None,
-    ) -> tuple[torch.Tensor, None]:
-        """Run the final projection and return Megatron-style ``(output, bias)``."""
-        del weight, runtime_gather_output
-        logits = super().forward(input_).float()
-        if self.sequence_parallel:
-            logits = tensor_parallel.gather_from_sequence_parallel_region(
-                logits,
-                tensor_parallel_output_grad=False,
-            )
-        return logits, None
-
-
-def create_value_head_hook(hidden_size: int, sequence_parallel: bool, output_size: int = 1) -> ModelHook:
-    """Create a pre-wrap hook that replaces the final pipeline stage output head.
-
-    Args:
-        hidden_size: Hidden dimension of the transformer output.
-        sequence_parallel: Whether the model uses sequence parallelism.
-        output_size: Number of outputs produced by the final head.
-
-    Returns:
-        A model hook suitable for external trainer provider construction.
-    """
-    from megatron.core import parallel_state
-
-    _register_linear_for_last_layer_mapping()
-
-    def hook(model: ModelList | MegatronModule) -> ModelList:
-        model_chunks = _ensure_model_list(model)
-        model_post_process: list[bool] = []
-        if (
-            parallel_state.get_pipeline_model_parallel_world_size() > 1
-            and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
-        ):
-            for vp_stage in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
-                model_post_process.append(
-                    parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage)
-                )
-        else:
-            model_post_process.append(parallel_state.is_pipeline_last_stage())
-
-        if len(model_post_process) != len(model_chunks):
-            raise ValueError(
-                "Model list length and pipeline post-process list length must match. "
-                f"Got {len(model_chunks)} model chunks and {len(model_post_process)} post-process flags."
-            )
-
-        for index, model_chunk in enumerate(model_chunks):
-            if model_post_process[index]:
-                model_chunk.output_layer = LinearForLastLayer(
-                    input_size=hidden_size,
-                    output_size=output_size,
-                    sequence_parallel=sequence_parallel,
-                )
-
-        return model_chunks
-
-    return hook
 
 
 def make_value_model(hidden_size: int, sequence_parallel: bool) -> ModelHook:
@@ -152,7 +70,7 @@ def freeze_moe_router(model: ModelList | MegatronModule) -> ModelList:
     Returns:
         The normalized model chunk list with router parameters frozen in place.
     """
-    model_chunks = _ensure_model_list(model)
+    model_chunks = ensure_model_list(model)
     for model_chunk in model_chunks:
         decoder = getattr(model_chunk, "decoder", None)
         layers = getattr(decoder, "layers", None)
@@ -175,20 +93,10 @@ def freeze_moe_router(model: ModelList | MegatronModule) -> ModelList:
     return model_chunks
 
 
-def _ensure_model_list(model: ModelList | MegatronModule) -> ModelList:
-    return model if isinstance(model, list) else [model]
-
-
 def _freeze_parameter_if_present(module: object, name: str) -> None:
     parameter = getattr(module, name, None)
     if parameter is not None:
         parameter.requires_grad = False
-
-
-def _register_linear_for_last_layer_mapping() -> None:
-    from megatron.bridge.models.conversion.param_mapping import AutoMapping
-
-    AutoMapping.register_module_type("LinearForLastLayer", "replicated")
 
 
 def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
