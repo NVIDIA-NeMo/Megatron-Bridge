@@ -55,21 +55,12 @@ test "$(grep -c 'git fetch "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'git checkout "$MCORE_REF"' "$workflow")" = 2
 
 "$validator" https://github.com/NVIDIA/Megatron-LM.git
-mkdir -p "$temporary_dir/bin"
-cat >"$temporary_dir/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$*" == *"repos/example-contributor/Megatron-LM"* ]]; then
-  echo example-contributor/Megatron-LM
-  exit 0
+if "$validator" https://github.com/example-contributor/Megatron-LM.git; then
+  echo "MCore repository validation accepted an untrusted contributor fork" >&2
+  exit 1
 fi
-exit 1
-EOF
-chmod +x "$temporary_dir/bin/gh"
-PATH="$temporary_dir/bin:$PATH" GH_TOKEN=test "$validator" \
-  https://github.com/example-contributor/Megatron-LM.git
-if PATH="$temporary_dir/bin:$PATH" GH_TOKEN=test "$validator" \
-  https://github.com/not-a-fork/Megatron-LM.git; then
-  echo "MCore repository validation accepted a non-fork" >&2
+if "$validator" https://github.com/not-a-fork/Megatron-LM.git; then
+  echo "MCore repository validation accepted an untrusted repository" >&2
   exit 1
 fi
 if "$validator" 'https://github.com/example/Megatron-LM.git;touch /tmp/injected'; then
