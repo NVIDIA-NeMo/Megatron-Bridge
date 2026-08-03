@@ -2091,6 +2091,56 @@ class TestLoadBaseCheckpoint:
         assert checkpointing_context["dataloader_state_dir"] == str(save_dir / DATALOADER_STATE_SUBDIR)
         mock_load_persistent.assert_not_called()
 
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format", return_value="torch_dist")
+    @patch("megatron.bridge.training.checkpointing._load_non_persistent_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration", return_value=(100, False))
+    def test_ckpt_step_overrides_newer_non_persistent_checkpoint(
+        self,
+        mock_resolve,
+        mock_load_non_persistent,
+        _mock_get_format,
+        mock_load_persistent,
+        tmp_path,
+        base_config,
+        mock_pg_collection,
+    ):
+        """An explicit checkpoint step selects that persistent iteration exactly."""
+        load_dir = tmp_path / "input"
+        non_persistent_dir = tmp_path / "recovery"
+        non_persistent_dir.mkdir(parents=True)
+        torch.save(
+            TrainState(step=200).state_dict(),
+            get_checkpoint_train_state_filename(str(non_persistent_dir), prefix="latest"),
+        )
+
+        base_config.ckpt_step = 100
+        base_config.save = str(tmp_path / "output")
+        base_config.ckpt_format = "torch_dist"
+        base_config.non_persistent_ckpt_type = "global"
+        base_config.non_persistent_global_ckpt_dir = str(non_persistent_dir)
+        mock_load_non_persistent.return_value = (
+            {"model": "recovery"},
+            str(non_persistent_dir / "iter_0000200"),
+            False,
+            CheckpointType.GLOBAL,
+        )
+        expected = ({"model": "requested"}, str(load_dir / "iter_0000100"), False, CheckpointType.GLOBAL)
+        mock_load_persistent.return_value = expected
+
+        checkpointing_context = {}
+        result = _load_base_checkpoint(
+            str(load_dir),
+            base_config,
+            checkpointing_context=checkpointing_context,
+            pg_collection=mock_pg_collection,
+        )
+
+        assert result == expected
+        mock_resolve.assert_called_once_with(load_dir=str(load_dir), ckpt_step_override=100)
+        mock_load_non_persistent.assert_not_called()
+        assert checkpointing_context["dataloader_state_dir"] == str(load_dir / DATALOADER_STATE_SUBDIR)
+
     @patch("megatron.bridge.training.checkpointing._load_non_persistent_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration", return_value=(50, False))
     def test_newer_global_non_persistent_checkpoint_under_load_remains_available(
