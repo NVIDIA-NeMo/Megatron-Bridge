@@ -97,12 +97,15 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.model.moe_flex_dispatcher_backend = None
     # The selective Mamba SSD chunk does not cover the full-sequence output
     # projection, whose 128-MiB GEMM output is the remaining H100 forward peak.
-    # Checkpoint only the first Mamba/expert pair in each HybridStack. This
-    # releases their retained activations before later Mamba projections while
-    # avoiding the throughput cost of recomputing the full decoder.
+    # A two-layer checkpoint moved the failure from the full-sequence Mamba
+    # projection to retained routed- and shared-expert activations in later
+    # layers. Checkpoint every main HybridStack layer so those activations do
+    # not accumulate across the 108-layer decoder. MCore deliberately skips
+    # block-method MTP recompute, leaving its latent projection on the normal
+    # fused-gradient path.
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "block"
-    cfg.model.recompute_num_layers = 2
+    cfg.model.recompute_num_layers = 108
     cfg.model.recompute_modules = None
 
     # Thirty-two chunks reduced the first-forward routed-expert failures to

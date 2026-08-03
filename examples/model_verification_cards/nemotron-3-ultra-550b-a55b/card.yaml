@@ -409,8 +409,9 @@ items:
         reserved memory. BF16, standard all-to-all MoE dispatch, fine-grained
         parameter gather, FP32 fused weight-gradient accumulation and FP32
         gradient communication, and Megatron-FSDP must remain active with
-        partial full-layer block recompute for the first Mamba/expert pair in
-        each HybridStack, a one-element FSDP communication unit that disables
+        full-layer block recompute for all 108 main HybridStack layers while
+        leaving MTP on its normal backward path, a one-element FSDP
+        communication unit that disables
         next-bucket parameter prefetch, and the native expandable-segment
         allocator. The training MLP path must use sixty-four sequence chunks to
         bound the grouped-MoE working set, and the Mamba SSD path must use
@@ -424,7 +425,7 @@ items:
         activation offload.
         Gradient and loss NaN checks must remain enabled.
         Standard all-to-all avoids replaying stateful HybridEP communication;
-        disabling the operation fuser selects MCore's standalone MoE-activation
-        checkpoint path rather than the SM100-only fused implementation. The
-        H100 result is standalone and is not numerically comparable with the
-        GB200 MXFP8 result.
+        disabling the operation fuser retains the H100-supported TE grouped
+        linears and fused activation outside the SM100-only fused
+        implementation. The H100 result is standalone and is not numerically
+        comparable with the GB200 MXFP8 result.
