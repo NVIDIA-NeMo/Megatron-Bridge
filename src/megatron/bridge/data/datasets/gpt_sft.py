@@ -285,6 +285,8 @@ class GPTSFTDataset(Dataset):
                 index_mapping_dir=self.index_mapping_dir,
                 samples_mapping=osm,
             )
+            if self.global_sample_mapping:
+                self.samples_mapping = self.samples_mapping[: self.max_num_samples]
         else:
             self.samples_mapping = None
 

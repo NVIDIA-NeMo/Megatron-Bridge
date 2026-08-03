@@ -27,6 +27,7 @@ from megatron.bridge.training.setup import (
     _bind_dataset_provider_context,
     _build_distributed_model,
     _register_pre_wrap_hook,
+    _register_setup_pre_wrap_hook,
     _should_load_checkpoint,
     _update_model_config_funcs,
     _validate_and_set_vocab_size,
@@ -292,6 +293,19 @@ class TestRegisterPreWrapHook:
         _register_pre_wrap_hook(mock_provider, hook)
         mock_provider.register_pre_wrap_hook.assert_called_once_with(hook)
 
+    def test_setup_hook_replacement_preserves_model_config_user_hooks(self):
+        """Replacing setup-owned hooks must not remove caller registrations."""
+        cfg = _make_gpt_model_config()
+        user_hook = Mock(side_effect=lambda models: models)
+        stale_setup_hook = Mock(side_effect=lambda models: models)
+        current_setup_hook = Mock(side_effect=lambda models: models)
+        _register_pre_wrap_hook(cfg, user_hook)
+
+        _register_setup_pre_wrap_hook(cfg, stale_setup_hook, setup_hook_name="peft")
+        _register_setup_pre_wrap_hook(cfg, current_setup_hook, setup_hook_name="peft")
+
+        assert cfg.pre_wrap_hooks == [user_hook, current_setup_hook]
+
 
 class TestBuildDistributedModel:
     """Test cases for the _build_distributed_model function."""
@@ -312,6 +326,7 @@ class TestBuildDistributedModel:
     def test_build_with_model_config(self, _mock_gpt_cls):
         """Test that builder.build_distributed_models is called for ModelConfig."""
         cfg, model_cfg = self._make_cfg_with_model_config()
+        assert not hasattr(model_cfg, "provide_distributed_model")
 
         mock_builder_cls = MagicMock()
         mock_builder = MagicMock()

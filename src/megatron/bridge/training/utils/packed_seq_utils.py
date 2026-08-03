@@ -265,6 +265,14 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen_kv if max_seqlen_kv is not None else max_seqlen_q,
             total_tokens=batch.get("total_tokens"),
             qkv_format="thd",
+            # cp_partition_mode available in dev MCore only.
+            **(
+                {
+                    "cp_partition_mode": batch.get("cp_partition_mode", "zigzag"),
+                }
+                if hasattr(PackedSeqParams, "cp_partition_mode")
+                else {}
+            ),
         )
 
     cu_seqlens_padded = batch["cu_seqlens"].squeeze()
@@ -303,6 +311,14 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen,
             total_tokens=total_tokens,
             qkv_format="thd",
+            # cp_partition_mode available in dev MCore only.
+            **(
+                {
+                    "cp_partition_mode": batch.get("cp_partition_mode", "zigzag"),
+                }
+                if hasattr(PackedSeqParams, "cp_partition_mode")
+                else {}
+            ),
         )
     else:
         return PackedSeqParams(
@@ -312,4 +328,12 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen,
             total_tokens=total_tokens,
             qkv_format="thd",
+            # cp_partition_mode available in dev MCore only.
+            **(
+                {
+                    "cp_partition_mode": batch.get("cp_partition_mode", "zigzag"),
+                }
+                if hasattr(PackedSeqParams, "cp_partition_mode")
+                else {}
+            ),
         )

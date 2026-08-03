@@ -44,6 +44,28 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
+_GTP_REMAT_PROCESS_GROUP_ALIASES = (
+    "dp_cp_gtp_remat",
+    "expt_dp_gtp_remat",
+    "tp_ep_pp_with_egtp_remat",
+)
+
+
+def _get_gtp_remat_process_group_kwargs(
+    dp_cp_group: torch.distributed.ProcessGroup,
+    expt_dp_group: torch.distributed.ProcessGroup,
+    tp_ep_pp_group: torch.distributed.ProcessGroup,
+) -> Dict[str, torch.distributed.ProcessGroup]:
+    """Return GTP-remat aliases supported by the installed MCore contract."""
+    process_groups = {
+        "dp_cp_gtp_remat": dp_cp_group,
+        "expt_dp_gtp_remat": expt_dp_group,
+        "tp_ep_pp_with_egtp_remat": tp_ep_pp_group,
+    }
+    declared_fields = ProcessGroupCollection.__dataclass_fields__
+    return {name: process_groups[name] for name in _GTP_REMAT_PROCESS_GROUP_ALIASES if name in declared_fields}
+
+
 @dataclass
 class MegatronMIMOInfra:
     """MegatronMIMO infrastructure metadata (separate from model).
@@ -297,8 +319,13 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 expt_dp_group = grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME)
                 tp_ep_pp_group = grid.get_pg(["expt_tp", "ep", "pp"], view=EXPERT_VIEW_NAME)
 
-                # HyperCommGrid does not define GTP-remat axes, so the GTP-inclusive
+                # HyperCommGrid does not define GTP-remat axes, so supported GTP-inclusive
                 # process groups collapse to their existing non-GTP equivalents.
+                gtp_remat_process_groups = _get_gtp_remat_process_group_kwargs(
+                    dp_cp_group,
+                    expt_dp_group,
+                    tp_ep_pp_group,
+                )
                 pg_collections[module_name] = ProcessGroupCollection(
                     tp=grid.get_pg(["tp"]),
                     dp=grid.get_pg(["dp"]),
@@ -308,19 +335,17 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     expt_tp=grid.get_pg(["expt_tp"], view=EXPERT_VIEW_NAME),
                     expt_dp=expt_dp_group,
                     dp_cp=dp_cp_group,
-                    dp_cp_gtp_remat=dp_cp_group,
-                    expt_dp_gtp_remat=expt_dp_group,
                     intra_dp_cp=dp_cp_group,
                     tp_cp=grid.get_pg(["tp", "cp"]),
                     tp_dp_cp=grid.get_pg(["tp", "dp", "cp"]),
                     mp=grid.get_pg(["tp", "pp"]),
                     tp_ep=grid.get_pg(["expt_tp", "ep"], view=EXPERT_VIEW_NAME),
                     tp_ep_pp=tp_ep_pp_group,
-                    tp_ep_pp_with_egtp_remat=tp_ep_pp_group,
                     intra_expt_dp=expt_dp_group,
                     intra_dist_opt=grid.get_pg(["tp", "cp", "dp", "pp"]),
                     pos_embd=pos_embd_pg if first_stage else None,
                     embd=embd_pg if (first_stage or last_stage) else None,
+                    **gtp_remat_process_groups,
                 )
             else:
                 pg_collections[module_name] = None

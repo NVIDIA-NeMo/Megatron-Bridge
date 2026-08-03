@@ -923,7 +923,7 @@ class TestGemma4RotaryEmbeddings:
         hidden_states = torch.arange(1, head_dim + 1, dtype=torch.float32).view(1, 1, 1, head_dim)
         freqs = rotary.get_freqs_non_repeated(1, offset=position)
         freqs = torch.cat((freqs, freqs), dim=-1)[:, None, None, :]
-        config = SimpleNamespace(apply_rope_fusion=False, rotary_interleaved=False)
+        config = SimpleNamespace(apply_rope_fusion=False, rotary_interleaved=False, mrope_section=None)
         actual = apply_rotary_pos_emb(hidden_states, freqs, config, cp_group=object())
 
         expected = hidden_states.clone()

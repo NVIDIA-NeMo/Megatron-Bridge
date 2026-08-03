@@ -1039,6 +1039,38 @@ class TestEOSIndexFixInPackedDataset:
         assert processed["attention_mask"] is None
 
 
+def test_packed_full_loss_preserves_target_after_internal_eos():
+    """Full-loss packing must supervise the label after an EOS turn delimiter."""
+    from megatron.bridge.data.packing.algorithms import fill_packing_strategy
+
+    eos_id = 2
+    sequences = {length: [] for length in range(4)}
+    sequences[3].append(
+        {
+            "input_ids": [10, eos_id, 20, eos_id],
+            "loss_mask": [True, True, True, True],
+        }
+    )
+    packed_row = fill_packing_strategy([[3]], sequences, pack_size=3, pad_id=eos_id)[0]
+    dataset = _create_minimal_packed_dataset(tokenizer_eos_id=eos_id)
+    dataset.answer_only_loss = True
+    dataset.return_cu_seqlen = False
+
+    batch = dataset.collate_fn(
+        [
+            {
+                "input_ids": packed_row["input_ids"],
+                "seq_boundaries": [*packed_row["seq_start_id"], len(packed_row["input_ids"])],
+                "loss_mask": packed_row["loss_mask"],
+            }
+        ]
+    )
+
+    assert batch["tokens"].tolist() == [[10, eos_id, 20]]
+    assert batch["labels"].tolist() == [[eos_id, 20, eos_id]]
+    assert batch["loss_mask"].tolist() == [[1, 1, 1]]
+
+
 class TestPackedChatDatasetIntegration:
     """Integration tests for packed chat datasets."""
 

@@ -54,6 +54,12 @@ class DummySubConfig:
     y: str = "sub"
 
 
+@dataclass
+class DummyDerivedSubConfig:
+    value: int = 1
+    derived: int = field(init=False, default=2)
+
+
 def _dummy_callable() -> None:
     """Placeholder callable used as a field default in DummyNestedModelConfig."""
 
@@ -67,6 +73,15 @@ class DummyNestedModelConfig(ModelConfig):
 
 
 DummyNestedModelConfig.builder = f"{DummyModelBuilder.__module__}.DummyModelBuilder"
+
+
+@dataclass
+class DummyDerivedModelConfig(ModelConfig):
+    builder: ClassVar[str] = ""
+    sub: DummyDerivedSubConfig = field(default_factory=DummyDerivedSubConfig)
+
+
+DummyDerivedModelConfig.builder = f"{DummyModelBuilder.__module__}.DummyModelBuilder"
 
 
 @pytest.fixture(autouse=True)
@@ -100,6 +115,16 @@ def test_model_config_from_dict_round_trips_nested_config() -> None:
     assert isinstance(cfg.sub, DummySubConfig)
     assert cfg.sub.x == 7
     assert cfg.sub.y == "nested"
+
+
+def test_model_config_from_dict_ignores_non_init_derived_fields() -> None:
+    original = DummyDerivedModelConfig(sub=DummyDerivedSubConfig(value=7))
+
+    cfg = ModelConfig.from_dict(original.as_dict())
+
+    assert isinstance(cfg, DummyDerivedModelConfig)
+    assert cfg.sub.value == 7
+    assert cfg.sub.derived == 2
 
 
 def test_model_config_from_dict_rejects_disallowed_target() -> None:

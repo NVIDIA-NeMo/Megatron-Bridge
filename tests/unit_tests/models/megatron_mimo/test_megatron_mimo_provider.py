@@ -13,6 +13,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import _get_gtp_remat_process_group_kwargs
 
 
 class FakeStandardProvider:
@@ -683,6 +684,34 @@ class TestEmbeddingGroupHelpers:
 class TestProcessGroupCollectionWithEmbeddingGroups:
     """Test that ProcessGroupCollection includes embedding groups."""
 
+    @patch(
+        "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.ProcessGroupCollection.__dataclass_fields__",
+        {"tp": Mock()},
+    )
+    def test_gtp_remat_aliases_omitted_for_older_mcore_contract(self):
+        """Test that aliases absent from the MCore contract are not passed to its constructor."""
+        assert _get_gtp_remat_process_group_kwargs(Mock(), Mock(), Mock()) == {}
+
+    @patch(
+        "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.ProcessGroupCollection.__dataclass_fields__",
+        {
+            "dp_cp_gtp_remat": Mock(),
+            "expt_dp_gtp_remat": Mock(),
+            "tp_ep_pp_with_egtp_remat": Mock(),
+        },
+    )
+    def test_gtp_remat_aliases_preserved_for_current_mcore_contract(self):
+        """Test that current MCore receives all collapsed GTP-remat aliases."""
+        dp_cp_group = Mock()
+        expt_dp_group = Mock()
+        tp_ep_pp_group = Mock()
+
+        assert _get_gtp_remat_process_group_kwargs(dp_cp_group, expt_dp_group, tp_ep_pp_group) == {
+            "dp_cp_gtp_remat": dp_cp_group,
+            "expt_dp_gtp_remat": expt_dp_group,
+            "tp_ep_pp_with_egtp_remat": tp_ep_pp_group,
+        }
+
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.is_pp_first_stage")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.populate_embedding_and_position_groups")
@@ -835,15 +864,17 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         assert pgc.ep == mock_ep
         assert pgc.expt_tp == mock_expt_tp
         assert pgc.expt_dp == mock_expt_dp
-        assert pgc.expt_dp_gtp_remat == mock_expt_dp
         assert pgc.dp_cp == mock_dp_cp
-        assert pgc.dp_cp_gtp_remat == mock_dp_cp
         assert pgc.intra_dp_cp == mock_dp_cp
+        if "expt_dp_gtp_remat" in pgc.__dataclass_fields__:
+            assert pgc.expt_dp_gtp_remat == mock_expt_dp
+            assert pgc.dp_cp_gtp_remat == mock_dp_cp
         assert pgc.tp_cp == mock_tp_cp
         assert pgc.tp_dp_cp == mock_tp_dp_cp
         assert pgc.mp == mock_mp
         assert pgc.tp_ep == mock_tp_ep
         assert pgc.tp_ep_pp == mock_tp_ep_pp
-        assert pgc.tp_ep_pp_with_egtp_remat == mock_tp_ep_pp
+        if "tp_ep_pp_with_egtp_remat" in pgc.__dataclass_fields__:
+            assert pgc.tp_ep_pp_with_egtp_remat == mock_tp_ep_pp
         assert pgc.intra_expt_dp == mock_expt_dp
         assert pgc.intra_dist_opt == mock_intra_dist_opt

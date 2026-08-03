@@ -131,21 +131,51 @@ def first_fit(
     return res
 
 
-def first_fit_decreasing(seqlens: List[int], pack_size: int) -> List[List[int]]:
+def first_fit_decreasing(
+    seqlens: Sequence[_ItemT],
+    pack_size: int,
+    *,
+    item_lengths: Sequence[int] | None = None,
+) -> list[list[_ItemT]]:
     """
     Packs sequences of varying lengths into bins using the First-Fit Decreasing algorithm.
 
     This is a variation of the First-Fit algorithm where the sequences are sorted by decreasing length before packing.
 
+    Like `first_fit`, callers that pack objects rather than raw integers (for example
+    diffusion samples keyed on padded query sequence length) pass `item_lengths`
+    separately: the entries are then ordered by those lengths, longest first, and the
+    original objects are what end up in the bins.
+
     Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
+      seqlens: The entries to pack. Integer lengths unless `item_lengths` is given, in
+        which case these may be any objects.
       pack_size: The maximum capacity of each bin.
+      item_lengths: Optional length of each entry in `seqlens`, in the same order. When
+        omitted, each entry is used as its own length.
 
     Returns:
       A list of lists, similar to the output of the 'first_fit' function.
+
+    Raises:
+      ValueError: If `item_lengths` is given and does not have the same number of
+        entries as `seqlens`.
     """
-    sorted_seqlens = sorted(seqlens, reverse=True)
-    return first_fit(sorted_seqlens, pack_size)
+    if item_lengths is None:
+        return first_fit(sorted(seqlens, reverse=True), pack_size)
+    if len(seqlens) != len(item_lengths):
+        raise ValueError(
+            f"seqlens and item_lengths must have the same number of entries, "
+            f"got {len(seqlens)} and {len(item_lengths)}"
+        )
+    # Order entries by their supplied length, longest first, keeping each entry paired
+    # with its length. `sorted(..., reverse=True)` is stable, so entries of equal length
+    # keep their original relative order -- matching `sorted(items, reverse=True)` when
+    # the items compare by that same length.
+    order = sorted(range(len(seqlens)), key=lambda i: item_lengths[i], reverse=True)
+    sorted_items = [seqlens[i] for i in order]
+    sorted_lengths = [item_lengths[i] for i in order]
+    return first_fit(sorted_items, pack_size, item_lengths=sorted_lengths)
 
 
 def first_fit_shuffle(seqlens: List[int], pack_size: int) -> List[List[int]]:

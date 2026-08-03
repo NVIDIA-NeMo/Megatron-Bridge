@@ -45,6 +45,24 @@ def _first_fit_linear(seqlens: List[int], pack_size: int) -> List[List[int]]:
     return res
 
 
+def _first_fit_decreasing_linear_indices(lengths: list[int], pack_size: int) -> list[list[int]]:
+    """Reference first-fit-decreasing that retains each input item's identity."""
+    res: list[list[int]] = []
+    res_sums: list[int] = []
+    order = sorted(range(len(lengths)), key=lengths.__getitem__, reverse=True)
+    for item_index in order:
+        length = lengths[item_index]
+        for bin_index, current_sum in enumerate(res_sums):
+            if current_sum + length <= pack_size:
+                res[bin_index].append(item_index)
+                res_sums[bin_index] += length
+                break
+        else:
+            res.append([item_index])
+            res_sums.append(length)
+    return res
+
+
 class TestFirstFitPacking:
     """Test cases for first_fit bin-packing algorithm."""
 
@@ -218,3 +236,95 @@ class TestFirstFitItemLengths:
         """Guards against the lengths being passed positionally by mistake."""
         with pytest.raises(TypeError):
             first_fit([1, 2, 3], 10, [1, 2, 3])
+
+
+class TestFirstFitDecreasingItemLengths:
+    """first_fit_decreasing packs opaque objects when item_lengths is supplied.
+
+    This is the exact contract the diffusion task encoder relies on: it orders live
+    sample objects by (padded) query sequence length, longest first, and needs the
+    original objects back in the bins.
+    """
+
+    def test_defaults_to_entries_as_their_own_lengths(self):
+        """Omitting item_lengths must behave exactly like passing seqlens twice."""
+        seqlens = [5, 3, 2, 7, 4]
+        assert first_fit_decreasing(seqlens, 10) == first_fit_decreasing(seqlens, 10, item_lengths=seqlens)
+
+    def test_packs_objects_in_decreasing_length_order(self):
+        items = ["a", "b", "c", "d", "e"]
+        lengths = [5, 3, 2, 7, 4]
+
+        result = first_fit_decreasing(items, 10, item_lengths=lengths)
+
+        # Sorted by length desc -> d(7), a(5), e(4), b(3), c(2); first-fit-decreasing
+        # then packs [d, b], [a, e], [c], carrying the original objects.
+        assert result == [["d", "b"], ["a", "e"], ["c"]]
+
+    def test_equal_lengths_keep_input_identity_and_order(self):
+        """Stable sorting must not reorder opaque items with equal lengths."""
+        items = [object(), object(), object()]
+        lengths = [6, 6, 4]
+
+        result = first_fit_decreasing(items, 10, item_lengths=lengths)
+
+        assert result[0][0] is items[0]
+        assert result[0][1] is items[2]
+        assert result[1][0] is items[1]
+
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_object_packing_matches_integer_packing(self, seed):
+        """Bin structure must depend only on the lengths, not on what the items are."""
+        np.random.seed(seed)
+        lengths = [int(x) for x in np.random.randint(1, 2048, size=500)]
+        items = [object() for _ in lengths]
+
+        by_object = first_fit_decreasing(items, 2048, item_lengths=lengths)
+        by_length = first_fit_decreasing(lengths, 2048)
+
+        index = {id(o): i for i, o in enumerate(items)}
+        assert [[lengths[index[id(o)]] for o in b] for b in by_object] == by_length
+
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_object_packing_matches_linear_scan_reference(self, seed):
+        """Assignments must match the original O(N^2) linear scan on the sorted order."""
+        np.random.seed(seed)
+        lengths = [int(x) for x in np.random.randint(0, 2248, size=400)]
+        items = [object() for _ in lengths]
+
+        by_object = first_fit_decreasing(items, 2048, item_lengths=lengths)
+
+        index = {id(o): i for i, o in enumerate(items)}
+        packed_indices = [[index[id(o)] for o in b] for b in by_object]
+        assert packed_indices == _first_fit_decreasing_linear_indices(lengths, 2048)
+
+    @pytest.mark.parametrize(
+        "lengths,pack_size",
+        [
+            ([], 100),
+            ([0] * 10, 100),
+            ([0, 5, 0, 95, 0, 1], 100),
+            ([500], 100),
+            ([500, 600, 700], 100),
+            ([50, 50, 50, 50], 100),
+        ],
+        ids=["empty", "all-zero", "zero-mixed", "single-oversize", "all-oversize", "exact-fit"],
+    )
+    def test_object_packing_matches_linear_scan_on_edge_cases(self, lengths, pack_size):
+        """Named edge cases must preserve exact object assignments."""
+        items = [object() for _ in lengths]
+
+        result = first_fit_decreasing(items, pack_size, item_lengths=lengths)
+
+        index = {id(item): i for i, item in enumerate(items)}
+        packed_indices = [[index[id(item)] for item in bin_items] for bin_items in result]
+        assert packed_indices == _first_fit_decreasing_linear_indices(lengths, pack_size)
+
+    def test_mismatched_lengths_raise(self):
+        with pytest.raises(ValueError, match="same number of entries"):
+            first_fit_decreasing([1, 2, 3], 10, item_lengths=[1, 2])
+
+    def test_item_lengths_is_keyword_only(self):
+        """Guards against the lengths being passed positionally by mistake."""
+        with pytest.raises(TypeError):
+            first_fit_decreasing([1, 2, 3], 10, [1, 2, 3])

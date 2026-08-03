@@ -310,7 +310,7 @@ class EnergonDatasetBuilder:
             pg_collection=context.pg_collection,
             **self.config.dataset_kwargs,
         )
-        train = iter(datamodule.train_dataloader()) if build_train else None
+        train = datamodule.train_dataloader() if build_train else None
         validation = iter(datamodule.val_dataloader()) if build_validation else None
         return train, validation, None
 

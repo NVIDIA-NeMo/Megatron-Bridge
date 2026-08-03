@@ -21,9 +21,15 @@ from unittest.mock import Mock, patch
 import pytest
 import yaml
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.config import DistributedInitConfig
-from megatron.bridge.training.initialize import _initialize_tp_communicators, _setup_flight_recorder_env
+from megatron.bridge.training.initialize import (
+    _initialize_tp_communicators,
+    _setup_flight_recorder_env,
+    set_jit_fusion_options,
+)
 
 
 _FR_ENV_VARS = [
@@ -35,6 +41,29 @@ _FR_ENV_VARS = [
     "TORCH_INCLUDE_ONLY_ACTIVE",
     "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
 ]
+
+
+def test_set_jit_fusion_options_preserves_builder_config_for_warmup() -> None:
+    """JIT warmup needs GPT outer fields like seq_length plus transformer proxy fields."""
+    model_config = BridgeGPTModelConfig(
+        transformer=TransformerConfig(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            ffn_hidden_size=256,
+            use_cpu_initialization=True,
+        ),
+        vocab_size=256,
+        seq_length=128,
+    )
+
+    with (
+        patch("megatron.bridge.training.initialize.is_torch_min_version", return_value=True),
+        patch("megatron.bridge.training.initialize._warmup_jit_function") as warmup_jit_function,
+    ):
+        set_jit_fusion_options(model_config, micro_batch_size=1)
+
+    warmup_jit_function.assert_called_once_with(model_config, 1)
 
 
 class TestInitializeTPCommunicators:

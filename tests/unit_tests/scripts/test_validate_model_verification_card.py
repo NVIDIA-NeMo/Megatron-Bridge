@@ -57,6 +57,74 @@ def _fsdp_metrics():
     }
 
 
+def test_verified_inference_accepts_canonical_bash_launcher():
+    module = _load_validator()
+    errors = []
+    item = {
+        "expected_result": 'The exact 1-token result produced completion "ok".',
+    }
+
+    module._validate_inference(
+        item,
+        item_name="inference",
+        status="verified",
+        errors=errors,
+        command_override=(
+            "./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 "
+            "--task vlm-generation --prompt hello --max_new_tokens 1"
+        ),
+    )
+
+    assert errors == []
+
+
+def test_verified_inference_bash_launcher_requires_task_and_resources():
+    module = _load_validator()
+    errors = []
+    item = {
+        "expected_result": 'The exact 1-token result produced completion "ok".',
+    }
+
+    module._validate_inference(
+        item,
+        item_name="inference",
+        status="verified",
+        errors=errors,
+        command_override="./scripts/inference/infer.sh --prompt hello --max_new_tokens 1",
+    )
+
+    assert "/items/inference/command: infer.sh must specify one supported --task" in errors
+    assert "/items/inference/command: infer.sh must specify --nodes exactly once" in errors
+    assert "/items/inference/command: infer.sh must specify --gpus-per-node exactly once" in errors
+
+
+def test_verified_manual_forward_pass_accepts_canonical_bash_launcher():
+    module = _load_validator()
+    errors = []
+    item = {
+        "status": "verified",
+        "command": (
+            "./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 --task model-comparison "
+            "--hf_model_path org/model --hf-revision revision "
+            "--megatron_model_path work/model/iter_0000000 --prompt hello"
+        ),
+        "last_verified": "2026-07-31",
+        "expected_result": (
+            "The next token matches. Cosine similarity is 0.99. "
+            "Maximum absolute logit difference is 0.1. Mean absolute logit difference is 0.01."
+        ),
+    }
+
+    module._validate_manual_forward_pass(
+        item,
+        status="verified",
+        model_revision="revision",
+        errors=errors,
+    )
+
+    assert errors == []
+
+
 def test_fsdp_index_mirrors_concrete_hardware_leaf():
     module = _load_validator()
     verification_index, items, hardware_groups = _complete_index_inputs(module)

@@ -154,7 +154,7 @@ class _OfflineModelProvider:
 
 
 class _OfflineAutoBridge:
-    """Build a local provider without reading a Hugging Face configuration."""
+    """Build a local model configuration without reading a Hugging Face configuration."""
 
     @classmethod
     def from_hf_config(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
@@ -168,6 +168,10 @@ class _OfflineAutoBridge:
 
     def to_megatron_provider(self, *args: object, **kwargs: object) -> _OfflineModelProvider:
         del args, kwargs
+        return _OfflineModelProvider()
+
+    def get_model_config(self) -> _OfflineModelProvider:
+        """Return a mutable stand-in for builder-backed recipe construction."""
         return _OfflineModelProvider()
 
 

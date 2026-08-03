@@ -167,6 +167,8 @@ class ErnieMultimodalRotaryEmbedding(MultimodalRotaryEmbedding):
         position_ids: torch.Tensor,
         mrope_section,
         cp_group=None,
+        return_raw_freqs: bool = False,
+        packed_seq: bool = False,
     ) -> Tensor:
         """Compute ERNIE-style interleaved M-RoPE embeddings.
 
@@ -175,10 +177,14 @@ class ErnieMultimodalRotaryEmbedding(MultimodalRotaryEmbedding):
             mrope_section: Ignored (kept for API compatibility). ERNIE uses
                 freq_allocation instead.
             cp_group: Context parallel group.
+            return_raw_freqs: Ignored because ERNIE uses interleaved rotary embeddings.
+            packed_seq: Whether the sequence uses THD packing. Packed sequences retain
+                their full rotary embedding for packed context-parallel handling.
 
         Returns:
             Tensor: RoPE embedding of shape [seq_len, batch, 1, head_dim].
         """
+        del return_raw_freqs
         device = self.inv_freq.device
         seq = position_ids.to(device=device, dtype=self.inv_freq.dtype)
         # seq: [3, bs, seq_len]
@@ -237,7 +243,7 @@ class ErnieMultimodalRotaryEmbedding(MultimodalRotaryEmbedding):
 
         if cp_group is None:
             cp_group = self.cp_group
-        if cp_group is not None and cp_group.size() > 1:
+        if cp_group is not None and cp_group.size() > 1 and not packed_seq:
             emb = get_pos_emb_on_this_cp_rank(emb, 0, cp_group)
         return emb
 

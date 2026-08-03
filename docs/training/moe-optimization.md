@@ -31,6 +31,20 @@ optimization treats all three as a unified system.
 
 ## The Optimization Workflow
 
+Use the full evidence-gated loop:
+
+```text
+freeze the measurement contract -> fit -> scale -> profile -> retune -> validate
+```
+
+### Phase 0: Freeze the Measurement Contract
+
+Before tuning, record and hold fixed the software/runtime versions, hardware
+and topology, model/task/data/routing semantics, precision, sequence and batch
+shape, parallelism, graph scopes, and steady-state timing window. Label forced
+routing, synthetic data, or disabled optimizer/checkpoint paths as
+**benchmark-only**; they cannot establish training-equivalent acceptance.
+
 ### Phase 1: Establish Memory-Feasible Parallelism
 
 Memory is the hard gate — if it doesn't fit, nothing runs.
@@ -72,9 +86,10 @@ Five guidelines, in order of priority:
    depends on model size and hardware. Use hierarchical CP (`a2a+p2p`) on
    NVL72-class systems when appropriate.
 
-### Phase 3: Profile and Optimize Bottlenecks
+### Phase 3: Profile the Bottleneck
 
-Profile the training run and identify which wall dominates:
+Profile the training run and operationally split the paper's compute-efficiency
+wall into compute and host/launch bottlenecks:
 
 **Memory bottleneck** — forced into full recompute or excessive parallelism:
 
@@ -112,8 +127,24 @@ Profile the training run and identify which wall dominates:
 | Kernel fusions | `--moe-router-fusion --moe-permute-fusion` |
 | FP8 precision | `--fp8-format --fp8-recipe` |
 
-This process is **iterative**: fitting the model, choosing parallelism, and
-profiling the dominant wall usually matter more than any single micro-optimization.
+### Phase 4: Retune One Variable at a Time
+
+Use the profile to choose one candidate: dispatcher, one overlap mode, lower
+precision, CUDA graphs, recompute, or a parallelism adjustment. Keep the rest
+of the measurement contract fixed. Hardware support narrows the candidate set;
+it does not guarantee which backend or precision mode will improve end-to-end
+step time.
+
+### Phase 5: Validate the Complete Winner
+
+Use short post-warmup screens to reject weak candidates, then run the winner for
+at least 50 steps and report a declared steady window. Require runtime evidence
+that the requested dispatcher, lower-precision kernels, overlap path, and graph
+replay actually ran. Report finite loss, skipped/NaN iterations, peak memory,
+step time, model TFLOPS/GPU, and checkpoint/optimizer-state behavior when the
+production path requires them.
+
+This process is **iterative**: solving one bottleneck often exposes another.
 
 ## Parallel Folding
 
@@ -171,12 +202,12 @@ Ordered by overhead (lowest first):
 
 ## FP8 Recipe Selection
 
-| Recipe | Platform | Granularity | Recommended |
+| Recipe | Platform | Granularity | Role after BF16 is stable |
 |---|---|---|---|
 | Per-tensor FP8 | Hopper/Blackwell | 1 scale/tensor | Starting point |
-| Blockwise FP8 | Hopper | 128×128 blocks | **Production on Hopper** |
-| MXFP8 | Blackwell | 1×32 elements | **Default on Blackwell** |
-| NVFP4 | Blackwell | 16 elements, 2-level | Maximum throughput |
+| Blockwise FP8 | Hopper | 128×128 blocks | Candidate when the target stack supports the intended kernels |
+| MXFP8 | Blackwell | 1×32 elements | High-priority candidate |
+| NVFP4 | Blackwell | 16 elements, 2-level | Speed-first candidate after BF16/FP8 validation |
 
 Key rules:
 - Router stays in FP32 always
@@ -192,14 +223,14 @@ Two modes, different trade-offs:
 | Mode | What's Captured | When to Use |
 |---|---|---|
 | Full CUDA Graphs | Entire fwd+bwd | Drop-and-pad MoE only |
-| Partial (layer-wise) | attn + router + moe_preprocess | **Dropless MoE (default)** |
+| Partial (layer-wise) | router + moe_preprocess, optionally attn | Dropless-MoE candidate when host/launch overhead is visible |
 
 Partial CUDA graphs capture static components while leaving dynamic expert
-computation outside the graph, which is why they are the safer default for
-dropless MoE. Validate the replay window against an eager run on the same
-dispatcher and container: TE-scoped capture can be neutral or slightly slower
-on all-to-all fallback shapes that are not visibly launch-bound, even when
-capture succeeds.
+computation outside the graph. Start with the narrowest useful scope only after
+profiling host/launch overhead. Validate replay against eager on the same full
+stack: TE-scoped capture can be neutral or slightly slower when the workload is
+not launch-bound, and an earlier win can disappear after dispatcher, overlap,
+precision, or recompute changes.
 
 For full CUDA Graphs on dropless MoE, three techniques are needed:
 
@@ -258,16 +289,16 @@ dispatcher backend controls how this communication is implemented:
 | `flex` + DeepEP | DeepEP library | Low-latency SM-based dispatch with GPU-side routing |
 | `flex` + HybridEP | HybridEP library | Fused intra-node NVLink + inter-node IB dispatch |
 
-### Hardware affinity
+### Hardware-informed candidate order
 
-| Hardware | Recommended Dispatcher | Rationale |
+| Hardware | Bring-up | Tuned candidates |
 |---|---|---|
-| H100 / B200 (NVL8) | DeepEP, if installed | Optimized for node-based topologies |
-| GB200 / GB300 (NVL72) | HybridEP, if installed | Exploits NVLink domain for lower latency |
+| H100 / B200 (NVL8) | `alltoall` | A/B DeepEP and HybridEP when supported |
+| GB200 / GB300 (NVL72) | `alltoall` | HybridEP first, then compare other installed backends |
 
-HybridEP advantage usually grows with EP degree because it fuses intra-node
-NVLink transfers with inter-node IB work, avoiding much of the two-phase
-overhead of standard all-to-all at large EP sizes.
+Topology and EP degree affect the candidate order, but they do not determine the
+winner. The canonical 16×H100 Qwen3 30B recipe uses HybridEP, while the current
+256×H100 Qwen3 235B recipe uses standard `alltoall` plus overlap.
 
 Treat dispatcher package availability as part of the experiment setup, not as a
 given. `alltoall` is the correctness fallback and should be the first smoke test
@@ -278,6 +309,13 @@ Keep the container, CUDA graph scope, routing mode, and MoE kernel-fusion flags
 fixed when comparing dispatcher throughput.
 
 ### Short-run H100 sanity check
+
+The current canonical 16×H100 Qwen3 30B-A3B BF16 performance recipe uses
+HybridEP with 32 SMs, 64-token combine chunks, plain EP overlap, delayed
+weight-gradient compute disabled, and TE graphs over `moe_router` and
+`moe_preprocess`. Its verified 50-step run averaged 20.14729 seconds and
+299.352 model TFLOPS/GPU over steps 41–50. This is a workload-specific result,
+not a universal H100 dispatcher rule.
 
 On 2026-05-17, a 16-GPU H100 smoke run of Qwen3 30B A3B BF16 with EP=16 and
 the recipe's Transformer Engine CUDA graph scopes (`moe_router`,
@@ -350,7 +388,7 @@ Key principles:
 
 | Feature | Purpose |
 |---|---|
-| Force-balance routing | Even token distribution; best for benchmarking |
+| Force-balance routing | Even token distribution for disclosed benchmark-only comparisons; validate natural routing separately |
 | Aux-loss-free balancing | Learnable expert bias; adapts over time |
 | Shared expert overlap | Hides shared expert latency behind dispatch/combine |
 | LatentMoE | Reduces comms and per-expert params by compression ratio α |

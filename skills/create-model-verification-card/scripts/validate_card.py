@@ -1086,8 +1086,26 @@ def _validate_inference(
         command_tokens = shlex.split(command)
     except ValueError:
         command_tokens = []
-    if command_tokens[:2] != ["uv", "run"]:
-        errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
+    uses_uv = command_tokens[:2] == ["uv", "run"]
+    uses_inference_launcher = command_tokens[:1] == ["./scripts/inference/infer.sh"]
+    if not uses_uv and not uses_inference_launcher:
+        errors.append(
+            f"{_pointer(*resolved_command_path)}: inference must use ./scripts/inference/infer.sh "
+            "or a local uv run helper"
+        )
+    if uses_inference_launcher:
+        task_values = _argument_values(command, "--task")
+        if len(task_values) != 1 or task_values[0] not in {
+            "text-generation",
+            "vlm-generation",
+            "model-comparison",
+        }:
+            errors.append(f"{_pointer(*resolved_command_path)}: infer.sh must specify one supported --task")
+        for resource_flag in ("--nodes", "--gpus-per-node"):
+            if len(_argument_values(command, resource_flag)) != 1:
+                errors.append(
+                    f"{_pointer(*resolved_command_path)}: infer.sh must specify {resource_flag} exactly once"
+                )
     prompts = _argument_values(command, "--prompt")
     if len(prompts) != 1:
         errors.append(f"{_pointer(*resolved_command_path)}: specify --prompt exactly once")
@@ -1182,10 +1200,23 @@ def _validate_manual_forward_pass(
     if status != "verified" or not isinstance(expected, str):
         return
 
-    prefix = ["uv", "run", "python", "-m", "torch.distributed.run"]
-    if tokens[:5] != prefix:
-        errors.append(f"{_pointer(*path, 'command')}: manual forward pass must use uv distributed run")
-    if "examples/conversion/compare_hf_and_megatron/compare.py" not in tokens:
+    legacy_prefix = ["uv", "run", "python", "-m", "torch.distributed.run"]
+    uses_legacy_helper = tokens[:5] == legacy_prefix
+    uses_inference_launcher = tokens[:1] == ["./scripts/inference/infer.sh"]
+    if not uses_inference_launcher and not uses_legacy_helper:
+        errors.append(
+            f"{_pointer(*path, 'command')}: manual forward pass must use ./scripts/inference/infer.sh "
+            "or the legacy uv distributed helper"
+        )
+    if uses_inference_launcher:
+        if _argument_values(command, "--task") != ["model-comparison"]:
+            errors.append(
+                f"{_pointer(*path, 'command')}: infer.sh manual forward pass must use --task model-comparison"
+            )
+        for resource_flag in ("--nodes", "--gpus-per-node"):
+            if len(_argument_values(command, resource_flag)) != 1:
+                errors.append(f"{_pointer(*path, 'command')}: infer.sh must specify {resource_flag} exactly once")
+    elif "examples/conversion/compare_hf_and_megatron/compare.py" not in tokens:
         errors.append(f"{_pointer(*path, 'command')}: use the HF/Megatron comparison helper")
     for argument in ("--hf_model_path", "--megatron_model_path", "--prompt"):
         if len(_argument_values(command, argument)) != 1:

@@ -14,7 +14,7 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Any, Dict, Generic, List, Optional, Self, TypeVar, Union
 
 import torch
 from transformers import (
@@ -204,7 +204,7 @@ class PreTrainedMaskedLM(PreTrainedBase, Generic[MaskedLMType]):
         torch_dtype: Optional[torch.dtype] = None,
         trust_remote_code: bool = False,
         **kwargs,
-    ) -> "PreTrainedMaskedLM[MaskedLMType]":
+    ) -> Self:
         """
         Create a PreTrainedMaskedLM instance for lazy loading.
 
@@ -251,20 +251,20 @@ class PreTrainedMaskedLM(PreTrainedBase, Generic[MaskedLMType]):
         """Decode token IDs back into text using the model's tokenizer."""
         return self.tokenizer.decode(token_ids, **kwargs)
 
-    def to(self, device: Union[str, torch.device]) -> "PreTrainedMaskedLM[MaskedLMType]":
+    def to(self, device: Union[str, torch.device]) -> Self:
         """Move model to specified device."""
         self.device = device
         if self.has_model:
             self._model = self._model.to(device)
         return self
 
-    def half(self) -> "PreTrainedMaskedLM[MaskedLMType]":
+    def half(self) -> Self:
         """Convert model to half precision (float16)."""
         if self.has_model:
             self._model = self._model.half()
         return self
 
-    def float(self) -> "PreTrainedMaskedLM[MaskedLMType]":
+    def float(self) -> Self:
         """Convert model to full precision (float32)."""
         if self.has_model:
             self._model = self._model.float()

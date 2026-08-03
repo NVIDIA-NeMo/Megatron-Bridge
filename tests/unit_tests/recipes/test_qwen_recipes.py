@@ -672,6 +672,11 @@ def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_functional_config(
     assert perf_cfg.optimizer.use_precision_aware_optimizer == default_cfg.optimizer.use_precision_aware_optimizer
     assert perf_cfg.model.moe_router_force_load_balancing is True
     assert default_cfg.model.moe_router_force_load_balancing is False
+    assert perf_cfg.model.moe_permute_fusion_into_hybridep is True
+    assert perf_cfg.model.moe_hybridep_num_sms == 32
+    assert perf_cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
+    assert perf_cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 10
+    assert perf_cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 10
 
 
 def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():

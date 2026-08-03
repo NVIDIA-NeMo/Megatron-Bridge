@@ -62,6 +62,11 @@ class TestDataSamplers:
 
                     return GPTModelProvider()
 
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
@@ -102,6 +107,11 @@ class TestDataSamplers:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
+                def get_model_config(self):
                     from megatron.bridge.models.gpt_provider import GPTModelProvider
 
                     return GPTModelProvider()
@@ -155,6 +165,11 @@ class TestDataSamplers:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
+                def get_model_config(self):
                     from megatron.bridge.models.gpt_provider import GPTModelProvider
 
                     return GPTModelProvider()
@@ -877,6 +892,11 @@ class TestBatchDataloaderIntegration:
 
                     return GPTModelProvider()
 
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
@@ -911,6 +931,11 @@ class TestBatchDataloaderIntegration:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
+                def get_model_config(self):
                     from megatron.bridge.models.gpt_provider import GPTModelProvider
 
                     return GPTModelProvider()

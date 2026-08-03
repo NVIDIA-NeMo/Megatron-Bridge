@@ -264,11 +264,32 @@ model-verification workload:
   conversion, with portable node and GPU counts;
 - use `scripts/training/train.sh --nodes ... --gpus-per-node ...` for every
   training item;
-- use `uv run python ...` only for inference helpers that do not yet have a
-  public Slurm executor;
+- use `scripts/inference/infer.sh --nodes ... --gpus-per-node ... --task ...`
+  for Megatron inference and manual model comparison; select
+  `text-generation`, `vlm-generation`, or `model-comparison` explicitly;
+- invoke public shell launchers directly from the card. Do not create Slurm
+  jobs by calling their Python setup modules, and do not wrap the launchers in
+  `uv run`, `python`, `srun`, or `sbatch`; the shell entry point owns its Python
+  environment and scheduler setup;
+- use `uv run python ...` only for a local artifact verifier that has no public
+  shell wrapper, such as deterministic Hugging Face inference after export. It
+  must not be used as a substitute for an available shell launcher or to create
+  a cluster job;
 - use short, ignored repository-relative logical paths under `work/...`;
   prefer aliases such as `work/data/<dataset>` and `work/cache/<model>` over
   reproducing a physical storage hierarchy.
+
+For example, a portable multi-node VLM verification starts with:
+
+```bash
+./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 \
+  --task vlm-generation \
+  --hf_model_path <org>/<model> \
+  --megatron_model_path work/model-verification/<model>/iter_0000000 \
+  --image_path docs/images/tp1.png \
+  --prompt "Describe this image." \
+  --max_new_tokens 64
+```
 
 The public launchers may read their required generic Slurm configuration from
 the caller's environment. Do not include `srun`, `sbatch`, concrete account or
@@ -564,10 +585,11 @@ result. Private executor configuration stays outside the card.
   expected to be lossless; otherwise state the numerical tolerance. Do not use
   `--detach` or a dry-run flag in a verified conversion command.
 - **Manual forward pass:** Compare Hugging Face and Megatron logits on the same
-  prompt with `examples/conversion/compare_hf_and_megatron/compare.py`. Record
-  whether the next token matches, the cosine similarity, and the maximum and
-  mean absolute logit differences. For new evidence, pass `--hf-revision` with
-  the exact `model.hf_revision` so the command itself is reproducibly pinned.
+  prompt with `scripts/inference/infer.sh --task model-comparison`, which routes
+  to `examples/conversion/compare_hf_and_megatron/compare.py`. Record whether
+  the next token matches, the cosine similarity, and the maximum and mean
+  absolute logit differences. For new evidence, pass `--hf-revision` with the
+  exact `model.hf_revision` so the command itself is reproducibly pinned.
   Historical evidence verified before 2026-07-20, when the helper gained
   explicit revision pinning, may remain verified without a rerun when its
   clean-run provenance is tied to the card's immutable `model.hf_revision`;
@@ -581,10 +603,11 @@ result. Private executor configuration stays outside the card.
   generation. Choose a prompt whose tokenized length is divisible by TP so the
   helper does not append padding before selecting the compared next-token
   position.
-- **Megatron inference:** Disable sampling, run one deterministic greedy
-  generation with an exact token count, and record the literal completion
-  including whitespace. A second replay may help diagnose nondeterminism, but
-  it is not required verification evidence.
+- **Megatron inference:** Launch through `scripts/inference/infer.sh` with the
+  explicit `text-generation` or `vlm-generation` task. Disable sampling, run
+  one deterministic greedy generation with an exact token count, and record
+  the literal completion including whitespace. A second replay may help
+  diagnose nondeterminism, but it is not required verification evidence.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
@@ -597,9 +620,12 @@ result. Private executor configuration stays outside the card.
 - **SFT export and inference:** Depend on `sft`, export its final full-model
   checkpoint to HF, reload the exported model with Transformers, and run one
   deterministic greedy generation. Store this item as an ordered `commands`
-  list containing exactly two strings: the synchronous Slurm export first and
-  the `uv run` HF inference second. Specify an exact new-token count and record
-  the literal completion, including whitespace, in `expected_result`.
+  list containing exactly two strings: the synchronous `convert.sh` Slurm
+  export first and the local `uv run` HF artifact verifier second. The second
+  command is an explicit exception because it validates the exported HF
+  artifact and does not create a scheduler job. Specify an exact new-token
+  count and record the literal completion, including whitespace, in
+  `expected_result`.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
@@ -737,7 +763,10 @@ an item verified merely to make validation pass.
   guarding on them. New evidence must pass the exact `model.hf_revision`
   through `--hf-revision`; retain older unpinned evidence only under the
   explicitly documented grandfathering rule above.
-- Use `convert.sh --executor slurm` for conversion and `train.sh` for training.
+- Use `convert.sh --executor slurm` for conversion, `train.sh` for training,
+  and `infer.sh --task ...` for Megatron inference and model comparison. Invoke
+  these shell launchers directly; never call their Python setup modules to
+  create jobs.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Put every training result under its canonical public hardware key and include

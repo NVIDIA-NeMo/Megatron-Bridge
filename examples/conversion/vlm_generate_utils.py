@@ -195,6 +195,7 @@ def process_image_inputs(
     *,
     is_gemma4: bool = False,
     is_kimi: bool = False,
+    is_minimax: bool = False,
     is_mistral3: bool = False,
     image_token_id: Optional[int] = None,
 ):
@@ -216,6 +217,9 @@ def process_image_inputs(
     if is_kimi:
         return _process_kimi_inputs(processor, image_path, prompt, image_token_id)
 
+    if is_minimax:
+        return _process_minimax_inputs(processor, image_path, prompt)
+
     return _process_default_inputs(processor, image_path, prompt, allow_raw_prompt=is_mistral3)
 
 
@@ -234,6 +238,38 @@ def _process_kimi_inputs(processor, image_path, prompt, image_token_id):
     grid_thws = getattr(inputs, "grid_thws", None)
     input_ids = pre_expand_vision_tokens(inputs.input_ids, grid_thws, image_token_id)
     return input_ids, inputs.pixel_values, grid_thws, None, None, None
+
+
+def _process_minimax_inputs(processor, image_path, prompt):
+    """Format MiniMax multimodal input with its tokenizer chat template."""
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is None or getattr(tokenizer, "chat_template", None) is None:
+        raise ValueError("The MiniMax tokenizer has no chat template")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": prompt},
+            ],
+        }
+    ]
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = processor(
+        text=[text],
+        images=[load_image(image_path).convert("RGB")],
+        padding=True,
+        return_tensors="pt",
+    )
+    return (
+        inputs.input_ids,
+        inputs.get("pixel_values"),
+        inputs.get("image_grid_thw"),
+        inputs.get("image_sizes"),
+        inputs.get("mm_token_type_ids"),
+        inputs.get("image_position_ids"),
+    )
 
 
 def _process_default_inputs(processor, image_path, prompt, *, allow_raw_prompt=False):

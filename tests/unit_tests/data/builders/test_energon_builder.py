@@ -243,6 +243,38 @@ def test_builder_honors_requested_splits_and_reuses_runtime_encoder(monkeypatch:
     assert datamodule_cls.call_args.kwargs["packing_buffer_size"] == 32
 
 
+def test_builder_preserves_checkpointable_train_loader(monkeypatch: pytest.MonkeyPatch):
+    class CheckpointableLoader:
+        def __init__(self):
+            self._iterator = iter(["train"])
+
+        def __iter__(self):
+            return self._iterator
+
+        def save_state(self):
+            return {"sample": 0}
+
+        def restore_state(self, state):
+            self._iterator = iter(["train"])
+
+    config = _qwen_config()
+    train_loader = CheckpointableLoader()
+    datamodule = MagicMock()
+    datamodule.train_dataloader.return_value = train_loader
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.build_energon_task_encoder", lambda _: object())
+    monkeypatch.setattr(
+        base_energon_datamodule,
+        "EnergonMultiModalDataModule",
+        MagicMock(return_value=datamodule),
+    )
+
+    train, _, _ = EnergonDatasetBuilder(config).build(
+        DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0)
+    )
+
+    assert train is train_loader
+
+
 def test_builder_skips_unrequested_validation(monkeypatch: pytest.MonkeyPatch):
     config = _qwen_config(do_validation=False)
     datamodule = MagicMock()

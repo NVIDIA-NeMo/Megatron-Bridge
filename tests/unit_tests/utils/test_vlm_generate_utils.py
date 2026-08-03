@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Unit tests for VLM generation helpers
-in ``examples.conversion.vlm_generate_utils``.
+in ``scripts/inference/vlm_generation_utils.py``.
 
 Covers the ``ImportError`` fallback when ``qwen_vl_utils`` is unavailable
 and the success paths with mocked processors and ``qwen_vl_utils`` helpers.
@@ -22,20 +22,23 @@ and the success paths with mocked processors and ``qwen_vl_utils`` helpers.
 import importlib.util
 import os
 import sys
+import types
 from unittest import mock
 
 import pytest
 import torch
 
 
-# Load examples/conversion/vlm_generate_utils.py directly from its file path.
-# This avoids ambiguity when another `examples` package (e.g. from Megatron-LM)
-# shadows the local one on sys.path.
+# Load scripts/inference/vlm_generation_utils.py directly from its file path.
 _REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_VLM_GEN_UTILS_PATH = os.path.join(_REPO_ROOT, "examples", "conversion", "vlm_generate_utils.py")
+_VLM_GEN_UTILS_PATH = os.path.join(_REPO_ROOT, "scripts", "inference", "vlm_generation_utils.py")
 _spec = importlib.util.spec_from_file_location("vlm_generate_utils_under_test", _VLM_GEN_UTILS_PATH)
 vlm_generate_utils = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(vlm_generate_utils)
+_safe_url_module = types.ModuleType("megatron.bridge.utils.safe_url")
+_safe_url_module.is_safe_public_http_url = mock.MagicMock()
+_safe_url_module.safe_url_open = mock.MagicMock()
+with mock.patch.dict(sys.modules, {"megatron.bridge.utils.safe_url": _safe_url_module}):
+    _spec.loader.exec_module(vlm_generate_utils)
 
 
 @pytest.mark.unit
@@ -200,9 +203,61 @@ class TestProcessImageInputs:
         """Do not apply the Ministral raw-prompt convention to other VLMs."""
         proc = mock.MagicMock()
         proc.chat_template = None
+        proc.tokenizer.chat_template = None
 
         with pytest.raises(ValueError, match="no model-specific raw-prompt fallback"):
             vlm_generate_utils.process_image_inputs(proc, "/image.png", "describe")
+
+    def test_minimax_uses_tokenizer_chat_template(self):
+        """MiniMax must format the multimodal prompt with its tokenizer template."""
+        inputs = mock.MagicMock()
+        inputs.input_ids = torch.tensor([[10, 20]])
+        inputs.get.side_effect = lambda key: {
+            "pixel_values": "PIXELS",
+            "image_grid_thw": "GRID",
+        }.get(key)
+
+        proc = mock.MagicMock()
+        proc.chat_template = None
+        proc.tokenizer.chat_template = "TOKENIZER_TEMPLATE"
+        proc.tokenizer.apply_chat_template.return_value = "TEMPLATED"
+        proc.return_value = inputs
+        image = mock.MagicMock()
+        image.convert.return_value = "RGB_IMAGE"
+
+        with mock.patch.object(vlm_generate_utils, "load_image", return_value=image) as load_image_mock:
+            result = vlm_generate_utils.process_image_inputs(
+                proc,
+                "/image.png",
+                "describe",
+                is_minimax=True,
+            )
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "describe"},
+                ],
+            }
+        ]
+        proc.tokenizer.apply_chat_template.assert_called_once_with(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        load_image_mock.assert_called_once_with("/image.png")
+        image.convert.assert_called_once_with("RGB")
+        proc.assert_called_once_with(
+            text=["TEMPLATED"],
+            images=["RGB_IMAGE"],
+            padding=True,
+            return_tensors="pt",
+        )
+        assert torch.equal(result[0], torch.tensor([[10, 20]]))
+        assert result[1] == "PIXELS"
+        assert result[2] == "GRID"
 
     def test_kimi_image_path_returns_full_six_field_contract(self):
         """Kimi image preprocessing must match the VLM generation unpack contract."""

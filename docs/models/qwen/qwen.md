@@ -232,15 +232,16 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 ```python
 from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain_config
 
-config = qwen3_30b_a3b_pretrain_config(
-    name="qwen3_30b_a3b_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/qwen3_30b_a3b",
-    train_iters=500_000,
-    global_batch_size=2048,
-    seq_length=4096,
-    # Uses TP=1, PP=1, EP=16 (16 GPUs) automatically
-)
+config = qwen3_30b_a3b_pretrain_config()
+config.dataset.data_path = "/path/to/dataset_text_document"
+config.checkpoint.save = "/results/qwen3_30b_a3b/checkpoints"
+config.logger.tensorboard_dir = "/results/qwen3_30b_a3b/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 2048
+config.scheduler.lr_decay_iters = 500_000
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=1, PP=1, EP=16 (16 GPUs) automatically
 ```
 
 **Qwen3-235B-A22B**
@@ -248,15 +249,16 @@ config = qwen3_30b_a3b_pretrain_config(
 ```python
 from megatron.bridge.recipes.qwen import qwen3_235b_a22b_pretrain_config
 
-config = qwen3_235b_a22b_pretrain_config(
-    name="qwen3_235b_a22b_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/qwen3_235b_a22b",
-    train_iters=500_000,
-    global_batch_size=4096,
-    seq_length=4096,
-    # Uses TP=2, PP=8, EP=32 (512 GPUs) automatically
-)
+config = qwen3_235b_a22b_pretrain_config()
+config.dataset.data_path = "/path/to/dataset_text_document"
+config.checkpoint.save = "/results/qwen3_235b_a22b/checkpoints"
+config.logger.tensorboard_dir = "/results/qwen3_235b_a22b/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 4096
+config.scheduler.lr_decay_iters = 500_000
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=2, PP=8, EP=32 (512 GPUs) automatically
 ```
 
 #### Finetuning Examples
@@ -266,14 +268,13 @@ config = qwen3_235b_a22b_pretrain_config(
 ```python
 from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
 
-config = qwen3_30b_a3b_sft_config(
-    name="qwen3_30b_a3b_full_sft",
-    pretrained_checkpoint="/results/qwen3_30b_a3b/checkpoints/iter_0500000",
-    train_iters=1000,
-    global_batch_size=64,
-    finetune_lr=5e-6,
-    # Uses TP=1, PP=1, EP=16 (16 GPUs) automatically
-)
+config = qwen3_30b_a3b_sft_config()
+config.checkpoint.pretrained_checkpoint = "/results/qwen3_30b_a3b/checkpoints/iter_0500000"
+config.train.train_iters = 1000
+config.train.global_batch_size = 64
+config.scheduler.lr_decay_iters = 1000
+config.optimizer.lr = 5e-6
+# Uses TP=1, PP=1, EP=16 (16 GPUs) automatically
 ```
 
 **LoRA Finetuning (30B):**
@@ -281,15 +282,13 @@ config = qwen3_30b_a3b_sft_config(
 ```python
 from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
-config = qwen3_30b_a3b_peft_config(
-    name="qwen3_30b_a3b_lora",
-    pretrained_checkpoint="/results/qwen3_30b_a3b/checkpoints/iter_0500000",
-    peft_scheme="lora",  # or "dora"
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=1e-4,
-    # Uses TP=4, PP=1, EP=4 (4 GPUs) automatically
-)
+config = qwen3_30b_a3b_peft_config(peft_scheme="lora")  # or "dora"
+config.checkpoint.pretrained_checkpoint = "/results/qwen3_30b_a3b/checkpoints/iter_0500000"
+config.train.train_iters = 1000
+config.train.global_batch_size = 128
+config.scheduler.lr_decay_iters = 1000
+config.optimizer.lr = 1e-4
+# Uses TP=4, PP=1, EP=4 (4 GPUs) automatically
 ```
 
 ### Hugging Face Model Cards

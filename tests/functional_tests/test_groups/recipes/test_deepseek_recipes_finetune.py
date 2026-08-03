@@ -31,6 +31,7 @@ import torch
 from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_no_mtp_sft_config,
     deepseek_v4_flash_sft_config,
+    deepseek_v4_flash_sft_openmath_thinking_packed_config,
 )
 from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
 
@@ -89,6 +90,7 @@ DEEPSEEK_V4_SFT_MODEL_OVERRIDES = {
 DEEPSEEK_V4_SFT_RECIPES = [
     (deepseek_v4_flash_sft_config, "deepseek_v4_flash_sft", False),
     (deepseek_v4_flash_no_mtp_sft_config, "deepseek_v4_flash_no_mtp_sft", False),
+    (deepseek_v4_flash_sft_openmath_thinking_packed_config, "deepseek_v4_flash_sft_openmath_thinking_packed", False),
 ]
 
 

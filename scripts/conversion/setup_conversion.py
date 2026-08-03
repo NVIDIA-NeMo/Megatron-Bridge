@@ -149,12 +149,13 @@ def _build_executor(
     task_count = args.gpus_per_node if args.device == "gpu" else 1
     launcher = run.Torchrun() if args.executor == "local" and args.device == "gpu" else None
     if args.executor == "local":
-        return run.LocalExecutor(
-            nodes=1,
+        executor = run.LocalExecutor(
             ntasks_per_node=task_count,
             launcher=launcher,
             packager=run.Packager(),
         )
+        executor.nodes = 1
+        return executor
 
     gpu_kwargs = {}
     if args.device == "gpu" and not args.no_gpu_resource_request:

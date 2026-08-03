@@ -1,6 +1,6 @@
 ---
 name: nemo-mbridge-perf-moe-dispatcher-selection
-description: Choose the right MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage. Summarizes patterns from DSV3, Qwen3, Qwen3-Next, and VLM bring-up work.
+description: Select and validate an MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for a fixed workload and runtime. Covers backend availability, topology, matched A/B evidence, routing semantics, and failure diagnosis.
 license: Apache-2.0
 when_to_use: Choosing a MoE token dispatcher, or tracing a MoE regression or crash to a dispatcher config change; 'which dispatcher', 'alltoall vs DeepEP', 'HybridEP', 'MoE dispatcher', 'flex backend', 'EP dispatcher selection'.
 ---
@@ -14,29 +14,33 @@ Card: @skills/nemo-mbridge-perf-moe-dispatcher-selection/card.yaml
 
 ### By hardware
 
-| Hardware | First choice | Why |
+| Hardware | Bring-up path | Tuned candidates |
 |---|---|---|
-| H100 | DeepEP, if the runtime package is installed | Strong default for cross-node EP on Hopper |
-| B200 | DeepEP, if the runtime package is installed | Good first choice unless a platform-specific HybridEP path is available |
-| GB200 / GB300 NVL72 | HybridEP, if the runtime package is installed | Best fit for NVLink-domain-aware dispatch and lower memory pressure |
-| Unknown or first bring-up | `alltoall` | Easiest path for correctness and debugging |
+| H100 | `alltoall` | A/B DeepEP and HybridEP when installed; the current 16×H100 Qwen3 30B winner is HybridEP |
+| B200 | `alltoall` | A/B DeepEP and HybridEP when supported by the target runtime |
+| GB200 / GB300 NVL72 | `alltoall` | HybridEP is the strongest topology-informed candidate; compare DeepEP when available |
+| Unknown | `alltoall` | Add one flex backend only after the correctness baseline is stable |
+
+Hardware narrows the candidate set; it does not select the winner. Hold the
+model, routing, batch shape, parallelism, overlap, graph scope, container, and
+timing window fixed during the comparison.
 
 ### By EP degree
 
 | EP size | Guidance |
 |---|---|
-| Small EP | Dispatcher choice is usually second-order; start with `alltoall` or DeepEP |
-| Medium EP | DeepEP often becomes worthwhile |
-| Large EP | HybridEP is usually the best target on NVL72 systems |
+| Small EP | Dispatcher choice may be second-order; start with `alltoall` |
+| Medium EP | Profile first, then A/B the installed flex backends |
+| Large EP | Prioritize topology-aware candidates, but still require a matched A/B |
 
 ## Model-Family Patterns
 
 | Workload | Common best path | Notes |
 |---|---|---|
-| DSV3 at large scale | HybridEP on GB200 or GB300, DeepEP on H100 | Dispatcher choice matters more as EP and PP both grow |
-| Qwen3 235B | DeepEP on H100, HybridEP on GB200 | HybridEP usually wins on GB200 and often uses less memory |
-| Qwen3 30B | DeepEP | Smaller models still benefit, but the absolute gap is smaller |
-| Qwen3-Next | Close race in BF16, HybridEP stronger in FP8 or memory-tight runs | Good reminder to test, not assume |
+| DSV3 at large scale | Measured snapshots use HybridEP on GB200/GB300 and DeepEP on H100 | Revalidate against the target container and topology |
+| Qwen3 235B | Current H100 recipe uses `alltoall` plus overlap; measured GB200 snapshots use HybridEP | Do not replace the current recipe from a hardware rule alone |
+| Qwen3 30B | Current canonical 16×H100 recipe uses HybridEP | Direct counterexample to H100 → DeepEP mapping |
+| Qwen3-Next | Workload-dependent | Precision, memory, PP layout, and kernels can change the ordering |
 | MoE VLMs | Start simple, then test HybridEP on GB200-class systems | Vision workloads are sensitive to both memory and host overhead |
 
 ## Rounded Evidence Summary
@@ -52,6 +56,17 @@ record the import failure as an environment limitation and treat `alltoall` as
 the only measured correctness fallback for that run.
 
 ### Qwen3 30B A3B on H100
+
+The current canonical 16×H100 BF16 performance recipe uses HybridEP, 32
+HybridEP SMs, 64-token combine chunks, plain expert-parallel communication
+overlap, delayed weight-gradient compute disabled, and TE graphs over
+`moe_router` and `moe_preprocess`. Its verified 50-step run averaged 20.14729 s
+and 299.352 model TFLOPS/GPU over steps 41–50. This proves HybridEP can win on
+NVL8 H100; it does not prove HybridEP is universal.
+
+An earlier matched overlap A/B on the same broad shape isolated a rise from
+244.039 to 287.305 TFLOPS/GPU. Keep that causal result separate from the later
+multi-knob canonical winner.
 
 A short 2026-05-17 H100 smoke run used Qwen3 30B A3B BF16, 16 GPUs, EP=16,
 the recipe's Transformer Engine CUDA graph scopes (`moe_router`,
@@ -139,15 +154,17 @@ available.
 --moe-router-force-load-balancing
 ```
 
-For performance benchmarking, force-balance routing is the safer default. It
-usually outperforms dropless routing in large-scale benchmarks and makes results
-more comparable across dispatcher backends.
+Forced load balancing is a **benchmark-only** control that can reduce routing
+variance across dispatcher backends. It changes routing semantics, so keep it
+fixed within the dispatcher A/B and do not use it to accept a
+training-equivalent or convergence-sensitive result. Validate the production
+winner again with natural routing.
 
 ## Key Interactions
 
 | Feature | Interaction |
 |---|---|
-| CUDA graphs | Best paired with `attn moe_router moe_preprocess` on dropless MoE |
+| CUDA graphs | Profile-driven candidate; start narrow and re-test after dispatcher changes |
 | EP overlap | Helps when dispatcher time is still visible after backend tuning |
 | FP8 | Often increases the relative importance of communication and host overhead |
 | CPU affinity | Can matter as much as dispatcher choice on GB200 or GB300 |
@@ -163,13 +180,14 @@ more comparable across dispatcher backends.
 
 ### DeepEP
 
-- Hopper or B200 deployments
+- any supported target runtime where DeepEP imports successfully
 - cross-node EP is clearly visible in profiles
-- you want a mature intermediate step before testing HybridEP
+- a matched steady-state A/B beats the alternatives
 
 ### HybridEP
 
-- GB200 or GB300 NVL72 systems
+- NVL72 systems, where the topology makes it a high-priority candidate
+- NVL8 systems when the package supports the topology and a matched A/B wins
 - large EP degrees
 - memory headroom matters in addition to throughput
 
@@ -178,8 +196,8 @@ more comparable across dispatcher backends.
 1. **Do not compare dispatchers on different stacks**: container, routing mode,
    PP layout, and CUDA-graph scope can move the result as much as the dispatcher.
 
-2. **HybridEP is topology-sensitive**: it is not a universal win outside the
-   hardware it was designed for.
+2. **HybridEP is topology-sensitive**: configure the actual NVLink domain and
+   do not infer support or performance from the GPU SKU alone.
 
 3. **Both dispatchers need SM tuning**: default `moe_deepep_num_sms` (20) and
    `moe_hybridep_num_sms` (16) are reasonable starting points but rarely optimal.
@@ -195,3 +213,9 @@ more comparable across dispatcher backends.
    is missing from the container, do not compare its failed job against a
    completed `alltoall` job. Fix the environment first, then rerun the same
    stack.
+
+7. **Forced routing is not training equivalence**: use it only as a disclosed
+   benchmark control, then validate natural routing separately.
+
+8. **Config selection is not backend proof**: require runtime evidence that the
+   requested flex backend initialized and completed steady iterations.

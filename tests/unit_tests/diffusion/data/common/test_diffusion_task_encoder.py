@@ -112,7 +112,7 @@ def test_select_samples_to_pack(monkeypatch):
 
     # Verify no bin exceeds seq_length
     for group in result:
-        total_seq_len = sum(sample.seq_len_q.item() for sample in group)
+        total_seq_len = sum(sample.seq_len_q_padded.item() for sample in group)
         assert total_seq_len <= encoder.seq_length, (
             f"Bin with total {total_seq_len} exceeds seq_length {encoder.seq_length}"
         )
@@ -120,8 +120,44 @@ def test_select_samples_to_pack(monkeypatch):
     # Verify that bins are non-empty
     assert all(len(group) > 0 for group in result), "No bin should be empty"
 
-    print(f"✓ Successfully packed {len(samples)} samples into {len(result)} bins")
-    print(f"  Bin sizes: {[sum(s.seq_len_q.item() for s in group) for group in result]}")
+
+def test_select_samples_to_pack_uses_padded_lengths_and_stable_identity(monkeypatch):
+    """The real selector must pack original samples by padded length with stable ties."""
+    _patch_worker_config(monkeypatch)
+
+    encoder = ConcreteDiffusionTaskEncoder(seq_length=16)
+    samples = [
+        create_diffusion_sample("sample_0", seq_len=6),
+        create_diffusion_sample("sample_1", seq_len=6),
+        create_diffusion_sample("sample_2", seq_len=4),
+    ]
+    samples[0].seq_len_q_padded = torch.tensor([10], dtype=torch.int32)
+    samples[1].seq_len_q_padded = torch.tensor([10], dtype=torch.int32)
+
+    result = encoder.select_samples_to_pack(samples)
+
+    bins_by_key = sorted([[sample.__key__ for sample in group] for group in result])
+    assert bins_by_key == [["sample_0", "sample_2"], ["sample_1"]]
+    by_key = {sample.__key__: sample for group in result for sample in group}
+    assert all(by_key[sample.__key__] is sample for sample in samples)
+    assert all(sum(sample.seq_len_q_padded.item() for sample in group) <= encoder.seq_length for group in result)
+
+
+def test_select_samples_to_pack_handles_empty_and_oversized_inputs(monkeypatch):
+    """The real selector must retain empty and one-item oversized-bin behavior."""
+    _patch_worker_config(monkeypatch)
+
+    encoder = ConcreteDiffusionTaskEncoder(seq_length=20)
+    assert encoder.select_samples_to_pack([]) == []
+
+    samples = [
+        create_diffusion_sample("oversized_0", seq_len=25),
+        create_diffusion_sample("oversized_1", seq_len=30),
+    ]
+    result = encoder.select_samples_to_pack(samples)
+
+    assert sorted([[sample.__key__ for sample in group] for group in result]) == [["oversized_0"], ["oversized_1"]]
+    assert {id(sample) for group in result for sample in group} == {id(sample) for sample in samples}
 
 
 def test_select_samples_to_pack_deterministic(monkeypatch):
@@ -206,7 +242,3 @@ def test_pack_selected_samples():
     assert packed_sample.latent_shape.shape[0] == 3, "latent_shape should have 3 rows"
     assert isinstance(packed_sample.video_metadata, list), "video_metadata should be a list"
     assert len(packed_sample.video_metadata) == 3, "video_metadata should have 3 elements"
-
-    print(f"✓ Successfully packed {len(samples_to_pack)} samples")
-    print(f"  Packed video shape: {packed_sample.video.shape}")
-    print(f"  Packed context embeddings shape: {packed_sample.context_embeddings.shape}")
