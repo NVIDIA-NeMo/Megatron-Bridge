@@ -68,15 +68,15 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     *,
     num_gpus: int,
-    pipeline_model_parallel_size: int,
+    tensor_model_parallel_size: int,
     global_batch_size: int,
 ) -> ConfigContainer:
-    """Build a TP1 Nemotron 3 Ultra H100 BF16 FSDP candidate."""
+    """Build a PP1 Nemotron 3 Ultra H100 BF16 FSDP candidate."""
     cfg = _nemotron_3_ultra_perf_fsdp_config(
         num_gpus=num_gpus,
         compute_dtype="bf16",
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=1,
         virtual_pipeline_model_parallel_size=None,
         expert_model_parallel_size=64,
         global_batch_size=global_batch_size,
@@ -89,11 +89,11 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     return cfg
 
 
-def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_pp2_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 128× H100, TP1/PP2 BF16 FSDP."""
+def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 128× H100, TP2/PP1 BF16 FSDP."""
     cfg = _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         num_gpus=128,
-        pipeline_model_parallel_size=2,
+        tensor_model_parallel_size=2,
         global_batch_size=256,
     )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -120,10 +120,10 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_pp2_config() -> ConfigContai
 
 
 def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× H100, TP1/PP4 BF16 FSDP."""
+    """Nemotron 3 Ultra pretrain: 256× H100, TP4/PP1 BF16 FSDP."""
     cfg = _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         num_gpus=256,
-        pipeline_model_parallel_size=4,
+        tensor_model_parallel_size=4,
         global_batch_size=512,
     )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

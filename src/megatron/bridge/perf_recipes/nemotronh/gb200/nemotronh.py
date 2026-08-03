@@ -311,18 +311,18 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+def _nemotron_3_ultra_pretrain_gb200_fp8mx_tp2_config(
     *,
     num_gpus: int,
     global_batch_size: int,
     nccl_user_buffers: bool,
 ) -> ConfigContainer:
-    """Build the TP1/PP2 Ultra FSDP throughput candidate."""
+    """Build the TP2/PP1 Ultra FSDP throughput candidate."""
     cfg = _nemotron_3_ultra_perf_fsdp_config(
         num_gpus=num_gpus,
         compute_dtype="fp8_mx",
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=2,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
         virtual_pipeline_model_parallel_size=None,
         expert_model_parallel_size=64,
         global_batch_size=global_batch_size,
@@ -336,9 +336,9 @@ def _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
     return cfg
 
 
-def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_config() -> ConfigContainer:
-    """Nemotron 3 Ultra: 128× GB200, TP1/PP2 MXFP8 FSDP without CPU offload."""
-    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_config() -> ConfigContainer:
+    """Nemotron 3 Ultra: 128× GB200, TP2/PP1 MXFP8 FSDP without CPU offload."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_tp2_config(
         num_gpus=128,
         global_batch_size=256,
         nccl_user_buffers=False,
@@ -369,9 +369,9 @@ def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_config() -> ConfigContainer
     return cfg
 
 
-def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContainer:
-    """Nemotron 3 Ultra 128-GPU TP1/PP2 FSDP candidate with NCCL user buffers."""
-    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_ub_config() -> ConfigContainer:
+    """Nemotron 3 Ultra 128-GPU TP2/PP1 FSDP candidate with NCCL user buffers."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_tp2_config(
         num_gpus=128,
         global_batch_size=256,
         nccl_user_buffers=True,
@@ -401,9 +401,9 @@ def nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContai
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_config() -> ConfigContainer:
-    """Nemotron 3 Ultra: 256× GB200, TP1/PP2 MXFP8 FSDP without CPU offload."""
-    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp2_config() -> ConfigContainer:
+    """Nemotron 3 Ultra: 256× GB200, TP2/PP1 MXFP8 FSDP without CPU offload."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_tp2_config(
         num_gpus=256,
         global_batch_size=512,
         nccl_user_buffers=False,
@@ -434,9 +434,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_config() -> ConfigContainer
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContainer:
-    """Nemotron 3 Ultra TP1/PP2 FSDP candidate with NCCL user buffers."""
-    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_pp2_config(
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp2_ub_config() -> ConfigContainer:
+    """Nemotron 3 Ultra TP2/PP1 FSDP candidate with NCCL user buffers."""
+    cfg = _nemotron_3_ultra_pretrain_gb200_fp8mx_tp2_config(
         num_gpus=256,
         global_batch_size=512,
         nccl_user_buffers=True,
@@ -466,13 +466,13 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp2_ub_config() -> ConfigContai
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_pp4_config() -> ConfigContainer:
-    """Nemotron 3 Ultra: 256× GB200, TP1/PP4 MXFP8 FSDP without CPU offload."""
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp4_config() -> ConfigContainer:
+    """Nemotron 3 Ultra: 256× GB200, TP4/PP1 MXFP8 FSDP without CPU offload."""
     cfg = _nemotron_3_ultra_perf_fsdp_config(
         num_gpus=256,
         compute_dtype="fp8_mx",
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=4,
+        tensor_model_parallel_size=4,
+        pipeline_model_parallel_size=1,
         virtual_pipeline_model_parallel_size=None,
         expert_model_parallel_size=64,
         global_batch_size=512,
