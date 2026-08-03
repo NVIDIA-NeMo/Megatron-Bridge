@@ -417,8 +417,9 @@ items:
         set, while leaving the MTP latent projection outside whole-MoE checkpoint
         replay. TE grouped linears and fused weighted squared-ReLU must remain active
         through the non-op-fuser path. Eight CUDA device connections must retain
-        Megatron-FSDP stream independence while bounding Hopper driver resources,
-        with no CPU activation offload.
+        Megatron-FSDP stream independence while bounding Hopper driver resources.
+        One-MiB NCCL pair buffers must bound communication workspace, with no CPU
+        activation offload.
         Gradient and loss NaN checks must remain enabled.
         Standard all-to-all avoids replaying stateful HybridEP communication;
         disabling the operation fuser selects MCore's standalone MoE-activation

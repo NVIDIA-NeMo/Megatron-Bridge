@@ -160,6 +160,8 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config() -> ConfigContai
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # Bound NCCL pair buffers to one MiB for this capacity-constrained model.
+        "NCCL_BUFFSIZE": 1048576,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # Transformer Engine overlap settings for this model.
@@ -186,6 +188,8 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # Bound NCCL pair buffers to one MiB for this capacity-constrained model.
+        "NCCL_BUFFSIZE": 1048576,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # Transformer Engine overlap settings for this model.
