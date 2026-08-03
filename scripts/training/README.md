@@ -109,6 +109,7 @@ Benchmark recipes retain their recipe-owned dataset and reject `--dataset`.
 |---|---|---|---|
 | `mock` | Source selector | pretrain | In-memory generated GPT data |
 | `megatron-indexed` | Source selector | pretrain | Local Megatron `.bin/.idx` data; never falls back to mock |
+| `energon` | Source selector | pretrain/sft/lora/dora | Local Energon data selected by `dataset.path`; preserves a recipe-owned task encoder or uses its Hugging Face processor |
 | `local-jsonl` | Source selector | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
 | `local-vlm` | Source selector | sft/lora/dora | Local VLM JSON/JSONL selected through `dataset.source` overrides |
 | `squad` | Named preset | sft/lora/dora | Hugging Face SQuAD preset |
@@ -137,6 +138,35 @@ the index cache.
 
 The launcher does not infer the source corpus from the files. For one preprocessing example, see
 [the DCLM tutorial](../../tutorials/data/dclm/README.md).
+
+### Energon data
+
+Use `energon` with a VLM recipe that already owns an
+`EnergonDatasetConfig` or exposes `dataset.hf_processor_path`. Select
+pretraining, SFT, LoRA, or DoRA independently with `--mode`; the selector
+preserves a recipe-owned model-specific task encoder and otherwise constructs
+the generic Hugging Face task encoder.
+
+For example, the existing Qwen 35B-A3B recipe can train on prepared DataComp
+shards with explicit dataset, processor, and batch settings:
+
+```bash
+--dataset energon \
+train.global_batch_size=512 \
+train.micro_batch_size=1 \
+dataset.micro_batch_size=1 \
+dataset.path=/data/datacomp-energon \
+dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B \
+dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
+```
+
+Set both micro-batch fields when overriding the recipe's micro-batch size; the
+runner does not silently synchronize them. ChatML data must use the
+repository's `ChatMLWebdataset` tar-member contract.
+The [DataComp tutorial](../../tutorials/data/datacomp/README.md) documents a
+complete image-caption preparation and training flow; the
+[multimodal Energon tutorial](../../tutorials/data/energon/README.md) documents
+the general tar-member contract.
 
 ### OpenMathInstruct-2
 

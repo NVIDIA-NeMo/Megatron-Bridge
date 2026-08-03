@@ -10,6 +10,7 @@ Choose the tutorial that matches how your examples should reach the training loo
 | Text SFT or PEFT from prepared `.bin`/`.idx` | Planned Issue #4664 workflow; not available yet | Follow Issue #4664 | Future prepared-SFT builder |
 | Multimodal SFT or PEFT from Hugging Face | Recommended for hosted vision, video, audio, and omni data or local JSON/JSONL loaded through Hugging Face datasets | [Hugging Face multimodal](hf-multimodal/README.md) | `HFDatasetSourceConfig` → `DirectHFSFTDatasetConfig` → `DirectHFSFTDatasetBuilder` |
 | Large sharded multimodal training | Recommended for WebDataset/Energon data | [Multimodal Energon](energon/README.md) | `EnergonDatasetConfig` → `EnergonDatasetBuilder` |
+| DataComp image-caption training | Pinned metadata slice downloaded with the official tool and converted to generic ChatML shards | [DataComp with Energon](datacomp/README.md) | DataComp WebDataset → `ChatMLWebdataset` → `EnergonDatasetBuilder` |
 
 ## Which SFT path should I use?
 
