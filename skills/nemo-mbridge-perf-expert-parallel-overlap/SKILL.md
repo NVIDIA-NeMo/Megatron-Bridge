@@ -4,7 +4,6 @@ description: Validate and use MoE expert-parallel communication overlap in Megat
 license: Apache-2.0
 when_to_use: Enabling EP overlap to hide dispatch/combine latency, or tracing a throughput regression to an EP overlap config change; 'overlap_moe_expert_parallel_comm', 'delay_wgrad_compute', 'flex dispatcher', 'DeepEP overlap', 'HybridEP overlap'.
 ---
-<!-- NVSkills signature refresh request: 2026-08-02T19:32:21Z. No instruction changes. -->
 
 # MoE Expert-Parallel Overlap Skill
 
@@ -358,3 +357,5 @@ def _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=False):
 - MoE overlap and shared-expert overlap are mutually exclusive.
 - CUDA graph plus delayed wgrad is a multi-constraint path that requires
   careful TE version and scope validation.
+
+_Last signature refresh: 2026-08-03._
