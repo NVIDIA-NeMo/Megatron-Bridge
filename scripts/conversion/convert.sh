@@ -43,7 +43,8 @@ if [[ ${expect_executor_value} == true ]]; then
 fi
 
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    UV_ARGS=(--no-project --active --with nemo-run==0.10.0)
+    # Use NeMo Run from the pre-populated environment (for example, the CI container).
+    UV_ARGS=(--no-project --active)
 elif [[ ${executor} == slurm ]]; then
     # The Slurm head-node launcher only needs NeMo Run; model dependencies live
     # in the submitted container.

@@ -52,6 +52,7 @@ TrainFunctionEntry = Callable | tuple[str, str]
 
 STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
     "audio_lm_step": ("megatron.bridge.training.audio_lm_step", "forward_step"),
+    "dsv4_step": ("megatron.bridge.models.deepseek.deepseek_v4_step", "forward_step"),
     "gpt_step": ("megatron.bridge.training.gpt_step", "forward_step"),
     "llm_step": ("megatron.bridge.training.gpt_step", "forward_step"),
     "vlm_step": ("megatron.bridge.training.vlm_step", "forward_step"),
@@ -66,6 +67,7 @@ STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
 
 STEP_MODALITIES = {
     "audio_lm_step": "audio",
+    "dsv4_step": "text",
     "gpt_step": "text",
     "llm_step": "text",
     "vlm_step": "vlm",
