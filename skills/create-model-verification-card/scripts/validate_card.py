@@ -1130,9 +1130,7 @@ def _validate_inference(
         "inference": {"text-generation", "vlm-generation"},
         "sft_export_inference": {"hf-inference"},
     }.get(item_name, set())
-    uses_inference_launcher = any(
-        _is_inference_launcher(command, task=task) for task in allowed_launcher_tasks
-    )
+    uses_inference_launcher = any(_is_inference_launcher(command, task=task) for task in allowed_launcher_tasks)
     if uses_inference_launcher:
         _validate_synchronous_inference_launcher(command, path=resolved_command_path, errors=errors)
     if not uses_inference_launcher and command_tokens[:2] != ["uv", "run"]:

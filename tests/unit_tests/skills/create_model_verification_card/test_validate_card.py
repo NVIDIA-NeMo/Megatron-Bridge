@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 """Focused tests for model-verification-card validation."""
 
 import importlib.util
