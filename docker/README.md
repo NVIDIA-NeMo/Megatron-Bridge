@@ -46,8 +46,10 @@ docker build \
 ```
 
 The packages installed by `scripts/install_diffusion_deps.sh` are intentionally excluded from the
-normal dependency solve in `pyproject.toml`. Do not enable this argument for the NeMo Framework image
-stack or other release images.
+normal dependency solve in `pyproject.toml`. The installer consumes `scripts/diffusion-deps.lock`,
+which pins package versions and accepted artifact hashes; regenerate it from
+`scripts/diffusion-deps.in` with the command recorded in the lock header. Do not enable this argument
+for the NeMo Framework image stack or other release images.
 
 ---
 

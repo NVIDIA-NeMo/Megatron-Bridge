@@ -109,7 +109,7 @@ COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Mega
 COPY 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
 COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
-COPY scripts/install_diffusion_deps.sh /opt/Megatron-Bridge/scripts/install_diffusion_deps.sh
+COPY scripts/install_diffusion_deps.sh scripts/diffusion-deps.lock /opt/Megatron-Bridge/scripts/
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
