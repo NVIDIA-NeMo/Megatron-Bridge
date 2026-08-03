@@ -107,6 +107,12 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     # on its normal backward path so FSDP observes its fused FP32 wgrad.
     cfg.model.mlp_chunks_for_training = 16
 
+    # Sixteen MLP chunks removed the grouped-MoE and FSDP-gather peaks, exposing
+    # a later first-forward allocation failure in the Mamba output projection.
+    # Double the supported SSD chunk size to reduce the number of Mamba
+    # chunk-boundary states while keeping its intra-chunk workspace bounded.
+    cfg.model.mamba_chunk_size = 256
+
     # The op-fuser ScaledSReLU path exceeds H100 activation memory before the
     # first optimizer step. Keep TE grouped linears and the fused weighted
     # squared-ReLU implementation, but use their supported non-op-fuser path.
