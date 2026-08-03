@@ -109,9 +109,13 @@ COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Mega
 COPY 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
 COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
 COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
+COPY scripts/install_diffusion_deps.sh /opt/Megatron-Bridge/scripts/install_diffusion_deps.sh
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
+# Opt in only for CI images that run diffusion tests. Framework images must keep the default so
+# CVE-carrying WAN codecs remain excluded from the shipped environment.
+ARG INSTALL_DIFFUSION_DEPS=false
 ARG UV_CACHE_PRUNE_ARGS
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -137,6 +141,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     else \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
+    fi && \
+    if [ "$INSTALL_DIFFUSION_DEPS" = "true" ]; then \
+        bash scripts/install_diffusion_deps.sh; \
     fi && \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail
