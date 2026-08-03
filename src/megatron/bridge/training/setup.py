@@ -14,11 +14,16 @@
 
 import inspect
 import logging
+import random
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
+import numpy as np
 import torch
+from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.jit import disable_jit_fuser
@@ -148,6 +153,33 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         )
 
     return should_load_checkpoint
+
+
+@contextmanager
+def _preserve_rng_state() -> Iterator[None]:
+    """Restore every training RNG stream after a disposable warmup."""
+    python_rng_state = random.getstate()
+    numpy_rng_state = np.random.get_state()
+    cuda_rng_tracker = tensor_parallel.get_cuda_rng_tracker()
+    graph_safe_rng = tensor_parallel.is_graph_safe_cuda_rng_tracker(cuda_rng_tracker)
+    rng_tracker_states = {
+        name: tensor_parallel.convert_cuda_rng_state(state).clone()
+        for name, state in cuda_rng_tracker.get_states().items()
+    }
+    cuda_devices = [torch.cuda.current_device()] if torch.cuda.is_available() else []
+
+    with torch.random.fork_rng(devices=cuda_devices):
+        try:
+            yield
+        finally:
+            random.setstate(python_rng_state)
+            np.random.set_state(numpy_rng_state)
+            cuda_rng_tracker.set_states(
+                {
+                    name: tensor_parallel.convert_cuda_rng_state(state, to_graphable=graph_safe_rng)
+                    for name, state in rng_tracker_states.items()
+                }
+            )
 
 
 def setup(
@@ -412,7 +444,11 @@ def setup(
             scheduler=scheduler,
             user_state=callback_manager.user_state,
         )
-        callback_manager.fire("on_data_init_start", context)
+        if should_load_checkpoint and cfg.checkpoint.load_rng and not cfg.checkpoint.finetune:
+            with _preserve_rng_state():
+                callback_manager.fire("on_data_init_start", context)
+        else:
+            callback_manager.fire("on_data_init_start", context)
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
