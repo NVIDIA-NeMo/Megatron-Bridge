@@ -411,8 +411,8 @@ items:
         gradient communication, and Megatron-FSDP must remain active with
         selective MoE-activation and layernorm recompute, a one-element FSDP
         communication unit that disables next-bucket parameter prefetch, and
-        the CUDA stream-ordered allocator. The training MLP path must use
-        four sequence chunks to bound the grouped-MoE working set while leaving
+        the native expandable-segment allocator. The training MLP path must use
+        eight sequence chunks to bound the grouped-MoE working set while leaving
         the MTP latent projection outside whole-MoE checkpoint replay. TE
         grouped linears and fused weighted squared-ReLU must remain active
         through the non-op-fuser path, with no CPU activation offload.

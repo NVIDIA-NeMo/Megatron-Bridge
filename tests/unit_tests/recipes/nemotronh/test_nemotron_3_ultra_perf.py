@@ -202,7 +202,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.model.offload_modules == []
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
-    assert cfg.model.mlp_chunks_for_training == 4
+    assert cfg.model.mlp_chunks_for_training == 8
 
     assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
@@ -228,7 +228,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
 
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "backend:cudaMallocAsync"
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
     assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
     assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars

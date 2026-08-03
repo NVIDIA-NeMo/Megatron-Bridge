@@ -98,14 +98,13 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "layernorm"]
 
-    # The full 8K grouped-MoE FC2 output misses H100 capacity by less than
-    # 0.2 GiB after activation-only recompute, and two chunks still require up
-    # to 222 MiB with only 182 MiB free on the first forward. Split the
-    # supported training MLP path into four sequence chunks to quarter each
-    # routed-expert working set.
+    # Four chunks reduced the grouped-MoE FC2 allocation to 44 MiB, but the
+    # first forward still left only 58 MiB fragmented device memory. Split the
+    # supported training MLP path into eight sequence chunks to halve that
+    # remaining chunk-local routed-expert working set.
     # Unlike whole-MoE checkpointing, chunking leaves the MTP latent projection
     # on its normal backward path so FSDP observes its fused FP32 wgrad.
-    cfg.model.mlp_chunks_for_training = 4
+    cfg.model.mlp_chunks_for_training = 8
 
     # The op-fuser ScaledSReLU path exceeds H100 activation memory before the
     # first optimizer step. Keep TE grouped linears and the fused weighted
@@ -151,8 +150,7 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config() -> ConfigContai
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        # The four-chunk TP4 run left 44 MiB fragmented despite 58 MiB free.
-        "PYTORCH_CUDA_ALLOC_CONF": "backend:cudaMallocAsync",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -177,8 +175,7 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        # The four-chunk TP4 run left 44 MiB fragmented despite 58 MiB free.
-        "PYTORCH_CUDA_ALLOC_CONF": "backend:cudaMallocAsync",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
