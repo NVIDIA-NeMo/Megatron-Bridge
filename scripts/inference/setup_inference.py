@@ -30,6 +30,8 @@ from torchx.specs.api import AppState
 logger = logging.getLogger(__name__)
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
+MCORE_TEXT_GENERATION_PATH = CONTAINER_REPO_ROOT / "scripts/inference/text_generation.py"
+FULL_PREFIX_TEXT_GENERATION_PATH = CONTAINER_REPO_ROOT / "examples/conversion/hf_to_megatron_generate_text.py"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -47,8 +49,8 @@ Example:
       --prompt "Megatron Bridge inference is" --max_new_tokens 32
 
 Arguments not owned by this launcher are forwarded unchanged to
-scripts/inference/text_generation.py. Run that entry point with --help to see
-model, checkpoint, prompt, sampling, and inference-engine options.
+scripts/inference/text_generation.py. Passing --legacy-full-prefix selects the
+compatibility entry point for models that do not yet support cached inference.
 """,
     )
     execution = parser.add_argument_group("Execution")
@@ -196,10 +198,17 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     return executor
 
 
+def _generation_entrypoint(inference_args: list[str]) -> Path:
+    """Select the generation entry point required by the forwarded arguments."""
+    if "--legacy-full-prefix" in inference_args:
+        return FULL_PREFIX_TEXT_GENERATION_PATH
+    return MCORE_TEXT_GENERATION_PATH
+
+
 def _build_task(inference_args: list[str]) -> run.Script:
-    """Build the existing Bridge text-generation task for the submitted container."""
+    """Build the selected Bridge text-generation task for the submitted container."""
     return run.Script(
-        path=str(CONTAINER_REPO_ROOT / "scripts/inference/text_generation.py"),
+        path=str(_generation_entrypoint(inference_args)),
         entrypoint="python",
         env={
             "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
@@ -230,10 +239,11 @@ def main(argv: list[str] | None = None) -> None:
     mounts = _parse_mounts(args.mount)
     executor = _build_executor(args, env_names, mounts)
     task = _build_task(inference_args)
+    generation_entrypoint = _generation_entrypoint(inference_args)
 
     logger.info(
         "Inference command: %s",
-        shlex.join(["python", str(CONTAINER_REPO_ROOT / "scripts/inference/text_generation.py"), *inference_args]),
+        shlex.join(["python", str(generation_entrypoint), *inference_args]),
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")

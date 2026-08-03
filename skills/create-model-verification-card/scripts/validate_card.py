@@ -1086,8 +1086,13 @@ def _validate_inference(
         command_tokens = shlex.split(command)
     except ValueError:
         command_tokens = []
-    if command_tokens[:2] != ["uv", "run"]:
-        errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
+    if command_tokens[:1] == ["./scripts/inference/infer.sh"]:
+        _require_positive_integer_argument(command, "--nodes", path=resolved_command_path, errors=errors)
+        _require_positive_integer_argument(command, "--gpus-per-node", path=resolved_command_path, errors=errors)
+        if any(option in command_tokens for option in ("--dry-run", "--submission-dry-run")):
+            errors.append(f"{_pointer(*resolved_command_path)}: verified inference command must submit the workload")
+    elif command_tokens[:2] != ["uv", "run"]:
+        errors.append(f"{_pointer(*resolved_command_path)}: inference must use ./scripts/inference/infer.sh or uv run")
     prompts = _argument_values(command, "--prompt")
     if len(prompts) != 1:
         errors.append(f"{_pointer(*resolved_command_path)}: specify --prompt exactly once")

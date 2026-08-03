@@ -284,6 +284,17 @@ def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
     assert scripts[0].args == ["--prompt", "'benign; echo should-not-run'"]
 
 
+def test_build_task_routes_legacy_full_prefix_to_compatibility_entrypoint():
+    module = _load_setup_inference_module()
+    scripts = []
+    module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
+
+    module._build_task(["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"])
+
+    assert scripts[0].path == "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py"
+    assert scripts[0].args == ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"]
+
+
 @pytest.mark.parametrize(
     ("extra_options", "expected_run", "expected_dryrun"),
     [

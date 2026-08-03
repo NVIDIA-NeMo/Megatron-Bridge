@@ -23,7 +23,11 @@ GPU; users should not enter an allocation or wrap it in `srun`, `torchrun`, or
 The launcher owns only Slurm resources, the container, mounts, explicitly
 forwarded environment variables, and submission behavior. All other arguments
 are forwarded unchanged to `text_generation.py`, which owns model loading,
-parallelism, prompts, sampling, and inference-engine configuration.
+parallelism, prompts, sampling, and inference-engine configuration. Passing
+`--legacy-full-prefix` routes to the compatibility generation entry point
+instead. It recomputes the accumulated prefix for every decoding step and is
+intended for models such as GLM-5 whose AbsorbedMLA attention does not yet
+support cached inference.
 
 ## Model and checkpoint inputs
 

@@ -276,3 +276,30 @@ def test_megatron_fsdp_feature_is_scoped_to_fsdp_item():
 
     assert fsdp_errors == []
     assert pretrain_errors == ["/items/pretrain/GB200/enabled_features/megatron_fsdp: allowed only on pretrain_fsdp"]
+
+
+def test_verified_inference_accepts_public_slurm_launcher():
+    module = _load_validator()
+    errors = []
+    item = {
+        "command": ("./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 --prompt 'hello' --max_new_tokens 2"),
+        "expected_result": 'The exact 2-token completion was "hello world".',
+    }
+
+    module._validate_inference(item, item_name="inference", status="verified", errors=errors)
+
+    assert errors == []
+
+
+def test_verified_inference_launcher_requires_resources():
+    module = _load_validator()
+    errors = []
+    item = {
+        "command": "./scripts/inference/infer.sh --prompt 'hello' --max_new_tokens 2",
+        "expected_result": 'The exact 2-token completion was "hello world".',
+    }
+
+    module._validate_inference(item, item_name="inference", status="verified", errors=errors)
+
+    assert "/items/inference/command: requires exactly one positive integer --nodes" in errors
+    assert "/items/inference/command: requires exactly one positive integer --gpus-per-node" in errors
