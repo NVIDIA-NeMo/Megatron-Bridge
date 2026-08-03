@@ -383,7 +383,8 @@ def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigC
 
     recipe.dataset = build_dataset_config(recipe, args.dataset)
     requested_train_mode = _train_mode(args.mode)
-    if dataset_train_mode(recipe.dataset) != requested_train_mode:
+    required_train_mode = dataset_train_mode(recipe.dataset)
+    if required_train_mode is not None and required_train_mode != requested_train_mode:
         raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
     return recipe
 

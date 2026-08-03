@@ -66,6 +66,7 @@ def _load_module():
     pretraining_datasets = {"mock", "megatron-indexed"}
     dataset_names = {
         *pretraining_datasets,
+        "energon",
         "squad",
         "tulu3",
         "openmathinstruct2",
@@ -89,9 +90,13 @@ def _load_module():
             split=None,
         )
     )
-    dataset_utils.dataset_train_mode = Mock(
-        side_effect=lambda dataset: "pretrain" if dataset.dataset_name in pretraining_datasets else "finetune"
-    )
+
+    def dataset_train_mode(dataset):
+        if dataset.dataset_name == "energon":
+            return None
+        return "pretrain" if dataset.dataset_name in pretraining_datasets else "finetune"
+
+    dataset_utils.dataset_train_mode = Mock(side_effect=dataset_train_mode)
     config_module = types.ModuleType("megatron.bridge.training.config")
     config_module.ConfigContainer = object
     stub_modules = {
@@ -235,9 +240,9 @@ def test_kimi_supported_pp_vp_override_refreshes_pipeline_layout():
             pipeline_model_parallel_size=16,
             virtual_pipeline_model_parallel_size=None,
             pipeline_model_parallel_layout=default_layout,
-            _pipeline_model_parallel_layout_builder=lambda pp, vp: overridden_layout
-            if (pp, vp) == (4, 1)
-            else default_layout,
+            _pipeline_model_parallel_layout_builder=lambda pp, vp: (
+                overridden_layout if (pp, vp) == (4, 1) else default_layout
+            ),
         )
     )
     handles.recipe_runner.load_recipe.return_value = config
@@ -735,6 +740,39 @@ def test_local_dataset_names_use_presets_then_apply_config_overrides(public_name
 
     handles.build_dataset_config.assert_called_once_with(config, public_name)
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, options)
+
+
+def test_energon_uses_requested_pretrain_mode_and_qwen_step():
+    module, handles = _load_module()
+    config = SimpleNamespace()
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+            "--dataset",
+            "energon",
+            "--step-func",
+            "qwen3_vl_step",
+            "dataset.path=/data/datacomp-energon",
+        ]
+    )
+
+    handles.build_dataset_config.assert_called_once_with(config, "energon")
+    handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
+    assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
+
+
+@pytest.mark.parametrize("mode", ["pretrain", "sft", "lora", "dora"])
+def test_energon_is_compatible_with_all_training_modes(mode):
+    module, handles = _load_module()
+    config = SimpleNamespace()
+
+    assert module._apply_dataset(config, SimpleNamespace(dataset="energon", mode=mode)) is config
+    handles.build_dataset_config.assert_called_once_with(config, "energon")
 
 
 @pytest.mark.parametrize(
