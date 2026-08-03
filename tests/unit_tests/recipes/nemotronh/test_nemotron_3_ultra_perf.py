@@ -201,7 +201,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.model.fine_grained_activation_offloading is False
     assert cfg.model.offload_modules == []
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe", "layernorm"]
+    assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
 
     assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True

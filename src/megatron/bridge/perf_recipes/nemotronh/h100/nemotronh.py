@@ -88,14 +88,15 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         fine_grained_activation_offloading=False,
         enable_fine_grained_param_gather=True,
     )
-    # TE's moe_act recompute path requires the CuteDSL fused grouped MLP,
-    # which is only supported on SM100+. Use the stateless all-to-all token
-    # dispatcher so whole-MoE checkpoint replay can provide enough memory
-    # headroom for the 8K BF16 workload without replaying DeepEP state.
+    # Use the stateless all-to-all token dispatcher so activation replay does
+    # not include DeepEP state. With the op fuser disabled below, moe_act uses
+    # MCore's standalone CheckpointWithoutOutput path instead of the SM100-only
+    # fused grouped-MLP implementation. This also keeps the latent projection
+    # outside whole-MoE replay so its fused FP32 wgrad is visible to FSDP.
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe", "layernorm"]
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
 
     # The op-fuser ScaledSReLU path exceeds H100 activation memory before the
     # first optimizer step. Keep TE grouped linears and the fused weighted
