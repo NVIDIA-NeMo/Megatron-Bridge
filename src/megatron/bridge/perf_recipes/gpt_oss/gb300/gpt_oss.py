@@ -46,7 +46,7 @@ def gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     _apply_gpt_oss_20b_common_configs(cfg)
 
     cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_modules = "full"
+    cfg.model.cuda_graph_modules = "full_iteration"
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_mlp_glu_interleave_size = 32
@@ -151,7 +151,7 @@ def gpt_oss_20b_pretrain_72gpu_gb300_fp8mx_config() -> ConfigContainer:
     _apply_gpt_oss_20b_common_configs(cfg)
 
     cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_modules = "full"
+    cfg.model.cuda_graph_modules = "full_iteration"
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_expert_rank_capacity_factor = 5
     cfg.model.moe_mlp_glu_interleave_size = 32
@@ -256,7 +256,7 @@ def gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_config() -> ConfigContainer:
     _apply_gpt_oss_20b_common_configs(cfg)
 
     cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_modules = "full"
+    cfg.model.cuda_graph_modules = "full_iteration"
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_expert_rank_capacity_factor = 7
     cfg.model.sequence_parallel = True
