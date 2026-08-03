@@ -202,7 +202,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.model.offload_modules == []
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
-    assert cfg.model.mlp_chunks_for_training == 16
+    assert cfg.model.mlp_chunks_for_training == 32
     assert cfg.model.mamba_chunk_size == 256
 
     assert cfg.dist.use_megatron_fsdp is True

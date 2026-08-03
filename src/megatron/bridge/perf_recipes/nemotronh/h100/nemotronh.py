@@ -98,17 +98,17 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "layernorm"]
 
-    # Eight chunks reduced grouped-expert FC1 outputs to 54--60 MiB, but the
-    # first forward still could not fit the current 320 MiB FSDP expert-weight
-    # gather on every rank. Split the supported training MLP path into sixteen
-    # sequence chunks to halve the remaining chunk-local routed-expert working
-    # set and leave more room for that unavoidable on-demand gather.
+    # Sixteen chunks removed the original grouped-expert peak with NCCL's
+    # default buffer, but bounding NCCL buffers exposed smaller 12--30 MiB
+    # grouped-linear and fused-activation allocations on the first forward.
+    # Split the supported training MLP path into thirty-two sequence chunks to
+    # halve that remaining chunk-local routed-expert working set.
     # Unlike whole-MoE checkpointing, chunking leaves the MTP latent projection
     # on its normal backward path so FSDP observes its fused FP32 wgrad.
-    cfg.model.mlp_chunks_for_training = 16
+    cfg.model.mlp_chunks_for_training = 32
 
-    # Sixteen MLP chunks removed the grouped-MoE and FSDP-gather peaks, exposing
-    # a later first-forward allocation failure in the Mamba output projection.
+    # Earlier MLP chunking exposed a later first-forward allocation failure in
+    # the Mamba output projection.
     # Double the supported SSD chunk size to reduce the number of Mamba
     # chunk-boundary states while keeping its intra-chunk workspace bounded.
     cfg.model.mamba_chunk_size = 256
