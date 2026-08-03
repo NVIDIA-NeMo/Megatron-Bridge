@@ -41,6 +41,7 @@ native op instead of a bespoke hasher:
 Only ``digest`` (plus ``shape``/``dtype``) is needed to detect the first divergence.
 """
 
+import os
 from typing import NamedTuple, Optional
 
 import torch
@@ -107,14 +108,49 @@ _UINT_TO_INT = {
     if hasattr(torch, u) and hasattr(torch, s)
 }
 
+# The narrow float formats have no xor_sum CUDA kernel either ("xor_sum_cuda" not implemented
+# for 'Float8_e4m3fn'). The collective layer never hits this because Megatron-FSDP hands it raw
+# uint8 buffers, but under DET_TRACE_OPS the ATen-level tensors carry their true dtype — so an
+# MXFP8/NVFP4 recipe, exactly the class this tracer targets, dies on the first quantized op.
+# All of these are 1 byte wide, so bitcast to int8: identical bytes (the digest still covers the
+# raw payload exactly), deterministic, and both jobs bitcast the same way (cross-process stable).
+# Hashing the bytes rather than the float values is also NaN-safe, which float hashing is not.
+_NARROW_FLOAT_TO_INT = {
+    getattr(torch, f): torch.int8
+    for f in (
+        "float8_e4m3fn",
+        "float8_e5m2",
+        "float8_e4m3fnuz",
+        "float8_e5m2fnuz",
+        "float8_e8m0fnu",  # MXFP8 block-scale dtype
+        "float4_e2m1fn_x2",  # NVFP4 (two 4-bit values packed per byte)
+    )
+    if hasattr(torch, f)
+}
+
+_BITCAST_TO_INT = {**_UINT_TO_INT, **_NARROW_FLOAT_TO_INT}
+
+# Record sum/absmax moments alongside the xor digest. Off by default: two extra device
+# reductions per fingerprinted tensor. On, diff_streams reports |Delta sum| instead of
+# "n/a (digest-only)", which separates a 1-ULP rounding difference from a real one.
+_MOMENTS = os.environ.get("DET_TRACE_MOMENTS") == "1"
+
 
 def _prepare(t: torch.Tensor) -> torch.Tensor:
-    """Detach, map complex → real view, bitcast unsigned→signed, and make contiguous for hashing."""
+    """Detach, unwrap DTensor, map complex → real, bitcast unsigned/narrow-float→int, contiguous."""
     x = t.detach()
+    # Megatron-FSDP parameters are DTensors, and torch.hash_tensor has no DTensor sharding rule
+    # ("Operator aten.hash_tensor.default does not have a sharding strategy registered"), which
+    # kills DET_TRACE_OPS on any FSDP run. Hash the LOCAL shard: every stream is already keyed by
+    # the logical GPU coordinate, so per-rank local data is exactly what the diff aligns on.
+    if type(x).__name__ == "DTensor":
+        to_local = getattr(x, "to_local", None)
+        if to_local is not None:
+            x = to_local()
     if x.is_complex():
         x = torch.view_as_real(x)
     x = x.contiguous()
-    signed = _UINT_TO_INT.get(x.dtype)
+    signed = _BITCAST_TO_INT.get(x.dtype)
     if signed is not None:
         x = x.view(signed)
     return x
@@ -160,8 +196,23 @@ def stage_tensor(t: Optional[torch.Tensor]) -> Optional[dict]:
     dtype = str(t.dtype)
     numel = t.numel()
     if numel == 0:
-        return {"shape": shape, "dtype": dtype, "numel": 0, "h_t": None}
-    return {"shape": shape, "dtype": dtype, "numel": numel, "h_t": _hash_u64(_prepare(t))}
+        return {"shape": shape, "dtype": dtype, "numel": 0, "h_t": None, "s_t": None, "m_t": None}
+    x = _prepare(t)
+    rec = {"shape": shape, "dtype": dtype, "numel": numel, "h_t": _hash_u64(x), "s_t": None, "m_t": None}
+    if _MOMENTS:
+        # The xor digest answers "did it change" but not "by how much". diff_streams already
+        # computes |Δsum| (see _sum_gap) and degrades to "n/a (digest-only)" without these,
+        # so a 1-ULP rounding difference is indistinguishable from a wholly wrong tensor.
+        # sum(float64) gives magnitude; absmax gives scale to normalise it against. Both are
+        # staged on-device like the digest, so no mid-iteration host sync is introduced.
+        # NB ``x`` is post-_prepare, so uint/fp8/fp4 have already been bitcast to int8/intN.
+        # For those the moments are over RAW BYTES, not the numeric values — still a valid
+        # cross-run comparison (both jobs bitcast identically) but NOT physically meaningful,
+        # so do not read an fp8 tensor's "sum" as a magnitude. Float dtypes are unaffected.
+        xf = x.double()
+        rec["s_t"] = xf.sum()
+        rec["m_t"] = xf.abs().max()
+    return rec
 
 
 def finalize_staged(staged: Optional[dict]) -> Optional[dict]:
@@ -182,7 +233,14 @@ def finalize_staged(staged: Optional[dict]) -> Optional[dict]:
     numel = staged["numel"]
     h_t = staged.get("h_t")
     digest = _EMPTY_DIGEST if (numel == 0 or h_t is None) else _digest_hex(h_t)
-    return {"shape": list(staged["shape"]), "dtype": staged["dtype"], "digest": digest, "numel": numel}
+    out = {"shape": list(staged["shape"]), "dtype": staged["dtype"], "digest": digest, "numel": numel}
+    s_t, m_t = staged.get("s_t"), staged.get("m_t")
+    if s_t is not None:
+        # Field name must stay "sum": diff_streams._sum_gap keys off it.
+        out["sum"] = float(s_t.item())
+    if m_t is not None:
+        out["absmax"] = float(m_t.item())
+    return out
 
 
 def signature_to_jsonable(sig: Optional[TensorSignature]) -> Optional[dict]:

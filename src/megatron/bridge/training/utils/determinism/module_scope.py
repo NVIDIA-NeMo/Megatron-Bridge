@@ -62,6 +62,25 @@ def _pop(name: str):
     return hook
 
 
+def _clear():
+    """Drop the whole stack at a model-level boundary.
+
+    Because ``_pop`` is conservative, any push it declines to match survives to the end of
+    the step. Everything that runs AFTER the model — optimizer, gradient clipping, grad-norm
+    all-reduce, logging reductions — then inherits whichever layer name happened to be left
+    on top and is recorded as if it belonged to that layer. That is the phase where a
+    divergence is most interesting, so a stale label there is worse than no label: it was
+    observed tagging `optimizer/clip_grads.py` records as
+    `mtp.layers.0...mlp.experts.linear_fc2`.
+    """
+
+    def hook(module, *args):
+        if ct._S.active:
+            ct._S.scope_stack.clear()
+
+    return hook
+
+
 def register(model, prefix: str = "", backward_scope: bool = False) -> int:
     """Register FORWARD scope hooks on every named submodule (PP-safe by default).
 
@@ -101,6 +120,14 @@ def register(model, prefix: str = "", backward_scope: bool = False) -> int:
             except Exception:
                 pass
         count += 1
+    # Root-level boundary clears. ``named_modules()`` yields the root with an empty name and
+    # the loop skips it, so nothing else resets the stack until the step boundary.
+    _handles.append(model.register_forward_hook(_clear()))
+    if backward_scope:
+        try:
+            _handles.append(model.register_full_backward_hook(_clear()))
+        except Exception:
+            pass
     logger.info(
         "module_scope: registered forward scope hooks on %d modules (prefix=%r, backward_scope=%s)",
         count,

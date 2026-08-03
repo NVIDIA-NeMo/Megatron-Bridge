@@ -92,9 +92,46 @@ class _TraceState:
     # Deferred (HybridEP-safe) records: each carries GPU scalar reductions instead of host
     # values. Finalized (.item()'d) and written at the step boundary by flush_pending().
     pending: list = field(default_factory=list)
+    # >0 while inside torch.distributed._coalescing_manager, whose collectives do not launch
+    # until __exit__. Records stashed in that window get their output hashed afterwards.
+    coalescing_depth: int = 0
+    # (record, output_tensor) pairs awaiting the manager exit — drained by _drain_coalesced().
+    coalesced: list = field(default_factory=list)
 
 
 _S = _TraceState()
+
+# Exhaustive-coverage knobs. All default OFF: each trades throughput/stream size for closing a
+# blind spot that has, in practice, hidden the producer of a divergent value.
+#   DET_TRACE_OP_CALLER  -> frame-walk aten records too, so every op carries a file:line. Without
+#                           it an aten record is only (op, scope) and an unexplained value cannot
+#                           be traced back to source.
+#   DET_TRACE_NO_SKIP    -> stop dropping the "empty"/"c10d" op families. The empty family is
+#                           normally excluded because uninitialized memory diffs are spurious, but
+#                           that also hides any op that *legitimately* produced a value.
+#   DET_TRACE_KEEP_EMPTY -> emit a record even when an op yields no non-empty tensor, so the op
+#                           stream has no silent holes to hide a producer in.
+_OP_CALLER = os.environ.get("DET_TRACE_OP_CALLER") == "1"
+_NO_SKIP = os.environ.get("DET_TRACE_NO_SKIP") == "1"
+_KEEP_EMPTY = os.environ.get("DET_TRACE_KEEP_EMPTY") == "1"
+
+# Restrict op-level capture to modules whose scope contains one of these substrings
+# (comma-separated), e.g. DET_TRACE_OP_SCOPE="layers.1.mlp.router". Empty = capture everything.
+#
+# Whole-model op tracing costs ~50K records/iter/rank; the exhaustive flags above multiply that
+# far higher (NO_SKIP + KEEP_EMPTY removed the filters bounding stream size and produced 1.1 TB
+# across 256 ranks before reaching iteration 2). Once the divergence is localised to a module,
+# capturing everything else buys nothing. Narrow the scope FIRST, then afford to be exhaustive
+# inside it.
+_OP_SCOPE = tuple(s for s in os.environ.get("DET_TRACE_OP_SCOPE", "").split(",") if s)
+
+
+def _scope_selected() -> bool:
+    """True when no scope filter is set, or the enclosing module matches one."""
+    if not _OP_SCOPE:
+        return True
+    top = _S.scope_stack[-1] if _S.scope_stack else ""
+    return any(s in top for s in _OP_SCOPE)
 
 
 # ---------------------------------------------------------------------------
@@ -230,12 +267,22 @@ def _caller_tag() -> str:
     op level, when only ``filename:lineno`` is used.
     """
     f = sys._getframe(1)
+    first_torch = None
     while f is not None:
         fn = f.f_code.co_filename
-        if "/torch/" not in fn and not fn.endswith(("collective_trace.py", "op_trace.py")):
-            # keep last two path components for brevity
-            return f"{'/'.join(fn.split('/')[-2:])}:{f.f_lineno}"
+        if not fn.endswith(("collective_trace.py", "op_trace.py")):
+            if "/torch/" not in fn:
+                # keep last two path components for brevity
+                return f"{'/'.join(fn.split('/')[-2:])}:{f.f_lineno}"
+            if first_torch is None:
+                first_torch = f
         f = f.f_back
+    # Backward ops are driven by autograd's C++ engine, so every Python frame can be inside
+    # /torch/ and the preferred non-torch answer does not exist. Returning "?" there discards
+    # the only attribution available for the phase where divergence concentrates; name the
+    # innermost torch frame (with a marker) instead.
+    if first_torch is not None:
+        return f"torch:{'/'.join(first_torch.f_code.co_filename.split('/')[-2:])}:{first_torch.f_lineno}"
     return "?"
 
 
@@ -266,7 +313,7 @@ def _staged_sig_list(x):
         return [stage_tensor(x)]
 
 
-def _stash_named(op_name: str, group_name: str, input_staged, output_staged) -> None:
+def _stash_named(op_name: str, group_name: str, input_staged, output_staged, reduce_op=None) -> None:
     """Reserve the alignment key now (execution order) and stash a pending record.
 
     ``group_name`` is an already-resolved logical label — ``"tp"``/``"dp"``/... for
@@ -287,9 +334,23 @@ def _stash_named(op_name: str, group_name: str, input_staged, output_staged) -> 
             "align_idx": align_idx,
             # enclosing layer/module (per-layer attribution); None outside any module scope
             "scope": _S.scope_stack[-1] if _S.scope_stack else None,
+            # Coarse execution phase, independent of the module stack. `scope` alone cannot
+            # distinguish "inside layer X" from "after the model, stack not yet cleared", and
+            # post-model records (optimizer step, grad clipping, grad-norm/logging all-reduces)
+            # are exactly where the first real divergence tends to surface. "post" here means
+            # the record belongs to no module — attribute it via `caller`, not `scope`.
+            "phase": ("bwd" if (_S.scope_stack and "[bwd]" in _S.scope_stack[-1]) else "fwd")
+            if _S.scope_stack
+            else "post",
             # aten op records are already identified by op + scope; skip the frame-walk for them
             # (op-level runs ~500K/iter, so the caller tag is worth its cost only for collectives).
-            "caller": None if group_name == "aten" else _caller_tag(),
+            # DET_TRACE_OP_CALLER=1 pays that cost anyway: when a divergent value has NO producer
+            # among the preceding records, op+scope cannot say which Python line emitted it, and
+            # the search dead-ends. The caller tag turns "invisible producer" into a file:line.
+            "caller": (_caller_tag() if _OP_CALLER else None) if group_name == "aten" else _caller_tag(),
+            # Which reduction the collective performed (SUM/AVG/PREMUL_SUM), or None for
+            # non-reducing collectives. See _reduce_op_tag.
+            "reduce_op": reduce_op,
             "input": input_staged,
             "output": output_staged,
         }
@@ -297,9 +358,50 @@ def _stash_named(op_name: str, group_name: str, input_staged, output_staged) -> 
     _S.seq_id += 1
 
 
-def _stash(op_name: str, group, input_staged, output_staged) -> None:
+def _stash(op_name: str, group, input_staged, output_staged, reduce_op=None) -> None:
     """Stash a collective record, resolving the process group to a logical name."""
-    _stash_named(op_name, _group_name(group), input_staged, output_staged)
+    _stash_named(op_name, _group_name(group), input_staged, output_staged, reduce_op)
+
+
+def _device_sync() -> None:
+    """Block until all enqueued device work completes, if there is a device at all.
+
+    Both callers need the same thing — a fingerprint must not be taken while the kernel
+    that fills the buffer is still in flight — and both must be no-ops on CPU-only builds.
+    """
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def _stash_deferred(op_name: str, group, input_staged, output_tensor, reduce_op=None) -> None:
+    """Stash a coalesced collective, deferring the OUTPUT hash until the group launches.
+
+    ``torch.distributed._coalescing_manager`` only CAPTURES its collectives; the grouped NCCL
+    op is not issued until ``__exit__``. Hashing the output inside the wrapper therefore reads
+    a buffer nothing has written yet — the record is not merely imprecise, it is meaningless.
+    All four Megatron-FSDP collective paths use the manager (param_and_grad_buffer.py lines
+    4038/4132/4542/4561), so this silently invalidated every FSDP collective record.
+
+    The record keeps its execution-order ``seq_id`` (alignment across the two jobs is
+    unchanged); only the output signature is filled in later, by ``_drain_coalesced()`` once
+    the manager exits and the work is complete.
+    """
+    _stash(op_name, group, input_staged, [], reduce_op)
+    _S.coalesced.append((_S.pending[-1], output_tensor))
+
+
+def _drain_coalesced() -> None:
+    """Hash the deferred outputs of a just-exited coalescing manager.
+
+    Called after ``__exit__`` has issued and awaited the grouped op, so the buffers now hold
+    the real gathered/reduced result.
+    """
+    if not _S.coalesced:
+        return
+    _device_sync()
+    for rec, out in _S.coalesced:
+        rec["output"] = _staged_sig_list(out)
+    _S.coalesced.clear()
 
 
 def flush_pending() -> None:
@@ -308,6 +410,10 @@ def flush_pending() -> None:
     Call at the step boundary (``set_active(False)``/``disable``), where a device->host
     sync is safe — by then the iteration's collectives and HybridEP kernels have retired.
     """
+    if _S.coalesced:
+        # A manager that never cleanly exited (exception, or capture turned off inside it)
+        # would otherwise write records with an empty output and look like a silent hole.
+        _drain_coalesced()
     if not _S.pending:
         return
     for rec in _S.pending:
@@ -353,11 +459,37 @@ def _await_async(work) -> None:
     HybridEP), so the staged reduction reads the finished output. A synchronous collective is
     already stream-ordered by PyTorch and returns ``None`` here → this is a no-op.
     """
-    # torch returns an ``_IllegalWork`` sentinel (a Work-like object whose ``.wait()`` raises
-    # "Illegal to call wait on IllegalWork object") for some synchronous collectives — treat it
-    # like ``None`` (already stream-ordered, nothing to wait on).
-    if work is not None and hasattr(work, "wait") and type(work).__name__ != "_IllegalWork":
-        work.wait()
+    # torch returns an ``_IllegalWork`` sentinel for some synchronous collectives (Megatron-FSDP's
+    # bucket param all-gather is one). Its ``__getattribute__`` raises ``ValueError`` for EVERY
+    # attribute, so ``hasattr(work, "wait")`` raises too — ``hasattr`` only swallows
+    # ``AttributeError``. The type check must therefore come FIRST: ``type(work)`` does not route
+    # through the instance ``__getattribute__``. Treat the sentinel like ``None`` (already
+    # stream-ordered, nothing to wait on).
+    if work is None or type(work).__name__ == "_IllegalWork":
+        _sync_unwaitable()
+        return
+    try:
+        wait = work.wait
+    except (AttributeError, ValueError):
+        _sync_unwaitable()  # any other Work-like sentinel that refuses attribute access
+        return
+    wait()
+
+
+def _sync_unwaitable() -> None:
+    """Device-sync when a collective hands back no waitable Work handle.
+
+    Returning early here (the old behaviour) silently broke the ONE case that matters most.
+    Megatron-FSDP's bucket param all-gather (param_and_grad_buffer.py:4707) passes
+    ``async_op=True`` but gets back an ``_IllegalWork`` sentinel, so nothing ordered our
+    output reduction after the NCCL kernel. It fingerprinted the bucket that
+    ``fetch_bucket()`` had just allocated and NOT yet filled — uninitialized memory, which
+    differs run-to-run by construction. That is why this call site kept surfacing as a
+    "genuine origin" (inputs match, output differs) with impossible values such as bf16
+    ``absmax = 2**65``. A device sync costs throughput but is the only ordering available
+    without a Work handle, and the tracer is a debug path.
+    """
+    _device_sync()
 
 
 def _extract_group(args, kwargs):
@@ -374,6 +506,36 @@ def _extract_group(args, kwargs):
         if isinstance(a, dist.ProcessGroup):
             return a
     return None
+
+
+def _reduce_op_tag(args, kwargs) -> Optional[str]:
+    """Label the reduction a collective performs, e.g. ``"SUM"`` / ``"AVG"`` / ``"PREMUL_SUM"``.
+
+    Which ReduceOp is used decides how exposed a collective is to chunk-ordering effects, so a
+    record that omits it cannot be interpreted. Megatron-FSDP picks between three paths per
+    bucket in ``gradient_reduce_preprocessing``: ``AVG`` when ``average_in_collective``,
+    a fused ``_make_nccl_premul_sum`` when ``gradient_reduce_div_fusion`` and the dtype is NOT
+    bfloat16, otherwise an in-place ``mul_`` followed by a plain ``SUM``. bf16 gradients
+    therefore always take the plain-SUM path, which is the one this investigation found
+    producing different outputs from bit-identical inputs.
+
+    ``ReduceOp`` has no stable public name attribute across torch versions: plain ops expose
+    ``.name`` via ``op.op``, while ``_make_nccl_premul_sum`` returns an object whose repr is the
+    only identifier. Fall back to repr rather than dropping the field.
+    """
+    op = kwargs.get("op", None)
+    if op is None:
+        for a in args:
+            if isinstance(a, (dist.ReduceOp, dist.ReduceOp.RedOpType)):
+                op = a
+                break
+    if op is None:
+        return None  # collectives with no reduction (all_gather, all_to_all)
+    for probe in (getattr(op, "op", None), op):
+        name = getattr(probe, "name", None)
+        if isinstance(name, str):
+            return name
+    return repr(op)
 
 
 def _capturing() -> bool:
@@ -407,7 +569,7 @@ def _wrap_all_reduce(orig):
         with _suspended():
             work = orig(tensor, *args, **kwargs)
             _await_async(work)  # if async, wait so the staged output isn't hashed mid-flight
-        _stash("all_reduce", group, in_sig, _staged_sig_list(tensor))
+        _stash("all_reduce", group, in_sig, _staged_sig_list(tensor), _reduce_op_tag(args, kwargs))
         return work
 
     return wrapper
@@ -435,10 +597,16 @@ def _wrap_out_in(op_name):
             in_sig = _staged_sig_list(input)
             with _suspended():
                 work = orig(*args, **kwargs)
-                _await_async(work)  # async (e.g. SP all-gather): wait before staging the output
+                if _S.coalescing_depth == 0:
+                    _await_async(work)  # async (e.g. SP all-gather): wait before staging output
+            if _S.coalescing_depth:
+                # Inside a coalescing manager nothing has launched yet — defer the output hash
+                # to _drain_coalesced() at manager exit (see _stash_deferred).
+                _stash_deferred(op_name, group, in_sig, output, _reduce_op_tag(args, kwargs))
+                return work
             # The output reduction is enqueued after the collective completes, so it reads the
             # finished result (sync: already ordered; async: ordered by _await_async above).
-            _stash(op_name, group, in_sig, _staged_sig_list(output))
+            _stash(op_name, group, in_sig, _staged_sig_list(output), _reduce_op_tag(args, kwargs))
             return work
 
         return wrapper
@@ -496,6 +664,8 @@ def enable(out_dir: str) -> None:
         setattr(dist, attr, factory(orig))
 
     _patch_captured_refs()
+    _patch_coalescing_manager()
+    _log_effective_determinism()
 
     _S.enabled = True
     _S.active = False
@@ -506,11 +676,122 @@ def enable(out_dir: str) -> None:
     _S.fallback_names.clear()
     _S.fallback_size_counter.clear()
     _S.pending.clear()
+    _S.coalesced.clear()
+    _S.coalescing_depth = 0
     logger.info(
         "collective_trace enabled: wrapped %d dist collectives + %d captured refs → %s",
         len(_S.originals),
         len(_S.extra_patches),
         fname,
+    )
+
+
+def _wrap_coalescing_manager(orig):
+    """Wrap ``_coalescing_manager`` so deferred collectives are hashed after they launch."""
+
+    @contextlib.contextmanager
+    def wrapper(*args, **kwargs):
+        if not _capturing():
+            with orig(*args, **kwargs) as cm:
+                yield cm
+            return
+        _S.coalescing_depth += 1
+        try:
+            with orig(*args, **kwargs) as cm:
+                yield cm
+        finally:
+            _S.coalescing_depth -= 1
+            if _S.coalescing_depth == 0:
+                # Outermost manager has exited: the grouped op is issued and awaited, so the
+                # output buffers finally hold real data.
+                _drain_coalesced()
+
+    return wrapper
+
+
+def _log_effective_determinism() -> None:
+    """Log the EFFECTIVE determinism state once, from runtime objects — not from env strings.
+
+    An env var that never reached the process, a config override that was silently dropped, or
+    a stale bind-mount all look identical to a correct setup in the launch script. Every one of
+    those has already produced a "null result" here that was really a no-op ablation. Read the
+    live values (``torch.are_deterministic_algorithms_enabled()``,
+    ``torch.utils.deterministic.fill_uninitialized_memory``, ``torch._inductor.config.deterministic``)
+    so the log states what the process is DOING, and print the NCCL vars unset-as-``<unset>`` so
+    an un-pinned knob is visible rather than absent.
+    """
+    det_alg = _safe(torch.are_deterministic_algorithms_enabled, None)
+    fill = getattr(getattr(torch.utils, "deterministic", None), "fill_uninitialized_memory", None)
+    try:
+        from torch._inductor import config as _ind_cfg
+
+        inductor_det = getattr(_ind_cfg, "deterministic", None)
+        split_reductions = getattr(_ind_cfg, "split_reductions", None)
+    except Exception:
+        inductor_det = split_reductions = None
+    env = {
+        k: os.environ.get(k, "<unset>")
+        for k in (
+            "NCCL_ALGO",
+            "NCCL_PROTO",
+            "NCCL_MIN_NCHANNELS",
+            "NCCL_MAX_NCHANNELS",
+            "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+            "CUBLAS_WORKSPACE_CONFIG",
+            "MAMBA_DETERMINISTIC",
+            "TORCHINDUCTOR_DETERMINISTIC",
+            "DET_NO_FUSED_AUX_LOSS",
+        )
+    }
+    logger.warning(
+        "[det-env] torch.deterministic_algorithms=%s fill_uninitialized_memory=%s "
+        "inductor.deterministic=%s inductor.split_reductions=%s | %s",
+        det_alg,
+        fill,
+        inductor_det,
+        split_reductions,
+        " ".join(f"{k}={v}" for k, v in env.items()),
+    )
+
+
+def _patch_coalescing_manager() -> None:
+    """Patch ``_coalescing_manager`` on ``torch.distributed`` AND on its import-time captors.
+
+    Megatron-FSDP does ``from torch.distributed import _coalescing_manager`` at module import
+    (param_and_grad_buffer.py:33), binding the ORIGINAL contextmanager in its own namespace —
+    patching ``dist`` alone would not be seen by the very module whose collectives need this.
+    """
+    targets = [(dist, "_coalescing_manager")]
+    for mod_name in (
+        "megatron_fsdp.param_and_grad_buffer",
+        "megatron.core.distributed.fsdp.src.megatron_fsdp.param_and_grad_buffer",
+    ):
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            targets.append((mod, "_coalescing_manager"))
+    patched = []
+    for mod, attr in targets:
+        orig = getattr(mod, attr, None)
+        if orig is None or getattr(orig, "_det_wrapped", False):
+            continue
+        wrapped = _wrap_coalescing_manager(orig)
+        try:
+            wrapped._det_wrapped = True  # type: ignore[attr-defined]
+        except (AttributeError, TypeError):
+            pass
+        _S.extra_patches.append((mod, attr, orig))
+        setattr(mod, attr, wrapped)
+        patched.append(getattr(mod, "__name__", str(mod)))
+    # Name the patched modules explicitly. Patching only `torch.distributed` while missing
+    # megatron_fsdp's import-time copy still "succeeds" here, and the resulting FSDP collective
+    # records are silently pre-launch garbage — the exact failure this fix exists to remove.
+    logger.warning(
+        "[det-coalesce] _coalescing_manager patched on: %s%s",
+        ", ".join(patched) if patched else "NOTHING",
+        ""
+        if any("megatron_fsdp" in p for p in patched)
+        else "  <<< WARNING: megatron_fsdp's captured ref NOT patched (module not yet imported) —"
+        " FSDP collective records will be hashed before launch and are NOT trustworthy",
     )
 
 

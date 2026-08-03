@@ -65,6 +65,7 @@ Limitations:
 """
 
 import logging
+import os
 from typing import Optional
 
 import torch
@@ -72,6 +73,12 @@ from torch.utils._python_dispatch import TorchDispatchMode
 
 from megatron.bridge.training.utils.determinism import collective_trace as ct
 from megatron.bridge.training.utils.determinism.signature import stage_tensor
+
+
+# Device-sync after every traced op so the output fingerprint is the op's finished result and
+# not a buffer another stream is still writing. Off by default (a per-op sync is expensive and
+# serialises the run); required for attribution on recipes that execute ops on side streams.
+_OP_SYNC = os.environ.get("DET_TRACE_OP_SYNC") == "1"
 
 
 logger = logging.getLogger(__name__)
@@ -152,7 +159,12 @@ def _op_meta(func):
     m = _OP_META.get(func)
     if m is None:
         name = str(func)
-        m = (name, "empty" in name or "c10d" in name, _is_inplace(name))
+        # DET_TRACE_NO_SKIP keeps the normally-excluded families. "empty" is excluded because
+        # uninitialized memory produces spurious diffs, "c10d" because the collective layer owns
+        # those — but both exclusions also create holes in the op stream, and a producer that
+        # falls in a hole is indistinguishable from one that does not exist.
+        skip = (not ct._NO_SKIP) and ("empty" in name or "c10d" in name)
+        m = (name, skip, _is_inplace(name))
         _OP_META[func] = m
     return m
 
@@ -176,7 +188,9 @@ class OpTraceMode(TorchDispatchMode):
         if not ct._capturing():
             return func(*args, **kwargs)
         name, skip, inplace = _op_meta(func)  # memoized per distinct op
-        record = not skip
+        # DET_TRACE_OP_SCOPE narrows capture to the module(s) under investigation. Checked here,
+        # before any fingerprinting, so filtered-out ops cost one string check instead of a hash.
+        record = (not skip) and ct._scope_selected()
 
         in_sigs = []
         if record:
@@ -188,12 +202,26 @@ class OpTraceMode(TorchDispatchMode):
 
         out = func(*args, **kwargs)
 
+        if record and _OP_SYNC:
+            # ``func`` returns once the kernel is ENQUEUED. Ops whose work lands on a side
+            # stream (MoE dispatch/combine, Megatron-FSDP ag/param-gather streams) are still
+            # in flight here, so fingerprinting on the CURRENT stream races them and records
+            # a pre-op or half-written buffer as if it were the result. Observed concretely:
+            # aten.copy_ whose recorded output equalled neither operand in one arm and the
+            # UNMUTATED destination in the other. Sync every stream before hashing so the
+            # fingerprint is the op's actual result. Expensive - opt in via DET_TRACE_OP_SYNC=1
+            # and keep the traced window small.
+            torch.cuda.synchronize()
+
         if record:
             with ct._suspended(), torch.no_grad():
                 # Clone in-place outputs (the mutated buffer) so the reduction never aliases
                 # an autograd-saved tensor. no_grad + detach keeps it off the graph.
                 out_sigs = _fingerprint_outputs(out, clone=inplace)
-                if out_sigs:
+                # An op whose outputs are all empty/non-tensor normally emits NO record, leaving a
+                # gap in the stream. DET_TRACE_KEEP_EMPTY records it anyway (with empty sigs) so
+                # the sequence is complete and a producer cannot hide in an unrecorded slot.
+                if out_sigs or ct._KEEP_EMPTY:
                     # Deferred: stash in+out staged sigs into the shared pending stream;
                     # the diff classifies the first output divergence (inputs match -> this
                     # op is the root cause; inputs differ -> upstream, look earlier).
