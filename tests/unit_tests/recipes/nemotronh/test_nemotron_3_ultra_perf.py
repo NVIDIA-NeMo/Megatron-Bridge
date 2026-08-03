@@ -202,7 +202,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.model.offload_modules == []
     assert cfg.model.recompute_granularity == "full"
     assert cfg.model.recompute_method == "block"
-    assert cfg.model.recompute_num_layers == 32
+    assert cfg.model.recompute_num_layers == 64
     assert cfg.model.recompute_modules is None
     assert cfg.model.mlp_chunks_for_training == 64
     assert cfg.model.mamba_chunk_size == 256

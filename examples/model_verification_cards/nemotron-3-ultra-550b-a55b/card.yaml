@@ -409,8 +409,8 @@ items:
         reserved memory. BF16, standard all-to-all MoE dispatch, fine-grained
         parameter gather, FP32 fused weight-gradient accumulation and FP32
         gradient communication, and Megatron-FSDP must remain active with
-        full-layer block recompute for the first 32 main HybridStack layers
-        (16 Mamba/expert pairs) while leaving MTP on its normal backward
+        full-layer block recompute for the first 64 main HybridStack layers
+        (32 Mamba/expert pairs) while leaving MTP on its normal backward
         path, a one-element FSDP
         communication unit that disables
         next-bucket parameter prefetch, and the native expandable-segment
