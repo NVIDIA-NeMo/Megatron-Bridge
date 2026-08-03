@@ -113,7 +113,7 @@ These packages are suppressed via `sys_platform == 'never'` overrides in `/opt/M
 If your workflow needs `av`, `imageio`, and `imageio-ffmpeg` for WAN diffusion tests or inference, use the repository's integrity-locked installer:
 
 ```bash
-bash scripts/install_diffusion_deps.sh
+bash /opt/Megatron-Bridge/scripts/install_diffusion_deps.sh
 ```
 
 For the unrelated `decord` and `opencv-python-headless` packages, install only the package your workflow requires:
