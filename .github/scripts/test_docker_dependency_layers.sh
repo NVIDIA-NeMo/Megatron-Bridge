@@ -112,10 +112,15 @@ printf 'orphan\n' >"$revision_worktree/orphan"
 git -C "$revision_worktree" add orphan
 git -C "$revision_worktree" commit -q -m orphan
 orphan_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+printf 'unapproved\n' >"$revision_worktree/unapproved"
+git -C "$revision_worktree" add unapproved
+git -C "$revision_worktree" commit -q -m unapproved
+unapproved_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" push -q "$revision_repo" "$main_sha:refs/heads/main"
 git -C "$revision_worktree" push -q "$revision_repo" "$mirror_sha:refs/heads/pull-request/123"
 git -C "$revision_worktree" push -q "$revision_repo" "$merge_sha:refs/pull/123/merge"
 git -C "$revision_worktree" push -q "$revision_repo" "$orphan_sha:refs/pull/456/merge"
+git -C "$revision_worktree" push -q "$revision_repo" "$unapproved_sha:refs/heads/unapproved"
 
 mkdir -p "$temporary_dir/revision-bin"
 cat >"$temporary_dir/revision-bin/repo-validator" <<EOF
@@ -133,8 +138,12 @@ if "$temporary_dir/revision-validator" "$revision_repo" "$orphan_sha"; then
   echo "MCore revision validation accepted a PR merge without an approved mirror parent" >&2
   exit 1
 fi
+if "$temporary_dir/revision-validator" "$revision_repo" "$unapproved_sha"; then
+  echo "MCore revision validation accepted an existing commit on an unapproved ref" >&2
+  exit 1
+fi
 if "$temporary_dir/revision-validator" "$revision_repo" 0000000000000000000000000000000000000000; then
-  echo "MCore revision validation accepted an unapproved SHA" >&2
+  echo "MCore revision validation accepted a nonexistent SHA" >&2
   exit 1
 fi
 if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
