@@ -1650,15 +1650,22 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     print_rank_0("Deleting CUDA graphs")
 
-    # Explicitly delete the training CUDA graph because of
+    # Explicitly delete full CUDA graphs because of
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
-    if "training" in FullCudaGraphWrapper.cuda_graph:
-        del FullCudaGraphWrapper.cuda_graph["training"]
+    for stage in ("training", "validation"):
+        if stage in FullCudaGraphWrapper.cuda_graph:
+            del FullCudaGraphWrapper.cuda_graph[stage]
+        FullCudaGraphWrapper.cuda_graph[stage] = None
+        FullCudaGraphWrapper.result[stage] = None
+        FullCudaGraphWrapper.curr_iteration[stage] = 0
 
     # Explicitly delete optimizer CUDA graph
-    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
-        del OptimizerCudaGraphWrapper.cuda_graph
+    if HAS_OPTIMIZER_CUDA_GRAPH:
+        if OptimizerCudaGraphWrapper.cuda_graph is not None:
+            del OptimizerCudaGraphWrapper.cuda_graph
         OptimizerCudaGraphWrapper.cuda_graph = None
+        OptimizerCudaGraphWrapper.result = None
+        OptimizerCudaGraphWrapper.curr_iteration = 0
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
