@@ -131,6 +131,7 @@ items:
     bridge_commit: cd09c801474e5573ffceccf236b48b543c7a0b4a  # pragma: allowlist secret
     command: >
       ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      --task full-prefix-generation
       --hf_model_path zai-org/GLM-5.2
       --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
       --prompt "Write one concise sentence explaining why deterministic tests matter:"

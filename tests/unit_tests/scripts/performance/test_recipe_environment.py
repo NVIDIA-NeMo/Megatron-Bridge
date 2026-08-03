@@ -494,6 +494,41 @@ def test_flat_default_args_leave_inline_recipe_environment_unchanged():
     assert recipe.env_vars == original_env
 
 
+def test_vr200_argparse_overrides_keep_sm100_cuda_connection_count():
+    from utils.overrides import _apply_flat_cli_environment_compatibility
+
+    recipe = SimpleNamespace(
+        env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 1},
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="vr200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="llama",
+        model_recipe_name="llama31_405b",
+        task="pretrain",
+    )
+
+    _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=None,
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+
+
 def test_flat_explicit_argparse_compatibility_changes_only_legacy_coupled_values():
     from utils.overrides import _apply_flat_cli_environment_compatibility
 

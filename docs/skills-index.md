@@ -60,6 +60,7 @@ skills/nemo-mbridge-perf-activation-recompute/SKILL
 
 skills/nemo-mbridge-multi-node-slurm/SKILL
 skills/nemo-mbridge-multi-node-slurm/references/templates
+skills/nemo-mbridge-memory-snapshot-analysis/SKILL
 ```
 
 ```{toctree}

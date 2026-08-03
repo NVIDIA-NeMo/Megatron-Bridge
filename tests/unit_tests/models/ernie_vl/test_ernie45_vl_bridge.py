@@ -33,6 +33,7 @@ from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import 
     ErnieMultiTypeMoE,
     MultiTypeMoeSubmodules,
 )
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import ErnieMultimodalRotaryEmbedding
 
 
 def _make_vision_config():
@@ -467,6 +468,52 @@ class TestOffsetMappings:
         resolved = mapping.resolve(("1", "0"))
         # The resolved HF param should reference expert 64
         assert "64" in resolved.hf_param
+
+
+class TestErnieMultimodalRotaryEmbedding:
+    """Test ERNIE multimodal rotary context-parallel handling."""
+
+    @pytest.fixture
+    def rotary_embedding(self):
+        """Create a CPU rotary embedding without invoking the CUDA constructor."""
+        rotary_embedding = ErnieMultimodalRotaryEmbedding.__new__(ErnieMultimodalRotaryEmbedding)
+        torch.nn.Module.__init__(rotary_embedding)
+        rotary_embedding.inv_freq = torch.tensor([1.0, 0.5])
+        rotary_embedding.seq_len_interpolation_factor = None
+        rotary_embedding.freq_allocation = 0
+        rotary_embedding.cp_group = None
+        return rotary_embedding
+
+    @pytest.fixture
+    def position_ids(self):
+        """Create distinct temporal, height, and width positions."""
+        return torch.arange(12).reshape(3, 1, 4)
+
+    def test_unpacked_sequence_slices_context_parallel_embedding(self, rotary_embedding, position_ids):
+        cp_group = Mock()
+        cp_group.size.return_value = 2
+
+        with patch(
+            "megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model.get_pos_emb_on_this_cp_rank",
+            side_effect=lambda embedding, *_: embedding[:2],
+        ) as get_cp_embedding:
+            output = rotary_embedding(position_ids, [1, 1, 0], cp_group=cp_group)
+
+        assert output.shape == (2, 1, 1, 4)
+        get_cp_embedding.assert_called_once()
+        assert get_cp_embedding.call_args.args[1:] == (0, cp_group)
+
+    def test_packed_sequence_retains_full_context_parallel_embedding(self, rotary_embedding, position_ids):
+        cp_group = Mock()
+        cp_group.size.return_value = 2
+
+        with patch(
+            "megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model.get_pos_emb_on_this_cp_rank"
+        ) as get_cp_embedding:
+            output = rotary_embedding(position_ids, [1, 1, 0], cp_group=cp_group, packed_seq=True)
+
+        assert output.shape == (4, 1, 1, 4)
+        get_cp_embedding.assert_not_called()
 
 
 class TestErnie45VLModelProvider:
