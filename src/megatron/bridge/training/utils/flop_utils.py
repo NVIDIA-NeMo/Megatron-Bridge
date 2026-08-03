@@ -85,19 +85,21 @@ def _accumulator_to_int(value) -> int:
     return 0
 
 
-def resolve_global_flops_seqlen_stats(
+def resolve_global_flops_runtime_stats(
     state,
     *,
     data_parallel_size: int,
     vp_size: int | None = None,
     dp_group=None,
-) -> tuple[int | None, int | None, int]:
+    include_cross_attention_stats: bool = False,
+) -> tuple[int | None, int | None, int, int | None, int | None]:
     """Resolve data-parallel-global FLOPS sequence stats from per-rank accumulators.
 
-    Reads the three accumulators populated by the forward step
+    Reads the accumulators populated by the forward step
     (``_flops_seqlen_sum`` = Σ padded tokens, ``_flops_seqlen_sq_sum`` = Σᵢ sᵢ²
-    over real sub-sequences, ``_flops_vision_patches``) and reduces them to
-    global totals across the data-parallel group.
+    over real sub-sequences, ``_flops_vision_patches``, and optional cross-attention
+    key/value and query-key products) and reduces them to global totals across the
+    data-parallel group.
 
     Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
     differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
@@ -116,16 +118,22 @@ def resolve_global_flops_seqlen_stats(
         dp_group: Data-parallel process group to SUM-reduce over. Must be the
             pure DP group (excluding CP) matching ``data_parallel_size`` — CP
             ranks share the same ``cu_seqlens`` and would double-count.
+        include_cross_attention_stats: Whether the collective includes the two
+            optional cross-attention values. This must be uniform across every
+            rank in ``dp_group``; callers should derive it from model capability,
+            not local batch contents.
 
     Returns:
-        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches)``. The first two
-        are ``None`` when no accumulation happened, signalling the caller to fall
-        back to a fixed-length estimate. ``num_vision_patches`` is ``0`` when no
-        vision tokens were seen.
+        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches,
+        cross_seqlen_sum, cross_seqlen_product_sum)``. Sequence values are ``None``
+        when no corresponding accumulation happened. ``num_vision_patches`` is
+        ``0`` when no vision tokens were seen.
     """
     local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
     local_seqlen_sq_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sq_sum", 0))
     local_vision_patches = _accumulator_to_int(getattr(state, "_flops_vision_patches", 0))
+    local_cross_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_cross_seqlen_sum", 0))
+    local_cross_seqlen_product_sum = _accumulator_to_int(getattr(state, "_flops_cross_seqlen_product_sum", 0))
     _ = vp_size
 
     use_all_reduce = (
@@ -137,22 +145,58 @@ def resolve_global_flops_seqlen_stats(
     )
     if use_all_reduce:
         device = torch.cuda.current_device() if torch.cuda.is_available() else None
-        stats = torch.tensor(
-            [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches],
-            dtype=torch.long,
-            device=device,
-        )
+        stats_values = [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches]
+        # Preserve the original three-int collective for every non-cross-attention
+        # caller. Only WAN currently records the two optional cross-attention terms.
+        if include_cross_attention_stats:
+            stats_values.extend([local_cross_seqlen_sum, local_cross_seqlen_product_sum])
+        stats = torch.tensor(stats_values, dtype=torch.long, device=device)
         torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM, group=dp_group)
-        seqlen_sum, seqlen_squared_sum, num_vision_patches = (int(x) for x in stats.tolist())
+        reduced_stats = [int(x) for x in stats.tolist()]
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = reduced_stats[:3]
+        if include_cross_attention_stats:
+            cross_seqlen_sum, cross_seqlen_product_sum = reduced_stats[3:]
+        else:
+            cross_seqlen_sum = 0
+            cross_seqlen_product_sum = 0
     else:
         # No process group: extrapolate from the local rank (approximation).
         seqlen_sum = local_seqlen_sum * data_parallel_size
         seqlen_squared_sum = local_seqlen_sq_sum * data_parallel_size
         num_vision_patches = local_vision_patches * data_parallel_size
+        cross_seqlen_sum = local_cross_seqlen_sum * data_parallel_size
+        cross_seqlen_product_sum = local_cross_seqlen_product_sum * data_parallel_size
 
     if seqlen_sum <= 0:
-        return None, None, max(num_vision_patches, 0)
-    return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
+        seqlen_sum = None
+        seqlen_squared_sum = None
+    if cross_seqlen_sum <= 0:
+        cross_seqlen_sum = None
+        cross_seqlen_product_sum = None
+    return (
+        seqlen_sum,
+        seqlen_squared_sum,
+        max(num_vision_patches, 0),
+        cross_seqlen_sum,
+        cross_seqlen_product_sum,
+    )
+
+
+def resolve_global_flops_seqlen_stats(
+    state,
+    *,
+    data_parallel_size: int,
+    vp_size: int | None = None,
+    dp_group=None,
+) -> tuple[int | None, int | None, int]:
+    """Resolve the original self-attention and vision FLOP statistics."""
+    return resolve_global_flops_runtime_stats(
+        state,
+        data_parallel_size=data_parallel_size,
+        vp_size=vp_size,
+        dp_group=dp_group,
+        include_cross_attention_stats=False,
+    )[:3]
 
 
 def _add_flops_accumulator(state, name: str, delta) -> None:
@@ -221,6 +265,8 @@ def accumulate_flops_metadata(
     cu_seqlens_argmin: torch.Tensor | None = None,
     cu_seqlens_unpadded: torch.Tensor | None = None,
     cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+    cross_cu_seqlens: torch.Tensor | None = None,
+    cross_cu_seqlens_unpadded: torch.Tensor | None = None,
     num_vision_patches: int | torch.Tensor | None = None,
 ) -> None:
     """Accumulate per-microbatch FLOPS metadata onto ``state``.
@@ -230,7 +276,7 @@ def accumulate_flops_metadata(
     0 contributes metadata so model chunking does not multiply the full-model
     FLOPS estimate. ``None`` and ``0`` both represent the primary/only chunk.
 
-    Writes three accumulators consumed by ``train.py`` at end of step:
+    Writes accumulators consumed by ``train.py`` at end of step:
 
     - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
       this microbatch contributes), or ``mbs * config_seq_len`` for dense
@@ -247,6 +293,9 @@ def accumulate_flops_metadata(
       pre-fix value). ``dense_seq_len`` is ``config_seq_len`` when provided,
       otherwise ``tokens.shape[1]``.
     - ``_flops_vision_patches``: running total of ``num_vision_patches``.
+    - ``_flops_cross_seqlen_sum`` and ``_flops_cross_seqlen_product_sum``:
+      optional cross-attention Σᵢ kᵢ and Σᵢ qᵢkᵢ terms for model-specific
+      estimators such as WAN.
 
     ``num_vision_patches`` is the precomputed number of vision patches in this
     microbatch (drives the ViT term). It is kept model-agnostic on purpose: the
@@ -282,6 +331,28 @@ def accumulate_flops_metadata(
         # sub-sequences → BSHD fallback (single pack-length sequence).
         _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * dense_seq_len)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * dense_seq_len**2)
+
+    cross_sub_seq_lens = _real_subseq_lengths(
+        cross_cu_seqlens,
+        cu_seqlens_unpadded=cross_cu_seqlens_unpadded,
+    )
+    if cross_sub_seq_lens is not None and cross_sub_seq_lens.numel() > 0:
+        if sub_seq_lens is None or sub_seq_lens.numel() != cross_sub_seq_lens.numel():
+            raise ValueError("Cross-attention FLOP metadata requires matching query and key/value sequences")
+        setattr(state, "_flops_requires_global_reduce", True)
+        cross_padded_sub_seq_lens = _real_subseq_lengths(cross_cu_seqlens)
+        if cross_padded_sub_seq_lens is None or cross_padded_sub_seq_lens.numel() == 0:
+            cross_padded_sub_seq_lens = cross_sub_seq_lens
+        _add_flops_accumulator(
+            state,
+            "_flops_cross_seqlen_sum",
+            _scalar_sum_for_accumulator(cross_padded_sub_seq_lens),
+        )
+        _add_flops_accumulator(
+            state,
+            "_flops_cross_seqlen_product_sum",
+            _scalar_sum_for_accumulator(sub_seq_lens * cross_sub_seq_lens),
+        )
 
     if num_vision_patches is not None:
         _add_flops_accumulator(state, "_flops_vision_patches", num_vision_patches)
@@ -357,6 +428,8 @@ def num_floating_point_operations(
     seqlen_sum: int | None = None,
     seqlen_squared_sum: int | None = None,
     num_vision_patches: int = 0,
+    cross_seqlen_sum: int | None = None,
+    cross_seqlen_product_sum: int | None = None,
 ):
     """Return the number of floating point operations.
 
@@ -374,7 +447,21 @@ def num_floating_point_operations(
             result matches the legacy constant-length estimate.
         num_vision_patches: Total number of vision patches in the batch
             (before spatial merge). Used to compute ViT encoder FLOPS.
+        cross_seqlen_sum: Sum of cross-attention key/value sequence lengths.
+        cross_seqlen_product_sum: Sum of per-sample query and key/value length products.
     """
+    peft = getattr(cfg, "peft", None)
+    is_lora = isinstance(peft, LoRA)
+    runtime_flops_estimator = getattr(cfg.model, "_get_num_floating_point_operations_with_runtime_stats", None)
+    if runtime_flops_estimator is not None and not is_lora:
+        return runtime_flops_estimator(
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+            cross_seqlen_sum=cross_seqlen_sum,
+            cross_seqlen_product_sum=cross_seqlen_product_sum,
+        )
+
     # Compute effective sequence length from actual values or fall back to config.
     if seqlen_sum is not None and batch_size > 0:
         effective_seq_length = seqlen_sum / batch_size
@@ -395,8 +482,6 @@ def num_floating_point_operations(
     else:
         core_attn_seq_factor = effective_seq_length
 
-    peft = getattr(cfg, "peft", None)
-    is_lora = isinstance(peft, LoRA)
     # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
     if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
         return cfg.model._get_num_floating_point_operations(batch_size)
