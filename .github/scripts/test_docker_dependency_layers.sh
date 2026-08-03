@@ -99,6 +99,9 @@ fi
 if [[ "$1" == "fetch" ]]; then
   exit 0
 fi
+if [[ "$*" == "merge-base --is-ancestor aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]; then
+  exit 0
+fi
 if [[ "$*" == "rev-list --parents -n 1 cccccccccccccccccccccccccccccccccccccccc" ]]; then
   printf '%s %s %s\n' cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   exit 0
@@ -133,12 +136,10 @@ if PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
 fi
 
 composite_action=".github/actions/test-template/action.yml"
-test "$(grep -c '\${{ github.event.inputs.mcore_commit }}' "$composite_action")" = 1
-grep -q '^        MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}$' "$composite_action"
-grep -q 'docker exec -t --env MCORE_COMMIT="$MCORE_COMMIT"' "$composite_action"
-verify_line=$(grep -n 'ACTUAL_COMMIT=$(git rev-parse HEAD)' "$composite_action" | cut -d: -f1)
-sync_line=$(grep -n 'uv sync --all-extras --all-groups' "$composite_action" | cut -d: -f1)
-((verify_line < sync_line))
+if grep -qE 'mcore_(commit|ref)|MCORE_COMMIT|uv sync --all-extras --all-groups' "$composite_action"; then
+  echo "Test template must use the already-validated MCore in the built image" >&2
+  exit 1
+fi
 
 # The baseline dependency layer must be structurally independent of the mutable
 # dispatched checkout. CI validates the ordering statically so this regression

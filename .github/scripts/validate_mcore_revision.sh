@@ -12,10 +12,15 @@ if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 refs=$(git ls-remote "$repo" "refs/heads/main" "refs/heads/pull-request/*" "refs/pull/*/merge")
-while IFS=$'\t' read -r sha ref; do
-  if [[ "$sha" == "$revision" && "$ref" == "refs/heads/main" ]]; then
+main_sha=$(awk '$2 == "refs/heads/main" {print $1}' <<<"$refs")
+if [[ -n "$main_sha" ]]; then
+  git fetch --quiet --filter=blob:none --no-tags "$repo" "$main_sha" "$revision"
+  if git merge-base --is-ancestor "$revision" "$main_sha"; then
     exit 0
   fi
+fi
+
+while IFS=$'\t' read -r sha ref; do
   if [[ "$sha" == "$revision" && "$ref" =~ ^refs/heads/pull-request/[0-9]+$ ]]; then
     exit 0
   fi
