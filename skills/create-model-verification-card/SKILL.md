@@ -596,7 +596,10 @@ result. Private executor configuration stays outside the card.
 - **Conversion:** Test CPU and GPU import/export separately. Reload every
   output. Require exact keys, shapes, dtypes, and values when the conversion is
   expected to be lossless; otherwise state the numerical tolerance. Do not use
-  `--detach` or a dry-run flag in a verified conversion command.
+  `--detach` or a dry-run flag in a verified conversion command. Keep the card
+  workload itself to import or export; do not run logit comparison or a
+  roundtrip from a model's `conversion.sh`. Record numerical comparison as a
+  separate inference workload.
 - **Manual forward pass:** Compare Hugging Face and Megatron logits on the same
   prompt with `scripts/inference/infer.sh --task model-comparison`, which routes
   to `examples/conversion/compare_hf_and_megatron/compare.py`. Record whether

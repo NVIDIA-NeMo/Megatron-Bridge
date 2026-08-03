@@ -37,25 +37,12 @@ To import the HF VL model to your desired Megatron path:
   --hf-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B-hf-export
 ```
 
-### Multi-GPU Round-Trip Validation
-
-Use the shared launcher to verify the in-memory Hugging Face → Megatron →
-Hugging Face weight round trip:
-
-```bash
-./scripts/conversion/convert.sh roundtrip \
-  --executor local \
-  --device gpu \
-  --gpus-per-node 8 \
-  --hf-model-id Qwen/Qwen3.5-35B-A3B \
-  --tp 1 --pp 1 --ep 8 \
-  --trust-remote-code
-```
-
-See the [conversion.sh](conversion.sh) script for the parallelism selected for
-each supported model variant.
-
 ## Inference
+
+Keep numerical comparison in the inference workload. Use
+`scripts/inference/infer.sh --task model-comparison` for HF/Megatron logit
+correlation; [conversion.sh](conversion.sh) performs checkpoint import and
+export only.
 
 ### Run Inference on Converted Checkpoint
 

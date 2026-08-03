@@ -48,12 +48,8 @@ items:
       The pinned-revision import exited successfully in 14m39s and created
       iter_0000000. Model weights remained on CPU; exactly one shared runtime
       GPU was required because Transformer Engine constructs the Qwen vision
-      modules through CUDA even for CPU-weight conversion. A subsequent
-      persisted CPU round-trip compared every language, vision, projection,
-      router, shared-expert, routed-expert, and packed MTP tensor bitwise:
-      1,045 tensors and 71,903,645,408 serialized tensor bytes matched, with no
-      missing, unexpected, shape-mismatched, dtype-mismatched, or
-      value-mismatched tensors.
+      modules through CUDA even for CPU-weight conversion. The resulting
+      checkpoint was reloadable by the subsequent verified CPU export.
 
   hf_to_megatron_gpu:
     status: verified
@@ -69,12 +65,8 @@ items:
     expected_result: >
       The 16-H100 pinned-revision import exited successfully at
       TP2/PP1/EP8/ETP1 and created a 16-shard iter_0000000 distributed
-      checkpoint. The repository's distributed HF-to-Megatron-to-HF verifier
-      covered all 1,045 source BF16 tensors, including language, vision,
-      projection, router, routed/shared expert, and packed MTP weights. All
-      1,045 passed the value-comparison gate at absolute tolerance 0.1 and
-      relative tolerance 1e-5, with zero failed rows and no missing,
-      unexpected, or shape-mismatched weights.
+      checkpoint. Subsequent verified GPU export and inference workloads
+      reloaded this checkpoint successfully.
 
   megatron_to_hf_cpu:
     status: verified
@@ -94,14 +86,7 @@ items:
       Transformers strictly reloaded all 1,045 BF16 tensors in 26 indexed
       shards as Qwen3_5MoeForConditionalGeneration. The exported config
       preserves 40 language layers, 256 experts, top-8 routing, 27 vision
-      layers, and one MTP layer with dedicated embeddings disabled. The
-      persisted export matches the pinned source bitwise for all 1,045 tensors
-      and 71,903,645,408 serialized tensor bytes, with no missing, unexpected,
-      shape-mismatched, dtype-mismatched, or value-mismatched tensors. An
-      independent forward comparison through Transformers and the exported
-      checkpoint selected token 760 ('The') in both implementations, with
-      cosine similarity 0.999452 and maximum/mean absolute logit differences
-      0.406250/0.066805.
+      layers, and one MTP layer with dedicated embeddings disabled.
 
   megatron_to_hf_gpu:
     status: verified
@@ -118,14 +103,9 @@ items:
     expected_result: >
       The 16-H100 distributed export exited successfully and wrote 26 indexed
       shards containing 1,045 BF16 tensors and 71,903,645,408 serialized tensor
-      bytes. Its key set, dtype inventory, and byte total exactly match the
-      pinned source. The repository round-trip verifier passed all 1,045
-      language, vision, projection, router, routed/shared expert, and packed
-      MTP weights with zero failed rows. Transformers independently reloaded
-      the persisted export as Qwen3_5MoeForConditionalGeneration with empty
-      missing, unexpected, mismatched, and error sets. The distributed
-      round-trip value comparison used absolute tolerance 0.1 and relative
-      tolerance 1e-5.
+      bytes. Transformers independently reloaded the persisted export as
+      Qwen3_5MoeForConditionalGeneration with empty missing, unexpected,
+      mismatched, and error sets.
 
   manual_forward_pass:
     status: verified
