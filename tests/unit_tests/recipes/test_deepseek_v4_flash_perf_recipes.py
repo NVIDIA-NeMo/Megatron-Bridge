@@ -41,7 +41,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
             deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
             1,
             "selective",
-            ["core_attn", "moe_act", "layernorm", "mla_up_proj", "shared_experts", "mhc"],
+            ["moe_act", "layernorm", "mla_up_proj", "shared_experts", "mhc"],
             False,
         ),
         (
