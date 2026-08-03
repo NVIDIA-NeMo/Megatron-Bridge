@@ -105,6 +105,7 @@ def test_deepseek_v4_flash_gb300_configs(
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 
+    assert cfg.model.apply_dsa_kernel_fusion is True
     assert cfg.model.quant_recipe is None
     assert cfg.model.moe_router_padding_for_fp8 is False
     assert cfg.model.moe_router_padding_for_quantization is True
