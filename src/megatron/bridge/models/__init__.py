@@ -146,6 +146,9 @@ from megatron.bridge.models.nemotron_vl import (
 from megatron.bridge.models.nemotronh import (
     NemotronHBridge,
 )
+from megatron.bridge.models.nemotronh_puzzle import (
+    NemotronHPuzzleBridge,
+)
 from megatron.bridge.models.olmoe import (
     OlMoEBridge,
     OlMoEModelProvider,
@@ -260,6 +263,7 @@ __all__ = [
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",
+    "NemotronHPuzzleBridge",
     "MambaModelProvider",
     "MimoBridge",
     # MiMo-V2-Flash
