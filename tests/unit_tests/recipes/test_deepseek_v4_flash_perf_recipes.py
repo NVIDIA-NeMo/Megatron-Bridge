@@ -35,12 +35,19 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("recipe", "micro_batch_size", "recompute_modules", "offload_optimizer_states"),
+    ("recipe", "micro_batch_size", "recompute_granularity", "recompute_modules", "offload_optimizer_states"),
     [
-        (deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config, 1, None, False),
+        (
+            deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
+            1,
+            "selective",
+            ["core_attn", "moe_act", "layernorm", "mla_up_proj", "shared_experts", "mhc"],
+            False,
+        ),
         (
             deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_mbs2_recompute_moe_act_config,
             2,
+            "selective",
             ["moe_act"],
             False,
         ),
@@ -48,13 +55,15 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
             deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_mbs2_offload_optimizer_expert_fc1_config,
             2,
             None,
+            None,
             True,
         ),
     ],
 )
-def test_deepseek_v4_flash_gb300_configs_match_benchmark_rows(
+def test_deepseek_v4_flash_gb300_configs(
     recipe,
     micro_batch_size: int,
+    recompute_granularity: str | None,
     recompute_modules: list[str] | None,
     offload_optimizer_states: bool,
 ) -> None:
@@ -75,6 +84,7 @@ def test_deepseek_v4_flash_gb300_configs_match_benchmark_rows(
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.recompute_granularity == recompute_granularity
     assert cfg.model.recompute_modules == recompute_modules
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]

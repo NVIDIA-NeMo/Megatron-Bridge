@@ -28,7 +28,7 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, MBS=1."""
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, MBS=1, selective recompute."""
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
@@ -53,8 +53,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_load_balancing_type = "seq_aux_loss"
     cfg.model.moe_aux_loss_coeff = 1.0e-4
 
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "moe_act", "layernorm", "mla_up_proj", "shared_experts", "mhc"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
@@ -132,6 +132,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_mbs2_offload_optimizer_expert_
     """
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
     cfg.train.micro_batch_size = 2
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
     cfg.optimizer.offload_optimizer_states = True
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["expert_fc1"]
