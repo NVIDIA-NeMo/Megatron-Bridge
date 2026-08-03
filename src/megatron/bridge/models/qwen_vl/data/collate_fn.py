@@ -364,5 +364,6 @@ def qwen2_5_collate_fn(
         enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         ignore_index=IGNORE_INDEX,
+        sequence_tensor_pad_values={"mm_token_type_ids": 0},
     )
     return batch
