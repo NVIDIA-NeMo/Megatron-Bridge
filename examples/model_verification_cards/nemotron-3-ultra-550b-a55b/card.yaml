@@ -407,7 +407,8 @@ items:
         complete all 50 optimizer steps at TP4/PP1/CP1/EP64/ETP1,
         GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
         NaN iterations, all four training metrics, and peak allocated and
-        reserved memory. BF16, HybridEP, selective MoE-activation recompute,
-        fine-grained parameter gather, and Megatron-FSDP must remain active
-        without CPU activation offload. The H100 result is standalone and is
-        not numerically comparable with the GB200 MXFP8 result.
+        reserved memory. BF16, HybridEP, fine-grained parameter gather, and
+        Megatron-FSDP must remain active without MoE-activation recompute or
+        CPU activation offload; the fused recompute path requires SM100+.
+        The H100 result is standalone and is not numerically comparable with
+        the GB200 MXFP8 result.
