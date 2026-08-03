@@ -17,15 +17,23 @@
 The Puzzle architecture (e.g. `NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-BF16`) is a
 NemotronH hybrid backbone (mamba / attention / MoE blocks) where the MoE layers
 have a *different* `moe_intermediate_size` and `num_experts_per_tok` on almost
-every layer, expressed in HF config as a `block_configs: list[dict]` sequence.
-This bridge is thin: it inherits mapping infra + config translation from
-`NemotronHBridge`, only swaps the HF top-level prefix (`model.*` instead of
-`backbone.*`) and populates `moe_ffn_hidden_size_per_layer` /
-`moe_router_topk_per_layer` on the Megatron provider so
-`heterogeneous_block_specs` routing kicks in inside `hybrid_block.py`.
+every layer, expressed in HF config as `block_configs: list[dict]` (main block)
+and `mtp_block_configs: list[dict]` (positions inside one MTP depth).
+
+Both sides map 1:1 to Megatron-Core's sparse per-layer override interface:
+
+- `block_configs`      -> `per_layer_config_overrides`      (length = num_layers)
+- `mtp_block_configs`  -> `mtp_per_layer_config_overrides`  (length = mtp_pattern_length)
+
+Non-MoE positions get a `None` entry (no override — the global provider values
+apply). MoE positions carry the varying keys only (`moe_ffn_hidden_size`,
+`moe_router_topk`); the globally-constant `num_moe_experts` and
+`moe_shared_expert_intermediate_size` stay on the provider itself.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 
@@ -57,6 +65,25 @@ def _block_attr(b, name: str):
     if hasattr(b, name):
         return getattr(b, name)
     return b.get(name) if isinstance(b, dict) else None
+
+
+def _block_to_override(b) -> dict[str, Any] | None:
+    """Return the sparse override dict for one HF block config entry, or None.
+
+    Only MoE entries carry per-position overrides in Puzzle configs. Non-MoE
+    positions inherit the global provider config, which the resolver returns
+    verbatim when the override is `None`.
+    """
+    if _block_type(b) != "moe":
+        return None
+    moe_int = _block_attr(b, "moe_intermediate_size")
+    topk = _block_attr(b, "num_experts_per_tok")
+    if moe_int is None or topk is None:
+        raise ValueError(f"MoE block config missing required keys: {b!r}")
+    return {
+        "moe_ffn_hidden_size": int(moe_int),
+        "moe_router_topk": int(topk),
+    }
 
 
 @MegatronModelBridge.register_bridge(
@@ -109,40 +136,30 @@ class NemotronHPuzzleBridge(NemotronHBridge):
         num_layers = len(block_configs)
         main_pattern = _blocks_to_pattern(block_configs)
 
-        # MTP: mtp_block_configs is the per-sub-layer breakdown of a single MTP
-        # depth. For Puzzle this is [attention, moe]. We forward the sub-pattern
-        # via mtp_hybrid_override_pattern so HybridModelProvider.finalize()
-        # concatenates it into the unified hybrid_layer_pattern.
         mtp_block_configs = list(getattr(hf_config, "mtp_block_configs", []) or [])
         mtp_pattern = _blocks_to_pattern(mtp_block_configs) if mtp_block_configs else None
 
-        # Puzzle keeps expert count and shared expert size globally constant,
-        # but we still populate the per-layer lists with -1 sentinels for the
-        # non-MoE positions so the hetero validation path is exercised.
         total_experts = int(hf_config.n_routed_experts)
         shared_size = int(getattr(hf_config, "moe_shared_expert_intermediate_size", 0) or 0)
 
-        moe_ffn_hidden_size_per_layer: list[int] = []
-        moe_router_topk_per_layer: list[int] = []
-        num_moe_experts_per_layer: list[int] = []
-        moe_shared_expert_intermediate_size_per_layer: list[int] = []
-        for b in block_configs:
-            if _block_type(b) == "moe":
-                moe_int = _block_attr(b, "moe_intermediate_size")
-                topk = _block_attr(b, "num_experts_per_tok")
-                if moe_int is None or topk is None:
-                    raise ValueError(
-                        f"MoE block config missing required keys: {b!r}"
-                    )
-                moe_ffn_hidden_size_per_layer.append(int(moe_int))
-                moe_router_topk_per_layer.append(int(topk))
-                num_moe_experts_per_layer.append(total_experts)
-                moe_shared_expert_intermediate_size_per_layer.append(shared_size or -1)
-            else:
-                moe_ffn_hidden_size_per_layer.append(-1)
-                moe_router_topk_per_layer.append(-1)
-                num_moe_experts_per_layer.append(-1)
-                moe_shared_expert_intermediate_size_per_layer.append(-1)
+        # Sparse main-block overrides: one entry per layer, either a dict of
+        # override keys or None. Length must equal num_layers — the mcore
+        # validator enforces this in TransformerConfig.__post_init__.
+        per_layer_config_overrides: list[dict[str, Any] | None] = [
+            _block_to_override(b) for b in block_configs
+        ]
+
+        # Sparse MTP per-position overrides: one entry per position inside one
+        # MTP depth. All MTP depths share these — see `mtp_pattern_length` on
+        # TransformerConfig for the axis definition. Length must equal
+        # mtp_pattern_length.
+        mtp_per_layer_config_overrides: list[dict[str, Any] | None] | None = None
+        mtp_pattern_length: int | None = None
+        if mtp_block_configs:
+            mtp_pattern_length = len(mtp_block_configs)
+            mtp_per_layer_config_overrides = [
+                _block_to_override(b) for b in mtp_block_configs
+            ]
 
         # Overwrite scalar hybrid pattern derived by the parent from
         # hybrid_override_pattern (which Puzzle configs don't set) with the one
@@ -156,82 +173,51 @@ class NemotronHPuzzleBridge(NemotronHBridge):
         if shared_size:
             provider.moe_shared_expert_intermediate_size = shared_size
 
-        provider.moe_ffn_hidden_size_per_layer = moe_ffn_hidden_size_per_layer
-        provider.moe_router_topk_per_layer = moe_router_topk_per_layer
-        provider.num_moe_experts_per_layer = num_moe_experts_per_layer
-        provider.moe_shared_expert_intermediate_size_per_layer = (
-            moe_shared_expert_intermediate_size_per_layer
-        )
+        provider.per_layer_config_overrides = per_layer_config_overrides
+        provider.mtp_per_layer_config_overrides = mtp_per_layer_config_overrides
+        provider.mtp_pattern_length = mtp_pattern_length
 
-        # MTP HybridStack cannot use the main-block per-layer lists (its layer
-        # numbers restart at 1 with pp_layer_offset=0). Instead, populate the
-        # global scalar moe_ffn_hidden_size / moe_router_topk with the MTP MoE
-        # values so MTP falls through to those scalars via the guard in
-        # hybrid_block.py.
-        if mtp_block_configs:
-            mtp_moe = next(
-                (b for b in mtp_block_configs if _block_type(b) == "moe"), None
-            )
-            if mtp_moe is not None:
-                mtp_moe_int = _block_attr(mtp_moe, "moe_intermediate_size")
-                mtp_topk = _block_attr(mtp_moe, "num_experts_per_tok")
-                if mtp_moe_int is not None:
-                    provider.moe_ffn_hidden_size = int(mtp_moe_int)
-                if mtp_topk is not None:
-                    provider.moe_router_topk = int(mtp_topk)
-
+        # Validator flips this on when either override list is set, but
+        # __post_init__ has already run on the parent's provider — set it here
+        # explicitly so downstream builders route through get_config_for_layer /
+        # get_config_for_mtp_layer.
         provider.heterogeneous_block_specs = True
         return provider
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
-        """Emit HF-side `block_configs` and `mtp_block_configs` from per-layer lists."""
+        """Emit HF-side `block_configs` and `mtp_block_configs` from sparse per-layer overrides."""
         hf_cfg = super().megatron_to_hf_config(provider)
 
-        # Rebuild block_configs from per-layer lists + hybrid pattern.
+        # Rebuild block_configs from the main hybrid pattern + sparse overrides.
         pattern = hf_cfg.pop("hybrid_override_pattern", None)
         if pattern is None:
             # NemotronHBridge.megatron_to_hf_config normally returns a cleaned
             # pattern; if it's missing we can't rebuild block_configs.
             return hf_cfg
 
-        # `pattern` is already the main decoder pattern (no MTP suffix). Convert
-        # symbols back to block types.
         symbol_to_type = {v: k for k, v in _BLOCK_TYPE_TO_SYMBOL.items()}
         main_types = [symbol_to_type[s] for s in pattern if s in symbol_to_type]
 
-        moe_ffn_per_layer = provider.moe_ffn_hidden_size_per_layer or []
-        moe_topk_per_layer = provider.moe_router_topk_per_layer or []
-
-        block_configs: list[dict] = []
-        for i, t in enumerate(main_types):
-            entry: dict = {"block_type": t}
-            if t == "moe":
-                moe_int = moe_ffn_per_layer[i] if i < len(moe_ffn_per_layer) else -1
-                topk = moe_topk_per_layer[i] if i < len(moe_topk_per_layer) else -1
-                if moe_int != -1:
-                    entry["moe_intermediate_size"] = int(moe_int)
-                if topk != -1:
-                    entry["num_experts_per_tok"] = int(topk)
-            block_configs.append(entry)
-
+        per_layer_overrides = provider.per_layer_config_overrides or []
+        block_configs = [
+            _entry_from_override(t, per_layer_overrides[i] if i < len(per_layer_overrides) else None)
+            for i, t in enumerate(main_types)
+        ]
         hf_cfg["block_configs"] = block_configs
 
-        # MTP block: reconstruct from scalar moe_ffn_hidden_size / moe_router_topk.
+        # MTP block: reconstruct from sparse mtp_per_layer_config_overrides.
         mtp_pattern = hf_cfg.pop("mtp_hybrid_override_pattern", None)
         if mtp_pattern:
-            mtp_block_configs: list[dict] = []
-            for s in mtp_pattern:
-                if s not in symbol_to_type:
-                    continue
-                t = symbol_to_type[s]
-                entry = {"block_type": t}
-                if t == "moe":
-                    if provider.moe_ffn_hidden_size is not None:
-                        entry["moe_intermediate_size"] = int(provider.moe_ffn_hidden_size)
-                    if provider.moe_router_topk is not None:
-                        entry["num_experts_per_tok"] = int(provider.moe_router_topk)
-                mtp_block_configs.append(entry)
+            mtp_overrides = provider.mtp_per_layer_config_overrides or []
+            mtp_block_configs = [
+                _entry_from_override(
+                    symbol_to_type[s],
+                    mtp_overrides[i] if i < len(mtp_overrides) else None,
+                )
+                for i, s in enumerate(mtp_pattern)
+                if s in symbol_to_type
+            ]
             hf_cfg["mtp_block_configs"] = mtp_block_configs
 
         # Puzzle-specific auto_map overrides the vanilla NemotronH values set
@@ -253,3 +239,17 @@ class NemotronHPuzzleBridge(NemotronHBridge):
         if mtp_pattern:
             hf_cfg["mtp_layers_block_type"] = [entry["block_type"] for entry in hf_cfg["mtp_block_configs"]]
         return hf_cfg
+
+
+def _entry_from_override(block_type: str, override: dict[str, Any] | None) -> dict:
+    """Rebuild one HF block_configs entry from a Megatron per-layer override dict."""
+    entry: dict = {"block_type": block_type}
+    if block_type != "moe" or not override:
+        return entry
+    moe_int = override.get("moe_ffn_hidden_size")
+    topk = override.get("moe_router_topk")
+    if moe_int is not None:
+        entry["moe_intermediate_size"] = int(moe_int)
+    if topk is not None:
+        entry["num_experts_per_tok"] = int(topk)
+    return entry
