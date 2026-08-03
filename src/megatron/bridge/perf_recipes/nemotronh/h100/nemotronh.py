@@ -153,8 +153,9 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config() -> ConfigContai
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
-        # Megatron-FSDP requires more than one CUDA device connection.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # Megatron-FSDP requires more than one CUDA device connection. Eight
+        # bounds Hopper driver/stream resources while retaining stream independence.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 8,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
@@ -178,8 +179,9 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
-        # Megatron-FSDP requires more than one CUDA device connection.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # Megatron-FSDP requires more than one CUDA device connection. Eight
+        # bounds Hopper driver/stream resources while retaining stream independence.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 8,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
