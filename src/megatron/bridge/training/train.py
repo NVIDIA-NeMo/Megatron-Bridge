@@ -24,7 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -120,6 +119,14 @@ try:
     HAS_OPTIMIZER_CUDA_GRAPH = True
 except ImportError:
     HAS_OPTIMIZER_CUDA_GRAPH = False
+
+
+# ``FullyShardedDataParallel`` became a factory function (dispatching to V1/V2) in newer
+# Megatron-Core; prefer the concrete V1 wrapper class so ``isinstance`` checks stay valid.
+try:
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1 as megatron_FSDP
+except ImportError:
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 
 
 def train(
