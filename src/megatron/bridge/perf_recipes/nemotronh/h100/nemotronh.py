@@ -107,11 +107,12 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.model.gradient_accumulation_fusion = True
 
-    # Bound forward parameter prefetch to approximately one FSDP bucket. The
-    # default communication-unit heuristic keeps two following parameter
-    # buckets resident for this model, which leaves insufficient H100 memory
-    # for the grouped-MoE activation while using FP32 fused main gradients.
-    cfg.ddp.suggested_communication_unit_size = 400_000_000
+    # Disable forward parameter prefetch. Even the smallest positive prefetch
+    # window admits one complete following FSDP bucket, which leaves
+    # insufficient H100 memory for the grouped-MoE activation while using FP32
+    # fused main gradients. A one-element communication unit maps to a zero
+    # all-gather prefetch window while preserving the existing bucket layout.
+    cfg.ddp.suggested_communication_unit_size = 1
 
     # Performance defaults disable these checks, but an invalid gradient must
     # fail the verification run before the optimizer can corrupt the model.

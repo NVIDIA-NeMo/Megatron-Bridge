@@ -206,7 +206,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.ddp.num_distributed_optimizer_instances == 1
     assert cfg.ddp.outer_dp_sharding_strategy == "no_shard"
     assert cfg.ddp.megatron_fsdp_enable_fine_grained_param_gather is True
-    assert cfg.ddp.suggested_communication_unit_size == 400_000_000
+    assert cfg.ddp.suggested_communication_unit_size == 1
     assert cfg.ddp.megatron_fsdp_use_decoupled_grad is True
     assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
     assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.float32
