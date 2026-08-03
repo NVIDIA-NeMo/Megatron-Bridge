@@ -28,7 +28,7 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, MBS=1, selective recompute."""
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, MBS=1, no recompute."""
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
