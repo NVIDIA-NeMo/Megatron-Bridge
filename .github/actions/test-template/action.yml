@@ -149,6 +149,8 @@ runs:
     - name: Create run-script
       id: create
       shell: bash
+      env:
+        MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}
       run: |
         echo "::group::Create run-script"
         COVERAGE_PREFIX=$([[ "${{ inputs.is_unit_test }}" == "true" ]] && echo "unit-test" || echo "e2e")
@@ -157,12 +159,12 @@ runs:
         cmd=$(cat <<'RUN_TEST_EOF'
         #!/bin/bash
 
-        docker exec -t nemo_container_${{ github.run_id }} bash -c '
+        docker exec -t --env MCORE_COMMIT="$MCORE_COMMIT" nemo_container_${{ github.run_id }} bash -c '
           set -e
           export GH_TOKEN=${{ inputs.PAT }}
 
           # Reinstall MCore if the submodule was updated
-          if [ -n "${{ github.event.inputs.mcore_commit }}" ]; then
+          if [ -n "$MCORE_COMMIT" ]; then
             echo "🔄 Reinstalling MCore from updated submodule..."
             cd /opt/Megatron-Bridge
 
@@ -175,7 +177,7 @@ runs:
 
             # Verify the commit matches what we expected
             cd 3rdparty/Megatron-LM
-            EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+            EXPECTED_COMMIT="$MCORE_COMMIT"
             ACTUAL_COMMIT=$(git rev-parse HEAD)
             echo "🔍 Verifying MCore commit..."
             echo "   Expected: ${EXPECTED_COMMIT}"
@@ -190,8 +192,8 @@ runs:
             cd /opt/Megatron-Bridge
 
             # Store commit SHA for verification (since Docker build file was overridden by volume mount)
-            echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
-            echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
+            echo "$MCORE_COMMIT" > /opt/Megatron-Bridge/.mcore_commit_sha
+            echo "📝 Stored MCore commit SHA: $MCORE_COMMIT"
           fi
 
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?

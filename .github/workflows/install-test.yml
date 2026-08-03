@@ -160,12 +160,8 @@ jobs:
           echo "📍 MCore repo: $MCORE_REPO"
           echo "🎯 Triggered by: $TRIGGERED_BY"
 
-          if [[ ! "$MCORE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "MCore commit must be a full commit SHA" >&2
-            exit 1
-          fi
-          if ! .github/scripts/validate_mcore_repo.sh "$MCORE_REPO"; then
-            echo "Unsupported MCore repository: $MCORE_REPO" >&2
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_COMMIT"; then
+            echo "MCore revision is not an approved NVIDIA branch head: $MCORE_COMMIT" >&2
             exit 1
           fi
 

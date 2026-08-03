@@ -9,7 +9,8 @@ baseline_clone_line=$(grep -n 'git clone --filter=blob:none --no-checkout' "$doc
 baseline_line=$(grep -n 'Install the main-branch environment from an immutable baseline context' "$dockerfile" | cut -d: -f1)
 dispatched_copy_line=$(grep -n '^COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM$' "$dockerfile" | cut -d: -f1)
 delta_line=$(grep -n 'syncing the dispatched dependency delta' "$dockerfile" | cut -d: -f1)
-validator=".github/scripts/validate_mcore_repo.sh"
+repo_validator=".github/scripts/validate_mcore_repo.sh"
+revision_validator=".github/scripts/validate_mcore_revision.sh"
 temporary_dir=$(mktemp -d)
 trap 'rm -rf "$temporary_dir"' EXIT
 
@@ -49,16 +50,15 @@ if grep -q 'MCORE_REF="${{ github.event.inputs.mcore_ref }}"' "$workflow"; then
   echo "Dispatch inputs must enter shell steps through env" >&2
   exit 1
 fi
-test "$(grep -c 'validate_mcore_repo.sh "$MCORE_REPO"' "$workflow")" = 2
-test "$(grep -c 'if \[\[ ! "$MCORE_REF" =~ ^\[0-9a-f\]{40}\$ \]\]; then' "$workflow")" = 2
+test "$(grep -c 'validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'git fetch "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'git checkout "$MCORE_REF"' "$workflow")" = 2
+test "$(grep -c 'test "$(git rev-parse HEAD)" = "$MCORE_REF"' "$workflow")" = 1
 
 install_workflow=".github/workflows/install-test.yml"
 grep -q '^          MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}$' "$install_workflow"
 grep -q '^          MCORE_REPO: ${{ github.event.inputs.mcore_repo' "$install_workflow"
-grep -q 'if \[\[ ! "$MCORE_COMMIT" =~ ^\[0-9a-f\]{40}\$ \]\]; then' "$install_workflow"
-grep -q 'validate_mcore_repo.sh "$MCORE_REPO"' "$install_workflow"
+grep -q 'validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_COMMIT"' "$install_workflow"
 grep -q 'git fetch "$MCORE_REPO" "$MCORE_COMMIT"' "$install_workflow"
 grep -q 'git checkout "$MCORE_COMMIT"' "$install_workflow"
 if grep -qE '(git fetch|EXPECTED_COMMIT=).*\$\{\{ github\.event\.inputs\.mcore_(repo|commit)' "$install_workflow"; then
@@ -66,23 +66,63 @@ if grep -qE '(git fetch|EXPECTED_COMMIT=).*\$\{\{ github\.event\.inputs\.mcore_(
   exit 1
 fi
 
-"$validator" https://github.com/NVIDIA/Megatron-LM.git
-if "$validator" https://github.com/example-contributor/Megatron-LM.git; then
+"$repo_validator" https://github.com/NVIDIA/Megatron-LM.git
+if "$repo_validator" https://github.com/example-contributor/Megatron-LM.git; then
   echo "MCore repository validation accepted an untrusted contributor fork" >&2
   exit 1
 fi
-if "$validator" https://github.com/not-a-fork/Megatron-LM.git; then
+if "$repo_validator" https://github.com/not-a-fork/Megatron-LM.git; then
   echo "MCore repository validation accepted an untrusted repository" >&2
   exit 1
 fi
-if "$validator" 'https://github.com/example/Megatron-LM.git;touch /tmp/injected'; then
+if "$repo_validator" 'https://github.com/example/Megatron-LM.git;touch /tmp/injected'; then
   echo "MCore repository validation accepted shell metacharacters" >&2
   exit 1
 fi
-if "$validator" https://example.com/example/Megatron-LM.git; then
+if "$repo_validator" https://example.com/example/Megatron-LM.git; then
   echo "MCore repository validation accepted a non-GitHub host" >&2
   exit 1
 fi
+
+mkdir -p "$temporary_dir/revision-bin"
+cat >"$temporary_dir/revision-bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == "ls-remote https://github.com/NVIDIA/Megatron-LM.git refs/heads/main refs/heads/pull-request/* refs/pull/*/merge" ]]; then
+  printf '%s\t%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main
+  printf '%s\t%s\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/heads/pull-request/123
+  printf '%s\t%s\n' cccccccccccccccccccccccccccccccccccccccc refs/pull/123/merge
+  printf '%s\t%s\n' dddddddddddddddddddddddddddddddddddddddd refs/pull/456/merge
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$temporary_dir/revision-bin/git"
+PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
+  https://github.com/NVIDIA/Megatron-LM.git aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
+  https://github.com/NVIDIA/Megatron-LM.git bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
+  https://github.com/NVIDIA/Megatron-LM.git cccccccccccccccccccccccccccccccccccccccc
+if PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
+  https://github.com/NVIDIA/Megatron-LM.git dddddddddddddddddddddddddddddddddddddddd; then
+  echo "MCore revision validation accepted a PR merge without an approved mirror" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
+  https://github.com/NVIDIA/Megatron-LM.git eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; then
+  echo "MCore revision validation accepted an unapproved SHA" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" "$revision_validator" \
+  https://github.com/NVIDIA/Megatron-LM.git not-a-full-sha; then
+  echo "MCore revision validation accepted a malformed SHA" >&2
+  exit 1
+fi
+
+composite_action=".github/actions/test-template/action.yml"
+test "$(grep -c '\${{ github.event.inputs.mcore_commit }}' "$composite_action")" = 1
+grep -q '^        MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}$' "$composite_action"
+grep -q 'docker exec -t --env MCORE_COMMIT="$MCORE_COMMIT"' "$composite_action"
 
 # The baseline dependency layer must be structurally independent of the mutable
 # dispatched checkout. CI validates the ordering statically so this regression
