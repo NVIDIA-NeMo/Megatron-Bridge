@@ -381,6 +381,3 @@ class TestPatchPackedVisualSlice:
         sliced = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
         enc = sliced["modality_inputs"]["images"]["vision_encoder"]
         assert enc["encoder_meta"] == "fixed-string"
-
-
-# ---------------------------------------------------------------------------

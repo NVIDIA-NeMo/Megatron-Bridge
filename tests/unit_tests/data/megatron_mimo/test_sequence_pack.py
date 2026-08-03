@@ -131,9 +131,9 @@ class TestMRoPEAndPackLanguageShard:
         assert out is b and kw is None
 
     def test_pack_language_shard_stage_gt0_packs_with_input_ids_nulled(self):
-        # Bug #2 (packing + PP>1): on language PP stages > 0 ``input_ids`` is nulled, but the caller
-        # still supplies ``lengths`` (derived from ``input_ids`` before nulling, via the batch_spec
-        # that keeps input_ids on every language stage when packing). The shard must still pack
+        # Packing + PP>1: on language PP stages > 0 ``input_ids`` is nulled, but the caller
+        # still supplies ``lengths`` (from the batch's attention_mask, which the batch_spec
+        # ships on every language stage when packing). The shard must still pack
         # ``position_ids`` (MRoPE [3,B,S]) / ``labels`` / ``loss_mask`` to the SAME [1,T] so the THD
         # rotary on the receiving stage is sized to T, not the dense seq_length.
         from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
@@ -157,8 +157,8 @@ class TestMRoPEAndPackLanguageShard:
 
 
 @pytest.mark.unit
-class TestPadTokenIdAndLengthSource:
-    """F4: the caller-provided lengths (priority-0) drive the tight pack regardless of pad id."""
+class TestPackingKwargs:
+    """The caller-provided lengths drive the tight pack and its packing_kwargs."""
 
     def test_packing_kwargs_has_padded_cu_seqlens(self):
         # F9 / CP>1: padded cu_seqlens populated (coincide with unpadded; tight pack).
@@ -182,8 +182,8 @@ class TestPPConsistentPacking:
     def test_labels_packed_consistently_with_logits_shape(self):
         from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
 
-        # The caller derives lengths from input_ids once and reuses them so input_ids (logits)
-        # and labels/loss_mask pack to an identical [1, T].
+        # The caller derives lengths from the attention_mask once and reuses them so
+        # input_ids (logits) and labels/loss_mask pack to an identical [1, T].
         lengths = torch.tensor([3, 2])  # real 3, 2 -> T = 5
 
         input_ids = torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]])

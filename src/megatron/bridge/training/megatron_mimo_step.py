@@ -224,14 +224,31 @@ def forward_step(
         data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
         pack_lengths = None
         if megatron_mimo_model.role is not None and megatron_mimo_model.role.has_language_module:
-            # Every language stage must pack to the same [1, T]; lengths come from the
-            # attention_mask carried with the batch (it must cover modality placeholder tokens).
+            # Lengths come from the batch's attention_mask; it must cover modality placeholder tokens.
             if pack_sequences_enabled:
                 mask = data_batch.get("attention_mask")
-                if not isinstance(mask, torch.Tensor):
+                if not isinstance(mask, torch.Tensor) or mask.dim() != 2:
                     raise ValueError(
-                        "MegatronMIMO in-batch packing requires the batch to carry attention_mask "
-                        "on every language stage"
+                        "MegatronMIMO in-batch packing requires the batch to carry a [batch, seq] "
+                        "attention_mask on every language stage"
+                    )
+                ref = next(
+                    (
+                        t
+                        for t in (
+                            data_batch.get("input_ids"),
+                            data_batch.get("labels"),
+                            data_batch.get("loss_mask"),
+                            data_batch.get("position_ids"),
+                        )
+                        if isinstance(t, torch.Tensor)
+                    ),
+                    None,
+                )
+                if ref is not None and mask.size(-1) != ref.size(-1):
+                    raise ValueError(
+                        f"attention_mask width ({mask.size(-1)}) does not match the batch width "
+                        f"({ref.size(-1)}); lengths derived from it would corrupt the pack"
                     )
                 pack_lengths = mask.to(torch.bool).sum(dim=1).to(torch.long)
             if not is_language_first_stage:

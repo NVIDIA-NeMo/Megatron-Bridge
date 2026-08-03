@@ -219,9 +219,9 @@ class TestForwardStep:
 
     @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
-    def test_forward_step_packs_language_shard_before_nulling_input_ids(self, mock_unwrap, mock_get_batch):
-        """Packing wiring: lengths come from input_ids before a non-first stage nulls it,
-        the shard is packed to one [1, T] row, and packing_kwargs reach the model call."""
+    def test_forward_step_packs_language_shard_with_mask_lengths(self, mock_unwrap, mock_get_batch):
+        """Packing wiring: lengths come from the batch's attention_mask, the shard is
+        packed to one [1, T] row, and packing_kwargs reach the model call."""
         from types import SimpleNamespace
 
         from megatron.bridge.training.megatron_mimo_step import forward_step
@@ -238,7 +238,7 @@ class TestForwardStep:
         mock_model.return_value = (torch.tensor([1.0]), None)
         mock_unwrap.return_value = mock_model
 
-        # Two samples with pad id 0: real lengths 3 and 2 -> packed [1, 5], cu_seqlens [0, 3, 5].
+        # Two samples, mask lengths 3 and 2 -> packed [1, 5], cu_seqlens [0, 3, 5].
         mock_get_batch.return_value = {
             "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
             "position_ids": torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
@@ -256,6 +256,60 @@ class TestForwardStep:
         assert call_kwargs["position_ids"].tolist() == [[0, 1, 2, 0, 1]]
         assert call_kwargs["attention_mask"] is None
 
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_packing_requires_attention_mask(self, mock_unwrap, mock_get_batch):
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_unwrap.return_value = mock_model
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 0]]),
+            "position_ids": torch.tensor([[0, 1, 2, 3]]),
+            "attention_mask": None,
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        with pytest.raises(ValueError, match="attention_mask"):
+            forward_step(mock_state, iter([]), mock_model)
+
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_packing_rejects_mismatched_mask_width(self, mock_unwrap, mock_get_batch):
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_unwrap.return_value = mock_model
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 0]]),
+            "position_ids": torch.tensor([[0, 1, 2, 3]]),
+            "attention_mask": torch.tensor([[1, 1, 1]]),  # width 3 vs batch width 4
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        with pytest.raises(ValueError, match="width"):
+            forward_step(mock_state, iter([]), mock_model)
+
 
 @pytest.mark.unit
 class TestResolveStepPacking:
@@ -268,7 +322,7 @@ class TestResolveStepPacking:
         cfg = SimpleNamespace(enable_in_batch_packing=False, defer_in_batch_packing_to_step=False)
         assert resolve_step_packing(cfg) is False
 
-    def test_enabled_with_defer_and_pad_id(self):
+    def test_enabled_with_defer(self):
         cfg = SimpleNamespace(enable_in_batch_packing=True, defer_in_batch_packing_to_step=True)
         assert resolve_step_packing(cfg) is True
 

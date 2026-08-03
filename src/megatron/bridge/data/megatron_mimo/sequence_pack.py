@@ -143,16 +143,9 @@ def pack_language_shard(
     GPT decoder for block-diagonal attention. Non-LM tensors (``modality_inputs``, etc.) are
     carried through unchanged.
 
-    The per-sample real length comes **only** from the caller-supplied ``lengths`` (the
-    PP-consistent source). ``forward_step`` derives ``lengths`` from ``input_ids`` on every
-    language stage — ``input_ids`` is the only tensor that counts image-placeholder tokens —
-    so all stages pack to an identical ``[1, T]`` and the decoder ``cu_seqlens`` match the
-    hidden states propagated down the pipeline. (Under PP>1 the example's ``_batch_spec_for_rank``
-    keeps ``input_ids`` on every language stage when packing is active, so ``lengths`` is derived
-    from it before it is nulled; ``position_ids`` is then packed to the same ``[1, T]`` — neither
-    ``attention_mask`` nor ``position_ids`` is used as a length source because they under-count
-    image-placeholder tokens.) When ``lengths`` is ``None`` there is no supported length source, so
-    the batch is returned unchanged.
+    The per-sample real length comes **only** from the caller-supplied ``lengths``
+    (``forward_step`` derives it from the batch's ``attention_mask`` on every language stage,
+    so all stages pack to an identical ``[1, T]``). ``None`` returns the batch unchanged.
 
     ``loss_mask`` is **not** used for length (it is a supervision mask, not a padding mask).
 
@@ -165,8 +158,7 @@ def pack_language_shard(
 
     Returns:
         ``(packed_batch, packing_kwargs)``. ``packing_kwargs`` is ``None`` (and the batch is
-        returned unchanged) when ``lengths`` is ``None``, so the caller can pass it straight
-        through on non-data / single-token stages.
+        returned unchanged) when ``lengths`` is ``None`` (no length source).
 
     Raises:
         ValueError: If ``lengths`` cannot be derived to a consistent ``[bs]`` shape (a
@@ -177,8 +169,8 @@ def pack_language_shard(
     loss_mask = data_batch.get("loss_mask")
     position_ids = data_batch.get("position_ids")
 
-    # The caller-provided ``lengths`` (derived from ``input_ids`` in forward_step) is the only
-    # supported length source; without it there is nothing to pack.
+    # The caller-provided ``lengths`` (derived from the batch's ``attention_mask`` in
+    # forward_step) is the only supported length source; without it there is nothing to pack.
     if lengths is None:
         return data_batch, None
     lengths_t = torch.as_tensor(lengths, dtype=torch.long)

@@ -11,7 +11,8 @@ own TP/PP/DP configuration.
 Conversation examples are built with the standard HF VLM provider, then the
 resulting Qwen batch is adapted into the MIMO forward shape:
 
-  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask
+  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask, and
+    (when packing) the tokenizer's ``attention_mask``
   - image inputs: ``modality_inputs["images"]["qwen_visual"]``
 
 Example 2-GPU smoke:
@@ -291,8 +292,7 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
             labels=is_last_pp,
             loss_mask=is_last_pp,
             modality_inputs=False,
-            # Packing derives per-sample lengths from the tokenizer's own mask (the packer
-            # nulls it again before the model, which requires attention_mask=None under CP).
+            # Packing length source; the packer nulls it again before the model.
             attention_mask=packing_active,
         )
 
@@ -1279,9 +1279,7 @@ def main() -> None:
         _log(f"distributed initialized (world_size={dist.get_world_size()})")
         _log(f"loading HF config from {args.hf_model}")
         hf_config = AutoConfig.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        # The tokenizer's pad id, not text_config's: it pads the tokenized batches, and
-        # spec.pad_token_id drives both the seq-length tail padding and the packing
-        # length derivation (input_ids != pad), so the ids must agree.
+        # The tokenizer's pad id (not text_config's) pads the batches and fills the tail.
         hf_spec = _build_hf_spec(hf_config, pad_token_id=_tokenizer_pad_token_id(args))
         _log(
             f"qwen constants: image_token_id={hf_spec.image_token_id}, "
