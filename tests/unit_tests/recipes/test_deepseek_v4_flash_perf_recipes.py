@@ -22,7 +22,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_mbs2_offload_optimizer_expert_fc1_config,
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_mbs2_recompute_moe_act_config,
 )
-from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -40,8 +40,8 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
         (
             deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
             1,
-            None,
-            None,
+            "selective",
+            ["moe_act", "layernorm", "mla_up_proj", "shared_experts", "mhc"],
             False,
         ),
         (
@@ -86,14 +86,14 @@ def test_deepseek_v4_flash_gb300_configs(
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity == recompute_granularity
     assert cfg.model.recompute_modules == recompute_modules
-    assert is_full_iteration_cuda_graph(cfg.model)
-    assert cuda_graph_module_names(cfg.model) == []
-    assert cfg.model.cuda_graph_warmup_steps == 3
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.cuda_graph_warmup_steps == 1
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
-    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True,graph_capture_record_stream_reuse:True"
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert cfg.env_vars["NCCL_GRAPH_REGISTER"] == 0
-    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
 
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
@@ -113,10 +113,6 @@ def test_deepseek_v4_flash_gb300_configs(
     assert cfg.model.quant_recipe is None
     assert cfg.model.moe_router_padding_for_fp8 is False
     assert cfg.model.moe_router_padding_for_quantization is True
-    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
-    assert cfg.model.moe_paged_stash is not offload_optimizer_states
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.mixed_precision.fp8_param_gather is True
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
     assert cfg.optimizer.main_grads_dtype == torch.float32
@@ -126,5 +122,4 @@ def test_deepseek_v4_flash_gb300_configs(
     assert getattr(cfg.optimizer, "offload_optimizer_states", False) is offload_optimizer_states
     assert cfg.model.fine_grained_activation_offloading is offload_optimizer_states
     assert cfg.model.offload_modules == (["expert_fc1"] if offload_optimizer_states else [])
-    assert cfg.model.fine_grained_offloading_max_inflight_offloads == (1 if offload_optimizer_states else None)
     assert (cfg.env_vars.get("NVTE_CPU_OFFLOAD_V1") == 1) is offload_optimizer_states

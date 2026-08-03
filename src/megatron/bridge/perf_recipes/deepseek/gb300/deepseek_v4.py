@@ -24,11 +24,11 @@ from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, MBS=1."""
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, MBS=1, selective recompute."""
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
@@ -53,8 +53,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_load_balancing_type = "seq_aux_loss"
     cfg.model.moe_aux_loss_coeff = 1.0e-4
 
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act", "layernorm", "mla_up_proj"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
@@ -63,24 +63,19 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
 
-    set_full_iteration_cuda_graph(cfg.model)
-    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    cfg.model.cuda_graph_warmup_steps = 1
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
     cfg.train.manual_gc_interval = 10
-
-    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.0
 
     cfg.model.csa_compress_rotary_base = 40_000
     cfg.model.rotary_scaling_factor = 4
     cfg.model.apply_dsa_kernel_fusion = True
     cfg.model.dsa_indexer_loss_coeff = 0.01
     cfg.model.dsa_indexer_use_sparse_loss = True
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.quant_recipe = None
     cfg.model.moe_router_padding_for_fp8 = False
     cfg.model.moe_router_padding_for_quantization = True
@@ -107,8 +102,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
@@ -139,11 +134,11 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_mbs2_offload_optimizer_expert_
     """
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
     cfg.train.micro_batch_size = 2
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
     cfg.optimizer.offload_optimizer_states = True
-    cfg.model.moe_paged_stash = False
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["expert_fc1"]
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
     if hasattr(cfg.model, "delay_offload_until_cuda_graph"):
         cfg.model.delay_offload_until_cuda_graph = True
     cfg.env_vars = {
