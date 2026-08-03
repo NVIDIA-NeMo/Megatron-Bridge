@@ -39,7 +39,9 @@ final_copy_line=$(grep -n '^COPY --chmod=644 \. /opt/Megatron-Bridge$' "$dockerf
 ((mcore_reinstall_line < helper_assertion_line))
 ((helper_assertion_line < final_copy_line))
 grep -q 'BASELINE_MCORE_REF=$(git -C 3rdparty/Megatron-LM rev-parse HEAD)' "$workflow"
+grep -q 'validate_mcore_revision.sh' "$workflow"
 grep -q 'BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}' "$workflow"
+grep -q 'test "$(git -C 3rdparty/Megatron-LM rev-parse HEAD)" = "$BASELINE_MCORE_REF"' "$dockerfile"
 grep -q 'if \[ -n "$BASELINE_MCORE_REF" \]; then' "$dockerfile"
 if grep -q '^COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/baseline/' "$dockerfile"; then
   echo "Mutable MCore must not enter the baseline dependency layer" >&2
@@ -94,6 +96,17 @@ if [[ "$*" == "ls-remote https://github.com/NVIDIA/Megatron-LM.git refs/heads/ma
   printf '%s\t%s\n' dddddddddddddddddddddddddddddddddddddddd refs/pull/456/merge
   exit 0
 fi
+if [[ "$1" == "fetch" ]]; then
+  exit 0
+fi
+if [[ "$*" == "rev-list --parents -n 1 cccccccccccccccccccccccccccccccccccccccc" ]]; then
+  printf '%s %s %s\n' cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  exit 0
+fi
+if [[ "$*" == "rev-list --parents -n 1 dddddddddddddddddddddddddddddddddddddddd" ]]; then
+  printf '%s %s\n' dddddddddddddddddddddddddddddddddddddddd aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  exit 0
+fi
 exit 1
 EOF
 chmod +x "$temporary_dir/revision-bin/git"
@@ -123,6 +136,9 @@ composite_action=".github/actions/test-template/action.yml"
 test "$(grep -c '\${{ github.event.inputs.mcore_commit }}' "$composite_action")" = 1
 grep -q '^        MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}$' "$composite_action"
 grep -q 'docker exec -t --env MCORE_COMMIT="$MCORE_COMMIT"' "$composite_action"
+verify_line=$(grep -n 'ACTUAL_COMMIT=$(git rev-parse HEAD)' "$composite_action" | cut -d: -f1)
+sync_line=$(grep -n 'uv sync --all-extras --all-groups' "$composite_action" | cut -d: -f1)
+((verify_line < sync_line))
 
 # The baseline dependency layer must be structurally independent of the mutable
 # dispatched checkout. CI validates the ordering statically so this regression

@@ -166,17 +166,7 @@ runs:
           # Reinstall MCore if the submodule was updated
           if [ -n "$MCORE_COMMIT" ]; then
             echo "🔄 Reinstalling MCore from updated submodule..."
-            cd /opt/Megatron-Bridge
-
-            # Force uninstall existing megatron-core to ensure fresh install
-            uv pip uninstall megatron-core || true
-
-            # Reinstall from the updated submodule
-            uv sync --all-extras --all-groups
-            echo "✅ MCore reinstalled"
-
-            # Verify the commit matches what we expected
-            cd 3rdparty/Megatron-LM
+            cd /opt/Megatron-Bridge/3rdparty/Megatron-LM
             EXPECTED_COMMIT="$MCORE_COMMIT"
             ACTUAL_COMMIT=$(git rev-parse HEAD)
             echo "🔍 Verifying MCore commit..."
@@ -190,6 +180,13 @@ runs:
 
             echo "   ✅ MCore commit verified"
             cd /opt/Megatron-Bridge
+
+            # Force uninstall existing megatron-core to ensure fresh install
+            uv pip uninstall megatron-core || true
+
+            # Reinstall only after verifying the mounted checkout.
+            uv sync --all-extras --all-groups
+            echo "✅ MCore reinstalled"
 
             # Store commit SHA for verification (since Docker build file was overridden by volume mount)
             echo "$MCORE_COMMIT" > /opt/Megatron-Bridge/.mcore_commit_sha

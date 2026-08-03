@@ -114,6 +114,7 @@ RUN if [ -n "$BASELINE_MCORE_REF" ]; then \
         git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/Megatron-LM.git 3rdparty/Megatron-LM && \
         git -C 3rdparty/Megatron-LM fetch --depth 1 origin "$BASELINE_MCORE_REF" && \
         git -C 3rdparty/Megatron-LM checkout --detach FETCH_HEAD && \
+        test "$(git -C 3rdparty/Megatron-LM rev-parse HEAD)" = "$BASELINE_MCORE_REF" && \
         test -f 3rdparty/Megatron-LM/pyproject.toml; \
     fi
 

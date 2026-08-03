@@ -368,7 +368,14 @@ jobs:
           ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: Record baseline MCore revision
-        run: echo "BASELINE_MCORE_REF=$(git -C 3rdparty/Megatron-LM rev-parse HEAD)" | tee -a "$GITHUB_ENV"
+        run: |
+          BASELINE_MCORE_REF=$(git -C 3rdparty/Megatron-LM rev-parse HEAD)
+          if ! .github/scripts/validate_mcore_revision.sh \
+            https://github.com/NVIDIA/Megatron-LM.git "$BASELINE_MCORE_REF"; then
+            echo "Baseline MCore revision is not approved: $BASELINE_MCORE_REF" >&2
+            exit 1
+          fi
+          echo "BASELINE_MCORE_REF=$BASELINE_MCORE_REF" | tee -a "$GITHUB_ENV"
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
