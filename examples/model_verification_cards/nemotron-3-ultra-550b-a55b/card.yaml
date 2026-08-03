@@ -408,8 +408,9 @@ items:
         GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
         NaN iterations, all four training metrics, and peak allocated and
         reserved memory. BF16, HybridEP, fine-grained parameter gather, and
-        Megatron-FSDP must remain active with selective whole-MoE and layernorm
-        recompute but without CPU activation offload. The narrower
-        MoE-activation recompute path remains disabled because its fused path
-        requires SM100+. The H100 result is standalone and is not numerically
-        comparable with the GB200 MXFP8 result.
+        Megatron-FSDP must remain active with selective shared-expert and
+        layernorm recompute but without CPU activation offload. Recomputing the
+        whole MoE is excluded because it replays HybridEP dispatch during
+        backward; the narrower MoE-activation path is also disabled because its
+        fused path requires SM100+. The H100 result is standalone and is not
+        numerically comparable with the GB200 MXFP8 result.

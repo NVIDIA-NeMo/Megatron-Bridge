@@ -87,11 +87,13 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
         enable_fine_grained_param_gather=True,
     )
     # TE's moe_act recompute path requires the CuteDSL fused grouped MLP,
-    # which is only supported on SM100+. H100 instead checkpoints the whole
-    # MoE submodule and discards layernorm outputs to keep the 8K BF16 workload
-    # within H100 memory without relying on that SM100-only fused path.
+    # which is only supported on SM100+. Whole-MoE recompute also cannot be
+    # used here because replaying HybridEP dispatch during backward corrupts
+    # DeepEP's dispatch state. Recompute only the shared expert and discard
+    # layernorm outputs to reduce the 8K BF16 activation footprint without
+    # replaying routed-expert communication.
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe", "layernorm"]
+    cfg.model.recompute_modules = ["shared_experts", "layernorm"]
     return cfg
 
 
