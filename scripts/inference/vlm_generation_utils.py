@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared utilities for VLM generation scripts."""
+"""Shared utilities for the canonical VLM generation entry point."""
 
 import io
 import logging
