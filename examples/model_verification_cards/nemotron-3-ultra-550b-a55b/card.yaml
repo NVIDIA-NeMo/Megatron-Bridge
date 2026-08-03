@@ -409,8 +409,9 @@ items:
         reserved memory. BF16, standard all-to-all MoE dispatch, fine-grained
         parameter gather, FP32 fused weight-gradient accumulation and FP32
         gradient communication, and Megatron-FSDP must remain active with
-        selective whole-MoE and layernorm recompute but without CPU activation
-        offload. Gradient and loss NaN checks must remain enabled.
+        selective whole-MoE, layernorm, and core-attention recompute but without
+        CPU activation offload. Gradient and loss NaN checks must remain
+        enabled.
         Whole-MoE recompute is paired with standard all-to-all because replaying
         the stateful HybridEP path during backward is unsupported; the narrower
         MoE-activation path is also disabled because its fused path requires

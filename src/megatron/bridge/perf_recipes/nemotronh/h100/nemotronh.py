@@ -95,7 +95,10 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe", "layernorm"]
+    # FP32 fused weight-gradient accumulation raises the persistent training
+    # footprint enough that the 8K workload also needs the supported
+    # memory-intensive core-attention checkpoint target on H100.
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn"]
 
     # The 256-GPU BF16 verification exposed a NaN global gradient norm when
     # gradients were materialized in BF16 before being copied into the FSDP
