@@ -19,6 +19,7 @@ from collections.abc import Callable
 from inspect import signature
 
 import pytest
+import torch
 
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config,
@@ -173,11 +174,12 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     recipe_factory: Callable[[], ConfigContainer],
     base_recipe_factory: Callable[[], ConfigContainer],
 ) -> None:
-    """Nemotron 3.5 variants inherit environment, loss normalization, and RNG policy."""
+    """Nemotron 3.5 variants inherit shared loss normalization and RNG policy."""
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
-    assert cfg.env_vars == base_cfg.env_vars
+    if recipe_factory is not nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config:
+        assert cfg.env_vars == base_cfg.env_vars
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
     assert cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
     assert cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model
@@ -196,14 +198,49 @@ def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
-    assert cfg.model.moe_hybridep_num_sms == 16
-    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
 
 
+def test_h100_bf16_perf_recipe_uses_measured_benchmark_tuning() -> None:
+    """The H100 BF16 benchmark preserves the measured memory and HybridEP tuning."""
+    cfg = nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config()
+
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+
+    assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["expert_fc1"]
+    assert cfg.model.activation_offload_fraction == 1.0
+    assert cfg.model.delay_offload_until_cuda_graph is True
+
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_permute_fusion_into_hybridep is True
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 10
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 10
+
+
+def test_h100_fp8_perf_recipe_retains_fp32_optimizer_state() -> None:
+    """The unrelated H100 FP8 benchmark retains its existing optimizer and dispatcher policy."""
+    cfg = nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config()
+
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.model.moe_hybridep_num_sms == 16
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+
+
 def test_bf16_perf_recipes_share_training_workload() -> None:
-    """H100 and GB200 BF16 recipes differ only in execution tuning."""
+    """H100 and GB200 BF16 recipes otherwise share the same model workload."""
     h100_cfg = nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config()
     gb200_cfg = nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config()
 
@@ -213,6 +250,17 @@ def test_bf16_perf_recipes_share_training_workload() -> None:
     gb200_cfg.model.cuda_graph_impl = h100_cfg.model.cuda_graph_impl
     gb200_cfg.model.cuda_graph_scope = h100_cfg.model.cuda_graph_scope
     gb200_cfg.model.cuda_graph_modules = h100_cfg.model.cuda_graph_modules
+    gb200_cfg.model.fine_grained_activation_offloading = h100_cfg.model.fine_grained_activation_offloading
+    gb200_cfg.model.offload_modules = h100_cfg.model.offload_modules
+    gb200_cfg.model.activation_offload_fraction = h100_cfg.model.activation_offload_fraction
+    gb200_cfg.model.delay_offload_until_cuda_graph = h100_cfg.model.delay_offload_until_cuda_graph
+    gb200_cfg.model.moe_router_fusion = h100_cfg.model.moe_router_fusion
+    gb200_cfg.model.moe_permute_fusion_into_hybridep = h100_cfg.model.moe_permute_fusion_into_hybridep
+    gb200_cfg.model.moe_hybridep_num_sms = h100_cfg.model.moe_hybridep_num_sms
+    gb200_cfg.model.moe_flex_dispatcher_num_sms = h100_cfg.model.moe_flex_dispatcher_num_sms
+    gb200_cfg.optimizer.use_precision_aware_optimizer = h100_cfg.optimizer.use_precision_aware_optimizer
+    gb200_cfg.optimizer.exp_avg_dtype = h100_cfg.optimizer.exp_avg_dtype
+    gb200_cfg.optimizer.exp_avg_sq_dtype = h100_cfg.optimizer.exp_avg_sq_dtype
     gb200_cfg.env_vars = h100_cfg.env_vars
 
     assert gb200_cfg == h100_cfg
