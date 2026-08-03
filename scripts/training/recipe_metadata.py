@@ -63,7 +63,7 @@ BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
 LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset()
 
 PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
-TEXT_FORWARD_STEPS = frozenset({"gpt_step", "llm_step"})
+TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
 
 # Put specific multimodal families before the text default. This registry is
 # source-agnostic: library and benchmark recipes with the same identity use

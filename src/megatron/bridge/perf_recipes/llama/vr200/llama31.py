@@ -31,7 +31,7 @@ def llama31_405b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
@@ -50,7 +50,7 @@ def llama31_405b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
@@ -73,7 +73,7 @@ def llama31_405b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
