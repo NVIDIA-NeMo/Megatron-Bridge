@@ -45,6 +45,7 @@ def test_mcore_to_hf_window_size_rejects_malformed_pair():
 
 
 def test_unwrap_model_ignores_wrapper_factory():
+    """Callable factories are excluded while concrete wrapper types are retained."""
     model = object()
 
     assert unwrap_model(_Wrapper(model), module_instances=(_Wrapper, _wrapper_factory)) is model
