@@ -131,7 +131,7 @@ items:
     bridge_commit: cd09c801474e5573ffceccf236b48b543c7a0b4a  # pragma: allowlist secret
     command: >
       ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
-      --task full-prefix-generation
+      --task legacy-full-prefix-generation
       --hf_model_path zai-org/GLM-5.2
       --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
       --prompt "Write one concise sentence explaining why deterministic tests matter:"
@@ -216,7 +216,10 @@ items:
         1.394, and every step recorded zero skipped and NaN iterations. The
         final 10 steps averaged 60,610.850 ms and 101.310 TFLOPS/GPU. Step-50
         and step-100 checkpoints were written with model, optimizer, scheduler,
-        data-order, and RNG state for resume verification.
+        data-order, and RNG state for resume verification. These losses are not
+        directly comparable with the H100 pretrain result: H100 used Wikitext
+        at sequence length 2,048, while GB200 used Tulu 3 at sequence length
+        4,096.
 
   sft:
     H100:
