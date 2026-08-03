@@ -70,6 +70,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = True
     cfg.train.manual_gc_interval = 10
 
+    cfg.model.csa_compress_rotary_base = 40_000
+    cfg.model.rotary_scaling_factor = 4
     cfg.model.apply_dsa_kernel_fusion = True
     cfg.model.dsa_indexer_loss_coeff = 0.01
     cfg.model.dsa_indexer_use_sparse_loss = True
