@@ -14,7 +14,16 @@
 
 import pytest
 
-from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
+from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size, unwrap_model
+
+
+class _Wrapper:
+    def __init__(self, module):
+        self.module = module
+
+
+def _wrapper_factory(module):
+    return _Wrapper(module)
 
 
 @pytest.mark.parametrize(
@@ -33,3 +42,9 @@ def test_mcore_to_hf_window_size(window_size, expected):
 def test_mcore_to_hf_window_size_rejects_malformed_pair():
     with pytest.raises(ValueError, match="two-element MCore window"):
         mcore_to_hf_window_size([2047])
+
+
+def test_unwrap_model_ignores_wrapper_factory():
+    model = object()
+
+    assert unwrap_model(_Wrapper(model), module_instances=(_Wrapper, _wrapper_factory)) is model
