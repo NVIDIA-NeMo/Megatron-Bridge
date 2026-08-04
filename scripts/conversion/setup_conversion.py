@@ -121,9 +121,9 @@ def _validate_args(args: argparse.Namespace) -> None:
                     "metacharacters through NeMo Run 0.10; use shell-safe names and paths."
                 )
         world_size = args.nodes * args.gpus_per_node
-        model_parallel_size = args.tp * args.pp * args.ep
-        if world_size != model_parallel_size:
-            raise ValueError("nodes*gpus-per-node must equal TP*PP*EP.")
+        model_parallel_size = args.tp * args.pp
+        if world_size % model_parallel_size != 0:
+            raise ValueError("nodes*gpus-per-node must be divisible by TP*PP.")
         expert_model_parallel_size = args.etp * args.ep * args.pp
         if world_size % expert_model_parallel_size != 0:
             raise ValueError("nodes*gpus-per-node must be divisible by ETP*EP*PP.")
