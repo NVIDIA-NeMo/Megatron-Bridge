@@ -140,9 +140,6 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFI
 
 BASE_NEMOTRON_3_SUPER_CONFIG_B200 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG,
-    # B200 is an NVL8 topology; EP must stay within one NVLink domain or
-    # HybridEP falls back to its inter-domain RDMA path and crashes.
-    expert_model_parallel_size=8,
     cuda_graph_impl="none",
     recompute_modules=["moe_act", "layernorm"],
 )
@@ -154,15 +151,7 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     cuda_graph_scope=["mamba", "attn", "moe_router", "moe_preprocess"],
     recompute_modules=["moe_act", "layernorm", "core_attn"],
 )
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1 = replace(
-    BASE_NEMOTRON_3_SUPER_CONFIG_B200,
-    # At EP=8 each rank holds 64 of the 512 experts, so it needs the same
-    # memory posture as the BF16 variant, which peaks at 156 of 178 GB.
-    tensor_model_parallel_size=2,
-    cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["mamba", "attn", "moe_router", "moe_preprocess"],
-    recompute_modules=["moe_act", "layernorm", "core_attn"],
-)
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B200
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_NVFP4_V1 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG_B200,
     tensor_model_parallel_size=2,
