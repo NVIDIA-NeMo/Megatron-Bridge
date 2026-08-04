@@ -163,6 +163,11 @@ def configure_slurm_gpu_tuning(
         )
 
     if peak_mem_clk is not None:
+        peak_mem_clock_cmd = (
+            f"for idx in {{0..{executor.ntasks_per_node - 1}}}; do "
+            f'sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk} -i "$idx"; '
+            "done"
+        )
         commands.append(
             "\n".join(
                 [
@@ -178,7 +183,7 @@ def configure_slurm_gpu_tuning(
                             "--error",
                             os.path.join(job_dir, "peak_mem_clock.err"),
                             "bash -c",
-                            shlex.quote(f"sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk}"),
+                            shlex.quote(peak_mem_clock_cmd),
                         ]
                     ),
                     "",
