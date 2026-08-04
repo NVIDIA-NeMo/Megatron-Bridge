@@ -104,6 +104,16 @@ def _te_grouped_linear_uses_explicit_m_splits(
     return "m_splits" in inspect.signature(autograd_function.forward).parameters
 
 
+@cache
+def _te_grouped_linear_uses_output_buffers(
+    autograd_function: type[torch.autograd.Function],
+) -> bool:
+    """Return whether TE's grouped-linear autograd takes output buffer tensors."""
+
+    parameters = inspect.signature(autograd_function.forward).parameters
+    return "out" in parameters and "dgrad_out" in parameters
+
+
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
     """Return the process-group collection attached to a module or its config."""
 
@@ -1782,8 +1792,9 @@ class GroupedExpertLinearAdapter(nn.Module):
         self.pg_collection = _get_pg_collection(
             pg_collection,
             model_parallel_config,
-            required_pgs=["ep", "expt_tp", "expt_dp"],
+            required_pgs=["tp", "ep", "expt_tp", "expt_dp"],
         )
+        tensor_parallel_group = _get_tensor_parallel_group(self.pg_collection)
         self.expert_tp_group = _get_tensor_parallel_group(self.pg_collection, is_expert=True)
         self.ep_group = _get_process_group(self.pg_collection, "ep")
         self.expert_dp_group = _get_process_group(self.pg_collection, "expt_dp")
@@ -1793,6 +1804,10 @@ class GroupedExpertLinearAdapter(nn.Module):
         expert_tp_size = _process_group_size(
             self.expert_tp_group,
             model_parallel_config.expert_tensor_parallel_size or 1,
+        )
+        tensor_parallel_size = _process_group_size(
+            tensor_parallel_group,
+            getattr(model_parallel_config, "tensor_model_parallel_size", 1) or 1,
         )
         linear_in_tp_axis = 2 if input_is_parallel else 1
         linear_out_tp_axis = 1
@@ -1831,12 +1846,13 @@ class GroupedExpertLinearAdapter(nn.Module):
         ParallelLinearAdapter._get_init_fn(self, column_init_method)(linear_in_weight)
         ParallelLinearAdapter._get_init_fn(self, row_init_method)(linear_out_weight)
 
-        expert_parallel = (
+        use_expert_process_groups = (
             _process_group_size(
                 self.ep_group,
                 model_parallel_config.expert_model_parallel_size or 1,
             )
             > 1
+            or expert_tp_size != tensor_parallel_size
         )
         self._linear_in_tp_axis = linear_in_tp_axis
         self._linear_out_tp_axis = linear_out_tp_axis
@@ -1846,7 +1862,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             (self.linear_in.weight, linear_in_tp_axis),
             (self.linear_out.weight, linear_out_tp_axis),
         ):
-            setattr(weight, "allreduce", not expert_parallel)
+            setattr(weight, "allreduce", not use_expert_process_groups)
             if tp_axis is not None:
                 set_tensor_model_parallel_attributes(weight, True, tp_axis, 1)
 
@@ -2049,11 +2065,6 @@ class GroupedExpertLinearAdapter(nn.Module):
                 helper.sequence_parallel,
                 helper.activation_dtype,
                 torch.is_grad_enabled(),
-                [None] * weight.shape[0],
-                False,
-                None,
-                helper.save_original_input,
-                False,
             )
             empty_biases = [x.new_empty(0) for _ in range(weight.shape[0])]
             weights_and_biases = (*[weight[i] for i in range(weight.shape[0])], *empty_biases)
@@ -2061,18 +2072,53 @@ class GroupedExpertLinearAdapter(nn.Module):
             # TODO: Replace this private FP8 dispatch once Transformer Engine exposes
             # a public functional grouped-linear API for externally owned weights
             # (NVIDIA/TransformerEngine#3191).
-            if _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd):
+            explicit_m_splits = _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd)
+            if explicit_m_splits:
                 te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
-                autograd_args = (x, te_m_splits, common_non_tensor_args, *weights_and_biases)
+                te_non_tensor_args = (
+                    *common_non_tensor_args,
+                    [None] * weight.shape[0],
+                    False,
+                    None,
+                    helper.save_original_input,
+                    False,
+                )
+                output_buffers = (
+                    (None, None) if _te_grouped_linear_uses_output_buffers(TEPytorchGroupedLinearAutograd) else ()
+                )
+                autograd_args = (
+                    x,
+                    te_m_splits,
+                    te_non_tensor_args,
+                    *output_buffers,
+                    *weights_and_biases,
+                )
             else:
-                non_tensor_args = (m_splits, *common_non_tensor_args)
-                autograd_args = (x, non_tensor_args, *weights_and_biases)
+                if "_fp8_workspaces" in vars(helper):
+                    cache_weight = False
+                    workspace_args = (
+                        [None] * weight.shape[0],
+                        cache_weight,
+                        None,
+                    )
+                else:
+                    workspace_args = (helper, None)
+                te_non_tensor_args = (
+                    m_splits,
+                    *common_non_tensor_args,
+                    *workspace_args,
+                    helper.save_original_input,
+                    False,
+                )
+                autograd_args = (x, te_non_tensor_args, *weights_and_biases)
 
             if torch.is_grad_enabled():
-                output, _ = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
+                result = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
             else:
-                output, _ = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
-            return output
+                result = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
+            if isinstance(result, tuple):
+                result, _ = result
+            return result
         finally:
             helper.end_forward()
 

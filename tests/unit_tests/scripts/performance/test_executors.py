@@ -137,7 +137,7 @@ def test_build_nemorun_script_wraps_only_enabled_kubeflow_tasks():
         custom_env_vars={KUBEFLOW_NUMA_BINDING_ENV: "1"},
     )
 
-    expected_env = {"PYTHONPATH": "/opt/Megatron-Bridge/scripts/performance:$PYTHONPATH"}
+    expected_env = {"PYTHONPATH": "/opt/Megatron-Bridge/scripts/performance:/opt/Megatron-Bridge/src:$PYTHONPATH"}
     assert enabled.inline
     assert enabled.env == expected_env
     assert not disabled.inline
@@ -188,6 +188,20 @@ def test_recipe_env_vars_are_exported_and_forced_into_container(tmp_path):
 
     assert executor.env_vars.items() >= recipe_env_vars.items()
     assert set(recipe_env_vars) <= set(executor.container_env or [])
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_vr200_slurm_executor_uses_two_gpus_per_numa_node(tmp_path):
+    executor = slurm_executor(
+        gpu="vr200",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=4,
+    )
+
+    assert "SLURM_LOCALID/2" in executor.launcher.template_vars["pre_cmds"]
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

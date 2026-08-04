@@ -71,14 +71,15 @@ See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md
 
 | Model | Mode | TP | PP | EP | Total GPUs | Use Case |
 |-------|------|----|----|----|-----------:|----------|
-| **Moonlight-16B** | Pretrain | 2 | 1 | 8 | 16 | Pre-training (2 nodes) |
-| **Moonlight-16B** | Full SFT | 2 | 1 | 8 | 16 | Full supervised finetuning (2 nodes) |
-| **Moonlight-16B** | LoRA/DoRA | 1 | 1 | 1 | 8 | PEFT finetuning (single node!) |
+| **Moonlight-16B** | Pretrain | 1 | 1 | 8 | 16 | Pre-training (2 nodes) |
+| **Moonlight-16B** | Full SFT | 1 | 1 | 8 | 8 | Full supervised finetuning (single node) |
+| **Moonlight-16B** | LoRA/DoRA | 1 | 1 | 4 | 4 | PEFT finetuning (single node) |
 
 **Key Features**:
-- **Expert Parallelism**: EP=8 for efficient MoE training (64 experts)
-- **Sequence Parallel**: Enabled by default for memory efficiency
-- **Selective Recomputation**: Reduces activation memory
+- **Expert Parallelism**: EP=8 for pretraining/full SFT and EP=4 for PEFT
+- **Sequence Parallel**: Disabled in the bounded-convergence recipes; enabled by higher-TP support configs
+- **Packed SFT**: The TP1 full-SFT recipe uses 8K offline packs with GBS/MBS 8/1, one dense-DP step per update, and 65,536 token slots per update
+- **Selective Recomputation**: Available for long-context and memory-constrained support configs
 - **RoPE Fusion**: Optional MLA-specific optimization (`apply_rope_fusion=True`)
 - **DeePEP**: Optional expert permutation optimization (`enable_deepep=True`)
 
@@ -100,33 +101,30 @@ See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md
 ```python
 from megatron.bridge.recipes.moonlight import moonlight_16b_pretrain_config
 
-cfg = moonlight_16b_pretrain_config(
-    name="moonlight_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/moonlight_16b",
-    train_iters=500_000,
-    global_batch_size=2048,
-    seq_length=4096,
-    # Uses TP=2, PP=1, EP=8 (16 GPUs) automatically
-)
+cfg = moonlight_16b_pretrain_config()
+cfg.logger.tensorboard_dir = "/results/moonlight_16b/tb_logs"
+cfg.checkpoint.save = "/results/moonlight_16b/checkpoints"
+cfg.dataset.data_path = "/path/to/preprocessed_text_document"
+cfg.train.train_iters = 500_000
+cfg.train.global_batch_size = 2048
+# Uses TP=1, PP=1, EP=8 (16 GPUs) automatically
 ```
 
 ### Finetuning Examples
 
-#### Full Finetuning (2 Nodes)
+#### Full Finetuning (1 Node)
 
 ```python
 from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
-cfg = moonlight_16b_sft_config(
-    tokenizer_path="moonshotai/Moonlight-16B-A3B",
-    name="moonlight_full_sft",
-    pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=5e-6,
-    # Uses TP=2, PP=1, EP=8 (16 GPUs) automatically
-)
+cfg = moonlight_16b_sft_config()
+cfg.logger.tensorboard_dir = "/results/moonlight_16b/sft/tb_logs"
+cfg.checkpoint.save = "/results/moonlight_16b/sft/checkpoints"
+cfg.checkpoint.pretrained_checkpoint = "/results/moonlight_16b/checkpoints/iter_0500000"
+cfg.train.train_iters = 1000
+cfg.train.global_batch_size = 8
+cfg.optimizer.lr = 5e-6
+# Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 ```
 
 #### LoRA Finetuning
@@ -134,16 +132,14 @@ cfg = moonlight_16b_sft_config(
 ```python
 from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
-cfg = moonlight_16b_peft_config(
-    tokenizer_path="moonshotai/Moonlight-16B-A3B",
-    name="moonlight_lora_finetune",
-    pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
-    peft_scheme="lora",  # or "dora" for DoRA
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=1e-4,
-    # Uses TP=1, PP=1, EP=1 (8 GPUs) automatically
-)
+cfg = moonlight_16b_peft_config(peft_scheme="lora")  # or "dora" for DoRA
+cfg.logger.tensorboard_dir = "/results/moonlight_16b/peft/tb_logs"
+cfg.checkpoint.save = "/results/moonlight_16b/peft/checkpoints"
+cfg.checkpoint.pretrained_checkpoint = "/results/moonlight_16b/checkpoints/iter_0500000"
+cfg.train.train_iters = 1000
+cfg.train.global_batch_size = 128
+cfg.optimizer.lr = 1e-4
+# Uses TP=1, PP=1, EP=4 (4 GPUs) automatically
 ```
 
 ## Hugging Face model cards
@@ -160,4 +156,3 @@ cfg = moonlight_16b_peft_config(
 - Recipe usage and customization: [Recipe usage](../../recipe-usage.md)
 - Training configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

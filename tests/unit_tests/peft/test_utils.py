@@ -1647,25 +1647,25 @@ class TestGroupedExpertLinearAdapter:
             expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
         torch.testing.assert_close(output, torch.cat(expected_chunks), rtol=2e-2, atol=2e-2)
 
-    @pytest.mark.parametrize("te_version", ["2.16", "2.17"])
+    @pytest.mark.parametrize("te_version", ["2.14", "2.16", "2.17", "2.18"])
     @pytest.mark.parametrize("grad_enabled", [True, False])
     @pytest.mark.parametrize("active_expert_indices", [(0, 1), (1, 2)])
     def test_grouped_expert_linear_adapter_fp8_te_contract(self, te_version, grad_enabled, active_expert_indices):
-        """FP8 dispatch should pack the supported TE 2.16 and 2.17 call layouts."""
+        """FP8 dispatch should pack the supported TE 2.14 through 2.18 call layouts."""
         calls = []
         expected = torch.randn(3, 2)
 
-        class TE216GroupedLinear:
+        class TE214GroupedLinear:
             @staticmethod
             def apply(inp, non_tensor_args, *weights_and_biases):
                 calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected, []
+                return expected
 
             @staticmethod
             def forward(ctx, inp, non_tensor_args, *weights_and_biases):
                 assert ctx is None
                 calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected, []
+                return expected
 
         class TE217GroupedLinear:
             @staticmethod
@@ -1679,7 +1679,29 @@ class TestGroupedExpertLinearAdapter:
                 calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
                 return expected, []
 
-        autograd_function = TE216GroupedLinear if te_version == "2.16" else TE217GroupedLinear
+        class TE218GroupedLinear:
+            @staticmethod
+            def apply(inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                assert out is None
+                assert dgrad_out is None
+                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
+                return expected, []
+
+            @staticmethod
+            def forward(ctx, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                assert ctx is None
+                assert out is None
+                assert dgrad_out is None
+                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
+                return expected, []
+
+        autograd_functions = {
+            "2.14": TE214GroupedLinear,
+            "2.16": TE214GroupedLinear,
+            "2.17": TE217GroupedLinear,
+            "2.18": TE218GroupedLinear,
+        }
+        autograd_function = autograd_functions[te_version]
         helper = Mock()
         helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
         helper._get_quantizers.return_value = tuple(
@@ -1693,6 +1715,8 @@ class TestGroupedExpertLinearAdapter:
         helper.sequence_parallel = False
         helper.activation_dtype = torch.float32
         helper.save_original_input = False
+        if te_version == "2.16":
+            helper._fp8_workspaces = {}
 
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
@@ -1724,14 +1748,30 @@ class TestGroupedExpertLinearAdapter:
         assert len(calls) == 1
         received_input, explicit_splits, non_tensor_args, weights_and_biases = calls[0]
         assert received_input is x
-        if te_version == "2.16":
+        if te_version in {"2.14", "2.16"}:
             assert explicit_splits is None
             assert non_tensor_args[0] == [1, 2]
-            common_non_tensor_args = non_tensor_args[1:]
+            common_non_tensor_args = non_tensor_args[1:17]
+            if te_version == "2.14":
+                assert non_tensor_args[17] is helper
+                assert non_tensor_args[18] is None
+                assert non_tensor_args[19] is False
+                assert non_tensor_args[20] is False
+            else:
+                assert non_tensor_args[17] == [None, None]
+                assert non_tensor_args[18] is False
+                assert non_tensor_args[19] is None
+                assert non_tensor_args[20] is False
+                assert non_tensor_args[21] is False
         else:
             torch.testing.assert_close(explicit_splits, torch.tensor([1, 2], dtype=torch.int64))
             assert explicit_splits.device.type == "cpu"
-            common_non_tensor_args = non_tensor_args
+            common_non_tensor_args = non_tensor_args[:16]
+            assert non_tensor_args[16] == [None, None]
+            assert non_tensor_args[17] is False
+            assert non_tensor_args[18] is None
+            assert non_tensor_args[19] is False
+            assert non_tensor_args[20] is False
         assert common_non_tensor_args[0] is False
         assert common_non_tensor_args[2] is True
         assert common_non_tensor_args[12] is True
@@ -2186,11 +2226,32 @@ class TestGroupedExpertLinearAdapter:
         )
         torch.testing.assert_close(merged, expected)
 
-    @pytest.mark.parametrize(("ep_size", "expected_allreduce"), [(1, True), (2, False)])
-    def test_grouped_expert_linear_adapter_allreduce_flag_tracks_expert_parallelism(self, ep_size, expected_allreduce):
-        """Per-expert grouped adapters should use expert-DP grad sync only when EP is enabled."""
+    @pytest.mark.parametrize(
+        ("ep_size", "tp_size", "etp_size", "expected_allreduce"),
+        [
+            pytest.param(1, 1, 1, True, id="ordinary-dp"),
+            pytest.param(2, 1, 1, False, id="expert-dp-with-ep"),
+            pytest.param(1, 2, 1, False, id="expert-dp-with-tp-greater-than-etp"),
+            pytest.param(1, 1, 2, False, id="expert-dp-with-etp-greater-than-tp"),
+        ],
+    )
+    def test_grouped_expert_linear_adapter_allreduce_flag_tracks_expert_topology(
+        self,
+        ep_size,
+        tp_size,
+        etp_size,
+        expected_allreduce,
+    ):
+        """Per-expert grouped adapters should select DP from the full expert topology."""
         config = MockModelParallelConfig()
-        config._pg_collection = make_mock_pg_collection(ep_size=ep_size, etp_size=1)
+        config.tensor_model_parallel_size = tp_size
+        config.expert_model_parallel_size = ep_size
+        config.expert_tensor_parallel_size = etp_size
+        config._pg_collection = make_mock_pg_collection(
+            tp_size=tp_size,
+            ep_size=ep_size,
+            etp_size=etp_size,
+        )
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
             out_features=2,
@@ -2209,17 +2270,20 @@ class TestGroupedExpertLinearAdapter:
         assert adapter.linear_in.weight.partition_dim == 1
         assert adapter.linear_out.weight.partition_dim == 1
 
-    def test_grouped_expert_linear_adapter_groups_as_expert_ddp_buffer_when_ep_enabled(self):
-        """Per-expert adapter params must sync on expert-DP, not dense DP.
+    def test_grouped_expert_linear_adapter_groups_as_expert_ddp_buffer_when_etp_differs(self):
+        """Per-expert adapter params must sync on expert-DP when ETP differs from TP.
 
-        EP plus DP replicates each local expert across expert-DP ranks. Marking
-        these params as expert-parallel keeps replicas for the same expert in
-        sync without mixing different EP-owned experts.
+        Even with EP=1, differing TP and ETP topologies require the expert-DP
+        buffer so replicas synchronize over the process group that owns them.
         """
         from megatron.core.distributed.param_and_grad_buffer import group_params_for_buffers
+        from megatron.core.optimizer.param_layout import BufferKey
 
         config = MockModelParallelConfig()
-        config._pg_collection = make_mock_pg_collection(ep_size=8, etp_size=1)
+        config.tensor_model_parallel_size = 2
+        config.expert_model_parallel_size = 1
+        config.expert_tensor_parallel_size = 1
+        config._pg_collection = make_mock_pg_collection(tp_size=2, ep_size=1, etp_size=1)
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
             out_features=2,
@@ -2231,18 +2295,12 @@ class TestGroupedExpertLinearAdapter:
             model_parallel_config=config,
         )
 
-        buffer_groups = group_params_for_buffers(
-            [adapter.linear_in.weight, adapter.linear_out.weight],
-            grad_reduce_in_fp32=False,
-        )
+        buffer_groups = group_params_for_buffers([adapter.linear_in.weight], grad_reduce_in_fp32=False)
 
         assert len(buffer_groups) == 1
         buffer_key, (params, _param_indices) = next(iter(buffer_groups.items()))
-        assert buffer_key.is_expert_parallel
-        assert [id(param) for param in params] == [
-            id(adapter.linear_in.weight),
-            id(adapter.linear_out.weight),
-        ]
+        assert buffer_key == BufferKey(torch.float32, torch.float32, True)
+        assert params == [adapter.linear_in.weight]
 
     def test_grouped_expert_linear_sharded_state_dict_uses_expert_parallel_offsets(self):
         """Grouped-expert weights should shard only across expert EP/ETP and use expert-DP replica ids."""

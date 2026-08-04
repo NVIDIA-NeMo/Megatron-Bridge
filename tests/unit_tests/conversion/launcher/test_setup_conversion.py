@@ -110,6 +110,14 @@ def test_cpu_backend_rejects_distributed_parallelism():
         module._validate_args(args)
 
 
+def test_cpu_backend_rejects_low_memory_save():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--low-memory-save")
+
+    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+        module._validate_args(args)
+
+
 def test_local_executor_rejects_detach():
     module = _load_setup_conversion_module()
     args = _parse(module, "--detach")
@@ -249,7 +257,13 @@ def test_local_cpu_executor_uses_one_process_without_launcher():
     module = _load_setup_conversion_module()
     captured = {}
     module.run.Packager = lambda: "packager"
-    module.run.LocalExecutor = lambda **kwargs: captured.update(kwargs) or types.SimpleNamespace(**kwargs)
+
+    def local_executor(**kwargs):
+        assert "nodes" not in kwargs
+        captured.update(kwargs)
+        return types.SimpleNamespace(**kwargs)
+
+    module.run.LocalExecutor = local_executor
     args = _parse(module)
 
     executor = module._build_executor(args, [], [])

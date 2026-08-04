@@ -91,6 +91,45 @@ def test_cpu_import_dispatches_to_cpu_backend():
     ]
 
 
+def test_gpu_import_forwards_low_memory_save():
+    module, _, gpu_backend = _load_run_conversion_module()
+    calls = []
+    gpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
+
+    module.main(
+        [
+            "import",
+            "--device",
+            "gpu",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/checkpoint",
+            "--low-memory-save",
+        ]
+    )
+
+    assert calls[0]["low_memory_save"] is True
+
+
+def test_cpu_import_rejects_low_memory_save():
+    module, _, _ = _load_run_conversion_module()
+
+    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+        module.main(
+            [
+                "import",
+                "--device",
+                "cpu",
+                "--hf-model",
+                "hf/model",
+                "--megatron-path",
+                "/checkpoint",
+                "--low-memory-save",
+            ]
+        )
+
+
 def test_cpu_import_forwards_hf_revision_without_replacing_model_id(monkeypatch):
     module, cpu_backend, _ = _load_run_conversion_module()
     calls = []

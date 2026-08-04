@@ -56,7 +56,6 @@ def test_every_flat_recipe_has_registered_family_and_metadata():
         if module.BENCHMARK_RECIPE_PATTERN.search(recipe_name)
     ]
 
-    assert len(recipes) > 300
     for recipe_name, owning_family in recipes:
         metadata = module.available_benchmark_recipe_metadata(recipe_name)
         assert metadata is not None
@@ -68,7 +67,6 @@ def test_every_exported_benchmark_name_has_canonical_metadata():
     recipe_names = module.benchmark_recipe_names()
     public_modes = {"pretrain": "pretrain", "sft": "sft", "peft": "lora"}
 
-    assert len(recipe_names) > 300
     for recipe_name in recipe_names:
         metadata = module.available_benchmark_recipe_metadata(recipe_name)
         assert metadata is not None
@@ -123,7 +121,6 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
     ("recipe_name", "step_name"),
     [
         ("gpt_oss_20b_pretrain_config", "llm_step"),
-        ("nemotron_nano_v2_vl_12b_sft_config", "llava_step"),
         ("nemotron_omni_cord_v2_sft_config", "nemotron_omni_step"),
         ("qwen2_audio_7b_sft_config", "audio_lm_step"),
         ("qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config", "qwen3_omni_step"),

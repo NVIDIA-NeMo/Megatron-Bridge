@@ -20,7 +20,7 @@ import re
 import sys
 
 from argument_parser import parse_cli_args
-from utils.utils import get_perf_recipe_by_name
+from utils.utils import PerfRecipeNotFoundError, get_perf_optimized_recipe, get_perf_recipe_by_name
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,12 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
     from utils.utils import explicit_environment_override_names
 
+    if not hasattr(recipe, "env_vars"):
+        logger.warning(
+            "No environment variables are set explicitly. We typically set "
+            "NVTE_BWD_LAYERNORM_SM_MARGIN, NVTE_FWD_LAYERNORM_SM_MARGIN, etc. Performance might be degraded."
+        )
+        recipe.env_vars = {}
     base_env_vars = dict(recipe.env_vars)
     base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)
     comm_overlap = getattr(recipe, "comm_overlap", None)
@@ -90,14 +96,38 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
 
 def _prepare_perf_recipe(args, cli_overrides: list[str]):
     """Build a flat performance recipe with all user overrides applied."""
-    recipe = get_perf_recipe_by_name(
-        model_recipe_name=args.model_recipe_name,
-        task=args.task,
-        num_gpus=args.num_gpus,
-        gpu=args.gpu,
-        precision=args.compute_dtype,
-        config_variant=getattr(args, "config_variant", None),
-    )
+    try:
+        recipe = get_perf_recipe_by_name(
+            model_recipe_name=args.model_recipe_name,
+            task=args.task,
+            num_gpus=args.num_gpus,
+            gpu=args.gpu,
+            precision=args.compute_dtype,
+            config_variant=getattr(args, "config_variant", None),
+        )
+    except PerfRecipeNotFoundError:
+        recipe = get_perf_optimized_recipe(
+            model_family_name=args.model_family_name,
+            model_recipe_name=args.model_recipe_name,
+            train_task=args.task,
+            gpu=args.gpu,
+            compute_dtype=args.compute_dtype,
+            config_variant=getattr(args, "config_variant", None),
+        )
+        recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
+        from utils.overrides import set_post_overrides
+
+        return set_post_overrides(
+            recipe,
+            model_family_name=args.model_family_name,
+            model_recipe_name=args.model_recipe_name,
+            gpu=args.gpu,
+            num_gpus=args.num_gpus,
+            compute_dtype=args.compute_dtype,
+            task=args.task,
+            user_gbs=args.global_batch_size,
+            config_variant=getattr(args, "config_variant", None),
+        )
     return _apply_perf_recipe_overrides(recipe, cli_overrides, args)
 
 

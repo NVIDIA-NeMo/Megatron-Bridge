@@ -19,7 +19,7 @@ import time
 import unittest.mock as mock
 from dataclasses import dataclass
 from functools import partial
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -419,6 +419,133 @@ class TestTrainingLog:
         # Verify tensorboard logging was called
         mock_global_state.tensorboard_logger.add_scalar.assert_called()
         mock_global_state.timers.write.assert_called()
+
+    def test_comet_only_logs_general_training_scalars(self, monkeypatch, mock_config, mock_global_state):
+        """Comet does not require another backend to receive general training scalars."""
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_num_microbatches",
+            lambda: 8,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
+            lambda value, mp_group: value,
+            raising=True,
+        )
+
+        mock_config.logger.tensorboard_log_interval = 1
+        mock_config.logger.log_interval = 5
+        mock_config.logger.log_timers_to_tensorboard = False
+        mock_config.logger.log_throughput_to_tensorboard = False
+        mock_config.logger.log_memory_to_tensorboard = False
+        mock_config.logger.log_runtime_to_tensorboard = False
+        mock_config.logger.log_l2_norm_grad_to_tensorboard = False
+        mock_config.logger.log_loss_scale_to_tensorboard = False
+        mock_config.logger.log_world_size_to_tensorboard = False
+
+        mock_global_state.train_state.step = 1
+        mock_global_state.tensorboard_logger = None
+        mock_global_state.wandb_logger = None
+        mock_global_state.mlflow_logger = None
+        comet_logger = mock.MagicMock()
+        mock_global_state.comet_logger = comet_logger
+
+        training_log(
+            loss_dict={},
+            total_loss_dict={},
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=None,
+            params_norm=None,
+            num_zeros_in_grad=None,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=[],
+            model=None,
+        )
+
+        comet_logger.log_metrics.assert_any_call({"learning-rate": 1e-4}, step=1)
+        comet_logger.log_metrics.assert_any_call({"batch-size": 64}, step=1)
+
+    def test_detailed_timers_reach_all_enabled_backends(self, monkeypatch, mock_config, mock_global_state):
+        """Detailed timer samples are shared by every enabled logging backend."""
+        from megatron.bridge.training.state import (
+            _timers_write_to_comet,
+            _timers_write_to_mlflow,
+            _timers_write_to_wandb,
+        )
+
+        class StatefulTimers:
+            def __init__(self):
+                self.samples = {"forward-backward": (4.0, 6.0)}
+
+            def _get_global_min_max_time(self, names, reset, barrier, normalizer):
+                samples = {name: self.samples[name] for name in names if name in self.samples}
+                if reset:
+                    self.samples.clear()
+                return samples
+
+            def write(self, names, writer, iteration, normalizer=1.0, reset=True, barrier=False):
+                self._get_global_min_max_time(names, reset, barrier, normalizer)
+
+        timers = StatefulTimers()
+        timers.write_to_wandb = MethodType(_timers_write_to_wandb, timers)
+        timers.write_to_mlflow = MethodType(_timers_write_to_mlflow, timers)
+        timers.write_to_comet = MethodType(_timers_write_to_comet, timers)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_num_microbatches",
+            lambda: 8,
+            raising=True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group",
+            lambda value, mp_group: value,
+            raising=True,
+        )
+
+        mock_config.logger.tensorboard_log_interval = 1
+        mock_config.logger.log_interval = 5
+        mock_config.logger.timing_log_level = 1
+        mock_config.logger.log_throughput_to_tensorboard = False
+        mock_config.logger.log_memory_to_tensorboard = False
+        mock_config.logger.log_runtime_to_tensorboard = False
+        mock_config.logger.log_l2_norm_grad_to_tensorboard = False
+        mock_config.logger.log_loss_scale_to_tensorboard = False
+        mock_config.logger.log_world_size_to_tensorboard = False
+
+        mock_global_state.train_state.step = 1
+        mock_global_state.timers = timers
+        mock_global_state.tensorboard_logger = None
+        mock_global_state.wandb_logger = None
+        mlflow_logger = mock.MagicMock()
+        comet_logger = mock.MagicMock()
+        mock_global_state.mlflow_logger = mlflow_logger
+        mock_global_state.comet_logger = comet_logger
+
+        training_log(
+            loss_dict={},
+            total_loss_dict={},
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=None,
+            params_norm=None,
+            num_zeros_in_grad=None,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=[],
+            model=None,
+        )
+
+        mlflow_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+        comet_logger.log_metrics.assert_any_call({"forward-backward-time": 6.0}, step=1)
+        assert timers.samples == {}
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -1644,6 +1771,7 @@ class TestTrainingLog:
         mock_global_state.tensorboard_logger = None
         mock_global_state.wandb_logger = None
         mock_global_state.mlflow_logger = None
+        mock_global_state.comet_logger = None
 
         # Set iteration to match logging intervals
         mock_global_state.train_state.step = 10
@@ -2457,7 +2585,10 @@ class TestCalcParamsL2Norm:
             def __init__(self):
                 # Minimal set of groups used by calc_params_l2_norm
                 self.dp_cp = object()
+                self.expt_dp = object()
+                self.expt_tp = object()
                 self.mp = object()
+                self.tp = object()
                 self.tp_ep_pp = object()
                 self.pp = object()
 
@@ -2468,11 +2599,13 @@ class TestCalcParamsL2Norm:
 
                 self.dp = _DP()
 
+        pg_collection = _PG()
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.get_pg_collection",
-            lambda model: _PG(),
+            lambda model: pg_collection,
             raising=True,
         )
+        return pg_collection
 
     @pytest.fixture
     def simple_model(self):
@@ -2679,8 +2812,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with sharded main params (distributed optimizer)."""
+        """Test dense sharded main params reduce over ordinary DP/CP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -2697,9 +2831,69 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(13.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(0.0)
         assert isinstance(result, float)
         assert result > 0
+
+    def test_bf16_sharded_dense_and_expert_norm_uses_matching_dp_groups(
+        self,
+        monkeypatch,
+        mock_model_config_bf16,
+        _patch_pg_collection,
+    ):
+        """Dense and expert optimizer shards contribute through their matching DP groups."""
+
+        class _DenseAndExpertModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert.allreduce = False
+
+                self.dense.main_param = torch.tensor([2.0], device="cuda")
+                self.dense.main_param_sharded = True
+                self.expert.main_param = torch.tensor([3.0], device="cuda")
+                self.expert.main_param_sharded = True
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.dp_cp:
+                tensor.add_(12.0)
+            elif group is _patch_pg_collection.expt_dp:
+                tensor.add_(16.0)
+            elif group is not _patch_pg_collection.mp:
+                raise AssertionError("unexpected reduction group")
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            lambda param, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr("torch.distributed.get_process_group_ranks", lambda group: [0])
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(
+            _DenseAndExpertModel(),
+            mock_model_config_bf16,
+            force_create_fp32_copy=False,
+        )
+
+        # Dense: 2**2 local + 12 remote over DP/CP. Expert: 3**2 local + 16 remote over expert DP.
+        assert actual_norm == pytest.approx(math.sqrt(41.0))
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -2823,13 +3017,14 @@ class TestCalcParamsL2Norm:
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    def test_tp_duplicate_params(
+    def test_duplicate_filter_receives_tp_and_expert_tp_groups(
         self,
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_fp32,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm skips TP duplicate parameters."""
+        """Test duplicate filtering receives both tensor-parallel groups."""
         model = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
@@ -2850,6 +3045,97 @@ class TestCalcParamsL2Norm:
 
             # Should be 0 since all params are TP duplicates
             assert result == pytest.approx(0.0, abs=1e-5)
+            mock_is_not_tp_dup.assert_called_once_with(
+                model.weight,
+                tp_group=_patch_pg_collection.tp,
+                expert_tp_group=_patch_pg_collection.expt_tp,
+            )
+
+    def test_moe_param_norm_counts_logical_parameter_when_tp_ranks_differ(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+    ):
+        """Expert parameters use the expert-TP rank when it differs from regular TP."""
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        class _MixedModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert.allreduce = False
+
+        regular_tp_group = _RankGroup(rank=1)
+        expert_tp_group = _RankGroup(rank=0)
+        reduce_group = _RankGroup(rank=0)
+        pg_collection = SimpleNamespace(
+            tp=regular_tp_group,
+            expt_tp=expert_tp_group,
+            dp_cp=reduce_group,
+            expt_dp=reduce_group,
+            mp=reduce_group,
+            tp_ep_pp=reduce_group,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: pg_collection,
+        )
+
+        with (
+            mock.patch(
+                "megatron.core.tensor_parallel.layers.get_tensor_model_parallel_rank",
+                return_value=regular_tp_group.rank(),
+            ),
+            mock.patch("torch.distributed.get_process_group_ranks", return_value=[0]),
+            mock.patch("torch.distributed.all_reduce"),
+        ):
+            actual_norm = calc_params_l2_norm(_MixedModel(), mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(2.0)
+
+    def test_real_mcore_duplicate_filter_honors_expert_tp_group(self):
+        """Guard the Bridge<->MCore contract for expert-parameter duplicate filtering.
+
+        ``calc_params_l2_norm`` calls MCore's ``param_is_not_tensor_parallel_duplicate`` with an
+        ``expert_tp_group`` so that ``allreduce=False`` expert parameters de-duplicate over expert
+        tensor parallel instead of regular TP. Every other test in this class mocks that function,
+        so they would still pass against an MCore build that dropped the ``expert_tp_group`` kwarg --
+        silently undercounting expert parameter norms. Exercise the real function here so a pinned
+        MCore that regresses below this contract fails loudly (``TypeError`` or wrong result) rather
+        than degrading the training-log norm in production.
+        """
+        from megatron.core.tensor_parallel.layers import param_is_not_tensor_parallel_duplicate
+
+        assert "expert_tp_group" in inspect.signature(param_is_not_tensor_parallel_duplicate).parameters
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        duplicate_regular_tp = _RankGroup(rank=1)  # would be dropped as a regular-TP duplicate
+        primary_expert_tp = _RankGroup(rank=0)  # but is the primary shard on expert TP
+
+        expert_param = SimpleNamespace(allreduce=False)
+        dense_param = SimpleNamespace(allreduce=True)
+
+        # Expert param must route through expert_tp_group (rank 0 -> kept), not regular TP (rank 1).
+        assert param_is_not_tensor_parallel_duplicate(
+            expert_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
+        # Dense param still de-duplicates against the regular TP group (rank 1 -> dropped).
+        assert not param_is_not_tensor_parallel_duplicate(
+            dense_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.calc_dtensor_params_l2_norm")
     def test_megatron_fsdp_path(self, mock_calc_dtensor_norm, mock_model_config_fp32):
@@ -3087,13 +3373,7 @@ class TestCalcParamsL2Norm:
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
     ):
-        """Test calc_params_l2_norm when main_param is None with main_param_sharded=False.
-
-        This is an edge case that currently causes an error because None is added to
-        params_data, and multi_tensor_l2norm doesn't accept None values. This test
-        documents the current behavior - ideally the code should handle this more
-        gracefully (e.g., skip None values or fallback to creating FP32 copy).
-        """
+        """Test calc_params_l2_norm falls back when a non-sharded main_param is None."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -3108,9 +3388,10 @@ class TestCalcParamsL2Norm:
             param.main_param = None
             param.main_param_sharded = False
 
-        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
-        with pytest.raises(TypeError, match="incompatible function arguments"):
-            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        expected_norm = 5.0  # sqrt(25 * 1.0^2)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
 
     # ==================== MoE BF16 main_param tests ====================
 
@@ -3179,12 +3460,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with MoE params using sharded main_param (distributed optimizer).
-
-        When MoE params have main_param_sharded=True, they should be added to
-        sharded_params_data for proper all-reduce across DP groups.
-        """
+        """Test expert sharded main params reduce over expert DP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -3202,7 +3480,14 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(0.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(13.0)
         assert isinstance(result, float)
         assert result > 0
 
@@ -3359,11 +3644,7 @@ class TestCalcParamsL2Norm:
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
     ):
-        """Test MoE params when main_param is None with main_param_sharded=False.
-
-        This is an edge case that causes an error because None is added to
-        moe_params_data, and multi_tensor_l2norm doesn't accept None values.
-        """
+        """Test MoE norm falls back when a non-sharded main_param is None."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -3379,9 +3660,10 @@ class TestCalcParamsL2Norm:
             param.main_param = None
             param.main_param_sharded = False
 
-        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
-        with pytest.raises(TypeError, match="incompatible function arguments"):
-            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        expected_norm = 5.0  # sqrt(25 * 1.0^2)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -3654,20 +3936,109 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert bias is None
 
 
+def test_value_head_apis_preserve_positional_call_compatibility() -> None:
+    """The relocated value-head APIs must retain their established positional signatures."""
+    head = LinearForLastLayer(2, 1, False)
+    hook = create_value_head_hook(2, False)
+
+    assert isinstance(head, LinearForLastLayer)
+    assert callable(hook)
+
+
+def test_linear_for_last_layer_supports_bias_and_dropout() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        bias=True,
+        dropout=0.25,
+    )
+
+    assert head.bias is not None
+    assert head.dropout.p == 0.25
+
+
+def test_linear_for_last_layer_supports_model_initialization_policy() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        bias=True,
+        init_method=lambda weight: torch.nn.init.constant_(weight, 0.125),
+    )
+
+    assert torch.equal(head.weight, torch.full_like(head.weight, 0.125))
+    assert torch.equal(head.bias, torch.zeros_like(head.bias))
+
+
+def test_linear_for_last_layer_can_skip_initialization(monkeypatch) -> None:
+    reset_parameters = mock.Mock()
+    monkeypatch.setattr(torch.nn.Linear, "reset_parameters", reset_parameters)
+
+    LinearForLastLayer(2, 1, False, perform_initialization=False)
+
+    reset_parameters.assert_not_called()
+
+
+def test_linear_for_last_layer_reuses_initializer_after_meta_materialization() -> None:
+    with torch.device("meta"):
+        head = LinearForLastLayer(
+            2,
+            1,
+            False,
+            bias=True,
+            init_method=lambda weight: torch.nn.init.constant_(weight, 0.125),
+        )
+
+    head.to_empty(device="cpu")
+    head.reset_parameters()
+
+    assert torch.equal(head.weight, torch.full_like(head.weight, 0.125))
+    assert torch.equal(head.bias, torch.zeros_like(head.bias))
+
+
+def test_linear_for_last_layer_marks_bias_for_sequence_parallel_grad_sync() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=True,
+        bias=True,
+    )
+
+    assert head.weight.sequence_parallel is True
+    assert head.bias is not None
+    assert head.bias.sequence_parallel is True
+
+
+def test_linear_for_last_layer_can_preserve_projection_dtype() -> None:
+    head = LinearForLastLayer(
+        input_size=2,
+        output_size=1,
+        sequence_parallel=False,
+        output_in_fp32=False,
+    ).to(dtype=torch.bfloat16)
+
+    logits, _ = head(torch.ones(2, 2, dtype=torch.bfloat16))
+
+    assert logits.dtype == torch.bfloat16
+
+
 def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> None:
-    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True)
+    tp_group = object()
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True, tp_group=tp_group)
     with torch.no_grad():
         head.weight.fill_(1.0)
 
     calls = {}
 
-    def fake_gather(tensor, tensor_parallel_output_grad):
+    def fake_gather(tensor, tensor_parallel_output_grad, group):
         calls["tensor"] = tensor
         calls["tensor_parallel_output_grad"] = tensor_parallel_output_grad
+        calls["group"] = group
         return tensor + 1
 
     monkeypatch.setattr(
-        "megatron.bridge.training.utils.train_utils.tensor_parallel.gather_from_sequence_parallel_region",
+        "megatron.bridge.models.common.heads.tensor_parallel.gather_from_sequence_parallel_region",
         fake_gather,
     )
 
@@ -3676,6 +4047,7 @@ def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> 
     assert torch.equal(logits, torch.full((2, 1), 3.0))
     assert torch.equal(calls["tensor"], torch.full((2, 1), 2.0))
     assert calls["tensor_parallel_output_grad"] is False
+    assert calls["group"] is tp_group
     assert bias is None
 
 

@@ -192,6 +192,11 @@ All training scripts use the Nemotron-3-Nano-Omni-30B-A3B-Reasoning
 pretrained checkpoint and enable in-batch sequence packing via
 `dataset.enable_in_batch_packing=True`. Default GPU layout per script:
 
+For the canonical expanded-sequence image path, the collator owns THD packing.
+The model receives the final packed tensors and global boundaries, inserts
+image embeddings without changing sequence length, and then selects its
+rank-local context-parallel shard.
+
 - **Full SFT** — 2 nodes / 16 GPUs (full optimizer state for ~33 B params)
 - **LoRA PEFT** — 1 node / 8 GPUs
 
@@ -212,6 +217,32 @@ through `srun`):
 The two task flavors below are orthogonal — pick whichever dataset/modality
 combo matches your target task and either full-parameter (SFT) or LoRA
 (PEFT).
+
+### Vision Input Processing Modes
+
+Nemotron-3 Nano Omni pairs each vision modality with exactly one input processing
+mode:
+
+- Image inputs → dynamic resolution: The vision encoder keeps each
+  image's native H×W and produces a variable per-image token count
+  (`temporal_patch_dim=1`, no temporal fusion). Images are supported on **both** the
+  HF (`DirectHFSFTDatasetConfig`) path and the Energon path.
+- Video inputs → temporal video embedder (non-dynamic resolution): Frames are resized onto a fixed 512×512 canvas and fused in consecutive
+  pairs (`temporal_patch_dim=2`, `separate_video_embedder=True`), so every
+  video contributes a constant number of tokens per frame-pair. Videos are supported
+  on the **Energon path only**.
+
+Set the four flags below as a matched column — a mismatched set produces incorrect model's expected input.
+
+| Field                                              | Dynamic resolution (images, variable H×W) | Temporal video (videos, fused pairs, 512²) |
+|----------------------------------------------------|-------------------------------------------|--------------------------------------------|
+| `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                                     |
+| `model.temporal_patchrecipe_dim`                         | `1`                                       | `2`                                        |
+| `model.separate_video_embedder`                    | `False`                                   | `True`                                     |
+| `model.temporal_ckpt_compat`                       | `False`                                   | `True`                                     |
+
+Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.
+
 
 ### Image-Text — CORD-V2
 

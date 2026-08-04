@@ -20,6 +20,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
+from typing import Any
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -75,6 +76,13 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
+        "--additional-slurm-params",
+        "--additional_slurm_params",
+        type=_parse_additional_slurm_params,
+        default={},
+        help="Additional sbatch parameters as semicolon-separated KEY=VALUE pairs.",
+    )
+    execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
         help="Do not emit a Slurm GPU/GRES request on clusters that allocate whole GPU nodes implicitly.",
@@ -103,6 +111,18 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         dest="srun_args",
         metavar="ARG",
         help="Additional cluster-specific argument passed to srun; may be repeated. Use --srun-arg=--flag.",
+    )
+    execution.add_argument(
+        "-lmc",
+        "--peak-mem-clk",
+        "--peak_mem_clk",
+        type=int,
+        default=None,
+        dest="peak_mem_clk",
+        help=(
+            "Lock the GPU memory clock to a fixed frequency in MHz once per node. "
+            "Defaults to 4752 for VR200 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
+        ),
     )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
     execution.add_argument(
@@ -150,6 +170,17 @@ def _parse_mounts(values: list[str]) -> list[str]:
     return mounts
 
 
+def _parse_additional_slurm_params(value: str) -> dict[str, str]:
+    """Parse semicolon-separated Slurm executor parameters."""
+    parameters: dict[str, str] = {}
+    for item in value.split(";"):
+        key, separator, parameter_value = item.partition("=")
+        if not separator or not key or not parameter_value:
+            raise argparse.ArgumentTypeError("--additional-slurm-params expects semicolon-separated KEY=VALUE pairs.")
+        parameters[key] = parameter_value
+    return parameters
+
+
 def _validate_args(
     args: argparse.Namespace,
     benchmark_metadata: BenchmarkRecipeMetadata | None = None,
@@ -168,9 +199,11 @@ def _validate_args(
     if benchmark_metadata is not None:
         requested_gpus = args.nodes * args.gpus_per_node
         if requested_gpus != benchmark_metadata.num_gpus:
-            raise ValueError(
-                f"Benchmark recipe requires exactly {benchmark_metadata.num_gpus} GPUs, but --nodes and "
-                f"--gpus-per-node request {requested_gpus}."
+            logger.info(
+                "Weak scaling benchmark recipe '%s' from %d to %d GPUs.",
+                benchmark_metadata.recipe_name,
+                benchmark_metadata.num_gpus,
+                requested_gpus,
             )
 
 
@@ -179,6 +212,48 @@ def _task_environment() -> dict[str, str]:
     return {
         "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
     }
+
+
+def _resolve_peak_mem_clk(
+    requested_peak_mem_clk: int | None,
+    benchmark_metadata: BenchmarkRecipeMetadata | None,
+) -> int | None:
+    """Resolve the explicit memory clock or the VR200 benchmark default."""
+    if requested_peak_mem_clk == -1:
+        return None
+    if requested_peak_mem_clk is not None:
+        return requested_peak_mem_clk
+    if benchmark_metadata is not None and benchmark_metadata.hardware == "vr200":
+        return 4752
+    return None
+
+
+def _configure_slurm_peak_mem_clk(executor: Any, peak_mem_clk: int | None) -> None:
+    """Add a once-per-node GPU memory-clock lock to a Slurm executor."""
+    if peak_mem_clk is None:
+        return
+
+    command = "\n".join(
+        [
+            "",
+            "# Lock GPU memory clock",
+            " ".join(
+                [
+                    "srun",
+                    f"--ntasks={executor.nodes}",
+                    "--ntasks-per-node=1",
+                    "--output",
+                    os.path.join(executor.tunnel.job_dir, "peak_mem_clock.out"),
+                    "--error",
+                    os.path.join(executor.tunnel.job_dir, "peak_mem_clock.err"),
+                    "bash -c",
+                    shlex.quote(f"sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk}"),
+                ]
+            ),
+            "",
+        ]
+    )
+    executor.setup_lines = f"{executor.setup_lines or ''}{command}"
 
 
 def _build_executor(
@@ -218,7 +293,10 @@ def _build_executor(
     # Keep Slurm control commands available to the batch script without
     # forwarding the host PATH into the training container.
     slurm_env_names = list(dict.fromkeys(["PATH", *env_names]))
-    executor.additional_parameters = {"export": ",".join(slurm_env_names)}
+    executor.additional_parameters = {
+        **args.additional_slurm_params,
+        "export": ",".join(slurm_env_names),
+    }
     executor.srun_args = srun_args
     return executor
 
@@ -240,6 +318,8 @@ def main(argv: list[str] | None = None) -> None:
     mounts = _parse_mounts(args.mount)
     task_environment = _task_environment()
     executor = _build_executor(args, env_names, mounts, task_environment=task_environment)
+    peak_mem_clk = _resolve_peak_mem_clk(args.peak_mem_clk, benchmark_metadata)
+    _configure_slurm_peak_mem_clk(executor, peak_mem_clk)
 
     task = run.Script(
         path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),

@@ -61,6 +61,8 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
+REPO_ROOT = SCRIPT_DIR.parents[1]
+BRIDGE_SOURCE_DIR = REPO_ROOT / "src" / "megatron" / "bridge"
 ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
@@ -76,8 +78,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     reach the rank-local scripts:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
-    * ``--enable_vboost`` / ``--lock_gpu_freq`` — applied directly to the
-      Slurm executor before submission.
+    * ``--enable_vboost`` / ``--lock_gpu_freq`` / ``--peak_mem_clk`` — applied
+      directly to the Slurm executor before submission.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
@@ -92,11 +94,13 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     def _is_launcher_only(flag: str) -> bool:
         return flag in (
             "-lgc",
+            "-lmc",
             "-vb",
             "--additional_slurm_params",
             "--csp",
             "--enable_vboost",
             "--lock_gpu_freq",
+            "--peak_mem_clk",
         ) or flag.startswith("--kubeflow_")
 
     filtered_args = []
@@ -134,6 +138,13 @@ def _default_experiment_name(
     return "_".join(fields)
 
 
+def _bridge_source_mount(in_container_script_dir: str) -> str:
+    """Build the source-to-container mount for the Megatron Bridge package."""
+    in_container_repo_root = Path(in_container_script_dir).parents[1]
+    target = in_container_repo_root / "src" / "megatron" / "bridge"
+    return f"{BRIDGE_SOURCE_DIR}:{target}"
+
+
 def _build_nemorun_script(
     *,
     script_path: str,
@@ -143,10 +154,11 @@ def _build_nemorun_script(
     custom_env_vars: Dict[str, str],
 ) -> run.Script:
     """Build the rank-local task and apply optional Kubeflow NUMA binding."""
+    in_container_repo_root = Path(script_dir).parents[1]
     task = run.Script(
         path=script_path,
         entrypoint="python",
-        env={"PYTHONPATH": f"{script_dir}:$PYTHONPATH"},
+        env={"PYTHONPATH": f"{script_dir}:{in_container_repo_root / 'src'}:$PYTHONPATH"},
         args=args,
     )
     if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
@@ -471,6 +483,7 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     lock_gpu_freq: Optional[int],
+    peak_mem_clk: Optional[int],
     enable_nsys: bool,
     export_nsys_sqlite: bool,
     pytorch_profiler: bool,
@@ -628,12 +641,20 @@ def main(
         [
             f"{run_script_path}:{run_script_path}",
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
+            _bridge_source_mount(in_container_script_dir),
         ]
     )
 
+    if peak_mem_clk is None and gpu == "vr200":
+        peak_mem_clk = 4752
+    if peak_mem_clk == -1:
+        peak_mem_clk = None
+
     if kubeflow_namespace:
-        if enable_vboost or lock_gpu_freq is not None:
-            logger.warning("--enable_vboost and --lock_gpu_freq are Slurm-only and will be ignored on Kubeflow.")
+        if enable_vboost or lock_gpu_freq is not None or peak_mem_clk is not None:
+            logger.warning(
+                "--enable_vboost, --lock_gpu_freq, and --peak_mem_clk are Slurm-only and will be ignored on Kubeflow."
+            )
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -692,6 +713,7 @@ def main(
             executor,
             enable_vboost=enable_vboost,
             lock_gpu_freq=lock_gpu_freq,
+            peak_mem_clk=peak_mem_clk,
         )
 
     plugins = []
@@ -992,6 +1014,7 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
+        peak_mem_clk=args.peak_mem_clk,
         enable_nsys=args.enable_nsys,
         export_nsys_sqlite=args.export_nsys_sqlite,
         pytorch_profiler=args.pytorch_profiler,

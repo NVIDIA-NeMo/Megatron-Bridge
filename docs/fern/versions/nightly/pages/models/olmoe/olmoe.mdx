@@ -111,15 +111,15 @@ See: [bridge.recipes.olmoe](../../apidocs/bridge/bridge.recipes.olmoe.md)
 ```python
 from megatron.bridge.recipes.olmoe import olmoe_7b_pretrain_config
 
-cfg = olmoe_7b_pretrain_config(
-    name="olmoe_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/olmoe_7b",
-    train_iters=500_000,
-    global_batch_size=2048,
-    seq_length=4096,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
-)
+cfg = olmoe_7b_pretrain_config()
+cfg.logger.tensorboard_dir = "/results/olmoe_7b/tb_logs"
+cfg.checkpoint.save = "/results/olmoe_7b/checkpoints"
+cfg.dataset.data_path = "/path/to/preprocessed_text_document"
+cfg.train.train_iters = 500_000
+cfg.train.global_batch_size = 2048
+cfg.dataset.seq_length = 4096
+cfg.model.seq_length = cfg.dataset.seq_length
+# Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 ```
 
 ### Finetuning Examples
@@ -129,15 +129,15 @@ cfg = olmoe_7b_pretrain_config(
 ```python
 from megatron.bridge.recipes.olmoe import olmoe_7b_sft_config
 
-cfg = olmoe_7b_sft_config(
-    tokenizer_path="allenai/OLMoE-1B-7B-0125",
-    name="olmoe_full_sft",
-    pretrained_checkpoint="path/to/olmoe/checkpoint",
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=5e-6,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
-)
+cfg = olmoe_7b_sft_config()
+cfg.tokenizer.tokenizer_model = "allenai/OLMoE-1B-7B-0125"
+cfg.logger.tensorboard_dir = "/results/olmoe_7b/sft/tb_logs"
+cfg.checkpoint.save = "/results/olmoe_7b/sft/checkpoints"
+cfg.checkpoint.pretrained_checkpoint = "/results/olmoe_7b/checkpoints/iter_0500000"
+cfg.train.train_iters = 1000
+cfg.train.global_batch_size = 128
+cfg.optimizer.lr = 5e-6
+# Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 ```
 
 #### LoRA Finetuning
@@ -145,16 +145,15 @@ cfg = olmoe_7b_sft_config(
 ```python
 from megatron.bridge.recipes.olmoe import olmoe_7b_peft_config
 
-cfg = olmoe_7b_peft_config(
-    tokenizer_path="allenai/OLMoE-1B-7B-0125",
-    name="olmoe_lora_finetune",
-    pretrained_checkpoint="path/to/olmoe/checkpoint",
-    peft_scheme="lora",  # or "dora" for DoRA
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=1e-4,
-    # Uses TP=1, PP=1, EP=1 (8 GPUs) automatically
-)
+cfg = olmoe_7b_peft_config(peft_scheme="lora")  # or "dora" for DoRA
+cfg.tokenizer.tokenizer_model = "allenai/OLMoE-1B-7B-0125"
+cfg.logger.tensorboard_dir = "/results/olmoe_7b/peft/tb_logs"
+cfg.checkpoint.save = "/results/olmoe_7b/peft/checkpoints"
+cfg.checkpoint.pretrained_checkpoint = "/results/olmoe_7b/checkpoints/iter_0500000"
+cfg.train.train_iters = 1000
+cfg.train.global_batch_size = 128
+cfg.optimizer.lr = 1e-4
+# Uses TP=1, PP=1, EP=1 (8 GPUs) automatically
 ```
 
 ## Hugging Face model cards

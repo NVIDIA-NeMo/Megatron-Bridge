@@ -69,6 +69,40 @@ exported, omit the item instead of adding an unverified placeholder. Once a
 canonical recipe exists, keep the item in the card even if its run is still
 unverified.
 
+Add `pretrain_fsdp` as an optional hardware-scoped item when a first-class
+Megatron FSDP performance recipe exists for the exact model variant. Record
+the FSDP result under `pretrain_fsdp.<hardware>`. Keep it separate from
+checkpoint-resume and tuned non-FSDP `pretrain_performance` results. Do not
+embed a baseline, control, computed delta, or relative speedup under another
+item; agents can derive valid comparisons from the standalone commands,
+resolved recipes, and raw metrics. The FSDP item does not claim checkpoint
+save/load unless a separate functional item records that evidence.
+
+When the same hardware has multiple first-class FSDP runs with different
+precisions or convergence contracts, use one aggregate hardware container and
+key its standalone leaves by precision:
+
+```yaml
+pretrain_fsdp:
+  GB200:
+    status: verified
+    variants:
+      bf16:
+        status: verified
+        precision: bf16
+        # complete standalone leaf
+      fp8_mx:
+        status: verified
+        precision: fp8_mx
+        # complete standalone leaf
+```
+
+The container status is `verified` only when every precision variant is
+verified; otherwise it is `unverified`. Keep the ordinary direct hardware-leaf
+shape when there is only one FSDP run. A precision variant repeats its
+precision as a scalar so agents do not have to infer workload facts from a
+mapping key.
+
 A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
 performance recipe exists for that hardware. Its item status states whether
 the card's benchmark run has been verified; an `unverified` leaf still records
@@ -106,19 +140,19 @@ items:
 
 The hardware-scoped names are `pretrain`, `sft`, `sft_export_inference`,
 `sft_long_context`, `peft`, `checkpoint_resume`, and optional
-`pretrain_performance`. Use canonical public accelerator identifiers such as
-`H100`, `B200`, or `GB200`, never a private cluster name. The validator's
-public-hardware allowlist is authoritative and must be updated when a new
-accelerator target is introduced. The hardware key replaces the old `gpu_type`
-field. Each hardware leaf is independent and must carry its own status plus the
-command or commands, date, metrics, features, and optional commit override that
-apply to that item. Dependencies resolve within the same hardware key:
-`checkpoint_resume.H100` consumes `pretrain.H100`, and
-`sft_export_inference.H100` consumes `sft.H100`. Never fall back across
-hardware targets. Use the reserved key `all` only as the sole leaf for a
-model-wide `unsupported` or `not_applicable` limitation. A terminal dependency
-leaf still names its logical dependency but does not require a matching `all`
-or concrete-hardware dependency leaf.
+`pretrain_performance` and `pretrain_fsdp`. Use canonical public accelerator
+identifiers such as `H100`, `B200`, or `GB200`, never a private cluster name.
+The validator's public-hardware allowlist is authoritative and must be updated
+when a new accelerator target is introduced. The hardware key replaces the old
+`gpu_type` field. Each hardware leaf is independent and must carry its own
+status plus the command or commands, date, metrics, features, and optional
+commit override that apply to that item. Dependencies resolve within the same
+hardware key: `checkpoint_resume.H100` consumes `pretrain.H100`, and
+`sft_export_inference.H100` consumes `sft.H100`. Never fall back across hardware
+targets. Use the reserved key `all` only as the sole leaf for a model-wide
+`unsupported` or `not_applicable` limitation. A terminal dependency leaf still
+names its logical dependency but does not require a matching `all` or
+concrete-hardware dependency leaf.
 
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
@@ -135,7 +169,9 @@ Use `model_level` for the six direct items: the four conversion directions,
 hardware-scoped items: `pretrain`, `sft`, `sft_export_inference`,
 `sft_long_context`, `peft`, and `checkpoint_resume`. Keep the optional
 `pretrain_performance` item separate under `performance`; omit `performance`
-when the card has no canonical performance recipe.
+when the card has no canonical performance recipe. Keep optional
+`pretrain_fsdp` leaves separate under `fsdp`; omit `fsdp` when the card has no
+FSDP recipe.
 
 Group item names under the same four status names used by the detailed items.
 For an explicitly indexed hardware target with no corresponding item leaf,
@@ -174,6 +210,22 @@ When a canonical performance recipe exists, mirror only its concrete leaves:
     H100: verified
 ```
 
+When an FSDP recipe exists, mirror only its concrete leaves:
+
+```yaml
+  fsdp:
+    GB200: verified
+```
+
+For a multi-variant FSDP hardware container, this scalar mirrors the aggregate
+container status rather than duplicating the per-precision inventory.
+
+Do not add prose comparisons, control payloads, computed deltas, or relative
+speedups to performance leaves. Agents can compare standalone runs
+automatically after resolving their recipes. The only exception is a concise
+warning that names two superficially similar runs that must **not** be compared
+and the exact convergence-contract differences that make them incompatible.
+
 The index may declare an allowlisted public hardware target such as `GB200`
 before detailed evidence exists. It must also include every concrete hardware
 target present in the detailed items. Do not use a private cluster name or
@@ -196,6 +248,10 @@ Use `bf16` for BF16. Training items may instead use `fp8_mx` for MXFP8 or
 `nvfp4` for NVFP4. Keep MXFP8 and NVFP4 training-only, and do not list either
 until that exact item has completed in that mode.
 
+The outer hardware container of a multi-variant `pretrain_fsdp` item is the
+only exception: each variant owns the scalar precision and the container owns
+only aggregate `status` plus `variants`.
+
 ### 3. Use the public Slurm launchers
 
 Assume the caller supplies the account, partition, concrete runtime image,
@@ -208,11 +264,32 @@ model-verification workload:
   conversion, with portable node and GPU counts;
 - use `scripts/training/train.sh --nodes ... --gpus-per-node ...` for every
   training item;
-- use `uv run python ...` only for inference helpers that do not yet have a
-  public Slurm executor;
+- use `scripts/inference/infer.sh --nodes ... --gpus-per-node ... --task ...`
+  for Megatron inference and manual model comparison; select
+  `text-generation`, `vlm-generation`, or `model-comparison` explicitly;
+- invoke public shell launchers directly from the card. Do not create Slurm
+  jobs by calling their Python setup modules, and do not wrap the launchers in
+  `uv run`, `python`, `srun`, or `sbatch`; the shell entry point owns its Python
+  environment and scheduler setup;
+- use `uv run python ...` only for a local artifact verifier that has no public
+  shell wrapper, such as deterministic Hugging Face inference after export. It
+  must not be used as a substitute for an available shell launcher or to create
+  a cluster job;
 - use short, ignored repository-relative logical paths under `work/...`;
   prefer aliases such as `work/data/<dataset>` and `work/cache/<model>` over
   reproducing a physical storage hierarchy.
+
+For example, a portable multi-node VLM verification starts with:
+
+```bash
+./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 \
+  --task vlm-generation \
+  --hf_model_path <org>/<model> \
+  --megatron_model_path work/model-verification/<model>/iter_0000000 \
+  --image_path docs/images/tp1.png \
+  --prompt "Describe this image." \
+  --max_new_tokens 64
+```
 
 The public launchers may read their required generic Slurm configuration from
 the caller's environment. Do not include `srun`, `sbatch`, concrete account or
@@ -281,11 +358,29 @@ loss sentinels for every layout and do not claim step-by-step numerical parity.
 
 Performance settings are **intended** to preserve training semantics, not
 guaranteed to be bitwise neutral. Parallel reductions, fusions, recompute, and
-dispatcher implementations can change floating-point order. After changing
-them, require finite loss, no skipped iterations, and compatible loss sentinels
-before calling the mapping verified. Anything that changes arithmetic
-precision, forced router balancing, token dropping, packing, or effective batch
-construction is a convergence change, even when introduced to improve speed.
+dispatcher implementations can change floating-point order. Every paired run
+used to claim that a performance-related feature preserves convergence must
+start from the same weights and use the same clean Bridge commit, dataset and
+revision, sample order, tokenizer, sequence length, global batch size, token
+budget, optimizer steps, seeds, objective, routing, precision, optimizer, and
+learning-rate schedule. Change only the feature under test and unavoidable
+execution settings. Keep micro batch size and gradient accumulation unchanged
+when possible; if either changes, require the same loss check but do not claim
+step-by-step numerical identity. If a verified run deliberately changes any
+convergence field, make the exact deviation explicit in its command or
+`expected_result`.
+
+Compare LM and auxiliary-loss values at every shared optimizer step. Each
+candidate value must satisfy
+`abs(candidate - reference) <= 1e-6 + 0.01 * abs(reference)`. Require finite
+losses, zero skipped or NaN iterations, and the same qualitative loss trend.
+If any convergence field differs or any loss falls outside this bound, do not
+claim that the feature is convergence-neutral. Treat the result as standalone
+performance evidence, investigate the discrepancy, and explicitly identify
+the pair as not comparable only when the card would otherwise invite a false
+comparison. Anything that changes arithmetic precision, forced router
+balancing, token dropping, packing, or effective batch construction is a
+convergence change, even when introduced to improve speed.
 
 The **benchmark-only configuration** may deliberately change semantics to find
 an upper throughput bound. It includes mock data, forced MoE load balancing,
@@ -294,13 +389,22 @@ evaluation, or checkpoint checks. These settings may be valid for a canonical
 `pretrain_performance` item, but their losses and checkpoints are never
 convergence evidence.
 
-Use `qwen3_30b_a3b_convergence_v1` as the named default cross-model bounded
-convergence cohort. It is the target contract derived from the resolved
-Qwen3-30B-A3B H100 recipes; the name identifies settings, not evidence status.
+Use `qwen3_30b_a3b_convergence_v2` as the named default cross-model bounded
+convergence cohort. It retains the optimizer, data, objective, and token-budget
+contract derived from the resolved Qwen3-30B-A3B H100 recipes while changing
+offline-packed SFT and PEFT from 2K/GBS32 to 8K/GBS8. The name identifies
+target settings, not evidence status.
 Do not call a workload cohort-verified until its recipe owns this contract and
 a clean-commit run passes the applicable gates below. Its 100 optimizer steps
 test finite loss, short-horizon loss trend, checkpoint reload, and direct
 resume; they do not establish full training convergence.
+
+Historical `qwen3_30b_a3b_convergence_v1` evidence used 2K/GBS32 for SFT and
+PEFT. Keep an existing verified card on that exact command, recipe commit, and
+metrics until the model is rerun. Never relabel 2K evidence as v2 or rewrite its
+command to 8K without fresh training. When refreshing a model, update the
+recipe first, write packed data to a fresh output root, rerun the training
+gates, and rerun post-SFT export/inference.
 
 Freeze this optimizer fingerprint for all three workloads:
 
@@ -326,32 +430,74 @@ Freeze the following workload profiles:
 | --- | --- | --- | --- |
 | Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
-| Sequence / GBS | `4096 / 1024` | `2048 / 32` | `2048 / 32` |
+| Sequence / GBS | `4096 / 1024` | `8192 / 8` | `8192 / 8` |
 | Reference MBS | `1` | `1` | `1` |
-| Reference packing alignment | Not applicable | `pad_seq_to_mult=1` | `pad_seq_to_mult=4` |
+| Offline packing alignment | Not applicable | Derive from resolved CP/TP/SP topology and pin explicitly | Same rule |
 | Token slots | `4,194,304` per step; `419,430,400` total | `65,536` per step; `6,553,600` total | `65,536` per step; `6,553,600` total |
 | Peak / minimum LR | `3e-4 / 3e-5` | `5e-6 / 0` | `1e-4 / 0` |
 | Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
 | RNG | Model and dataset seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` |
 | Gradient path | BF16 gradient reduction; precision-aware optimizer enabled | FP32 gradient reduction; precision-aware optimizer disabled | FP32 gradient reduction; precision-aware optimizer disabled |
 
-Treat the reference packing alignments as frozen data semantics, not as
-topology-derived performance defaults. Set them explicitly in the recipe and
-build every compared run from a fresh packing output. If a topology or kernel
-requires a larger alignment, record the resolved value, packing-manifest hash,
-and actual supervised-token count, then classify that run as support
-verification rather than evidence for this cross-model convergence cohort.
-Never let runtime alignment synchronization silently change a cohort run.
+Derive `pad_seq_to_mult` for both SFT and PEFT from the resolved execution
+topology:
+
+```text
+cp_multiple = 2 * CP if CP > 1 else 1
+sp_multiple = CP * TP if sequence parallelism is enabled and TP > 1 else 1
+pad_seq_to_mult = lcm(cp_multiple, sp_multiple)
+```
+
+The two workloads use the same rule; there is no intrinsic SFT-versus-PEFT
+alignment difference. Offline packing does not finalize this value
+automatically, so set the derived integer explicitly in the recipe and card
+command. Because changing it changes padding and pack membership, use a fresh
+packing output, record the resolved value, packing-manifest hash, and actual
+supervised-token count, and require fresh loss sentinels after a topology
+change.
+
+Use 8K as the default offline-pack target only when the exact model supports at
+least 8192 tokens, the recipe supports offline packing, and the resolved
+topology fits one MBS1 pack per data-parallel rank. Set `model.seq_length`,
+`dataset.seq_length`, and `packed_sequence_size` to 8192 together. A
+model-family packing opt-out, MTP incompatibility, context limit, or
+demonstrated memory limit is a cohort exception, not a reason to silently fall
+back.
+
+Treat fixed-width pack padding as an execution requirement, not part of the
+cross-model convergence profile. Set `pad_to_max_length=true` when the selected
+dispatcher or kernel requires a fixed token width; for example, the verified
+Moonlight HybridEP path requires the pack width to be divisible by its
+128-token combine chunk. CUDA graphs also require fixed token width and
+`pad_cu_seqlens=true` plus packing metadata. Otherwise do not require
+fixed-width padding universally. Any padded tail must retain a zero loss mask.
+
+The equal-token rule is:
+
+```text
+token_slots_per_step = packed_sequence_size * global_batch_size
+```
+
+Moving from 2K/GBS32 to 8K/GBS8 preserves 65,536 token slots per optimizer step
+and can reduce gradient accumulation while presenting more source sequences in
+each physical MBS1 pack. It still changes truncation and packing membership, so
+it is a convergence-contract migration that requires fresh loss sentinels.
+Because offline packing requires MBS1, require `GBS % DP == 0` and `GBS >= DP`.
+For the v2 GBS8 target, select a model-appropriate topology with DP in
+`{1, 2, 4, 8}`; do not reuse a DP16 layout.
 
 The public training runner applies `--dataset` after constructing the model
 recipe and replaces the recipe's dataset object with the selected preset.
 Consequently, a card command that uses `--dataset tulu3` must explicitly pin
 the dataset revision, split, data-order/packing seed, offline-packing enablement,
-and `+dataset.offline_packing_specs.pad_seq_to_mult`; recipe-level dataset
-defaults alone do not freeze the resolved CLI workload. Use a fresh
-`dataset.hf_output_root` (or force a deliberate rewrite) whenever any of these
-fields changes, and audit the final `ConfigContainer` after all overrides and
-runtime synchronization.
+and the derived `+dataset.offline_packing_specs.pad_seq_to_mult`; recipe-level
+dataset defaults alone do not freeze the resolved CLI workload. When the
+execution requires fixed-width packs, also pin
+`dataset.dataset_kwargs={pad_to_max_length:true}` and, for CUDA graphs,
+`+dataset.offline_packing_specs.pad_cu_seqlens=true`. Use a fresh
+`dataset.hf_output_root` (or force a deliberate rewrite) whenever sequence
+length, packing width, alignment, or any of these fields changes, and audit the
+final `ConfigContainer` after all overrides and runtime synchronization.
 
 Before launching training, create the parent directory named by
 `logger.save_config_filepath` and require the post-setup file to persist.
@@ -365,20 +511,20 @@ Treat the token counts above as token slots. For SFT and PEFT, also record the
 actual supervised-token count after label masking; do not present padded or
 masked token slots as supervised tokens.
 
-Use these accumulation layouts for the Qwen reference executions:
+Use these accumulation constraints for the reference executions:
 
-| Workload | Reference topology | DP | Gradient accumulation |
+| Workload | Topology constraint | DP | Gradient accumulation |
 | --- | --- | ---: | ---: |
 | Pretrain | 16 GPUs, TP1/PP1/CP1/EP16 | 16 | 64 |
-| Full SFT | 16 GPUs, TP1/PP1/CP1/EP16 | 16 | 2 |
-| PEFT | 4 GPUs, TP4/PP1/CP1/EP4 | 1 | 32 |
+| Full SFT | Model-appropriate topology with DP dividing GBS8 | 1, 2, 4, or 8 | `8 / DP` |
+| PEFT | Model-appropriate topology with DP dividing GBS8 | 1, 2, 4, or 8 | `8 / DP` |
 
-Topology, DP, micro batch size, and gradient accumulation are execution
-fingerprints rather than convergence constraints. They may change while the
-global batch size remains fixed. Every new execution layout must pass fresh
-loss sentinels, and its step-by-step values are not strictly numerically
-comparable with another layout. The current offline-packed SFT implementation
-requires MBS=1; treat that as an implementation limit, not a convergence rule.
+Topology, DP, and gradient accumulation are execution fingerprints rather than
+convergence constraints. They may change while GBS8 remains fixed. Every new
+execution layout must pass fresh loss sentinels, and its step-by-step values
+are not strictly numerically comparable with another layout. The current
+offline-packed SFT implementation requires MBS1; treat that as an
+implementation limit, not a convergence rule.
 
 For the Qwen anchor, record 128 experts, top-8 post-softmax-normalized routing,
 auxiliary load-balancing loss coefficient `1e-3`, natural routing, and no
@@ -422,7 +568,7 @@ instead of overriding it in the card. A canonical `perf_recipes` benchmark may
 intentionally use mock data, forced balancing, or a different batch and is not
 convergence evidence.
 
-Keep long-context SFT outside `qwen3_30b_a3b_convergence_v1`. Sequence length,
+Keep long-context SFT outside `qwen3_30b_a3b_convergence_v2`. Sequence length,
 CP, packing, batch construction, LR, and horizon define a separate convergence
 cohort even when the starting checkpoint and dataset are shared.
 
@@ -439,10 +585,11 @@ result. Private executor configuration stays outside the card.
   expected to be lossless; otherwise state the numerical tolerance. Do not use
   `--detach` or a dry-run flag in a verified conversion command.
 - **Manual forward pass:** Compare Hugging Face and Megatron logits on the same
-  prompt with `examples/conversion/compare_hf_and_megatron/compare.py`. Record
-  whether the next token matches, the cosine similarity, and the maximum and
-  mean absolute logit differences. For new evidence, pass `--hf-revision` with
-  the exact `model.hf_revision` so the command itself is reproducibly pinned.
+  prompt with `scripts/inference/infer.sh --task model-comparison`, which routes
+  to `examples/conversion/compare_hf_and_megatron/compare.py`. Record whether
+  the next token matches, the cosine similarity, and the maximum and mean
+  absolute logit differences. For new evidence, pass `--hf-revision` with the
+  exact `model.hf_revision` so the command itself is reproducibly pinned.
   Historical evidence verified before 2026-07-20, when the helper gained
   explicit revision pinning, may remain verified without a rerun when its
   clean-run provenance is tied to the card's immutable `model.hf_revision`;
@@ -456,9 +603,11 @@ result. Private executor configuration stays outside the card.
   generation. Choose a prompt whose tokenized length is divisible by TP so the
   helper does not append padding before selecting the compared next-token
   position.
-- **Megatron inference:** Use deterministic greedy generation, specify an exact
-  token count, run twice, and record the literal completion including
-  whitespace.
+- **Megatron inference:** Launch through `scripts/inference/infer.sh` with the
+  explicit `text-generation` or `vlm-generation` task. Disable sampling, run
+  one deterministic greedy generation with an exact token count, and record
+  the literal completion including whitespace. A second replay may help
+  diagnose nondeterminism, but it is not required verification evidence.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
@@ -469,11 +618,14 @@ result. Private executor configuration stays outside the card.
   decay. Use a public dataset name or preset, not its storage location. Save the
   final full-SFT checkpoint when export verification is in scope.
 - **SFT export and inference:** Depend on `sft`, export its final full-model
-  checkpoint to HF, reload the exported model with Transformers, and run greedy
-  generation twice. Store this item as an ordered `commands` list containing
-  exactly two strings: the synchronous Slurm export first and the `uv run` HF
-  inference second. Specify an exact new-token count and record the literal
-  byte-identical completion, including whitespace, in `expected_result`.
+  checkpoint to HF, reload the exported model with Transformers, and run one
+  deterministic greedy generation. Store this item as an ordered `commands`
+  list containing exactly two strings: the synchronous `convert.sh` Slurm
+  export first and the local `uv run` HF artifact verifier second. The second
+  command is an explicit exception because it validates the exported HF
+  artifact and does not create a scheduler job. Specify an exact new-token
+  count and record the literal completion, including whitespace, in
+  `expected_result`.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
@@ -523,6 +675,17 @@ For every verified training item, record:
   optimizer steps;
 - `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
 
+Optionally record `peak_allocated_memory_gib` and
+`peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
+leaves, including every verified precision variant.
+
+Record raw metrics for each run only. Do not store comparison payloads,
+throughput or memory deltas, speedups, or prose ranking one performance run
+against another. Agents can calculate those from standalone leaves after
+checking that their resolved convergence contracts match. A concise
+not-comparable warning is allowed only when it prevents a misleading
+comparison and names the specific mismatched fields.
+
 Parse all fields from each complete keyed optimizer-step line. Do not collect
 loss, time, and throughput independently and zip them. Reject missing,
 duplicate, skipped, NaN, or non-finite rows rather than excluding them.
@@ -540,8 +703,9 @@ reproducible functional run; keep the physical dataset root private.
 
 ### 7. Record only important enabled features
 
-Use `enabled_features` only on pretrain, SFT, long-context SFT, and PEFT. Keep
-it empty when none of these are central to the verification.
+Use `enabled_features` only on pretrain, SFT, long-context SFT, PEFT, and
+`pretrain_fsdp`. Keep it empty when none of these are central to the
+verification.
 
 | Key | Allowed value |
 | --- | --- |
@@ -550,6 +714,7 @@ it empty when none of these are central to the verification.
 | `cuda_graph.scopes` | `full_iteration`, `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, or `mamba` |
 | `context_parallel_size` | integer greater than one |
 | `moe_dispatcher` | `deepep` or `hybridep` |
+| `megatron_fsdp` | `optim_grads_params` (only on `pretrain_fsdp`) |
 
 Do not list routine TP/PP/DP sizes, Transformer Engine, fused loss,
 distributed optimizer, ordinary communication overlap, LoRA, or DoRA.
@@ -578,12 +743,16 @@ an item verified merely to make validation pass.
 
 - Keep all twelve core inventory items and use only the four statuses. Include
   `pretrain_performance` only when the exact variant has a canonical public
-  performance recipe.
+  performance recipe, and `pretrain_fsdp` only when an exact FSDP performance
+  recipe has a completed standalone verification run. Use precision-keyed
+  variants under one hardware container when multiple FSDP runs exist for the
+  same hardware, and make the container status summarize every variant.
 - Start the summary with the exact untuned performance disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
 - Put the verified workload precision on every direct item or hardware leaf;
   use `fp8_mx` and `nvfp4` only for training leaves that ran in those modes.
+  For a multi-variant FSDP container, put precision on each variant.
 - Pin a public immutable HF revision, minimum Transformers version, public base
   container, and exact Bridge verification commit; use an item override only
   for a verified workload run from a different clean commit.
@@ -594,7 +763,10 @@ an item verified merely to make validation pass.
   guarding on them. New evidence must pass the exact `model.hf_revision`
   through `--hf-revision`; retain older unpinned evidence only under the
   explicitly documented grandfathering rule above.
-- Use `convert.sh --executor slurm` for conversion and `train.sh` for training.
+- Use `convert.sh --executor slurm` for conversion, `train.sh` for training,
+  and `infer.sh --task ...` for Megatron inference and model comparison. Invoke
+  these shell launchers directly; never call their Python setup modules to
+  create jobs.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Put every training result under its canonical public hardware key and include
@@ -604,10 +776,14 @@ an item verified merely to make validation pass.
   buckets, list every item name explicitly, and never use the scalar `all` in
   the index.
 - Audit the resolved convergence contract before each training run; align it
-  with `qwen3_30b_a3b_convergence_v1` or record the exception and classify the
+  with `qwen3_30b_a3b_convergence_v2` or record the exception and classify the
   result as support verification rather than cross-model convergence evidence.
 - Change only the execution/performance contract while tuning throughput, and
-  recheck loss sentinels after numerically non-bitwise changes.
+  require every shared-step loss to match within the declared 1% relative plus
+  `1e-6` absolute bound after numerically non-bitwise changes.
+- Keep performance leaves free of control payloads, computed deltas, speedups,
+  and comparison prose. Mention two runs together only to warn that differing
+  convergence contracts make them unsuitable for comparison.
 - Leave recipe global and micro batch sizes unchanged in card commands.
 - Save full SFT, export it to HF, and record an exact deterministic N-token HF
   completion in a two-command ordered list.

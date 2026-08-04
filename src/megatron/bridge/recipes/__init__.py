@@ -20,6 +20,8 @@ This module exposes all recipe configurations from all model families.
 
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.deepseek.h100 import *
+from megatron.bridge.recipes.exaone import *
+from megatron.bridge.recipes.exaone.h100 import *
 from megatron.bridge.recipes.flux import *
 from megatron.bridge.recipes.flux.h100 import *
 from megatron.bridge.recipes.gemma import *
