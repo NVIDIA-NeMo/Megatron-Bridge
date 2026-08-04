@@ -72,6 +72,7 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     num_gpus: int,
     tensor_model_parallel_size: int,
     global_batch_size: int,
+    recompute_num_layers: int,
 ) -> ConfigContainer:
     """Build a PP1 Nemotron 3 Ultra H100 BF16 FSDP candidate."""
     cfg = _nemotron_3_ultra_perf_fsdp_config(
@@ -101,13 +102,14 @@ def _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
     # projection to retained routed- and shared-expert activations in later
     # layers. Both 16 and 32 checkpointed layers still exhausted the H100
     # during routed-expert GEMM, permutation, and all-to-all outputs. Checkpoint
-    # the first thirty-two Mamba/expert pairs: the all-108-layer probe proved
-    # ample memory headroom but could not meet the four-hour verification
-    # window. MCore deliberately skips block-method MTP recompute, leaving its
-    # latent projection on the normal fused-gradient path.
+    # enough leading Mamba/expert pairs to fit the selected TP layout: the
+    # all-108-layer probe proved ample memory headroom but could not meet the
+    # four-hour verification window. MCore deliberately skips block-method MTP
+    # recompute, leaving its latent projection on the normal fused-gradient
+    # path.
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "block"
-    cfg.model.recompute_num_layers = 64
+    cfg.model.recompute_num_layers = recompute_num_layers
     cfg.model.recompute_modules = None
 
     # Thirty-two chunks reduced the first-forward routed-expert failures to
@@ -160,6 +162,10 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config() -> ConfigContai
         num_gpus=128,
         tensor_model_parallel_size=2,
         global_batch_size=256,
+        # Block 64 missed a first-forward 2-MiB expert output with the H100
+        # effectively full. Four more Mamba/expert pairs provide bounded
+        # activation headroom without the all-108-layer replay cost.
+        recompute_num_layers=72,
     )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -188,6 +194,7 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
         num_gpus=256,
         tensor_model_parallel_size=4,
         global_batch_size=512,
+        recompute_num_layers=64,
     )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

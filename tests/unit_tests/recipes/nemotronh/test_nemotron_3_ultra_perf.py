@@ -162,10 +162,16 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("recipe_factory", "tensor_parallel_size", "virtual_pipeline_parallel_size", "global_batch_size"),
+    (
+        "recipe_factory",
+        "tensor_parallel_size",
+        "virtual_pipeline_parallel_size",
+        "global_batch_size",
+        "recompute_num_layers",
+    ),
     [
-        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 2, None, 256),
-        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, None, 512),
+        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 2, None, 256, 72),
+        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, None, 512, 64),
     ],
 )
 def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
@@ -173,6 +179,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     tensor_parallel_size: int,
     virtual_pipeline_parallel_size: int | None,
     global_batch_size: int,
+    recompute_num_layers: int,
 ) -> None:
     cfg = recipe_factory()
 
@@ -202,7 +209,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.model.offload_modules == []
     assert cfg.model.recompute_granularity == "full"
     assert cfg.model.recompute_method == "block"
-    assert cfg.model.recompute_num_layers == 64
+    assert cfg.model.recompute_num_layers == recompute_num_layers
     assert cfg.model.recompute_modules is None
     assert cfg.model.mlp_chunks_for_training == 64
     assert cfg.model.mamba_chunk_size == 256
