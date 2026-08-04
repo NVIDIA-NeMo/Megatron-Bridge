@@ -77,21 +77,6 @@ verified anchor token). `tau` is the training-time speedup proxy. The confidence
 head regresses to `accept_rate`; the paper applies a post-hoc Sequential
 Temperature Scaling calibration for serving.
 
-### Reference implementation (NeMo AutoModel)
-
-The AutoModel implementation separates cleanly into an architecture-agnostic core
-and per-target glue:
-
-- Architecture-agnostic core: the Markov/RNN heads, the three-term loss and
-  acceptance metrics, anchor sampling and block "noise" embedding, the eval mask,
-  the confidence-head module, and the block-attention mask builder.
-- Per-target glue: the draft backbone (attention that reads target hidden states
-  as context K/V, plus the decoder MLP), a draft config builder, a one-line
-  registry entry, and the frozen-target hidden-state capture.
-
-This split is what makes a Megatron-Bridge port tractable: the core is nearly
-verbatim, and only the backbone must be re-expressed in Megatron-Core layer specs.
-
 ## Where DSpark fits in Megatron-Bridge
 
 ### Current state
