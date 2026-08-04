@@ -36,10 +36,11 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # TP/PP combinations: "TP,PP"
-# These configs target a single 8-GPU node (DP=1 so EP must also be 1).
-# With EP=1 the 128 MoE experts are NOT sharded across GPUs, so activation
-# recompute and a frozen vision model are required to avoid OOM.
-PARALLELISM_CONFIGS=("4,2" "8,1")
+# These configs target a single 8-GPU node. TP=2/PP=1 leaves DP=4, which lets the
+# recipe keep EP=8 so the 128 MoE experts stay sharded across GPUs. Raising TP or
+# PP collapses DP to 1, forces EP=1, and replicates every expert on every GPU,
+# which does not fit in 80 GB even with recompute and a frozen vision model.
+PARALLELISM_CONFIGS=("2,1")
 
 for config in "${PARALLELISM_CONFIGS[@]}"; do
     IFS=',' read -r TP PP <<< "$config"
@@ -64,8 +65,5 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         dataset.source.dataset_name=${DATASET_NAME} \
         dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
-        model.pipeline_model_parallel_size=$PP \
-        model.expert_model_parallel_size=1 \
-        model.recompute_granularity=selective \
-        model.freeze_vision_model=True
+        model.pipeline_model_parallel_size=$PP
 done
