@@ -31,6 +31,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
+_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 _NEMOTRONH_RECIPE_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in getattr(_nemotronh_module, "__all__", [])
@@ -200,8 +201,10 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
-    assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
+    assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
 
@@ -242,8 +245,10 @@ def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
-    assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
+    assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
 
@@ -329,7 +334,9 @@ def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.hf_dataset.dataset_name == "openmathinstruct2"
@@ -338,7 +345,9 @@ def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.dataset.enable_offline_packing is True
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 4096
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 2
-    assert cfg.dataset.offline_packing_specs.tokenizer_model_name == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.dataset.offline_packing_specs.tokenizer_model_name == (
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    )
 
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == 128
