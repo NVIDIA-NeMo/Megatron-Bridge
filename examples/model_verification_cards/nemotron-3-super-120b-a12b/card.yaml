@@ -22,8 +22,8 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [sft_long_context]
-      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      verified: [pretrain, sft_long_context]
+      unverified: [sft, sft_export_inference, peft, checkpoint_resume]
     GB200:
       verified: [peft]
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
@@ -150,8 +150,9 @@ items:
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -171,23 +172,24 @@ items:
         logger.log_device_memory_used=true
         logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-03
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 12.19922
+        final_loss: 5.706429
+        last_10_steps_step_time_ms_avg: 29368.690
+        last_10_steps_model_tflops_per_gpu_avg: 236.330
       expected_result: >
-        On exactly 64 H100s, the BF16 support run must complete 100 bounded RP2
+        On exactly 64 H100s, the BF16 support run completes 100 bounded RP2
         optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural
         routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager
         execution, selective recompute of layernorm, moe_act, moe, and
         core_attn, no optimizer-state CPU offload, and ordered gradient
-        reduction. Loss must stay finite with no skipped or NaN iteration, all
-        four metrics and the resolved configuration must be recorded, and
-        complete iter_0000050 and
-        iter_0000100 checkpoints must save. Earlier TP8/PP1/EP16 evidence no
-        longer describes this command and cannot verify it.
+        reduction. Loss remains finite from 12.19922 to 5.706429 with zero
+        skipped or NaN iterations. The final ten steps average 29368.690 ms and
+        236.330 TFLOP/s/GPU. Peak device memory is 58.079 GiB allocated and
+        70.336 GiB reserved. The resolved configuration persists, and complete
+        iter_0000050 and iter_0000100 checkpoints each contain 64 distributed
+        rank shards plus checkpoint metadata and training state.
 
     GB200:
       status: unverified
@@ -637,6 +639,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
         --recipe nemotron_3_super_pretrain_64gpu_h100_bf16_config
