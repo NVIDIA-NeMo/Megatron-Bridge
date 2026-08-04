@@ -13,61 +13,29 @@
 # limitations under the License.
 
 
-from typing import List
+from typing import Any
 
 
-def find_first_bin_that_fits(bins: List[List[int]], s: int, bin_size: int) -> int:
+def packing_length(item: Any) -> int:
     """
-    Finds the first bin in a list of bins that has enough space to fit a sequence of size 's'.
+    Returns the bin-packing length of an item.
+
+    This is the only diffusion-specific piece of sequence packing: the bin-packing
+    algorithms themselves live in `megatron.bridge.data.packing.algorithms` and are
+    shared with LLM offline SFT packing. Diffusion packs live `DiffusionSample`
+    objects rather than integer lengths, so it computes each sample's length with
+    this adapter and passes the results as `item_lengths` to the shared packer.
+
+    Items are either plain sequence lengths or objects that report their length by
+    adding with an int -- `DiffusionSample` does this, returning its padded query
+    sequence length when one is set and its unpadded length otherwise. Going through
+    `0 + item` keeps this module free of a hard dependency on the sample type, and
+    matches the length the previous `sum(bin) + s` capacity check used.
 
     Args:
-      bins: A list of lists, where each inner list represents a bin and contains the current elements in that bin.
-      s: The size of the sequence to be placed in a bin.
-      bin_size: The maximum capacity of each bin.
+      item: A sequence length, or an object implementing `__radd__` against an int.
 
     Returns:
-      The index of the first bin that can fit the sequence 's', or -1 if no such bin exists.
+      The integer length used for bin-packing capacity accounting.
     """
-    for i, abin in enumerate(bins):
-        if sum(abin) + s <= bin_size:
-            return i
-    return -1
-
-
-def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
-    """
-    Packs sequences of varying lengths into bins using the First-Fit algorithm.
-
-    Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
-      pack_size: The maximum capacity of each bin.
-
-    Returns:
-      A list of lists, where each inner list represents a bin and contains the indices
-        of the sequences assigned to that bin.
-    """
-    res = []
-    for s in seqlens:
-        first_bin = find_first_bin_that_fits(res, s, pack_size)
-        if first_bin == -1:  # open a new bin
-            res.append([s])
-        else:
-            res[first_bin].append(s)
-    return res
-
-
-def first_fit_decreasing(seqlens: List[int], pack_size: int) -> List[List[int]]:
-    """
-    Packs sequences of varying lengths into bins using the First-Fit Decreasing algorithm.
-
-    This is a variation of the First-Fit algorithm where the sequences are sorted by decreasing length before packing.
-
-    Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
-      pack_size: The maximum capacity of each bin.
-
-    Returns:
-      A list of lists, similar to the output of the 'first_fit' function.
-    """
-    sorted_seqlens = sorted(seqlens, reverse=True)
-    return first_fit(sorted_seqlens, pack_size)
+    return 0 + item

@@ -21,7 +21,7 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 | **Gemma** | [Gemma (deprecated)](gemma/gemma.md), [Gemma 2 (deprecated)](gemma/gemma2.md), [Gemma 3](gemma/gemma3.md), [Gemma 3 VL](gemma/gemma3-vl.md), [Gemma 4 VL](gemma/gemma4-vl.md) |
 | **GLM** | [GLM 4.5](glm/glm45.md), [GLM-4.5V](glm/glm-45v.md), [GLM-4.7 / 4.7-Flash](glm/glm47.md), [GLM-5 / 5.1](glm/glm5.md) |
 | **GPT-OSS** | [GPT OSS](gpt_oss/gpt-oss.md) |
-| **Kimi** | [Kimi K2](kimi/kimi-k2.md), [Kimi-K2.5-VL](kimi/kimi-k25-vl.md) |
+| **Kimi** | [Kimi K2](kimi/kimi-k2.md), [Kimi-K2.5-VL](kimi/kimi-k25-vl.md), [Kimi K3](kimi/kimi-k3.md) |
 | **Llama** | [Llama 2 (deprecated)](llama/llama2.md), [Llama 3](llama/llama3.md) |
 | **MiniMax** | [MiniMax-M2 / M2.5 / M2.7](minimax/minimax-m2.md), [MiniMax-M3](minimax/minimax-m3.md) |
 | **Mistral** | [Mistral 7B / Small 3 24B (deprecated)](mistral/mistral.md), [Ministral 3](mistral/ministral3.md) |

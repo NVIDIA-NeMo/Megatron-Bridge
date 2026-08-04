@@ -185,6 +185,42 @@ def test_quantize_dequantize_mxfp4_e2m1_packed_roundtrips_representable_values()
     assert torch.equal(result.float(), weight.float())
 
 
+def test_quantize_dequantize_mxfp4_e2m1_packed_supports_uint8_e8m0_scales():
+    values = torch.tensor(
+        [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            6.0,
+            -0.0,
+            -1.0,
+            -2.0,
+            -3.0,
+            -4.0,
+            -6.0,
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+        ],
+        dtype=torch.float32,
+    ).repeat(2)
+    weight = values.reshape(1, 32).to(torch.bfloat16)
+    source_scale = torch.full((1, 1), 127, dtype=torch.uint8)
+
+    packed, scale = quantize_mxfp4_e2m1_like_scale(weight, source_scale)
+    result = dequantize_mxfp4_e2m1_packed(packed, scale)
+
+    assert scale.dtype == torch.uint8
+    assert torch.equal(scale, source_scale)
+    assert torch.equal(result.float(), weight.float())
+
+    doubled = dequantize_mxfp4_e2m1_packed(packed, torch.full((1, 1), 128, dtype=torch.uint8))
+    assert torch.equal(doubled.float(), weight.float() * 2)
+
+
 def test_mxfp4_scale_geometry_checks_logical_unpacked_shape():
     weight = torch.ones(2, 64)
 

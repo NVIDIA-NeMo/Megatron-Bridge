@@ -134,7 +134,7 @@ def test_direct_sft_dataset_collates_qwen3_omni_media_and_loss_mask():
 
 def test_qwen3_omni_collator_right_pads_before_truncating_mixed_lengths():
     short_row = [103, 20, 105, 100, 30, 31, 105]
-    long_row = [103, *([20] * 70), 105, 100, 30, 31, 105]
+    long_row = [103, 20, 105, 100, *([30] * 70), 31, 105]
     processor = Qwen3OmniMoeProcessor([short_row, long_row])
     examples = _examples()
     dataset = DirectSFTDataset(

@@ -298,6 +298,8 @@ navigation:
       path: ../../../skills/nemo-mbridge-multi-node-slurm/SKILL.md
     - page: Templates
       path: ../../../skills/nemo-mbridge-multi-node-slurm/references/templates.md
+    - page: Memory Snapshot Analysis
+      path: ../../../skills/nemo-mbridge-memory-snapshot-analysis/SKILL.md
     - page: Resiliency
       path: ../../../skills/nemo-mbridge-resiliency/SKILL.md
     section: Agent Skills Reference

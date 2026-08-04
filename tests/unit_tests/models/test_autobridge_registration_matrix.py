@@ -62,6 +62,9 @@ EXPECTED_REGISTRATIONS = {
     "NemotronH_Nano_Omni_Reasoning_V3": (
         "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
     ),
+    "NemotronH_Super_Omni_Reasoning_V3": (
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
+    ),
     "NemotronLabsDiffusionModel": (
         "megatron.bridge.diffusion.conversion.nemotron_labs_diffusion."
         "nemotron_labs_diffusion_bridge.NemotronLabsDiffusionBridge"
@@ -80,6 +83,9 @@ EXPECTED_REGISTRATIONS = {
     "Qwen3VLMoeForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.Qwen3VLMoEBridge",
     "Qwen3_5ForCausalLM": "megatron.bridge.models.qwen.qwen35_bridge.Qwen35Bridge",
     "Qwen3_5ForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35VLBridge",
+    "Qwen3_5ForTokenClassification": (
+        "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35TokenClassificationBridge"
+    ),
     "Qwen3_5MoeForCausalLM": "megatron.bridge.models.qwen.qwen35_bridge.Qwen35MoEBridge",
     "Qwen3_5MoeForConditionalGeneration": ("megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35VLMoEBridge"),
     "SarvamMLAForCausalLM": "megatron.bridge.models.sarvam.sarvam_mla_bridge.SarvamMLABridge",
@@ -109,10 +115,12 @@ STRING_REGISTRATIONS = {
     "MiniMaxM3SparseForConditionalGeneration",
     "NemotronHForCausalLM",
     "NemotronH_Nano_Omni_Reasoning_V3",
+    "NemotronH_Super_Omni_Reasoning_V3",
     "NemotronLabsDiffusionModel",
     "Qwen3ASRForConditionalGeneration",
     "Qwen3_5ForCausalLM",
     "Qwen3_5ForConditionalGeneration",
+    "Qwen3_5ForTokenClassification",
     "Qwen3_5MoeForCausalLM",
     "Qwen3_5MoeForConditionalGeneration",
     "SarvamMLAForCausalLM",
