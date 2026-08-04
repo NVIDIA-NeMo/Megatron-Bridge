@@ -14,6 +14,15 @@
 
 # Nemotron Nano v2 models
 # Nemotron 3 Nano models
+from megatron.bridge.recipes.nemotronh.nemotron_3_5_lightning import (
+    nemotron_3_5_lightning_peft_config,
+    nemotron_3_5_lightning_pretrain_8k_config,
+    nemotron_3_5_lightning_pretrain_8k_fsdp_config,
+    nemotron_3_5_lightning_pretrain_config,
+    nemotron_3_5_lightning_sft_config,
+    nemotron_3_5_lightning_sft_openmathinstruct2_packed_config,
+    nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_peft_config,
     nemotron_3_nano_pretrain_config,
@@ -82,6 +91,14 @@ __all__ = [
     "nemotron_3_nano_pretrain_config",
     "nemotron_3_nano_sft_config",
     "nemotron_3_nano_peft_config",
+    # Nemotron 3.5 Lightning models
+    "nemotron_3_5_lightning_pretrain_config",
+    "nemotron_3_5_lightning_sft_config",
+    "nemotron_3_5_lightning_peft_config",
+    "nemotron_3_5_lightning_sft_openmathinstruct2_packed_config",
+    "nemotron_3_5_lightning_pretrain_8k_config",
+    "nemotron_3_5_lightning_pretrain_8k_fsdp_config",
+    "nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config",
     # Nemotron 3 Super models
     "nemotron_3_super_pretrain_config",
     "nemotron_3_super_sft_config",

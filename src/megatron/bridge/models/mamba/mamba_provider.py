@@ -134,6 +134,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
     hf_model_id: Optional[str] = None
+    hf_model_revision: Optional[str] = None
     _pg_collection: Optional[ProcessGroupCollection] = None
 
     # MTP

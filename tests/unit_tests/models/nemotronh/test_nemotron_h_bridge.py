@@ -338,7 +338,48 @@ class TestNemotronHBridge:
         # Check MTP configuration mappings
         assert result.mtp_num_layers == 2
         assert result.mtp_hybrid_override_pattern == "*E"
+        assert result.mtp_use_repeated_layer is True
         assert result.keep_mtp_spec_in_bf16 is True
+        assert result.mtp_loss_scaling_factor == 0.3
+
+    @pytest.mark.parametrize("num_nextn_predict_layers", [None, 0])
+    def test_provider_bridge_disables_mtp_naturally(self, nemotronh_8b_config_dict, num_nextn_predict_layers):
+        """HF configs without enabled MTP produce a normal non-MTP provider."""
+        from types import SimpleNamespace
+
+        config_dict = {
+            **nemotronh_8b_config_dict,
+            "n_routed_experts": 0,
+            "mtp_hybrid_override_pattern": "*E",
+            "keep_mtp_spec_in_bf16": True,
+        }
+        if num_nextn_predict_layers is not None:
+            config_dict["num_nextn_predict_layers"] = num_nextn_predict_layers
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = SimpleNamespace(**config_dict)
+        result = NemotronHBridge().provider_bridge(mock_pretrained)
+
+        assert result.mtp_num_layers == 0
+        assert result.mtp_hybrid_override_pattern is None
+        assert result.mtp_use_repeated_layer is False
+        assert result.keep_mtp_spec_in_bf16 is False
+
+    def test_provider_bridge_rejects_incomplete_mtp_config(self, nemotronh_8b_config_dict):
+        """An enabled HF MTP config must describe its hybrid block."""
+        from types import SimpleNamespace
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = SimpleNamespace(
+            **{
+                **nemotronh_8b_config_dict,
+                "n_routed_experts": 0,
+                "num_nextn_predict_layers": 1,
+            }
+        )
+
+        with pytest.raises(ValueError, match="mtp_hybrid_override_pattern"):
+            NemotronHBridge().provider_bridge(mock_pretrained)
 
     def test_provider_bridge_no_moe_when_attribute_missing(self, nemotronh_8b_config_dict):
         """Test that MoE configs are not added when n_routed_experts attribute is missing."""
@@ -463,6 +504,29 @@ class TestNemotronHBridgeTokenizerKwargs:
         """Test get_hf_tokenizer_kwargs returns use_fast=True."""
         kwargs = NemotronHBridge.get_hf_tokenizer_kwargs()
         assert kwargs.get("use_fast") is True
+
+
+class TestNemotronHBridgeMegatronToHFConfig:
+    """Test Megatron provider config export for Nemotron-H."""
+
+    def test_megatron_to_hf_config_splits_unified_mtp_pattern(self):
+        """Export HF hybrid patterns without Megatron's unified separator."""
+        from types import SimpleNamespace
+
+        provider = SimpleNamespace(hybrid_layer_pattern="ME|ME/*E/*E", mtp_num_layers=2)
+        hf_cfg = NemotronHBridge.megatron_to_hf_config(provider)
+
+        assert hf_cfg["hybrid_override_pattern"] == "MEME"
+        assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
+        assert hf_cfg["num_nextn_predict_layers"] == 2
+
+    def test_megatron_to_hf_config_rejects_mismatched_mtp_patterns(self):
+        """Unified MTP blocks must be identical for HF export."""
+        from types import SimpleNamespace
+
+        provider = SimpleNamespace(hybrid_layer_pattern="ME/*E/*M", mtp_num_layers=2)
+        with pytest.raises(ValueError, match="All MTP patterns"):
+            NemotronHBridge.megatron_to_hf_config(provider)
 
 
 class TestAutoBridgeIntegration:

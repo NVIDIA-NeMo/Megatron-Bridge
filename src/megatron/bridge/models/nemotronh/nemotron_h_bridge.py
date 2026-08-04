@@ -255,6 +255,20 @@ class NemotronHBridge(MegatronModelBridge):
         super().__init__()
         self._mtp_layers_per_block: Optional[int] = None
 
+    @staticmethod
+    def _hf_mtp_config(hf_config) -> tuple[int, Optional[str]]:
+        """Return the normalized MTP depth and block pattern from an HF config."""
+        mtp_num_layers = int(getattr(hf_config, "num_nextn_predict_layers", 0) or 0)
+        if mtp_num_layers < 0:
+            raise ValueError("num_nextn_predict_layers must be non-negative.")
+        if mtp_num_layers == 0:
+            return 0, None
+
+        mtp_pattern = getattr(hf_config, "mtp_hybrid_override_pattern", None)
+        if not mtp_pattern:
+            raise ValueError("An HF config with num_nextn_predict_layers > 0 must define mtp_hybrid_override_pattern.")
+        return mtp_num_layers, mtp_pattern
+
     def build_conversion_tasks(self, hf_pretrained: PreTrainedCausalLM, megatron_model):
         # Cache MTP block depth (len of mtp_hybrid_override_pattern) so mapping_registry()
         # can compute the flattened HF layer indices deterministically.
@@ -303,12 +317,13 @@ class NemotronHBridge(MegatronModelBridge):
             provider.moe_latent_size = hf_config.moe_latent_size
         if hasattr(hf_config, "moe_shared_expert_overlap"):
             provider.moe_shared_expert_overlap = hf_config.moe_shared_expert_overlap
-        if hasattr(hf_config, "num_nextn_predict_layers"):
-            provider.mtp_num_layers = hf_config.num_nextn_predict_layers
-        if hasattr(hf_config, "mtp_hybrid_override_pattern"):
-            provider.mtp_hybrid_override_pattern = hf_config.mtp_hybrid_override_pattern
-        if hasattr(hf_config, "keep_mtp_spec_in_bf16"):
-            provider.keep_mtp_spec_in_bf16 = hf_config.keep_mtp_spec_in_bf16
+        mtp_num_layers, mtp_pattern = self._hf_mtp_config(hf_config)
+        provider.mtp_num_layers = mtp_num_layers
+        provider.mtp_hybrid_override_pattern = mtp_pattern
+        provider.mtp_use_repeated_layer = bool(mtp_num_layers and getattr(hf_config, "mtp_use_repeated_layer", True))
+        provider.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", True))
+        if mtp_num_layers:
+            provider.mtp_loss_scaling_factor = getattr(hf_config, "mtp_loss_scaling_factor", 0.3)
 
         return provider
 
@@ -324,17 +339,33 @@ class NemotronHBridge(MegatronModelBridge):
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
         hf_cfg = super().megatron_to_hf_config(provider)
-        # Clean hybrid_override_pattern: strip pipeline-parallel delimiters and validate
+        # Clean hybrid_override_pattern: strip pipeline-parallel delimiters, split out
+        # unified MTP patterns, and validate the HF-facing layer symbols.
         pattern = hf_cfg.pop("hybrid_override_pattern", None)
         if pattern:
-            clean_pattern = pattern.replace("|", "")
+            pattern_parts = pattern.split("/")
+            clean_pattern = pattern_parts[0].replace("|", "")
+            mtp_patterns = [part for part in pattern_parts[1:] if part]
             valid_chars = {"M", "E", "*", "-"}
-            unknown = set(clean_pattern) - valid_chars
-            if unknown:
-                raise ValueError(
-                    f"Unknown layer type characters in hybrid_override_pattern: {unknown}. "
-                    f"Expected: M (mamba), * (attention), E (moe), - (mlp)."
-                )
+
+            for pattern_name, layer_pattern in [("hybrid_override_pattern", clean_pattern)] + [
+                ("mtp_hybrid_override_pattern", mtp_pattern) for mtp_pattern in mtp_patterns
+            ]:
+                unknown = set(layer_pattern) - valid_chars
+                if unknown:
+                    raise ValueError(
+                        f"Unknown layer type characters in {pattern_name}: {unknown}. "
+                        f"Expected: M (mamba), * (attention), E (moe), - (mlp)."
+                    )
+
+            if mtp_patterns:
+                mtp_pattern = mtp_patterns[0]
+                if any(pattern_part != mtp_pattern for pattern_part in mtp_patterns[1:]):
+                    raise ValueError(
+                        f"All MTP patterns in hybrid_override_pattern must be identical. Got: {mtp_patterns}."
+                    )
+                hf_cfg["mtp_hybrid_override_pattern"] = mtp_pattern
+
             hf_cfg["hybrid_override_pattern"] = clean_pattern
 
         # Add auto_map for custom config/modeling classes
@@ -367,6 +398,7 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "backbone.layers.*.mixer.down_proj.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
             "decoder.final_norm.weight": "backbone.norm_f.weight",
+            "decoder.final_layernorm.weight": "backbone.norm_f.weight",
             # Fused TE layer norm weights (when using TELayerNormColumnParallelLinear)
             # if the megatron key does not exist for a given layer it will be ignored,
             # so only one of these will be used per layer
@@ -396,6 +428,12 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "backbone.layers.*.mixer.experts.*.down_proj.weight",
         }
 
+        # Adapter export and other registry-only paths do not call
+        # build_conversion_tasks(). AutoBridge seeds hf_config when resolving
+        # the bridge, so derive the MTP block depth lazily in those paths.
+        if self._mtp_layers_per_block is None and getattr(self, "hf_config", None) is not None:
+            mtp_num_layers, mtp_pattern = self._hf_mtp_config(self.hf_config)
+            self._mtp_layers_per_block = len(mtp_pattern) if mtp_num_layers and mtp_pattern else 0
         mtp_layers_per_block = int(self._mtp_layers_per_block or 0)
 
         mapping_list = []
@@ -449,6 +487,8 @@ class NemotronHBridge(MegatronModelBridge):
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.expert_bias": "mtp.layers.*.mixer.gate.e_score_correction_bias",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc1.weight*": "mtp.layers.*.mixer.experts.*.up_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc2.weight*": "mtp.layers.*.mixer.experts.*.down_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "mtp.layers.*.mixer.experts.*.up_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "mtp.layers.*.mixer.experts.*.down_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc1_latent_proj.weight": "mtp.layers.*.mixer.fc1_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc2_latent_proj.weight": "mtp.layers.*.mixer.fc2_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.shared_experts.linear_fc1.weight": "mtp.layers.*.mixer.shared_experts.up_proj.weight",
