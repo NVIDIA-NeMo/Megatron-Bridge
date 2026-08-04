@@ -50,60 +50,14 @@ See the [conversion.sh](conversion.sh) script for more examples including multi-
 
 ## Inference
 
-Gemma 4 uses VLM inference script (`hf_to_megatron_generate_vlm.py`) as other models. The script auto-detects the bridge type and switches to Gemma4-specific input preprocessing, attention mask handling, and stop tokens.
+Use the [Gemma 4 26B-A4B-it model verification
+card](../../../model_verification_cards/gemma-4-26b-a4b-it/card.yaml) as the canonical source for supported inference.
+The card records the immutable Hugging Face revision, verified Bridge commit, checkpoint prerequisite, parallelism
+topology, input image, prompt, expected output, and last verification date.
 
-### Text-only
-
-```bash
-uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_to_megatron_generate_vlm.py \
-    --hf_model_path google/gemma-4-26B-A4B \
-    --prompt "The capital of France is" \
-    --max_new_tokens 20 \
-    --tp 4 --pp 2
-```
-
-### Vision + Text (HF weights)
-
-Use the instruction-tuned model (`-it`) for image+text queries — the base model has no chat template and requires manual image token injection.
-
-```bash
-uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_to_megatron_generate_vlm.py \
-    --hf_model_path google/gemma-4-26B-A4B-it \
-    --image_path "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg" \
-    --prompt "What is shown in this image?" \
-    --max_new_tokens 50 \
-    --tp 4 --pp 2
-```
-
-### Vision + Text (imported Megatron checkpoint)
-
-```bash
-uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_to_megatron_generate_vlm.py \
-    --hf_model_path google/gemma-4-26B-A4B \
-    --megatron_model_path ${WORKSPACE}/models/gemma-4-26B-A4B/iter_0000000 \
-    --image_path "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/p-blog/candy.JPG" \
-    --prompt "What animal is on the candy?" \
-    --max_new_tokens 50 \
-    --tp 4 --pp 2
-```
-
-Note: when loading a Megatron checkpoint for VLM inference, use the base model (`gemma-4-26B-A4B`, not `-it`) as the `--hf_model_path` to match the checkpoint's tokenizer.
-
-See the [inference.sh](inference.sh) script for all three steps.
-
-**Expected output (cat image):**
-```
-======== GENERATED TEXT OUTPUT ========
-Image: https://.../pipeline-cat-chonk.jpeg
-Prompt: What is shown in this image?
-New tokens: The image shows a large, fluffy orange and white cat sitting inside
-what appears to be a wire cage or kennel. The cat looks quite large and appears
-relaxed, with its paws tucked underneath its body.
-=======================================
-```
+Run only an inference item whose card status is `verified`, and use its command without changing the recorded topology or
+inputs when reproducing the verified result. Other combinations have not passed the same verification gate and should not
+be inferred from older standalone examples.
 
 ## Finetune Recipes
 
