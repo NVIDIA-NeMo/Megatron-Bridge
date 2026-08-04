@@ -37,7 +37,7 @@ verification_index:
     GB200: verified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
-  hf_revision: b3caaabed0263651a17dc1f2d4ce97e794f76c44
+  hf_revision: b3caaabed0263651a17dc1f2d4ce97e794f76c44  # pragma: allowlist secret
   architecture: NemotronHForCausalLM
   min_transformers_version: "5.8.1"
 verification_environment:
