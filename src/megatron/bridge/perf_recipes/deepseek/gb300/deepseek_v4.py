@@ -26,8 +26,8 @@ from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
 from megatron.bridge.training.config import ConfigContainer
 
 
-def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_gb200_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, GB200 config."""
+def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
     return deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
 
 

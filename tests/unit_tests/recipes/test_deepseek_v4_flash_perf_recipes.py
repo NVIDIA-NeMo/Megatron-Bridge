@@ -19,7 +19,7 @@ import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
-    deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_gb200_config,
+    deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -111,8 +111,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.env_vars["USE_MNNVL"] == 1
 
 
-def test_deepseek_v4_flash_128gpu_gb300_fp8mx_gb200_config() -> None:
-    cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_gb200_config()
+def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
+    cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
 
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
