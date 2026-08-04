@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing cross-model convergence comparability or verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, or performance results, or preparing a model-support PR. Enforce the required core inventory, convergence-versus-performance contracts, optional canonical performance item, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing cross-model convergence comparability or verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, or performance results, or preparing a model-support PR. Enforce publicly reachable clean source provenance, upstream ownership of discovered fixes, the required core inventory, convergence-versus-performance contracts, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary.
 ---
 
 # Create Model Verification Card
@@ -44,6 +44,42 @@ item was run from a different clean checkout, put that exact 40-hex commit in
 the leaf's optional `bridge_commit` field. Omit the field when it would repeat
 the top-level value, and never use a commit field to disguise uncommitted
 runtime changes. Items that are not verified must not carry a commit override.
+
+#### Enforce source integrity and upstream ownership
+
+Treat source provenance as a verification gate, not a reporting detail. Every
+verification run must use either an upstream commit or the exact pushed head of
+an open upstream PR. Before and after the run, require a clean tracked source
+tree and record the exact Bridge commit plus every relevant submodule and
+dependency revision in the private durable run record. Confirm that each
+recorded commit is reachable from its stated public remote or PR; a copied
+source directory without public Git provenance is insufficient.
+
+Do not count a run that depends on an uncommitted edit, unpublished commit,
+source overlay, monkeypatch, bind-mounted replacement file, or locally rebuilt
+dependency as model verification. Do not reclassify such a run as a
+feasibility experiment. It is an invalid verification attempt and leaves the
+item `unverified`.
+
+When verification exposes a product defect:
+
+1. Stop the affected verification item and record the unchanged failing
+   command, exact public source revisions, failure, and owning upstream
+   repository in the private durable record.
+2. Implement the fix through the owning repository's normal branch, test,
+   review, and PR workflow. Never keep a required fix only in the verification
+   checkout.
+3. Label runs of a pushed fix as candidate-PR validation and link the upstream
+   PR and exact head commit. A local patched run cannot satisfy any card
+   checkbox, metric, or expected result.
+4. Rerun the original failing workload from the exact clean, pushed PR head.
+   Only that rerun may become verification evidence; after further edits, rerun
+   from the new pushed head.
+
+Do not hide a newly discovered blocker by changing the command, container,
+model, dataset, scale, or expected result. If another layer is responsible,
+file or link its upstream issue or PR and keep the card item `unverified` until
+the original workload passes on publicly reviewable source.
 
 ### 2. Create the core inventory and add performance when available
 
@@ -760,6 +796,13 @@ an item verified merely to make validation pass.
 - Pin a public immutable HF revision, minimum Transformers version, public base
   container, and exact Bridge verification commit; use an item override only
   for a verified workload run from a different clean commit.
+- Require every verification commit and dependency revision to be publicly
+  reachable from upstream or an open upstream PR. Reject local patches,
+  unpublished commits, source overlays, monkeypatches, replacement mounts, and
+  copied trees without public Git provenance as verification evidence.
+- For every defect found during verification, preserve the unchanged failure,
+  link the owning upstream issue or PR, and rerun the original workload from
+  the exact clean pushed fix commit before changing the item to `verified`.
 - Use the public model name in commands.
 - Include commands and concrete expected results for verified items.
 - For manual forward pass, require a next-token match and cosine similarity of
