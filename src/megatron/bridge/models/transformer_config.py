@@ -110,12 +110,25 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
         or _uses_legacy_full_iteration(getattr(config, "cuda_graph_scope", None))
     )
     if (
-        config.moe_token_dispatcher_type == "flex"
-        and config.moe_flex_dispatcher_backend == "hybridep"
-        and not config.moe_hybridep_pad_uneven_dispatch_inputs
-        and not cuda_graphs_enabled
+        config.moe_token_dispatcher_type != "flex"
+        or config.moe_flex_dispatcher_backend != "hybridep"
+        or cuda_graphs_enabled
     ):
-        config.moe_hybridep_pad_uneven_dispatch_inputs = True
+        return
+
+    padding_fields = tuple(
+        field_name
+        for field_name in (
+            "moe_hybridep_pad_uneven_dispatch_inputs",
+            "moe_hybridep_pad_variable_tokens",
+        )
+        if hasattr(config, field_name)
+    )
+    if not padding_fields:
+        raise AttributeError("Megatron Core TransformerConfig does not expose a HybridEP uneven-input padding field")
+    for padding_field in padding_fields:
+        if not getattr(config, padding_field):
+            setattr(config, padding_field, True)
 
 
 @dataclass
