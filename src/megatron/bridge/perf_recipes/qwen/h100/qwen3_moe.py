@@ -122,7 +122,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_16gpu_h100_fp8_delayed_config() -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× H100, FP8 delayed-scaling, EP=16.
 
     Same layout as the fp8cs recipe (TE partial CUDA graph + cuDNN LayerNorm),
