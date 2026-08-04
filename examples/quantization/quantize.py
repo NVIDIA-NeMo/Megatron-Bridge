@@ -136,7 +136,7 @@ def main(
 
     # All models use TE spec (default) for quantization
     model_config.finalize()
-    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+    megatron_model = bridge.get_model(model_config, wrap_with_ddp=False)
 
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0

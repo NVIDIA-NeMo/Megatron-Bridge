@@ -403,7 +403,7 @@ Add a model page at `docs/models/<type>/<model>.md` covering:
 After implementing bridge support, prompt the user to run these commands on the cluster:
 
 For a default finalized config with Hugging Face weights, the simple path is
-``bridge.get_megatron_model(wrap_with_ddp=False)``. The validation workflow below
+``bridge.get_model(wrap_with_ddp=False)``. The validation workflow below
 uses an explicit config because it inspects serialization before building.
 
 ### 1. Smoke test (single GPU)
@@ -418,7 +418,7 @@ serialized = model_config.as_dict()
 restored = ModelConfig.from_dict(serialized)
 assert restored.get_builder_cls() is model_config.get_builder_cls()
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 for i, (name, tensor) in enumerate(bridge.export_hf_weights(model, cpu=True)):
     print(name, tuple(tensor.shape))
     if i > 10: break

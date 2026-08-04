@@ -15,20 +15,27 @@
 """Nemotron Omni model family (Vision-Language + Audio) for Megatron Bridge."""
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
-from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
+from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
+    NemotronOmniBridge,
+    NemotronOmniLlavaBridge,
+)
 
 
 __all__ = [
     "NemotronOmniModel",
     "NemotronOmniBridge",
     "NemotronOmniModelProvider",
+    "NemotronOmniLlavaModel",
+    "NemotronOmniLlavaBridge",
+    "NemotronOmniLlavaModelProvider",
     "NemotronVLModelProvider",
     "BridgeSoundEncoder",
 ]
 
 
 def __getattr__(name: str):
-    if name in {"NemotronOmniModelProvider", "NemotronVLModelProvider"}:
+    if name in {"NemotronOmniLlavaModelProvider", "NemotronOmniModelProvider", "NemotronVLModelProvider"}:
         from megatron.bridge.models.nemotron_omni import nemotron_omni_provider
 
         return getattr(nemotron_omni_provider, name)

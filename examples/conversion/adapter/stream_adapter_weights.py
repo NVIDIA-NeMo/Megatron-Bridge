@@ -437,7 +437,7 @@ def main() -> None:
         ep=args.expert_model_parallel_size,
         etp=args.expert_tensor_parallel_size,
     ):
-        megatron_model = bridge.get_megatron_model(
+        megatron_model = bridge.get_model(
             model_config,
             wrap_with_ddp=False,
         )

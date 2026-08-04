@@ -450,7 +450,7 @@ def main() -> None:
     # Step 5: Build model with train_pgs
     # =========================================================================
     print_rank_0("\n--- Step 5: Creating model (with train_pgs, CP_train) ---")
-    model = bridge.get_megatron_model(
+    model = bridge.get_model(
         cfg.model,
         load_weights=False,
         ddp_config=ddp_cfg,

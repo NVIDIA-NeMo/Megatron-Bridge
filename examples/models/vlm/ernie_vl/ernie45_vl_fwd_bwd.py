@@ -106,7 +106,7 @@ def run_forward_backward(
     model_config.finalize()
     pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=42)
 
-    megatron_models = bridge.get_megatron_model(model_config, pg_collection=pg_collection, wrap_with_ddp=False)
+    megatron_models = bridge.get_model(model_config, pg_collection=pg_collection, wrap_with_ddp=False)
 
     # Disable deallocate_pipeline_outputs: the no-pipelining schedule does not
     # call deallocate_output_tensor(), so backward_step's custom_backward()

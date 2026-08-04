@@ -332,7 +332,7 @@ def main():
                 inner.llava_model.config.grad_scale_func = None
     else:
         print_rank_0(f"Converting HF from {args.hf_model_path} on the fly")
-        model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+        model = bridge.get_model(model_config, wrap_with_ddp=False)
         model = [m.cuda().bfloat16().eval() for m in model]
 
     tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)

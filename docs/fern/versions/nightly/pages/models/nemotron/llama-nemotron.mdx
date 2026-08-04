@@ -53,7 +53,7 @@ model_config.tensor_model_parallel_size = 2
 model_config.pipeline_model_parallel_size = 1
 model_config.finalize()
 
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 ```
 
 **Note**: Heterogeneous Llama-Nemotron models (Super/Ultra) require `trust_remote_code=True` as they use custom `DeciLMForCausalLM` architecture. Homogeneous models (Nano/70B) use standard Llama architecture and don't require this flag.

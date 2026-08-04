@@ -55,13 +55,14 @@ TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transforme
 def gemma3_layer_spec(model_config: "Gemma3ModelConfig") -> ModuleSpec:
     """Gemma3 custom layer spec."""
     transformer_config = getattr(model_config, "transformer", model_config)
+    attn_mask_type = AttnMaskType.no_mask if model_config.is_vision_language else AttnMaskType.causal
     return ModuleSpec(
         module=TransformerLayer,
         submodules=TransformerLayerSubmodules(
             self_attention=ModuleSpec(
                 module=Gemma3SelfAttention,
                 params={
-                    "attn_mask_type": AttnMaskType.causal,
+                    "attn_mask_type": attn_mask_type,
                     "interleaved_attn_pattern": model_config.interleaved_attn_pattern,
                 },
                 submodules=SelfAttentionSubmodules(
@@ -101,11 +102,13 @@ class Gemma3SelfAttention(SelfAttention):
     def __init__(
         self,
         *args: Any,
-        interleaved_attn_pattern: tuple[int, int] = (5, 1),
+        interleaved_attn_pattern: tuple[int, int] | None = None,
         **kwargs: Any,
     ) -> None:
-        self.interleaved_attn_pattern = interleaved_attn_pattern
         super().__init__(*args, **kwargs)
+        self.interleaved_attn_pattern = (
+            interleaved_attn_pattern if interleaved_attn_pattern is not None else self.config.interleaved_attn_pattern
+        )
 
     def forward(
         self,
@@ -117,7 +120,7 @@ class Gemma3SelfAttention(SelfAttention):
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
         rotary_pos_cos_sin: Optional[Tuple[Tensor, Tensor]] = None,
-        attention_bias: Optional[Tensor] = None,
+        attention_bias: Optional[Tensor | tuple[Tensor, Tensor]] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
         *,
@@ -127,10 +130,19 @@ class Gemma3SelfAttention(SelfAttention):
         assert isinstance(rotary_pos_emb, torch.Tensor) and rotary_pos_emb.ndim >= 1 and rotary_pos_emb.size(0) == 2
         assert rotary_pos_cos is None and rotary_pos_sin is None
 
-        if _is_local_attn_layer(self.layer_number, self.interleaved_attn_pattern):
+        interleaved_attn_pattern = getattr(
+            self,
+            "interleaved_attn_pattern",
+            self.config.interleaved_attn_pattern,
+        )
+        if _is_local_attn_layer(self.layer_number, interleaved_attn_pattern):
             final_rotary_pos_emb = rotary_pos_emb[0]
+            if isinstance(attention_bias, tuple):
+                attention_bias = attention_bias[0]
         else:
             final_rotary_pos_emb = rotary_pos_emb[1]
+            if isinstance(attention_bias, tuple):
+                attention_bias = attention_bias[1]
         return super().forward(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -160,23 +172,29 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
         attn_mask_type: AttnMaskType,
         attention_type: str,
         attention_dropout: Optional[float] = None,
-        interleaved_attn_pattern: tuple[int, int] = (5, 1),
-        is_vision_language: bool = False,
+        interleaved_attn_pattern: tuple[int, int] | None = None,
+        is_vision_language: bool | None = None,
         **kwargs,
     ):
         # Overwrite config.window_size based on layer_number
         config = copy.deepcopy(config)
+        if interleaved_attn_pattern is None:
+            interleaved_attn_pattern = config.interleaved_attn_pattern
+        if is_vision_language is None:
+            is_vision_language = config.is_vision_language
         if _is_local_attn_layer(layer_number, interleaved_attn_pattern):
-            # local attention, (q, k)
-            if not isinstance(config.window_size, tuple):
+            if is_vision_language:
+                # The VL model encodes the sliding window in its local-layer bias.
+                config.window_size = None
+            elif not isinstance(config.window_size, tuple):
                 config.window_size = (config.window_size - 1, 0)
         else:
             # global attention
             config.window_size = None
 
-        # The VL model calculates mask manually
+        # The VL model supplies its causal/image visibility pattern as an additive bias.
         if is_vision_language:
-            attn_mask_type = AttnMaskType.arbitrary
+            attn_mask_type = AttnMaskType.no_mask
 
         super().__init__(
             config=config,

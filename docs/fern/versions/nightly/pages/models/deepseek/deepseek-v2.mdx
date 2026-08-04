@@ -43,7 +43,7 @@ model_config.pipeline_model_parallel_size = 1
 model_config.expert_model_parallel_size = 8
 model_config.finalize()
 
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 ```
 
 ### Import Checkpoint from HF

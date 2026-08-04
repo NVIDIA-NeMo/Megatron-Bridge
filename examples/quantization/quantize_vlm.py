@@ -301,7 +301,7 @@ def main(
     model_config.pipeline_dtype = torch.bfloat16
 
     model_config.finalize()
-    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+    megatron_model = bridge.get_model(model_config, wrap_with_ddp=False)
 
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0

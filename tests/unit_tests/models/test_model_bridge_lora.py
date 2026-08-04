@@ -2003,6 +2003,7 @@ def test_stream_weights_megatron_to_hf_merges_grouped_expert_adapters(monkeypatc
     class GroupedMapping:
         is_grouped_export = True
         group_key = "hf.experts.down_proj"
+        ep_size = 1
 
         def megatron_to_hf(self, weight, module):
             return {self.group_key: torch.zeros(2, 2)}
@@ -2085,6 +2086,7 @@ def test_stream_weights_megatron_to_hf_merges_grouped_expert_adapters_before_tra
     class GroupedMapping:
         is_grouped_export = True
         group_key = "hf.experts.down_proj"
+        ep_size = 1
         transpose_on_export = True
 
         def megatron_to_hf(self, weight, module):

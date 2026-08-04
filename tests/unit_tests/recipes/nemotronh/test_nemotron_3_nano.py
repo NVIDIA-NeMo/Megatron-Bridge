@@ -44,6 +44,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
 
 @pytest.mark.unit
@@ -110,6 +111,11 @@ class TestNemotron3NanoPretrain:
         assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
         assert get_hf_model_id_from_model_config(config.model) == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.train.global_batch_size == 512
+        assert config.model.context_parallel_size == 2
+        assert config.model.cp_comm_type == "p2p"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn"]
+        assert cuda_graph_module_names(config.model) == ["mamba"]
 
     def test_pretrain_recipes_do_not_expose_mtp_flag(self):
         """Nemotron 3 and 3.5 pretraining use distinct parameterless factories."""

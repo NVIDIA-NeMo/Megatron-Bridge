@@ -24,6 +24,12 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+def _fallback_to_alltoall(model_config: TransformerConfig) -> None:
+    """Clear flex dispatcher state when the requested backend cannot be used."""
+    model_config.moe_token_dispatcher_type = "alltoall"
+    model_config.moe_flex_dispatcher_backend = None
+
+
 def apply_flex_dispatcher_backend(
     model_config: TransformerConfig,
     moe_flex_dispatcher_backend: str | None = None,
@@ -51,16 +57,18 @@ def apply_flex_dispatcher_backend(
             if get_rank_safe() == 0:
                 logger.warning(
                     f"DeepEP is only applicable to Ampere, Hopper, and Blackwell (B200/B300) GPUs. "
-                    f"Current GPU: {device_properties.name}. Skipping DeepEP configuration."
+                    f"Current GPU: {device_properties.name}. Falling back to alltoall."
                 )
+            _fallback_to_alltoall(model_config)
             return
     elif moe_flex_dispatcher_backend == "hybridep":
         if not device_properties.major in [8, 9, 10]:
             if get_rank_safe() == 0:
                 logger.warning(
                     f"HybridEP is only applicable for GB200, GB300 with NVL72 and for Ampere, Hopper, B200 and B300 GPUs. "
-                    f"Current GPU: {device_properties.name}. Skipping HybridEP configuration."
+                    f"Current GPU: {device_properties.name}. Falling back to alltoall."
                 )
+            _fallback_to_alltoall(model_config)
             return
     else:
         if get_rank_safe() == 0:

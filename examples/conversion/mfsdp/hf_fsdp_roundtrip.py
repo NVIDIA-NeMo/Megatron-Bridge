@@ -104,7 +104,7 @@ def main(
         data_parallel_sharding_strategy="optim_grads_params",
     )
 
-    megatron_model = bridge.get_megatron_model(
+    megatron_model = bridge.get_model(
         model_config,
         load_weights=False,
         ddp_config=ddp_config,

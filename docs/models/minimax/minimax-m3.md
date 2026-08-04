@@ -36,7 +36,7 @@ from megatron.bridge import AutoBridge
 bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3", trust_remote_code=True)
 model_config = bridge.get_model_config()
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 ```
 
 The bridge imports and exports the language, vision, projector, and Lightning

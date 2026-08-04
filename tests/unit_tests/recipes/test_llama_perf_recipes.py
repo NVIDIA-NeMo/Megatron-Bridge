@@ -59,6 +59,9 @@ class _FakeBridge:
     def get_model_config(self) -> _FakeModelCfg:
         return _FakeModelCfg()
 
+    def to_megatron_provider(self, load_weights: bool = False) -> _FakeModelCfg:
+        raise AssertionError("Llama recipes must use get_model_config(), not the legacy provider API")
+
 
 @pytest.mark.unit
 @pytest.mark.parametrize("recipe_func", _finetune_perf_recipes(), ids=lambda recipe: recipe.__name__)

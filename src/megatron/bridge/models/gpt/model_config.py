@@ -23,6 +23,7 @@ from megatron.training.models.gpt import GPTModelConfig
 
 from megatron.bridge.models.config_proxy import FlatTransformerConfigMixin
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
+from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
 ACTIVATION_FUNC_METADATA_KEY = "megatron_bridge.activation_func"
@@ -102,17 +103,19 @@ def restore_model_config_callables(data: dict[str, Any]) -> dict[str, Any]:
         ValueError: If activation metadata is present without a nested
             transformer dictionary or names an unsupported activation.
     """
-    metadata = data.get("extra_checkpoint_metadata")
-    if not isinstance(metadata, dict) or ACTIVATION_FUNC_METADATA_KEY not in metadata:
-        return data
-
-    activation_name = metadata[ACTIVATION_FUNC_METADATA_KEY]
-    if not isinstance(activation_name, str):
-        raise ValueError(f"{ACTIVATION_FUNC_METADATA_KEY} must be a string, got {type(activation_name).__name__}.")
-
     transformer = data.get("transformer")
+    metadata = data.get("extra_checkpoint_metadata")
+    activation_name = transformer.get("activation_func") if isinstance(transformer, dict) else None
+    if activation_name is None and isinstance(metadata, dict):
+        activation_name = metadata.get(ACTIVATION_FUNC_METADATA_KEY)
+    if activation_name is None:
+        return data
+    if not isinstance(activation_name, str):
+        if callable(activation_name):
+            return data
+        raise ValueError(f"Serialized activation function must be a string, got {type(activation_name).__name__}.")
     if not isinstance(transformer, dict):
-        raise ValueError(f"{ACTIVATION_FUNC_METADATA_KEY} requires a serialized transformer config.")
+        raise ValueError("Serialized activation metadata requires a nested transformer config.")
 
     restored = dict(data)
     restored_transformer = dict(transformer)
@@ -130,8 +133,15 @@ class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
     serializes activation and layer-spec callables through allow-listed targets.
     """
 
+    def get_builder_cls(self) -> type:
+        """Resolve the configured builder through Bridge's target allowlist."""
+        builder_cls = _resolve_target(self.builder, full_key="_builder_")
+        if not isinstance(builder_cls, type):
+            raise TypeError(f"Builder target '{self.builder}' did not resolve to a class.")
+        return builder_cls
+
     def as_dict(self) -> dict[str, Any]:
-        """Serialize config while preserving the activation symbol in metadata.
+        """Serialize config while preserving activation and layer-spec callables.
 
         Returns:
             Serialized model config with a symbolic activation name.
@@ -142,16 +152,20 @@ class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
         """
         data = super().as_dict()
         _drop_non_init_fields(data, self)
-        activation_name = callable_to_str(self.transformer.activation_func)
-        if activation_name is None:
-            raise ValueError(
-                "Cannot serialize unregistered transformer activation callable. "
-                "Register a symbolic activation before saving this model config."
-            )
+        transformer_data = data.get("transformer")
+        if not isinstance(transformer_data, dict):
+            raise TypeError("Serialized GPT model config must contain a transformer mapping.")
 
-        metadata = dict(data.get("extra_checkpoint_metadata") or {})
-        metadata[ACTIVATION_FUNC_METADATA_KEY] = activation_name
-        data["extra_checkpoint_metadata"] = metadata
+        activation_func = self.transformer.activation_func
+        if isinstance(activation_func, str):
+            str_to_callable(activation_func)
+            activation_name = activation_func
+        else:
+            activation_name = callable_to_str(activation_func)
+        if activation_name is None:
+            raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
+
+        transformer_data["activation_func"] = activation_name
         if callable(self.transformer_layer_spec) and not _uses_default_layer_spec(self):
             data["transformer_layer_spec"] = _serialize_layer_spec(self.transformer_layer_spec)
         return data
@@ -161,7 +175,7 @@ class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
         """Deserialize through Bridge's validated ModelConfig loader."""
         from megatron.bridge.models.common.base import ModelConfig
 
-        result = ModelConfig.from_dict(data)
+        result = ModelConfig.from_dict(restore_model_config_callables(data))
         if not isinstance(result, cls):
             raise TypeError(f"Expected {cls.__name__}, got {type(result).__name__}.")
         return result

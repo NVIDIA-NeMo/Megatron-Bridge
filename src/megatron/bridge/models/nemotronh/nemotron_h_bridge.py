@@ -186,7 +186,29 @@ class _MTPFlatteningQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self._hf_wc = MegatronParamMapping._count_wildcard_groups(q)  # q/k/v share pattern structure here
 
     def resolve(self, captures: Tuple[str, ...]) -> MegatronParamMapping:
-        # Expect captures from Megatron lookup: (outer, inner)
+        # Reverse lookup starts from one flattened HF layer index. Reconstruct
+        # Megatron's outer MTP depth and inner hybrid-layer index before
+        # returning the concrete QKV mapping.
+        treat_as_hf = (len(captures) == self._hf_wc) and (self._hf_wc != self._megatron_wc)
+        if treat_as_hf:
+            flat = int(captures[0])
+            outer = flat // self._mtp_layers_per_block
+            inner = flat % self._mtp_layers_per_block
+            resolved_megatron = _replace_wildcards(
+                self.megatron_param,
+                (str(outer), str(inner), *captures[1:]),
+            )
+            resolved_q = _replace_wildcards(self.hf_param["q"], captures)
+            resolved_k = _replace_wildcards(self.hf_param["k"], captures)
+            resolved_v = _replace_wildcards(self.hf_param["v"], captures)
+            return QKVMapping(
+                megatron_param=resolved_megatron,
+                q=resolved_q,
+                k=resolved_k,
+                v=resolved_v,
+            )
+
+        # Forward lookup starts from Megatron's (outer, inner) indices.
         if len(captures) < 2:
             raise ValueError(f"Expected (outer, inner) captures for MTP QKV mapping, got {captures}")
         outer = int(captures[0])
@@ -505,8 +527,12 @@ class NemotronHBridge(MegatronModelBridge):
                 "mtp.layers.*.mtp_model_layer.layers.*.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.*.norm.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.weight": "mtp.layers.*.mixer.gate.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.router.expert_bias": "mtp.layers.*.mixer.gate.e_score_correction_bias",
+                # GroupedMLP (moe_grouped_gemm=True): expert weights are stored as weight0, weight1, ...
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc1.weight*": "mtp.layers.*.mixer.experts.*.up_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.linear_fc2.weight*": "mtp.layers.*.mixer.experts.*.down_proj.weight",
+                # SequentialMLP (moe_grouped_gemm=False): expert weights are stored per local_expert
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc1.weight": "mtp.layers.*.mixer.experts.*.up_proj.weight",
+                "mtp.layers.*.mtp_model_layer.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "mtp.layers.*.mixer.experts.*.down_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc1_latent_proj.weight": "mtp.layers.*.mixer.fc1_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.fc2_latent_proj.weight": "mtp.layers.*.mixer.fc2_latent_proj.weight",
                 "mtp.layers.*.mtp_model_layer.layers.*.mlp.shared_experts.linear_fc1.weight": "mtp.layers.*.mixer.shared_experts.up_proj.weight",

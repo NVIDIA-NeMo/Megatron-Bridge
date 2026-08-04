@@ -300,7 +300,7 @@ def main() -> None:
     pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Build model + optimizer + scheduler
-    model_list = bridge.get_megatron_model(
+    model_list = bridge.get_model(
         cfg.model,
         ddp_config=cfg.ddp,
         overlap_param_gather_with_optimizer_step=False,

@@ -128,7 +128,7 @@ def main(
     )
     model_config = bridge.get_model_config()
     _configure_model_config(model_config, tp, pp, ep, etp)
-    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+    megatron_model = bridge.get_model(model_config, wrap_with_ddp=False)
     _sync_cuda()
     _maybe_barrier()
     import_duration = perf_counter() - import_start

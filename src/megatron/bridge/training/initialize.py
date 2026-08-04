@@ -312,10 +312,7 @@ def set_jit_fusion_options(
         torch._C._jit_override_can_fuse_on_cpu(True)
         torch._C._jit_override_can_fuse_on_gpu(True)
 
-    transformer_config = (
-        model_config.transformer if isinstance(model_config, (GPTModelConfig, HybridModelConfig)) else model_config
-    )
-    _warmup_jit_function(transformer_config, micro_batch_size, seq_length=model_config.seq_length)
+    _warmup_jit_function(model_config, micro_batch_size)
 
 
 def destroy_global_state() -> None:
@@ -891,7 +888,10 @@ def _set_random_seed(
         )
 
 
-def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int, *, seq_length: int) -> None:
+def _warmup_jit_function(
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig,
+    micro_batch_size: int,
+) -> None:
     """Compilie JIT functions before the main training steps"""
     if model_config.bf16:
         dtype = torch.bfloat16
@@ -907,7 +907,7 @@ def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int,
     )
     input = torch.rand(
         (
-            seq_length // model_config.context_parallel_size,
+            model_config.seq_length // model_config.context_parallel_size,
             micro_batch_size,
             model_config.ffn_hidden_size // model_config.tensor_model_parallel_size,
         ),
@@ -928,7 +928,9 @@ def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int,
     # Warmup fused bias+dropout+add
     if model_config.sequence_parallel:
         tp_world_size = int(model_config.tensor_model_parallel_size)
-        seq_length = seq_length // tp_world_size
+        seq_length = model_config.seq_length // tp_world_size
+    else:
+        seq_length = model_config.seq_length
     input = torch.rand(
         (
             seq_length // model_config.context_parallel_size,

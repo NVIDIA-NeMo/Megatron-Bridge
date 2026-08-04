@@ -89,6 +89,7 @@ class TestGemma3ModelProvider:
         # Mock the parent provide method
         mock_model = Mock()
         mock_model.embedding = Mock()
+        mock_model.vocab_size = 262272
         mock_model.setup_embeddings_and_output_layer = Mock()
 
         provider = Gemma3ModelProvider(
@@ -96,7 +97,7 @@ class TestGemma3ModelProvider:
             hidden_size=1152,
             num_attention_heads=4,
             kv_channels=256,
-            vocab_size=262144,
+            vocab_size=262145,
             seq_length=32768,
         )
 
@@ -109,7 +110,7 @@ class TestGemma3ModelProvider:
             # Verify that custom embedding was created
             mock_language_embedding.assert_called_once_with(
                 config=provider,
-                vocab_size=provider.vocab_size,
+                vocab_size=mock_model.vocab_size,
                 max_sequence_length=provider.seq_length,
                 position_embedding_type=provider.position_embedding_type,
                 scatter_to_sequence_parallel=provider.scatter_embedding_sequence_parallel,

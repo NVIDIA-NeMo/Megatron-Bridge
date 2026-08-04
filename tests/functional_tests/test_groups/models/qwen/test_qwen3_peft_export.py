@@ -107,7 +107,7 @@ def exported_adapter_dir(qwen3_toy_model_dir, tmp_path_factory):
     model_config.finalize()
 
     with temporary_distributed_context(backend="gloo"):
-        model = bridge.get_megatron_model(
+        model = bridge.get_model(
             model_config,
             wrap_with_ddp=False,
         )

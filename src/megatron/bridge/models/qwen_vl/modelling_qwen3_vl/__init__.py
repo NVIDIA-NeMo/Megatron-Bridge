@@ -15,6 +15,10 @@
 """Provider-neutral Qwen3-VL model components."""
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel  # noqa: F401
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 
 
-__all__ = ["Qwen3VLModel"]
+__all__ = [
+    "Qwen3VLModel",
+    "Qwen3VLForTokenClassification",
+]

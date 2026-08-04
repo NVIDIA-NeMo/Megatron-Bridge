@@ -242,7 +242,7 @@ def test_load_bridge_model_builds_hf_weights_through_model_builder(text_generati
             calls["pg"] = (transformer, seed)
             return "pg"
 
-        def get_megatron_model(self, received_model_config, **kwargs):
+        def get_model(self, received_model_config, **kwargs):
             calls["builder_config"] = received_model_config
             calls["build_kwargs"] = kwargs
             return [model]

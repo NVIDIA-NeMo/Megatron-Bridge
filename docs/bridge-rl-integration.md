@@ -58,7 +58,7 @@ model_config.num_layers_in_last_pipeline_stage = 0
 model_config.finalize()
 
 # Create distributed model and save as Megatron checkpoint
-megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+megatron_model = bridge.get_model(model_config, wrap_with_ddp=False)
 bridge.save_megatron_model(megatron_model, "/path/to/megatron_ckpt")
 ```
 
@@ -67,7 +67,7 @@ You can also check and try out our multi-GPU conversion example script: [example
 
 Notes:
 - The import-time parallelism is only for loading/conversion. The saved config is restored to canonical values to avoid validation issues at training time.
-- If you are running inside a framework, make sure to clean up any existing distributed state before and after import by destroying or initializing process groups as needed. `get_megatron_model` initializes a standalone distributed environment when one is not already set up.
+- If you are running inside a framework, make sure to clean up any existing distributed state before and after import by destroying or initializing process groups as needed. `get_model` initializes a standalone distributed environment when one is not already set up.
 
 
 ## 2) Build training configuration and initialize Megatron-Core

@@ -501,6 +501,29 @@ class TestGemma4ModelProviderDefaults:
         mock_rotary.assert_called_once()
         mock_tied_kv.assert_called_once_with(mock_model, provider)
 
+    def test_provide_uses_padded_model_vocab_for_custom_embedding(self):
+        provider = Gemma4ModelProvider(vocab_size=262145)
+        mock_model = Mock(vocab_size=262272)
+        mock_model.embedding = Mock()
+        mock_model.setup_embeddings_and_output_layer = Mock()
+
+        with (
+            patch.object(GPTModelProvider, "provide", return_value=mock_model),
+            patch("megatron.bridge.models.gemma.gemma4_provider.Gemma3LanguageModelEmbedding") as mock_embedding,
+            patch("megatron.bridge.models.gemma.gemma4_provider.Gemma4RotaryEmbedding"),
+            patch("megatron.bridge.models.gemma.gemma4_provider._install_tied_kv"),
+        ):
+            provider.provide(pre_process=True, post_process=True)
+
+        assert provider.vocab_size == 262145
+        mock_embedding.assert_called_once_with(
+            config=provider,
+            vocab_size=262272,
+            max_sequence_length=provider.seq_length,
+            position_embedding_type=provider.position_embedding_type,
+            scatter_to_sequence_parallel=provider.scatter_embedding_sequence_parallel,
+        )
+
     def test_provide_restores_dual_rotary_base_on_error(self, provider):
         with patch.object(GPTModelProvider, "provide", side_effect=RuntimeError("boom")):
             with pytest.raises(RuntimeError, match="boom"):

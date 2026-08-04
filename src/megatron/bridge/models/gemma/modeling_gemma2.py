@@ -122,7 +122,7 @@ class Gemma2DotProductAttention(MegatronModule):
         self.layer_number = max(1, layer_number)
 
         self.window_size = None
-        if self.layer_number % 2 == 0:
+        if self.layer_number % 2 == 1:
             self.window_size = config.window_size
 
         self.attention_type = attention_type  # unused for now
@@ -132,7 +132,7 @@ class Gemma2DotProductAttention(MegatronModule):
         # triangular causal kernel (ScaledUpperTriangMaskedSoftmax) which never reads
         # the mask argument, silently dropping the SWA mask. Switching to arbitrary
         # for SWA layers routes through ScaledMaskedSoftmax, which applies the mask.
-        # Odd-numbered layers remain causal and keep the fast fused causal path.
+        # Even-numbered layers remain causal and keep the fast fused causal path.
         self.attn_mask_type = AttnMaskType.arbitrary if self.window_size is not None else attn_mask_type
 
         projection_size = self.config.kv_channels * self.config.num_attention_heads
@@ -346,16 +346,18 @@ class Gemma2FlexDotProductAttention(Gemma2DotProductAttention):
     def _build_flex_block_mask(self, sq: int, sk: int, device: torch.device):
         """Build a FlexAttention block_mask encoding causal + optional SWA."""
         window_left = self._flex_window_size[0]
+        query_offset = sk - sq
         if window_left < 0:
 
-            def _mask(b, h, q_idx, kv_idx):
-                return q_idx >= kv_idx
+            def _mask(b, h, q_idx, kv_idx, _query_offset=query_offset):
+                return q_idx + _query_offset >= kv_idx
 
         else:
             w = window_left
 
-            def _mask(b, h, q_idx, kv_idx, _w=w):
-                return (q_idx >= kv_idx) & (q_idx - kv_idx <= _w)
+            def _mask(b, h, q_idx, kv_idx, _w=w, _query_offset=query_offset):
+                absolute_q_idx = q_idx + _query_offset
+                return (absolute_q_idx >= kv_idx) & (absolute_q_idx - kv_idx <= _w)
 
         return _create_flex_block_mask(_mask, B=None, H=None, Q_LEN=sq, KV_LEN=sk, device=device)
 

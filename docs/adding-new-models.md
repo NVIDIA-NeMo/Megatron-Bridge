@@ -191,7 +191,7 @@ model_config = bridge.get_model_config()
 model_config.tensor_model_parallel_size = 1
 model_config.pipeline_model_parallel_size = 1
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 
 # Megatron → HF (stream a few tensors)
 for i, (name, tensor) in enumerate(bridge.export_hf_weights(model, cpu=True)):

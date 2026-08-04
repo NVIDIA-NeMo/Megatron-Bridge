@@ -29,7 +29,7 @@ from megatron.training.models.gpt import GPTModelConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
-from megatron.bridge.models.gpt.model_config import ACTIVATION_FUNC_METADATA_KEY, BridgeGPTModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.training.model_load_save import load_model_config
 
 
@@ -237,8 +237,7 @@ def test_silu_activation_round_trips_through_model_config_dict() -> None:
     serialized = model_config.as_dict()
     restored = BridgeGPTModelConfig.from_dict(serialized)
 
-    assert "activation_func" not in serialized["transformer"]
-    assert serialized["extra_checkpoint_metadata"][ACTIVATION_FUNC_METADATA_KEY] == "silu"
+    assert serialized["transformer"]["activation_func"] == "silu"
     assert type(restored.transformer) is TransformerConfig
     assert restored.transformer.activation_func is F.silu
 

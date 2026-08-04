@@ -197,7 +197,7 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
     model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
     model_config.finalize()
     try:
-        model = bridge.get_megatron_model(
+        model = bridge.get_model(
             model_config,
             load_weights=False,
             wrap_with_ddp=False,

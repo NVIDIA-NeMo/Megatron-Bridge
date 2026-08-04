@@ -313,7 +313,7 @@ def main(args) -> None:
         model_config.expert_tensor_parallel_size = etp
         model_config.pipeline_dtype = torch.bfloat16
         model_config.finalize()
-        model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+        model = bridge.get_model(model_config, wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]
     for m in model:
@@ -336,8 +336,11 @@ def main(args) -> None:
             processor, args.image_path, args.prompt, args.system_prompt
         )
 
-    images = pixel_values.bfloat16()
-    input_ids = adjust_image_tokens(input_ids, num_patches, img_start_token_id, img_end_token_id)
+    if pixel_values is None:
+        images = torch.empty((0, 3, 512, 512), dtype=torch.bfloat16)
+    else:
+        images = pixel_values.bfloat16()
+        input_ids = adjust_image_tokens(input_ids, num_patches, img_start_token_id, img_end_token_id)
     if args.video_path:
         video_token_id = tokenizer.convert_tokens_to_ids("<video>")
         image_token_id = tokenizer.convert_tokens_to_ids("<image>")

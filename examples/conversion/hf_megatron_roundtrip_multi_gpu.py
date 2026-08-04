@@ -21,7 +21,7 @@ The process is as follows:
     (e.g., "meta-llama/Llama-3.2-1B"). This downloads the model from the Hub and loads it.
 2. The bridge's `get_model_config` method creates a builder-backed model configuration.
 3. The model configuration is configured for multi-GPU execution.
-4. `get_megatron_model` instantiates the Megatron-LM model.
+4. `get_model` instantiates the Megatron-LM model.
 5. The weights of the converted Megatron-LM model are verified against the original
     Hugging Face model.
 6. The `save_hf_pretrained` method is used to save the Megatron-LM
@@ -178,7 +178,7 @@ def main(
 
         # Once all overrides are set, finalize the builder config before construction.
         model_config.finalize()
-        megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+        megatron_model = bridge.get_model(model_config, wrap_with_ddp=False)
 
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0

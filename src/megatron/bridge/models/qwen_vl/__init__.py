@@ -14,9 +14,14 @@
 
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.qwen3_vl_bridge import Qwen3VLBridge, Qwen3VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen25_vl_bridge import Qwen25VLBridge
-from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
+from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
+    Qwen35TokenClassificationBridge,
+    Qwen35VLBridge,
+    Qwen35VLMoEBridge,
+)
 
 
 def __getattr__(name: str):
@@ -29,7 +34,11 @@ def __getattr__(name: str):
         from megatron.bridge.models.qwen_vl import qwen3_vl_provider
 
         return getattr(qwen3_vl_provider, name)
-    if name in {"Qwen35VLModelProvider", "Qwen35VLMoEModelProvider"}:
+    if name in {
+        "Qwen35TokenClassificationModelProvider",
+        "Qwen35VLModelProvider",
+        "Qwen35VLMoEModelProvider",
+    }:
         from megatron.bridge.models.qwen_vl import qwen35_vl_provider
 
         return getattr(qwen35_vl_provider, name)
@@ -41,6 +50,7 @@ __all__ = [
     "Qwen25VLBridge",
     "Qwen25VLModelProvider",
     "Qwen3VLModel",
+    "Qwen3VLForTokenClassification",
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
     "Qwen3VLModelProvider",
@@ -49,4 +59,6 @@ __all__ = [
     "Qwen35VLModelProvider",
     "Qwen35VLMoEBridge",
     "Qwen35VLMoEModelProvider",
+    "Qwen35TokenClassificationBridge",
+    "Qwen35TokenClassificationModelProvider",
 ]

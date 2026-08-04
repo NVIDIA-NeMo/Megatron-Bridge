@@ -130,7 +130,7 @@ try:
     model_config.transformer.pipeline_dtype = torch.bfloat16
     model_config.transformer.params_dtype = torch.bfloat16
     model_config.finalize()
-    model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+    model = bridge.get_model(model_config, wrap_with_ddp=False)
     if isinstance(model, list):
         model = model[0]
 

@@ -1002,7 +1002,7 @@ class TestExportAdapterCkpt:
         assert len(model_config.pre_wrap_hooks) == 2
         model_config.finalize.assert_called_once_with()
         bridge.to_megatron_provider.assert_not_called()
-        bridge.get_megatron_model.assert_called_once_with(
+        bridge.get_model.assert_called_once_with(
             model_config,
             pg_collection=bridge._get_or_initialize_pg_collection.return_value,
             wrap_with_ddp=False,
@@ -1311,7 +1311,7 @@ class TestExportAdapterScript:
         model_config.pre_wrap_hooks = []
         bridge = MagicMock()
         bridge.get_model_config.return_value = model_config
-        bridge.get_megatron_model.return_value = model_chunks
+        bridge.get_model.return_value = model_chunks
 
         with (
             patch(
@@ -1337,7 +1337,7 @@ class TestExportAdapterScript:
         bridge.save_hf_adapter.assert_not_called()
         assert model_config.use_cpu_initialization is False
         assert model_config.init_model_with_meta_device is False
-        bridge.get_megatron_model.assert_called_once_with(
+        bridge.get_model.assert_called_once_with(
             model_config,
             load_weights=False,
             wrap_with_ddp=False,
@@ -1369,7 +1369,7 @@ class TestExportAdapterScript:
         model_config.pre_wrap_hooks = []
         bridge = MagicMock()
         bridge.get_model_config.return_value = model_config
-        bridge.get_megatron_model.return_value = [model_chunk]
+        bridge.get_model.return_value = [model_chunk]
 
         with (
             patch(
@@ -1426,7 +1426,7 @@ class TestExportAdapterScript:
         model_config.pre_wrap_hooks = []
         bridge = MagicMock()
         bridge.get_model_config.return_value = model_config
-        bridge.get_megatron_model.return_value = [model_chunk]
+        bridge.get_model.return_value = [model_chunk]
         lora = MagicMock()
         state_dicts = [{"model": {"new": object()}}, {"model": {"legacy": object()}}]
 

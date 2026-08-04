@@ -215,7 +215,7 @@ def _build_megatron_lora_model(
         backend = "gloo" if cpu else "nccl"
         dist_ctx = temporary_distributed_context(backend=backend)
         dist_ctx.__enter__()
-    model = bridge.get_megatron_model(
+    model = bridge.get_model(
         model_config,
         wrap_with_ddp=False,
     )

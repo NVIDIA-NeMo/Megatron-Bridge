@@ -47,16 +47,6 @@ _FR_ENV_VARS = [
 ]
 
 
-def test_set_jit_fusion_options_preserves_outer_model_sequence_length() -> None:
-    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
-    model_config = BridgeGPTModelConfig(transformer=transformer, vocab_size=32, seq_length=4096)
-
-    with patch("megatron.bridge.training.initialize._warmup_jit_function") as warmup:
-        set_jit_fusion_options(model_config, micro_batch_size=2)
-
-    warmup.assert_called_once_with(transformer, 2, seq_length=4096)
-
-
 def test_torch_dist_init_preserves_outer_dist_train_config() -> None:
     transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
     model_config = Qwen3VLModelConfig(
@@ -144,6 +134,29 @@ def test_create_dist_train_pgs_uses_independent_transformer_configs() -> None:
     assert model_config.transformer.pipeline_model_parallel_size == 2
     assert model_config.add_encoder is True
     assert model_config.add_decoder is False
+
+
+def test_set_jit_fusion_options_preserves_builder_config_for_warmup() -> None:
+    """JIT warmup needs GPT outer fields like seq_length plus transformer proxy fields."""
+    model_config = BridgeGPTModelConfig(
+        transformer=TransformerConfig(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            ffn_hidden_size=256,
+            use_cpu_initialization=True,
+        ),
+        vocab_size=256,
+        seq_length=128,
+    )
+
+    with (
+        patch("megatron.bridge.training.initialize.is_torch_min_version", return_value=True),
+        patch("megatron.bridge.training.initialize._warmup_jit_function") as warmup_jit_function,
+    ):
+        set_jit_fusion_options(model_config, micro_batch_size=1)
+
+    warmup_jit_function.assert_called_once_with(model_config, 1)
 
 
 class TestInitializeTPCommunicators:

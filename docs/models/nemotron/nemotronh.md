@@ -145,7 +145,7 @@ model_config.context_parallel_size = 1
 model_config.sequence_parallel = True
 
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 
 # Other models:
 # bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-4B-Base-8K", trust_remote_code=True)
@@ -168,7 +168,7 @@ model_config.context_parallel_size = 1
 model_config.sequence_parallel = True
 
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 
 # For instruct variant:
 # bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-Nano-9B-v2", trust_remote_code=True)

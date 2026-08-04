@@ -365,7 +365,7 @@ def run_megatron_forward(
     model_config.finalize()
     pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=42)
 
-    megatron_models = bridge.get_megatron_model(model_config, pg_collection=pg_collection, wrap_with_ddp=False)
+    megatron_models = bridge.get_model(model_config, pg_collection=pg_collection, wrap_with_ddp=False)
 
     for m in megatron_models:
         disable_mtp_for_inference(m)

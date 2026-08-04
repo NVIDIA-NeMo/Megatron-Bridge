@@ -57,6 +57,18 @@ class GLM5Bridge(MegatronModelBridge):
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
 
+    def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
+        """Return whether an HF config field should be mapped to the Megatron provider."""
+        # Transformers 5.11-5.12 has an upstream GLM config bug: ``GlmMoeDsaConfig`` declares an independent
+        # ``num_experts=256`` default alongside the model's authoritative ``n_routed_experts`` field. The generic
+        # config mapping is first-wins, so that injected default can shadow the checkpoint's routed-expert count.
+        # Transformers 5.13 removed the duplicate field and redirects legacy ``num_experts`` input to
+        # ``n_routed_experts``. Detect the affected config shape instead of version-gating so this compatibility
+        # workaround applies only while both fields exist and does not become the default GLM mapping behavior.
+        if hf_name == "num_experts" and hasattr(hf_config, "num_experts") and hasattr(hf_config, "n_routed_experts"):
+            return False
+        return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config

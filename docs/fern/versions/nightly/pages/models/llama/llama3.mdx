@@ -37,7 +37,7 @@ model_config = bridge.get_model_config()
 model_config.tensor_model_parallel_size = 2
 model_config.pipeline_model_parallel_size = 1
 
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 ```
 
 ### Import Checkpoint from HF

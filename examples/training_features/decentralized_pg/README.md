@@ -127,7 +127,7 @@ tensor_parallel.model_parallel_cuda_manual_seed(
 
 ```python
 # Model creation
-model = bridge.get_megatron_model(
+model = bridge.get_model(
     cfg.model,
     load_weights=False,
     pg_collection=pg_collection,  # <-- Pass here!

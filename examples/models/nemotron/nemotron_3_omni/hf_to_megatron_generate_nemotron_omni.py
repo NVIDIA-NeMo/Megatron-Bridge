@@ -690,7 +690,7 @@ def main(args) -> None:
         model_config.separate_video_embedder = separate_video_embedder
         model_config.temporal_ckpt_compat = temporal_ckpt_compat
         model_config.finalize()
-        model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+        model = bridge.get_model(model_config, wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]
     for m in model:

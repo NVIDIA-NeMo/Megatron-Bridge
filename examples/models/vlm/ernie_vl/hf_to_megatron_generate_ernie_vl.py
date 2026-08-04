@@ -217,7 +217,7 @@ def main(args):
     model_config.pipeline_dtype = torch.bfloat16
     model_config.params_dtype = torch.bfloat16
     model_config.finalize()
-    model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+    model = bridge.get_model(model_config, wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]
     for m in model:

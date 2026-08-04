@@ -520,7 +520,7 @@ def megatron_generate_from_hf(
     model_config.finalize()
 
     # Initialize and load the model and tokenizer
-    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+    megatron_model = bridge.get_model(model_config, wrap_with_ddp=False)
     tokenizer_cfg = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=hf_model)
     tokenizer = build_tokenizer(tokenizer_cfg, trust_remote_code=trust_remote_code)
 

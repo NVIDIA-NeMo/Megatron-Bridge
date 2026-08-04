@@ -118,7 +118,7 @@ model_config.tensor_model_parallel_size = 1
 model_config.pipeline_model_parallel_size = 1
 model_config.finalize()
 # 3) Materialize Megatron Core model(s)
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 
 # 4a) Export Megatron → Hugging Face (full HF folder with config/tokenizer/weights)
 bridge.save_hf_pretrained(model, "./hf_exports/llama32_1b")

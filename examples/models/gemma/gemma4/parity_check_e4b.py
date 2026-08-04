@@ -250,7 +250,7 @@ def _build_models(args, seq_len: int):
     if args.mode == "vl":
         model_config.audio_config = None
     model_config.finalize()
-    return bridge.get_megatron_model(model_config, load_weights=False)
+    return bridge.get_model(model_config, load_weights=False)
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ import itertools
 import logging
 import math
 import re
+import warnings
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import (
     Any,
@@ -40,7 +41,6 @@ from typing import (
 
 import torch
 from megatron.core import parallel_state
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
@@ -73,6 +73,7 @@ from megatron.bridge.models.conversion.utils import (
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.utils import fusions
 from megatron.bridge.utils.activation_map import ACTIVATION_FUNC_MAP
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -80,15 +81,15 @@ from megatron.bridge.utils.common_utils import print_rank_0
 logger = logging.getLogger(__name__)
 
 
-class ModelConfigNotSupportedError(NotImplementedError):
-    """Raised when a legacy bridge has no builder-backed model config path."""
-
-
 MappingT = TypeVar("MappingT", bound=MegatronParamMapping)
 HFPreTrained = TypeVar("HFPreTrained")
 ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
+
+
+class ModelConfigNotSupportedError(NotImplementedError):
+    """Raised when a bridge has no builder-backed model config path."""
 
 
 class MegatronWeightTuple(NamedTuple):
@@ -416,7 +417,7 @@ class MegatronModelBridge(
             # The bridge is typically not instantiated directly
             # Instead, use AutoBridge or AutoBridge which handle this
             bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
-            models = bridge.get_megatron_model(load_weights=False, wrap_with_ddp=False)
+            models = bridge.get_model(load_weights=False, wrap_with_ddp=False)
 
     Note:
         This class uses generic type parameters to ensure type safety:
@@ -425,22 +426,26 @@ class MegatronModelBridge(
         - MegatronModel: The Megatron model type
     """
 
+    # These are extension points, not a setup checklist. Most new model bridges should keep all defaults below.
+
+    # Set to False only when this bridge cannot produce a standalone Hugging Face checkpoint.
     SUPPORTS_HF_PRETRAINED_EXPORT: ClassVar[bool] = True
 
-    # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
-    # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
-    PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
+    # None selects GPTModelProvider. Pass provider=... to @register_bridge only for a specialized
+    # provider, such as one implementing MLA.
+    PROVIDER_CLASS = None
 
     # The two classes select different layers of the new build contract: the
     # outer serializable ModelConfig/ModelBuilder pair and the exact nested MCore
     # config type. The latter cannot be inferred from inherited dataclass
-    # annotations for MLA and heterogeneous model families.
-    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig]] = BridgeGPTModelConfig
+    # annotations for MLA and heterogeneous model families. Set
+    # MODEL_CONFIG_CLASS to None for families that have not migrated.
+    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
     MODEL_BUILDER_CLASS: ClassVar[str | None] = None
     TRANSFORMER_CONFIG_CLASS: ClassVar[type[TransformerConfig]] = TransformerConfig
 
-    # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
-    # Set this in bridge subclasses to include model-specific files beyond standard artifacts
+    # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
+    # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
 
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
@@ -545,14 +550,14 @@ class MegatronModelBridge(
         """Return whether an HF config field should be mapped to provider kwargs."""
         return True
 
-    def hf_config_to_provider_kwargs(self, hf_config) -> dict:
-        """Convert HF config to Megatron provider kwargs using CONFIG_MAPPING.
+    def _hf_config_to_megatron_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert an HF config to flat Megatron config kwargs.
 
         Args:
             hf_config: HuggingFace model configuration object
 
         Returns:
-            dict: Provider kwargs ready for GPTModelProvider or similar
+            Megatron fields derived from ``CONFIG_MAPPING``.
         """
         provider_kwargs = {}
 
@@ -648,7 +653,11 @@ class MegatronModelBridge(
 
         return provider_kwargs
 
-    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Return kwargs for the legacy provider compatibility path."""
+        return self._hf_config_to_megatron_kwargs(hf_config)
+
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Convert a Hugging Face config to flat Megatron model-config kwargs.
 
         This method intentionally handles only the common GPT configuration
@@ -739,6 +748,13 @@ class MegatronModelBridge(
         hidden_act = getattr(hf_config, "hidden_act", None) or getattr(hf_config, "hidden_activation", "silu")
         model_config_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
 
+        model_config_kwargs.update(
+            attention_softmax_in_fp32=False,
+            cross_entropy_loss_fusion=True,
+            deallocate_pipeline_outputs=True,
+            gradient_accumulation_fusion=fusions.can_enable_gradient_accumulation_fusion(),
+        )
+
         return model_config_kwargs
 
     @staticmethod
@@ -765,7 +781,7 @@ class MegatronModelBridge(
             raise ValueError(
                 "Cannot map Hugging Face config fields to "
                 f"{model_config_class.__name__} + {transformer_config_class.__name__}: "
-                f"{sorted(unknown_fields)}. Override model_config_bridge() for model-specific fields."
+                f"{sorted(unknown_fields)}. Override hf_config_to_model_config() for model-specific fields."
             )
 
         model_kwargs = {name: value for name, value in config_kwargs.items() if name in model_fields}
@@ -776,29 +792,54 @@ class MegatronModelBridge(
         }
         return model_kwargs, transformer_kwargs
 
-    def model_config_bridge(self, hf_pretrained: HFPreTrained) -> ModelConfig:
-        """Create a builder-backed Megatron model config from Hugging Face config.
+    def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> ModelConfig:
+        """Convert a Hugging Face config directly to a builder-backed config.
 
-        This intentionally remains an instance method: model-family overrides
-        may use bridge runtime state and instance-level config-mapping hooks.
-
-        The default implementation supports the standard GPT path and returns
-        Megatron-LM's :class:`GPTModelConfig` containing Megatron-Core's
-        :class:`TransformerConfig`. Bridges registered with a custom provider must
-        override this method with the corresponding model config and builder.
+        GPT-style model families use ``BridgeGPTModelConfig`` by default.
+        A bridge may select a specialized config class or explicitly disable
+        this path by setting ``MODEL_CONFIG_CLASS`` to ``None``.
 
         Args:
-            hf_pretrained: Hugging Face model or config wrapper containing the
-                source architecture configuration.
+            hf_config: Hugging Face architecture configuration.
 
         Returns:
-            Builder-backed Megatron model configuration.
+            Serializable model configuration linked to its builder.
 
         Raises:
-            NotImplementedError: If this bridge uses a custom provider and has
-                not implemented a corresponding ModelConfig path.
-            TypeError: If configured ModelConfig classes are invalid.
+            ModelConfigNotSupportedError: If the model family explicitly disables this path.
             ValueError: If mapped fields do not belong to either config dataclass.
+        """
+        model_config_class = self.MODEL_CONFIG_CLASS
+        if model_config_class is None:
+            raise ModelConfigNotSupportedError(
+                f"ModelConfig conversion is not implemented for {type(self).__name__}. "
+                "This model family sets MODEL_CONFIG_CLASS to None."
+            )
+
+        config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(
+            config_kwargs,
+            model_config_class,
+            self.TRANSFORMER_CONFIG_CLASS,
+        )
+        if issubclass(self.TRANSFORMER_CONFIG_CLASS, MLATransformerConfig):
+            # GPTModel and MLA attention both consume these overlapping fields.
+            # Keep the outer build config and nested attention config synchronized.
+            for name in ("rotary_base", "rotary_percent"):
+                if name in config_kwargs:
+                    transformer_kwargs[name] = config_kwargs[name]
+        transformer_config = self.TRANSFORMER_CONFIG_CLASS(**transformer_kwargs)
+        model_config = model_config_class(transformer=transformer_config, **model_kwargs)
+        if self.MODEL_BUILDER_CLASS is not None:
+            model_config.builder = self.MODEL_BUILDER_CLASS
+        return model_config
+
+    def model_config_bridge(self, hf_pretrained: HFPreTrained) -> ModelConfig:
+        """Create a builder-backed model config from a Hugging Face wrapper.
+
+        This compatibility entry point remains for model-family bridges whose
+        conversion needs the complete pretrained wrapper. New generic paths
+        should use :meth:`hf_config_to_model_config` directly.
         """
         bridge_type = type(self)
         legacy_provider_override = bridge_type.provider_bridge is not MegatronModelBridge.provider_bridge
@@ -809,28 +850,10 @@ class MegatronModelBridge(
         if legacy_provider_override and not (config_mapping_override or model_config_override):
             raise ModelConfigNotSupportedError(
                 f"{bridge_type.__name__} overrides provider_bridge() without a builder-backed config path. "
-                "Override hf_config_to_model_config_kwargs() or model_config_bridge() with the matching "
-                "ModelConfig and ModelBuilder implementation."
+                "Override hf_config_to_model_config_kwargs(), hf_config_to_model_config(), or "
+                "model_config_bridge() with the matching ModelConfig and ModelBuilder implementation."
             )
-
-        hf_config = hf_pretrained.config
-        config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
-        model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(
-            config_kwargs,
-            self.MODEL_CONFIG_CLASS,
-            self.TRANSFORMER_CONFIG_CLASS,
-        )
-        if issubclass(self.TRANSFORMER_CONFIG_CLASS, MLATransformerConfig):
-            # GPTModel and MLA attention both consume these overlapping fields.
-            # Keep the outer build config and nested attention config synchronized.
-            for name in ("rotary_base", "rotary_percent"):
-                if name in config_kwargs:
-                    transformer_kwargs[name] = config_kwargs[name]
-        transformer_config = self.TRANSFORMER_CONFIG_CLASS(**transformer_kwargs)
-        model_config = self.MODEL_CONFIG_CLASS(transformer=transformer_config, **model_kwargs)
-        if self.MODEL_BUILDER_CLASS is not None:
-            model_config.builder = self.MODEL_BUILDER_CLASS
-        return model_config
+        return self.hf_config_to_model_config(hf_pretrained.config)
 
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None
@@ -861,6 +884,16 @@ class MegatronModelBridge(
         """
         from megatron.bridge.models.gpt_provider import GPTModelProvider
         from megatron.bridge.models.mla_provider import MLAModelProvider
+
+        if self.MODEL_CONFIG_CLASS is not None:
+            warnings.warn(
+                f"{type(self).__name__}.provider_bridge() and AutoBridge.to_megatron_provider() "
+                "are deprecated for builder-backed models. Use AutoBridge.get_model_config() "
+                "for training recipes or AutoBridge.get_model() to construct a model. "
+                "Legacy provider support will be removed in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
 
         hf_config = hf_pretrained.config
 
@@ -1150,8 +1183,8 @@ class MegatronModelBridge(
             for name, weight in weights.items()
         }
 
-    @staticmethod
     def _accumulate_grouped_export(
+        self,
         task: "WeightConversionTask",
         converted_weights_dict: Dict[str, torch.Tensor],
         model_config,
@@ -1169,7 +1202,11 @@ class MegatronModelBridge(
         """
         from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
-        ep_size = parallel_state.get_expert_model_parallel_world_size()
+        # Use the mapping's process group rather than the global parallel-state
+        # singleton. Decentralized callers such as MegatronMIMO install
+        # route-local groups directly on mappings, while MCore's cached global EP
+        # world size may still describe another component.
+        ep_size = task.mapping.ep_size
         num_experts = model_config.num_moe_experts
         experts_per_rank = num_experts // ep_size
 
@@ -1268,7 +1305,8 @@ class MegatronModelBridge(
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        use_megatron_fsdp = isinstance(megatron_model[0], FullyShardedDataParallel)
+        ddp_config = getattr(megatron_model[0], "ddp_config", None)
+        use_megatron_fsdp = ddp_config is not None and ddp_config.use_megatron_fsdp
         if use_megatron_fsdp:
             original_megatron_model = megatron_model
         unwrapped_model_list = unwrap_model(megatron_model)
@@ -1767,6 +1805,7 @@ class MegatronModelBridge(
         if (
             type(self)._share_embeddings_and_output_weights
             is not MegatronModelBridge._share_embeddings_and_output_weights
+            or "_share_embeddings_and_output_weights" in self.__dict__
         ):
             return self._share_embeddings_and_output_weights(getattr(model, "config", None))
 

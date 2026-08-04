@@ -559,7 +559,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # ===========================================================================
     print_rank_0("Creating model with pg_collection...")
 
-    model = bridge.get_megatron_model(
+    model = bridge.get_model(
         cfg.model,
         load_weights=False,
         ddp_config=ddp_cfg,

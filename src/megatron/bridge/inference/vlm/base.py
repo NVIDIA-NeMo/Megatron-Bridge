@@ -76,7 +76,10 @@ def setup_model_and_tokenizer(
     model_config = bridge.get_model_config()
     model_config.tensor_model_parallel_size = tp
     model_config.pipeline_model_parallel_size = pp
-    model_config.pipeline_dtype = torch.bfloat16
+    model_config.params_dtype = params_dtype
+    model_config.pipeline_dtype = params_dtype
+    model_config.bf16 = params_dtype == torch.bfloat16
+    model_config.fp16 = params_dtype == torch.float16
     model_config.parallel_output = False
     model_config.finalize()
     bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
@@ -86,7 +89,10 @@ def setup_model_and_tokenizer(
         mp_overrides={
             "tensor_model_parallel_size": tp,
             "pipeline_model_parallel_size": pp,
-            "pipeline_dtype": torch.bfloat16,
+            "params_dtype": params_dtype,
+            "pipeline_dtype": params_dtype,
+            "bf16": params_dtype == torch.bfloat16,
+            "fp16": params_dtype == torch.float16,
         },
         wrap_with_ddp=False,
     )
@@ -112,11 +118,12 @@ def setup_model_and_tokenizer(
     inference_wrapped_model = setup_inference_wrapper(
         model[0],
         processor.tokenizer,
-        params_dtype=torch.bfloat16,
+        params_dtype=params_dtype,
         inference_batch_times_seqlen_threshold=1000,
         inference_max_seq_length=inference_max_seq_length,
         inference_max_batch_size=inference_max_batch_size,
     )
+    inference_wrapped_model.processor = processor
 
     return inference_wrapped_model, processor
 
@@ -195,6 +202,8 @@ def generate(
     """
 
     if isinstance(wrapped_model, QwenVLInferenceWrapper):
+        if processor is None:
+            processor = getattr(wrapped_model, "processor", None)
         text_generation_controller = QwenVLTextGenerationController(
             inference_wrapped_model=wrapped_model,
             tokenizer=tokenizer,

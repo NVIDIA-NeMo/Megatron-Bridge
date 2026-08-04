@@ -67,6 +67,11 @@ class TestDataSamplers:
                         vocab_size=128,
                     )
 
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
@@ -115,6 +120,11 @@ class TestDataSamplers:
                         transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
                         vocab_size=128,
                     )
+
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -173,6 +183,11 @@ class TestDataSamplers:
                         transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
                         vocab_size=128,
                     )
+
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -897,6 +912,11 @@ class TestBatchDataloaderIntegration:
                         vocab_size=128,
                     )
 
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
@@ -939,6 +959,11 @@ class TestBatchDataloaderIntegration:
                         transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
                         vocab_size=128,
                     )
+
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
