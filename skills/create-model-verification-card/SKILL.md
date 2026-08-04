@@ -266,7 +266,9 @@ model-verification workload:
   training item;
 - use `scripts/inference/infer.sh --nodes ... --gpus-per-node ... --task ...`
   for Megatron inference and manual model comparison; select
-  `text-generation`, `vlm-generation`, or `model-comparison` explicitly;
+  `text-generation`, `legacy-full-prefix-generation`, `vlm-generation`, or
+  `model-comparison` explicitly. The legacy full-prefix task is a slow,
+  non-optimized compatibility path and requires `--legacy-full-prefix`;
 - invoke public shell launchers directly from the card. Do not create Slurm
   jobs by calling their Python setup modules, and do not wrap the launchers in
   `uv run`, `python`, `srun`, or `sbatch`; the shell entry point owns its Python
@@ -604,10 +606,12 @@ result. Private executor configuration stays outside the card.
   helper does not append padding before selecting the compared next-token
   position.
 - **Megatron inference:** Launch through `scripts/inference/infer.sh` with the
-  explicit `text-generation` or `vlm-generation` task. Disable sampling, run
-  one deterministic greedy generation with an exact token count, and record
-  the literal completion including whitespace. A second replay may help
-  diagnose nondeterminism, but it is not required verification evidence.
+  explicit `text-generation`, `legacy-full-prefix-generation`, or
+  `vlm-generation` task. Use the slow, non-optimized legacy task only when
+  cached inference is unsupported, and pass `--legacy-full-prefix`. Disable
+  sampling, run one deterministic greedy generation with an exact token count,
+  and record the literal completion including whitespace. A second replay may
+  help diagnose nondeterminism, but it is not required verification evidence.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a

@@ -225,6 +225,61 @@ class TestTransformerConfigFinalize:
             cfg.finalize()
         assert cfg.expert_tensor_parallel_size is None
 
+    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
+        """HybridEP must safely handle different token counts on each EP rank."""
+        cfg = _make_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_hybridep_pad_uneven_dispatch_inputs=False,
+        )
+
+        with patch(_FINALIZE_PATCH):
+            cfg.finalize()
+
+        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is True
+
+    def test_non_hybridep_finalization_preserves_uneven_dispatch_padding(self):
+        """Other flex backends must retain their configured padding behavior."""
+        cfg = _make_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="deepep",
+            moe_hybridep_pad_uneven_dispatch_inputs=False,
+        )
+
+        with patch(_FINALIZE_PATCH):
+            cfg.finalize()
+
+        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is False
+
+    @pytest.mark.parametrize(
+        "cuda_graph_settings",
+        [
+            {"cuda_graph_impl": "full_iteration"},
+            {"cuda_graph_impl": "transformer_engine"},
+            {"cuda_graph_impl": "local"},
+            {"enable_cuda_graph": True},
+            {"external_cuda_graph": True},
+            {"cuda_graph_modules": "full_iteration"},
+            {"cuda_graph_scope": "full_iteration"},
+        ],
+    )
+    def test_hybridep_cuda_graph_finalization_preserves_padding_setting(self, cuda_graph_settings):
+        """CUDA-graph HybridEP configs must not gain a host scalar synchronization."""
+        cfg = _make_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_hybridep_pad_uneven_dispatch_inputs=False,
+            **cuda_graph_settings,
+        )
+
+        with patch(_FINALIZE_PATCH):
+            cfg.finalize()
+
+        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is False
+
 
 class TestMLATransformerConfigFinalize:
     """Tests for MLATransformerConfig.finalize()."""
@@ -241,6 +296,22 @@ class TestMLATransformerConfigFinalize:
         with patch(_MLA_FINALIZE_PATCH):
             cfg.finalize()
         assert cfg.expert_tensor_parallel_size == 1
+
+    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
+        cfg = MLATransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_hybridep_pad_uneven_dispatch_inputs=False,
+        )
+
+        with patch(_MLA_FINALIZE_PATCH):
+            cfg.finalize()
+
+        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is True
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +369,19 @@ class TestHeterogeneousTransformerConfigFinalize:
         with patch(_HETERO_FINALIZE_PATCH):
             cfg.finalize()
         assert cfg.sequence_parallel is True
+
+    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
+        cfg = self._make_hetero(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_hybridep_pad_uneven_dispatch_inputs=False,
+        )
+
+        with patch(_HETERO_FINALIZE_PATCH):
+            cfg.finalize()
+
+        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is True
 
     def test_pipeline_dtype_propagated_from_params_dtype_when_pp_gt1(self):
         cfg = self._make_valid_hetero(
