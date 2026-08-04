@@ -9,8 +9,10 @@ summary: >
   performance results. The convergence pretraining recipes retain real
   tokenization, real data, natural routing, safety checks, and checkpointing
   while adopting the corresponding hardware performance recipe's execution
-  stack. Nemotron 3.5 Nano support verification covers conversion, inference,
-  and training on H100 and GB200. The
+  stack. The H100 performance leaf uses BF16 Adam moments in a benchmark-only
+  workload and is not convergence-comparable with FP32 optimizer-state runs.
+  Nemotron 3.5 Nano support verification covers conversion, inference, and
+  training on H100 and GB200. The
   model.hf_id/--hf-model and model.hf_revision/--hf-revision values are
   non-functional placeholders pending publication.
 verification_index:
@@ -673,26 +675,28 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 9b0c2dff42e6175e91d34cd2a504529f803ebde9  # pragma: allowlist secret
+      bridge_commit: 573e088c9c6740082c39744e03dc5b009e730ed4  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config
         --max_steps 50
-      last_verified: 2026-07-28
+      last_verified: 2026-08-03
       metrics:
-        initial_loss: 12.16155
-        final_loss: 0.01361997
-        last_10_steps_step_time_ms_avg: 20826.370
-        last_10_steps_model_tflops_per_gpu_avg: 354.300
-        peak_allocated_memory_gib: 71.949
-        peak_reserved_memory_gib: 74.631
+        initial_loss: 12.16197
+        final_loss: 0.01217863
+        last_10_steps_step_time_ms_avg: 18467.280
+        last_10_steps_model_tflops_per_gpu_avg: 399.580
+        peak_allocated_memory_gib: 72.066
+        peak_reserved_memory_gib: 75.340
       expected_result: >
-        On 16x H100, the exact mock-data BF16 performance recipe completes
-        exactly 50 steps with finite LM/MTP-1/MTP-2 losses and no skipped or
-        NaN iterations. Transformer Engine CUDA graphs cover attention and
-        Mamba scopes. Steps 41-50 average 20,826.370 ms and 354.300 model
-        TFLOP/s/GPU; peak rank-0 allocated/reserved memory is 71.949/74.631
-        GiB.
+        On 16x H100, the exact mock-data, force-balanced BF16 performance
+        recipe completes exactly 50 steps with finite LM/MTP-1/MTP-2 losses
+        and no skipped or NaN iterations. Transformer Engine CUDA graphs cover
+        attention and Mamba scopes, while expert-FC1 activations are offloaded.
+        Steps 41-50 average 18,467.280 ms and 399.580 model TFLOP/s/GPU; peak
+        rank-0 allocated/reserved memory is 72.066/75.340 GiB. This
+        benchmark-only run stores Adam moments in BF16, so its losses are not
+        convergence-comparable with FP32 optimizer-state runs.
 
     GB200:
       status: verified

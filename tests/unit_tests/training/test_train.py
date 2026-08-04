@@ -23,6 +23,7 @@ from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataPa
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
 from megatron.bridge.training.train import (
+    _delete_cuda_graphs,
     _dummy_train_step,
     _handle_mxfp8_param_buffer_copy,
     _maybe_register_fsdp_buffers,
@@ -40,6 +41,40 @@ from megatron.bridge.training.utils.train_utils import maybe_inject_state
 
 
 pytestmark = pytest.mark.unit
+
+
+class TestCudaGraphCleanup:
+    """Unit tests for CUDA graph state cleanup."""
+
+    @patch("megatron.bridge.training.train.gc.collect")
+    def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect):
+        """Cleanup must leave reusable full-graph mappings for the next training run."""
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+        from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
+
+        graph = Mock()
+        FullCudaGraphWrapper.cuda_graph = {"training": graph, "validation": Mock()}
+        FullCudaGraphWrapper.result = {"training": object(), "validation": object()}
+        FullCudaGraphWrapper.curr_iteration = {"training": 3, "validation": 2}
+        OptimizerCudaGraphWrapper.cuda_graph = Mock()
+        OptimizerCudaGraphWrapper.result = object()
+        OptimizerCudaGraphWrapper.curr_iteration = 3
+        helper = Mock()
+        helper.graphs_created.return_value = False
+
+        _delete_cuda_graphs(helper)
+
+        assert FullCudaGraphWrapper.cuda_graph["training"] is None
+        assert FullCudaGraphWrapper.result["training"] is None
+        assert FullCudaGraphWrapper.curr_iteration["training"] == 0
+        assert FullCudaGraphWrapper.cuda_graph["validation"] is None
+        assert FullCudaGraphWrapper.result["validation"] is None
+        assert FullCudaGraphWrapper.curr_iteration["validation"] == 0
+        assert OptimizerCudaGraphWrapper.cuda_graph is None
+        assert OptimizerCudaGraphWrapper.result is None
+        assert OptimizerCudaGraphWrapper.curr_iteration == 0
+        helper.delete_cuda_graphs.assert_not_called()
+        mock_collect.assert_called_once()
 
 
 class TestFSDPRegistration:

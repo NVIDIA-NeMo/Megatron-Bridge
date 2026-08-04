@@ -116,7 +116,7 @@ def test_library_resolved_recipe_does_not_enable_benchmark_executor():
     assert module.selected_benchmark_recipe(training_args) is None
 
 
-def test_benchmark_recipe_validates_total_submission_size():
+def test_benchmark_recipe_accepts_weak_scaling_submission_size():
     module = _load_setup_experiment_module()
     args, training_args = module.parse_args(
         [
@@ -135,8 +135,7 @@ def test_benchmark_recipe_validates_total_submission_size():
         ]
     )
 
-    with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
-        module._validate_args(args, module.selected_benchmark_recipe(training_args))
+    module._validate_args(args, module.selected_benchmark_recipe(training_args))
 
 
 def test_benchmark_recipe_accepts_user_selected_node_shape():

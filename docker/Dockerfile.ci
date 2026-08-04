@@ -105,14 +105,39 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
-COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
-COPY 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
-COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
-COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
+
+ARG BASELINE_MCORE_REF
+
+# Resolve the immutable baseline before copying the mutable dispatched checkout.
+# This keeps the dependency layer independent of ordinary MCore source changes.
+RUN if [ -n "$BASELINE_MCORE_REF" ]; then \
+        git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/Megatron-LM.git 3rdparty/Megatron-LM && \
+        git -C 3rdparty/Megatron-LM fetch --depth 1 origin "$BASELINE_MCORE_REF" && \
+        git -C 3rdparty/Megatron-LM checkout --detach FETCH_HEAD && \
+        test "$(git -C 3rdparty/Megatron-LM rev-parse HEAD)" = "$BASELINE_MCORE_REF" && \
+        test -f 3rdparty/Megatron-LM/pyproject.toml; \
+    fi
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
 ARG UV_CACHE_PRUNE_ARGS
+
+# Install the main-branch environment from an immutable baseline context before
+# dispatched MCore metadata can invalidate this expensive dependency layer.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/root/.cache/uv \
+    if [ -n "$BASELINE_MCORE_REF" ]; then \
+        export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+        export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
+            CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
+            CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
+        uv sync --locked --only-group build && \
+        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
+    fi
+
+RUN rm -rf 3rdparty/Megatron-LM
+COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -131,13 +156,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
     pip install nvidia-cutlass-dsl[cu13]==4.5.0 && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
-        echo "⚙️ MCore testing mode: skipping --locked flag"; \
+        echo "⚙️ MCore testing mode: syncing the dispatched dependency delta"; \
         uv sync --only-group build && \
         uv sync --link-mode copy --all-extras --all-groups --no-group diffusion; \
-    else \
+    elif [ -z "$BASELINE_MCORE_REF" ]; then \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
     fi && \
+    # uv may retain the baseline editable MCore wheel when only its source tree changes.
+    # Rebuild the dispatched checkout so its optional dataset helper is present.
+    uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM && \
+    test -n "$(find 3rdparty/Megatron-LM/megatron/core/datasets -maxdepth 1 -name 'helpers_cpp*.so' -print -quit)" && \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
