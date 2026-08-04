@@ -14,6 +14,7 @@
 
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
+from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 
 
-__all__ = ["PreTrainedCausalLM", "PreTrainedMaskedLM"]
+__all__ = ["PreTrainedCausalLM", "PreTrainedMaskedLM", "PreTrainedTokenClassification"]

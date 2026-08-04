@@ -1064,8 +1064,8 @@ class TestQwen3VLModel:
         assert out.dim() >= 2
 
     @pytest.mark.timeout(50)
-    def test_cuda_graph_helper_not_exposed_when_llm_cuda_graph_disabled(self, hf_config):
-        """CUDA graph helper fields stay on language_model when cuda_graph_impl is none."""
+    def test_cuda_graph_helper_aliases_do_not_register_root_modules_when_disabled(self, hf_config):
+        """CUDA graph helper aliases keep checkpoint keys under language_model when disabled."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
@@ -1087,8 +1087,10 @@ class TestQwen3VLModel:
             pg_collection=pg_collection,
         )
 
-        assert "decoder" not in model.__dict__
-        assert not hasattr(model, "rotary_pos_emb")
+        assert model.decoder is model.language_model.decoder
+        assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules
         assert getattr(model.language_model.config, "cuda_graph_impl", None) == "none"
 
     @pytest.mark.timeout(50)
@@ -1118,7 +1120,8 @@ class TestQwen3VLModel:
 
         assert getattr(language_transformer_config, "cuda_graph_impl", None) == "transformer_engine"
         assert model.language_model.config.variable_seq_lengths is False
-        assert hasattr(model, "decoder")
         assert model.decoder is model.language_model.decoder
         assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
         assert model.position_embedding_type == model.language_model.position_embedding_type
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules

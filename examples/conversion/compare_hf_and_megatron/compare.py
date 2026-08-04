@@ -258,7 +258,7 @@ def is_vision_language_model(
 
     except Exception as e:
         print_rank_0(f"Warning: Could not determine model type from config: {e}")
-        # Fallback: check if qwen_vl_utils is available and model name contains vl indicators
+        # Fallback: check whether the model name contains common VL indicators.
         return any(indicator in model_path.lower() for indicator in ["vl", "vision"])
 
 
