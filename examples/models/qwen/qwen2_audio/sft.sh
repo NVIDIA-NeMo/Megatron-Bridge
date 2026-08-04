@@ -59,7 +59,9 @@ WANDB_PROJECT=megatron-bridge-${MODEL_NAME}
 SEQ_LENGTH=16384
 TRAIN_ITERS=11250
 GLOBAL_BATCH_SIZE=32
-MICRO_BATCH_SIZE=4
+# Weights and optimizer state already occupy ~54 GB of each 80 GB H100, so run at
+# the smallest micro batch size in-batch packing permits.
+MICRO_BATCH_SIZE=2
 EVAL_INTERVAL=1000
 EVAL_ITERS=10
 LR=2e-5
