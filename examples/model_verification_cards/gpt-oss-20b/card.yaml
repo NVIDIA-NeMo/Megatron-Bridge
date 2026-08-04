@@ -7,8 +7,9 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. GPT-OSS 20B H100 support verification has completed GPU
   HF-to-Megatron conversion, GPU Megatron-to-HF export, manual forward-pass
-  correlation, and deterministic Megatron inference; CPU conversion, full SFT,
-  long-context SFT, PEFT, and checkpoint resume remain pending.
+  correlation, deterministic Megatron inference, and bounded pretraining; CPU
+  conversion, full SFT, long-context SFT, PEFT, and checkpoint resume remain
+  pending.
 verification_index:
   model_level:
     verified:
@@ -21,7 +22,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain]
+      unverified: [sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: openai/gpt-oss-20b
   hf_revision: 6cee5e81ee83917806bbde320786a8fb61efebee  # pragma: allowlist secret
@@ -146,7 +148,7 @@ items:
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
       command: >
@@ -166,19 +168,21 @@ items:
         --save_dir work/model-verification/gpt-oss-20b/pretrain-reference-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-04
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 10.90364
+        final_loss: 5.750363
+        last_10_steps_step_time_ms_avg: 21372.220
+        last_10_steps_model_tflops_per_gpu_avg: 122.600
       expected_result: >
-        Future verification must complete exactly 100 bounded RP2 optimizer
-        steps using the same RP2 prefix, cache, and SentencePiece tokenizer as
-        the Qwen3-30B-A3B verification run. It must report finite loss, no
-        skipped or NaN iterations, all four metrics, a persisted post-setup
-        ConfigContainer, and complete iter_0000050 and iter_0000100 checkpoints
-        suitable for direct resume.
+        On 16x H100, the command completes exactly 100 bounded pretraining
+        optimizer steps. All 100 optimizer-step rows are present exactly once
+        with finite loss, zero skipped iterations, and zero NaN iterations.
+        Loss decreases from 10.90364 to 5.750363, all four metrics are
+        recorded, the post-setup run_config.yaml persists, and complete
+        16-shard iter_0000050 and iter_0000100 checkpoints are saved with
+        metadata, train state, tokenizer artifacts, and latest-checkpoint
+        markers suitable for direct resume.
 
   sft:
     H100:
