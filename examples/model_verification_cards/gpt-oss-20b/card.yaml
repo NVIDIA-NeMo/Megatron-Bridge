@@ -6,16 +6,17 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. GPT-OSS 20B H100 support verification has completed GPU
-  HF-to-Megatron conversion; CPU conversion, export, inference, full SFT,
-  long-context SFT, PEFT, and checkpoint resume remain pending.
+  HF-to-Megatron conversion and GPU Megatron-to-HF export; CPU conversion,
+  manual forward pass, inference, full SFT, long-context SFT, PEFT, and
+  checkpoint resume remain pending.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_gpu
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
   training:
@@ -83,7 +84,7 @@ items:
       semantics.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -94,12 +95,14 @@ items:
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 2 --ep 2 --etp 1
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-04
     expected_result: >
-      Future verification must export the distributed Megatron checkpoint to
-      the public unquantized BF16 Hugging Face layout, reload the export as
-      GptOssForCausalLM, and verify exact keys, shapes, dtypes, and values for
-      the exported BF16 tensor representation.
+      The command exits successfully, exports the distributed Megatron
+      checkpoint to the public unquantized BF16 Hugging Face layout, and writes
+      a reloadable GptOssForCausalLM checkpoint with attention_bias=true. The
+      export has 411 BF16 tensors, no missing or unexpected keys relative to
+      unsloth/gpt-oss-20b-BF16, and all 20,914,757,184 parameters match that
+      BF16 reference bitwise.
 
   manual_forward_pass:
     status: unverified
