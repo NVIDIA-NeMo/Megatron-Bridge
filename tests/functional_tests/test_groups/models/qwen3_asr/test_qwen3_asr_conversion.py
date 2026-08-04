@@ -62,6 +62,7 @@ HF_QWEN3_ASR_TOY_MODEL_CONFIG = {
         },
         "text_config": {
             "vocab_size": 2048,
+            "pad_token_id": 0,
             "hidden_size": 256,
             "intermediate_size": 512,
             "num_hidden_layers": 2,
@@ -78,6 +79,7 @@ HF_QWEN3_ASR_TOY_MODEL_CONFIG = {
         },
         "audio_token_id": 151646,
         "audio_start_token_id": 151647,
+        "pad_token_id": 0,
     },
 }
 
@@ -212,9 +214,7 @@ class TestQwen3ASRConversion:
         ]
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parents[5])
 
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")

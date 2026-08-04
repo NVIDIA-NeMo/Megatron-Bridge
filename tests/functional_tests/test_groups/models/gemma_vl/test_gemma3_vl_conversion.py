@@ -74,6 +74,7 @@ class TestGemma3VLConversion:
         # Create a temporary directory for this test class
         temp_dir = tmp_path_factory.mktemp("gemma3_vl_toy_model")
         model_dir = temp_dir / "gemma3_vl_toy"
+        model_dir.mkdir(parents=True, exist_ok=True)
 
         # Create Gemma3 VL config from the toy model config
         # Note: We need to create a mock config since Gemma3ForConditionalGeneration might not be available

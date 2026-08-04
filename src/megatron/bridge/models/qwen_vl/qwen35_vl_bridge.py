@@ -32,6 +32,7 @@ This module provides three bridges:
 """
 
 import logging
+from typing import Any
 
 import torch
 
@@ -48,9 +49,14 @@ from megatron.bridge.models.hf_pretrained.token_classification import PreTrained
 from megatron.bridge.models.qwen.qwen35_bridge import (
     Qwen35Bridge,
     Qwen35MoEBridge,
-    _apply_qwen35_common_config,
-    _apply_qwen35_moe_config,
 )
+from megatron.bridge.models.qwen.qwen35_common import (
+    apply_qwen35_common_config as _apply_qwen35_common_config,
+)
+from megatron.bridge.models.qwen.qwen35_common import (
+    apply_qwen35_moe_config as _apply_qwen35_moe_config,
+)
+from megatron.bridge.models.qwen_vl.model_config import Qwen35VLModelConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
@@ -167,10 +173,33 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-397B-A17B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
+    MODEL_CONFIG_CLASS = Qwen35VLModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map MoE Qwen3.5-VL HF settings to pure model-config fields."""
+        text = hf_config.text_config
+        kwargs = Qwen35MoEBridge().hf_config_to_model_config_kwargs(text)
+        kwargs.pop("autocast_dtype", None)
+        kwargs.update(
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            vision_config=hf_config.vision_config.to_dict(),
+            vision_config_target=("transformers.models.qwen3_5_moe.configuration_qwen3_5_moe.Qwen3_5MoeVisionConfig"),
+            language_max_sequence_length=text.max_position_embeddings,
+            image_token_id=getattr(hf_config, "image_token_id", 248056),
+            video_token_id=getattr(hf_config, "video_token_id", 248057),
+            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 248053),
+            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 248054),
+            bos_token_id=getattr(text, "bos_token_id", 248045),
+            eos_token_id=getattr(text, "eos_token_id", 248046),
+            mrope_section=getattr(text, "rope_scaling", {}).get("mrope_section", [11, 11, 10]),
+        )
+        return kwargs
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLMoEModelProvider:
         """
@@ -185,6 +214,8 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         Returns:
             Qwen35VLMoEModelProvider configured with the HF model's parameters
         """
+        from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
@@ -253,18 +284,25 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         # (mtp.layers.0.mlp.experts.{i}.gate_proj.weight), Qwen3.6 stores packed
         # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
         # different storage — must inspect HF keys.
-        mtp_experts_packed = False
+        hf_keys: set[str] = set()
         hf_pretrained = getattr(self, "hf_pretrained", None)
         if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
             hf_keys = set(hf_pretrained.state.source.get_all_keys())
-            if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
-                mtp_experts_packed = True
-        experts_packed = moe_experts_stored_packed(hf_pretrained, "model.language_model.layers.")
+        experts_packed = moe_experts_stored_packed(
+            hf_pretrained,
+            "model.language_model.layers.",
+            default=True,
+        )
+        mtp_experts_packed = any(
+            key.startswith("mtp.layers.") and ".mlp.experts.gate_up_proj" in key for key in hf_keys
+        )
 
         mapping_list = []
         mapping_list.extend(
             Qwen35MoEBridge._get_moe_lm_mappings(
-                hf_prefix="model.language_model.", megatron_prefix="language_model.", experts_packed=experts_packed
+                hf_prefix="model.language_model.",
+                megatron_prefix="language_model.",
+                experts_packed=experts_packed,
             )
         )
         mapping_list.extend(
@@ -302,14 +340,39 @@ class Qwen35VLBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-27B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
     PROVIDER_CLASS = Qwen35VLModelProvider
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLModelProvider:
+    MODEL_CONFIG_CLASS = Qwen35VLModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map dense Qwen3.5-VL HF settings to pure model-config fields."""
+        text = hf_config.text_config
+        kwargs = Qwen35Bridge().hf_config_to_model_config_kwargs(text)
+        kwargs.pop("autocast_dtype", None)
+        kwargs.update(
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            vision_config=hf_config.vision_config.to_dict(),
+            vision_config_target="transformers.models.qwen3_5.configuration_qwen3_5.Qwen3_5VisionConfig",
+            language_max_sequence_length=text.max_position_embeddings,
+            image_token_id=getattr(hf_config, "image_token_id", 248056),
+            video_token_id=getattr(hf_config, "video_token_id", 248057),
+            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 248053),
+            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 248054),
+            bos_token_id=getattr(text, "bos_token_id", 248045),
+            eos_token_id=getattr(text, "eos_token_id", 248044),
+            mrope_section=getattr(text, "rope_scaling", {}).get("mrope_section", [11, 11, 10]),
+        )
+        return kwargs
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen35VLModelProvider":
         """Create a Qwen35VLModelProvider from a HuggingFace pretrained model."""
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
@@ -372,6 +435,7 @@ class Qwen35TokenClassificationBridge(Qwen35VLBridge):
     """Bridge for Qwen3.5 VL models with a replicated per-token classification head."""
 
     PROVIDER_CLASS = Qwen35TokenClassificationModelProvider
+    MODEL_CONFIG_CLASS = None
 
     def provider_bridge(
         self,

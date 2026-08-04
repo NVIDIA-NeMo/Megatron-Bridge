@@ -17,7 +17,6 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from megatron.bridge.models.stepfun import step37_bridge as _step37_bridge_mod
 from megatron.bridge.models.stepfun.modelling_step37 import transformer_block as _step37_block_mod
 from megatron.bridge.models.stepfun.modelling_step37.transformer_block import get_step37_text_layer_spec
 from megatron.bridge.models.stepfun.step35_bridge import build_step35_layer_spec
@@ -65,7 +64,7 @@ class TestStep37BridgeProviderBridge:
 
     def _run(self, **text_overrides):
         hf_config = _make_hf_config(**text_overrides)
-        with patch.object(_step37_bridge_mod, "Step37ModelProvider", _FakeProvider):
+        with patch("megatron.bridge.models.stepfun.step37_provider.Step37ModelProvider", _FakeProvider):
             return Step37Bridge().provider_bridge(SimpleNamespace(config=hf_config))
 
     def test_moe_schedule_selects_public_layer_spec_builder(self):

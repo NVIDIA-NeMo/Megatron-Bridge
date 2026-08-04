@@ -19,33 +19,15 @@ from dataclasses import dataclass, field
 
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.transformer.multi_token_prediction import MultiTokenPredictionBlockSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from transformers.models.exaone4_5.configuration_exaone4_5 import Exaone4_5_Config, Exaone4_5_VisionConfig
 
-from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.exaone45.layer_specs import (
+    exaone_45_mtp_block_spec,
+    exaone_45_transformer_layer_spec,
+)
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.model import Exaone45Model
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-
-
-def exaone_45_transformer_layer_spec(config: "Exaone45ModelProvider") -> ModuleSpec:
-    """Create an EXAONE 4.5 layer spec backed by the EXAONE Post-LN layer pattern."""
-    return exaone4_layer_spec(config)
-
-
-def exaone_45_mtp_block_spec(
-    config: "Exaone45ModelProvider", vp_stage: int | None = None
-) -> MultiTokenPredictionBlockSubmodules | None:
-    """Create an MTP block spec that preserves the EXAONE transformer layer."""
-    if not config.mtp_num_layers:
-        return None
-
-    from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
-
-    layer_spec = exaone_45_transformer_layer_spec(config)
-    block_spec = TransformerBlockSubmodules(layer_specs=[layer_spec])
-    return get_gpt_mtp_block_spec(config, block_spec, use_transformer_engine=True, vp_stage=vp_stage)
 
 
 @dataclass
@@ -150,3 +132,10 @@ class Exaone45ModelProvider(GPTModelProvider):
     ) -> MCoreGPTModel:
         """Provide just the language model component without vision."""
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+
+__all__ = [
+    "Exaone45ModelProvider",
+    "exaone_45_mtp_block_spec",
+    "exaone_45_transformer_layer_spec",
+]

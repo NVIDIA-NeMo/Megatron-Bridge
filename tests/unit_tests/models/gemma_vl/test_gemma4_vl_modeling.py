@@ -59,6 +59,7 @@ def _make_model(image_token_id=IMAGE_TOKEN_ID):
         model.pre_process = True
         model.post_process = True
         model.vp_stage = None
+        model.pg_collection = None
     return model
 
 

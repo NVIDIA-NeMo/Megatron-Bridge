@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
+
 import torch
 from megatron.core import InferenceParams
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer import MegatronModule
+from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeCode2WavConfig,
@@ -25,9 +27,10 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
 )
 
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import Qwen3OmniThinkerModel
-from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
-    Qwen3OmniTransformerConfig,
-)
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_omni.model_config import QwenOmniModelConfig
 
 
 class Qwen3OmniModel(MegatronModule):
@@ -35,7 +38,7 @@ class Qwen3OmniModel(MegatronModule):
 
     def __init__(
         self,
-        language_transformer_config: Qwen3OmniTransformerConfig,
+        language_transformer_config: TransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         thinker_transformer_config: Qwen3OmniMoeThinkerConfig,
         talker_transformer_config: Qwen3OmniMoeTalkerConfig | None = None,
@@ -46,6 +49,7 @@ class Qwen3OmniModel(MegatronModule):
         add_encoder: bool = True,
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection | None = None,
+        model_config: "QwenOmniModelConfig | None" = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -62,6 +66,7 @@ class Qwen3OmniModel(MegatronModule):
             add_encoder,
             add_decoder,
             pg_collection,
+            model_config,
         )
 
         self.talker_transformer_config = talker_transformer_config

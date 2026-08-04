@@ -15,7 +15,15 @@
 import megatron.bridge.models.qwen3_asr.hf_qwen3_asr  # triggers AutoConfig.register("qwen3_asr", ...)
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
 from megatron.bridge.models.qwen3_asr.qwen3_asr_bridge import Qwen3ASRBridge
-from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "Qwen3ASRModelProvider":
+        from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
+
+        return Qwen3ASRModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

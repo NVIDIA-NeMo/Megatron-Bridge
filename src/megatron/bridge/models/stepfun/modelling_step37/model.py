@@ -39,18 +39,15 @@ from typing import Optional
 
 import torch
 from megatron.core import InferenceParams
+from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
-from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.stepfun.modelling_step37.image_insert_embedding import (
     ImageForInsert,
     ImageInsertEmbedding,
-)
-from megatron.bridge.models.stepfun.modelling_step37.text_model import Step37GPTModel
-from megatron.bridge.models.stepfun.modelling_step37.transformer_config import (
-    Step37TransformerConfig,
 )
 from megatron.bridge.models.stepfun.modelling_step37.vision_model import Step37VisionModel
 
@@ -63,8 +60,7 @@ class Step37Model(MegatronModule):
             the Step-3.5 text-decoder fields and the multimodal fields
             (``vision_config``, ``image_token_id``,
             ``understand_projector_stride``, ``projector_bias``).
-        language_transformer_layer_spec: Per-layer ``ModuleSpec`` for the text
-            decoder — see ``modelling_step37/transformer_block.py``.
+        language_model: Builder-created text decoder.
         vision_transformer_config: HF ``StepRoboticsVisionEncoderConfig``
             describing the PE-G/14 trunk.
         parallel_output: forwarded to :class:`Step37GPTModel`.
@@ -79,17 +75,17 @@ class Step37Model(MegatronModule):
 
     def __init__(
         self,
-        language_transformer_config: Step37TransformerConfig,
-        language_transformer_layer_spec: ModuleSpec,
+        language_transformer_config: TransformerConfig,
+        language_model: GPTModel,
         vision_transformer_config,
+        image_token_id: int,
+        projector_bias: bool,
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
         add_encoder: bool = True,
         add_decoder: bool = True,
         pg_collection: Optional[ProcessGroupCollection] = None,
-        mtp_block_spec: Optional[ModuleSpec] = None,
-        vp_stage: Optional[int] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -103,7 +99,7 @@ class Step37Model(MegatronModule):
         self.vision_model = None
         self.language_model = None
         self.image_insert_embedding = None
-        self.image_token_id = language_transformer_config.image_token_id
+        self.image_token_id = image_token_id
 
         # Step-3.5's text decoder runs the standard share-embeddings logic;
         # we surface it on the wrapper so finalize_model_grads can find it.
@@ -121,24 +117,7 @@ class Step37Model(MegatronModule):
             self.vision_model = Step37VisionModel(vision_transformer_config)
 
         if self.add_decoder:
-            self.language_model = Step37GPTModel(
-                config=language_transformer_config,
-                transformer_layer_spec=language_transformer_layer_spec,
-                vocab_size=language_transformer_config.vocab_size,
-                max_sequence_length=language_transformer_config.language_max_sequence_length,
-                parallel_output=parallel_output,
-                position_embedding_type="rope",
-                rotary_percent=language_transformer_config.rotary_percent,
-                pre_process=self.pre_process,
-                post_process=self.post_process,
-                rotary_base=language_transformer_config.rotary_base,
-                fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
-                share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
-                scatter_embedding_sequence_parallel=False,
-                mtp_block_spec=mtp_block_spec,
-                vp_stage=vp_stage,
-                pg_collection=pg_collection,
-            )
+            self.language_model = language_model
             self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
 
         # ``ImageInsertEmbedding`` owns the projector (encoder.output_dim →
@@ -151,7 +130,7 @@ class Step37Model(MegatronModule):
                 language_embedding=self.language_model.embedding,
                 encoder_output_dim=vision_transformer_config.width * 4,
                 hidden_size=language_transformer_config.hidden_size,
-                projector_bias=language_transformer_config.projector_bias,
+                projector_bias=projector_bias,
             )
 
     def shared_embedding_or_output_weight(self):

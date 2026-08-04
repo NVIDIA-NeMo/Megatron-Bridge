@@ -38,6 +38,7 @@ from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
     minimax_m3_block_spec,
     quick_gelu,
 )
+from megatron.bridge.models.minimax_m3.model_config import MiniMaxM3TextModelConfig, MiniMaxM3VLModelConfig
 from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3LightningIndexerState
 from megatron.bridge.models.model_provider import _apply_mixed_precision_wrapper
 from megatron.bridge.utils.instantiate_utils import instantiate
@@ -135,9 +136,10 @@ def _make_text_config(overrides: dict | None = None) -> Mock:
 def _make_pretrained(text_overrides: dict | None = None) -> Mock:
     text_cfg = _make_text_config(text_overrides)
 
-    vision_cfg = Mock(spec=list(_MINIMAX_M3_VISION_CONFIG.keys()))
+    vision_cfg = Mock(spec=list(_MINIMAX_M3_VISION_CONFIG.keys()) + ["to_dict"])
     for key, value in _MINIMAX_M3_VISION_CONFIG.items():
         setattr(vision_cfg, key, value)
+    vision_cfg.to_dict.return_value = dict(_MINIMAX_M3_VISION_CONFIG)
 
     outer_keys = list(_MINIMAX_M3_VL_CONFIG.keys()) + ["text_config", "vision_config", "to_dict"]
     outer_cfg = Mock(spec=outer_keys)
@@ -187,6 +189,22 @@ class TestMiniMaxM3Bridge:
         assert provider.lightning_indexer_layers == [1, 2, 3]
         assert provider.index_n_heads == 2
         assert provider.index_head_dim == 8
+
+    def test_model_config_bridge_maps_vlm_and_text_builder_contracts(self, mock_pretrained):
+        model_config = MiniMaxM3Bridge().model_config_bridge(mock_pretrained)
+
+        assert isinstance(model_config, MiniMaxM3VLModelConfig)
+        assert model_config.builder.endswith(".MiniMaxM3VLModelBuilder")
+        assert model_config.transformer.num_layers == 4
+        assert model_config.transformer.moe_layer_freq == [0, 1, 1, 1]
+        assert model_config.lightning_indexer_layers == [1, 2, 3]
+        assert model_config.pre_wrap_hooks[0] is _promote_router_weights_to_float32
+
+        text_config = model_config.to_text_config()
+        assert isinstance(text_config, MiniMaxM3TextModelConfig)
+        assert text_config.builder.endswith(".MiniMaxM3TextModelBuilder")
+        assert text_config.transformer is not model_config.transformer
+        assert text_config.pre_wrap_hooks == model_config.pre_wrap_hooks
 
     def test_provider_bridge_maps_native_lightning_indexer_config(self):
         mock_pretrained = _make_pretrained(
@@ -453,7 +471,7 @@ class TestMiniMaxM3Bridge:
             return block_spec
 
         monkeypatch.setattr(
-            "megatron.bridge.models.minimax_m3.minimax_m3_bridge.get_gpt_decoder_block_spec",
+            "megatron.bridge.models.minimax_m3.model_config.get_gpt_decoder_block_spec",
             fake_get_gpt_decoder_block_spec,
         )
 
@@ -490,7 +508,7 @@ class TestMiniMaxM3Bridge:
     def test_block_spec_serialized_target_can_be_instantiated(self):
         layer_spec = instantiate(
             {
-                "_target_": ("megatron.bridge.models.minimax_m3.minimax_m3_bridge.minimax_m3_block_spec"),
+                "_target_": ("megatron.bridge.models.minimax_m3.model_config.minimax_m3_block_spec"),
                 "_partial_": True,
                 "use_transformer_engine": True,
             }

@@ -61,11 +61,17 @@ from megatron.bridge.diffusion.models.flux.layers import (
     Timesteps,
     rope,
 )
+from megatron.bridge.diffusion.models.flux.model_config import (
+    FluxModelBuilder,
+    FluxModelConfig,
+)
 
 
 __all__ = [
     # Main model
     "Flux",
+    "FluxModelBuilder",
+    "FluxModelConfig",
     "FluxProvider",
     # Transformer layers
     "MMDiTLayer",

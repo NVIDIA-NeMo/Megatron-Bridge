@@ -16,12 +16,16 @@
 Unit tests for Qwen3 Next bridge functionality.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
@@ -113,6 +117,21 @@ class TestQwen3NextBridge:
         # The @MegatronModelBridge.register_bridge decorator should register the bridge
         # Check that the class exists and has the expected base class
         assert issubclass(Qwen3NextBridge, MegatronModelBridge)
+
+    def test_model_config_bridge_is_direct_and_serializable(self, qwen3_next_80b_a3b_config_dict):
+        pretrained = SimpleNamespace(config=SimpleNamespace(**qwen3_next_80b_a3b_config_dict))
+        result = Qwen3NextBridge().model_config_bridge(pretrained)
+
+        assert type(result) is BridgeGPTModelConfig
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.experimental_attention_variant == "gated_delta_net"
+        assert result.transformer.linear_attention_freq == 4
+        assert result.transformer.moe_shared_expert_intermediate_size == 512
+        assert "linear_attention_freq" not in result.__dict__
+        restored = type(result).from_dict(result.as_dict())
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is None
+        assert restored.get_builder_cls() is GPTModelBuilder
 
     def test_provider_bridge_basic(self, mock_pretrained_qwen3_next, mock_qwen3_next_config):
         """Test basic provider_bridge functionality."""

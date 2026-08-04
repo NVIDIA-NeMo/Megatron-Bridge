@@ -18,6 +18,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelConfig
 from transformers import Qwen2Config, Qwen3ForCausalLM
 
 from megatron.bridge.models import AutoBridge
@@ -102,6 +104,19 @@ class TestMegatronQwen3Bridge:
         assert result.num_attention_heads == qwen3_config.num_attention_heads
         assert result.seq_length == qwen3_config.max_position_embeddings
         assert result.rotary_base == rope_theta_from_hf(qwen3_config)
+
+    def test_model_config_bridge_preserves_qwen3_specialization(self, mock_pretrained_qwen3):
+        result = Qwen3Bridge().model_config_bridge(mock_pretrained_qwen3)
+
+        assert isinstance(result, GPTModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.normalization == "RMSNorm"
+        assert result.transformer.gated_linear_unit is True
+        assert result.transformer.add_bias_linear is False
+        assert result.transformer.add_qkv_bias is False
+        assert result.transformer.qk_layernorm is True
+        assert result.transformer.autocast_dtype == torch.bfloat16
+        assert "normalization" not in result.__dict__
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3, qwen3_config):
         """Test vocabulary size mapping."""

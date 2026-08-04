@@ -14,6 +14,7 @@
 
 import tempfile
 from dataclasses import fields
+from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -180,6 +181,10 @@ class TestLlamaBridgeConfigConverter:
         model_config = bridge.hf_config_to_model_config(config)
         with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
             provider = bridge.provider_bridge(mock_pretrained)
+        # The compatibility provider defers MCore post-init until finalize(),
+        # whereas the builder contract stores an exact, already-validated MCore
+        # TransformerConfig. Compare the two runtime states at the same phase.
+        provider.finalize()
 
         provider_fields = {field.name for field in fields(provider)}
         model_config_fields = {field.name for field in fields(model_config)}
@@ -189,7 +194,14 @@ class TestLlamaBridgeConfigConverter:
         assert set(mapped_kwargs) <= set(comparable_fields)
         assert len(comparable_fields) > len(mapped_kwargs)
         for field_name in comparable_fields:
-            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+            model_value = getattr(model_config, field_name)
+            provider_value = getattr(provider, field_name)
+            if isinstance(model_value, partial) and isinstance(provider_value, partial):
+                assert model_value.func is provider_value.func, field_name
+                assert model_value.args == provider_value.args, field_name
+                assert model_value.keywords == provider_value.keywords, field_name
+            else:
+                assert model_value == provider_value, field_name
 
         # The provider stores its model-construction callable directly; the new
         # config intentionally delegates layer-spec selection to its builder.

@@ -151,7 +151,7 @@ class Exaone45Model(MegatronModule):
             )
 
         if language_transformer_config.mtp_num_layers is not None and language_transformer_config.mtp_num_layers >= 1:
-            from megatron.bridge.models.exaone.exaone45.exaone45_provider import exaone_45_mtp_block_spec
+            from megatron.bridge.models.exaone.exaone45.layer_specs import exaone_45_mtp_block_spec
 
             mtp_block_spec = exaone_45_mtp_block_spec(language_transformer_config, vp_stage=vp_stage)
             self.use_mtp_postprocess = True

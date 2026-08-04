@@ -344,6 +344,7 @@ class TestQwen3VLModel:
         model = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             parallel_output=True,
             pre_process=True,
@@ -384,6 +385,7 @@ class TestQwen3VLModel:
         model = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             parallel_output=True,
             pre_process=True,
@@ -400,6 +402,7 @@ class TestQwen3VLModel:
         model_no_decoder = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             parallel_output=True,
             pre_process=True,
@@ -478,6 +481,7 @@ class TestQwen3VLModel:
         model_pre = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             parallel_output=True,
             pre_process=True,
@@ -505,6 +509,7 @@ class TestQwen3VLModel:
         model_no_pre = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             parallel_output=True,
             pre_process=False,
@@ -543,6 +548,7 @@ class TestQwen3VLModel:
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             vision_transformer_config=vision_transformer_config,
             parallel_output=True,
@@ -589,6 +595,7 @@ class TestQwen3VLModel:
 
         encoder = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             vision_transformer_config=vision_transformer_config,
             parallel_output=True,
@@ -600,6 +607,7 @@ class TestQwen3VLModel:
         )
         decoder = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             vision_transformer_config=vision_transformer_config,
             parallel_output=True,
@@ -686,6 +694,7 @@ class TestQwen3VLModel:
                 sequence_parallel=False,
                 spatial_merge_size=4,
             ),
+            vision_transformer_config=SimpleNamespace(spatial_merge_size=4),
             pg_collection=SimpleNamespace(
                 cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
                 tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
@@ -1035,6 +1044,7 @@ class TestQwen3VLModel:
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
             vision_transformer_config=vision_transformer_config,
             parallel_output=True,
@@ -1078,6 +1088,7 @@ class TestQwen3VLModel:
         model = Qwen3VLModel(
             vision_transformer_config=self.get_vision_transformer_config(hf_config),
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=self.get_language_model_layer_spec(),
             parallel_output=True,
             pre_process=True,
@@ -1109,6 +1120,7 @@ class TestQwen3VLModel:
         model = Qwen3VLModel(
             vision_transformer_config=self.get_vision_transformer_config(hf_config),
             language_transformer_config=language_transformer_config,
+            model_config=language_transformer_config,
             language_transformer_layer_spec=self.get_language_model_layer_spec(),
             parallel_output=True,
             pre_process=True,

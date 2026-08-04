@@ -26,6 +26,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.models.metadata import get_hf_model_id_from_model_config
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -48,8 +49,8 @@ def test_nemotron_3_5_nano_library_recipe_names_are_hardware_agnostic():
     assert library_names.isdisjoint(perf_names)
 
 
-class _FakeModelProvider:
-    """Lightweight mutable provider for recipe construction without HF Hub access."""
+class _FakeModelConfig:
+    """Lightweight mutable model config for recipe construction without HF Hub access."""
 
     def __init__(self) -> None:
         self.vocab_size = 256
@@ -59,14 +60,18 @@ class _FakeModelProvider:
 
 
 class _FakeAutoBridge:
-    """Return a local model provider without loading a Hugging Face config."""
+    """Return a local model config or legacy provider without Hugging Face I/O."""
 
     @classmethod
     def from_hf_pretrained(cls, *args, **kwargs):
         return cls()
 
-    def to_megatron_provider(self, *args, **kwargs):
-        return _FakeModelProvider()
+    def get_model_config(self):
+        return _FakeModelConfig()
+
+    def to_megatron_provider(self, *, load_weights: bool):
+        assert load_weights is False
+        return _FakeModelConfig()
 
 
 @pytest.fixture(autouse=True)
@@ -200,7 +205,7 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert get_hf_model_id_from_model_config(cfg.model) == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
@@ -242,7 +247,7 @@ def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert get_hf_model_id_from_model_config(cfg.model) == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
@@ -274,6 +279,11 @@ def test_nemotron_3_5_nano_h100_and_gb200_differ_only_in_execution_policy():
     gb200.checkpoint.save_interval = h100.checkpoint.save_interval
     gb200.env_vars = h100.env_vars
 
+    # Exact MCore configs materialize initializer partials during post-init;
+    # independently built but equivalent partials do not compare equal by
+    # identity. The serialized model configs are the semantic contract.
+    assert gb200.model.as_dict() == h100.model.as_dict()
+    gb200.model = h100.model
     assert gb200 == h100
 
 
@@ -329,7 +339,7 @@ def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
-    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert get_hf_model_id_from_model_config(cfg.model) == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.hf_dataset.dataset_name == "openmathinstruct2"

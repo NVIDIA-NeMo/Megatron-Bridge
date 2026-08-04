@@ -42,7 +42,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
 
     cfg = _sft_common_vlm()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_QWEN3_OMNI_HF_PATH).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_QWEN3_OMNI_HF_PATH).get_model_config()
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1

@@ -21,10 +21,13 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer import MLATransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.sarvam.sarvam_mla_bridge import SarvamMLABridge
+from megatron.bridge.models.sarvam import sarvam_mla_bridge as sarvam_mla_bridge_module
+from megatron.bridge.models.sarvam.sarvam_mla_bridge import SarvamMLABridge, sarvam_mla_layer_spec
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMLAModelProvider
 
 
@@ -44,6 +47,7 @@ class TestSarvamMLABridge:
             "num_experts_per_tok": 8,
             "num_shared_experts": 1,
             "first_k_dense_replace": 1,
+            "hidden_act": "silu",
             "vocab_size": 262144,
             "max_position_embeddings": 131072,
             "rope_theta": 8_000_000.0,
@@ -58,16 +62,52 @@ class TestSarvamMLABridge:
 
     @pytest.fixture
     def mock_pretrained_mla(self, sarvam_mla_config_dict):
-        cfg = Mock()
-        for k, v in sarvam_mla_config_dict.items():
-            setattr(cfg, k, v)
-
         m = Mock(spec=PreTrainedCausalLM)
-        m.config = cfg
+        m.config = SimpleNamespace(**sarvam_mla_config_dict)
         return m
 
     def test_registration(self):
         assert issubclass(SarvamMLABridge, MegatronModelBridge)
+
+    def test_model_config_bridge_uses_generic_config_and_preserves_layer_spec(self, mock_pretrained_mla):
+        config = SarvamMLABridge().model_config_bridge(mock_pretrained_mla)
+
+        assert type(config) is BridgeGPTModelConfig
+        assert type(config.transformer) is MLATransformerConfig
+        assert config.transformer_layer_spec is sarvam_mla_layer_spec
+
+        restored = BridgeGPTModelConfig.from_dict(config.as_dict())
+
+        assert type(restored) is BridgeGPTModelConfig
+        assert type(restored.transformer) is MLATransformerConfig
+        assert restored.transformer_layer_spec is sarvam_mla_layer_spec
+
+    def test_mla_layer_spec_uses_local_layers_without_transformer_engine(self, monkeypatch):
+        get_decoder_spec = Mock(return_value=object())
+        monkeypatch.setattr(sarvam_mla_bridge_module, "HAVE_TE", False)
+        monkeypatch.setattr(sarvam_mla_bridge_module, "get_gpt_decoder_block_spec", get_decoder_spec)
+        config = BridgeGPTModelConfig(
+            transformer=MLATransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                q_lora_rank=None,
+                kv_lora_rank=32,
+                qk_head_dim=16,
+                qk_pos_emb_head_dim=16,
+                v_head_dim=16,
+            ),
+            vocab_size=256,
+        )
+
+        sarvam_mla_layer_spec(config)
+
+        get_decoder_spec.assert_called_once_with(
+            config.transformer,
+            use_transformer_engine=False,
+            normalization="RMSNorm",
+            vp_stage=None,
+        )
 
     def test_provider_bridge_maps_common_and_mla_fields(self, mock_pretrained_mla):
         bridge = SarvamMLABridge()

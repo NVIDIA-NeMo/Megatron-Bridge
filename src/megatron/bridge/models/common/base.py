@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Bridge model-config compatibility and validated deserialization."""
+
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 from typing import Any
@@ -27,11 +29,17 @@ from megatron.training.models.base import (
     ModelConfig as _MegatronModelConfig,
 )
 
-from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix
+from megatron.bridge.models.gpt.model_config import restore_model_config_callables
+from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix, instantiate
 
 
 class ModelConfig(_MegatronModelConfig):
-    """Bridge compatibility wrapper for Megatron-LM model configs."""
+    """Bridge compatibility wrapper for Megatron-LM model configs.
+
+    The upstream base remains the construction contract. Bridge adds target
+    allow-list validation, support for its structured instantiate nodes, and
+    activation-callable restoration needed by checkpoint config round trips.
+    """
 
     def get_builder_cls(self) -> type:
         """Get the appropriate builder type for this config."""
@@ -43,8 +51,12 @@ class ModelConfig(_MegatronModelConfig):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelConfig":
         """Deserialize config from dictionary with Bridge target validation."""
+        data = restore_model_config_callables(data)
 
         def _from_dict(subdata: dict[str, Any], full_key: str) -> Any:
+            if "_call_" in subdata or "_partial_" in subdata:
+                return instantiate(subdata)
+
             target = subdata.get("_target_")
             if target is None:
                 raise ValueError("Cannot deserialize: missing '_target_' field")

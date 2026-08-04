@@ -38,7 +38,7 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     # The nested text config intentionally omits ``architectures``. AutoBridge
     # needs it to select the registered causal-LM bridge instead of the VLM.
     text_config.architectures = ["Qwen3_5ForCausalLM"]
-    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_9B_BASE
     cfg.dataset.seq_length = 4096
     cfg.dataset.blend = None
@@ -111,7 +111,7 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     # The nested text config intentionally omits ``architectures``. AutoBridge
     # needs it to select the registered causal-LM bridge instead of the VLM.
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
-    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_config(text_config).get_model_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_35B_A3B_BASE
     cfg.dataset.seq_length = 4096
     cfg.dataset.blend = None

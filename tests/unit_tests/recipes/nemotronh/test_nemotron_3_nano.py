@@ -30,8 +30,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.metadata import get_hf_model_id_from_model_config, set_hf_model_id_on_model_config
+from megatron.bridge.models.nemotronh.model_config import NemotronHModelConfig
 from megatron.bridge.recipes.nemotronh.h100 import nemotron_3_nano as recipe_module
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_5_nano_peft_config,
@@ -58,7 +60,7 @@ class TestNemotron3NanoPretrain:
         config = nemotron_3_nano_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 1
@@ -107,7 +109,7 @@ class TestNemotron3NanoPretrain:
         assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
         assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
         assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
-        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert get_hf_model_id_from_model_config(config.model) == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.train.global_batch_size == 512
         assert config.model.context_parallel_size == 2
@@ -182,7 +184,7 @@ class TestNemotron3NanoSft:
         config = nemotron_3_nano_sft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check default parallelism for SFT
         assert config.model.tensor_model_parallel_size == 1
@@ -273,24 +275,27 @@ class TestNemotron3NanoSft:
         mtp_num_layers,
         tokenizer_model,
     ):
-        """SFT and PEFT derive the provider from Nemotron 3 before applying MTP."""
-        provider = HybridModelProvider()
-        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
+        """SFT and PEFT derive the model config from Nemotron 3 before applying MTP."""
+        model_config = NemotronHModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+            hybrid_layer_pattern="MM",
+        )
+        set_hf_model_id_on_model_config(model_config, recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         bridge = Mock()
-        bridge.to_megatron_provider.return_value = provider
+        bridge.get_model_config.return_value = model_config
 
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_factory()
 
         from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
-        bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
-        assert config.model is provider
+        bridge.get_model_config.assert_called_once_with()
+        assert config.model is model_config
         assert config.model.mtp_num_layers == mtp_num_layers
         assert config.model.mtp_hybrid_override_pattern == ("*E" if mtp_num_layers else None)
         assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
         assert config.model.keep_mtp_spec_in_bf16 is bool(mtp_num_layers)
         assert config.model.mtp_loss_scaling_factor == (0.3 if mtp_num_layers else 0.1)
-        assert config.model.hf_model_id == tokenizer_model
+        assert get_hf_model_id_from_model_config(config.model) == tokenizer_model
         assert config.tokenizer.tokenizer_model == tokenizer_model
 
     @pytest.mark.parametrize(
@@ -319,7 +324,10 @@ class TestNemotron3NanoSft:
     ):
         """Nemotron 3.5 SFT and PEFT mutate their corresponding Nemotron 3 config."""
         base_config = Mock()
-        base_config.model = HybridModelProvider()
+        base_config.model = NemotronHModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+            hybrid_layer_pattern="MM",
+        )
         base_config.tokenizer = Mock()
 
         with patch.object(recipe_module, base_factory_name, return_value=base_config) as base_factory:
@@ -332,7 +340,7 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_use_repeated_layer is True
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
-        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert get_hf_model_id_from_model_config(config.model) == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
 
     def test_finetuning_recipes_do_not_expose_model_id(self):
@@ -344,10 +352,13 @@ class TestNemotron3NanoSft:
 
     def test_nemotron_3_5_openmath_sft_recipe_owns_verified_h100_defaults(self):
         """The dedicated H100 recipe makes the standard packed SFT command concise."""
-        provider = HybridModelProvider()
-        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
+        model_config = NemotronHModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+            hybrid_layer_pattern="MM",
+        )
+        set_hf_model_id_on_model_config(model_config, recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         bridge = Mock()
-        bridge.to_megatron_provider.return_value = provider
+        bridge.get_model_config.return_value = model_config
 
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
@@ -358,7 +369,7 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_use_repeated_layer is True
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
-        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert get_hf_model_id_from_model_config(config.model) == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.model.tensor_model_parallel_size == 2
         assert config.model.sequence_parallel is True
         assert config.model.expert_tensor_parallel_size == 1
@@ -427,7 +438,7 @@ class TestNemotron3NanoPeft:
         config = nemotron_3_nano_peft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check default parallelism for LoRA/DoRA
         assert config.model.tensor_model_parallel_size == 1
@@ -556,11 +567,11 @@ class TestNemotron3NanoCommon:
         ],
     )
     def test_config_container_structure(self, recipe_fn):
-        """Test that all configs return proper ConfigContainer with correct model provider."""
+        """Test that all configs return a ConfigContainer with the builder config."""
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check required sections exist
         assert config.train is not None
@@ -600,10 +611,10 @@ class TestNemotron3NanoCommon:
         ],
     )
     def test_moe_model_configuration(self, recipe_fn):
-        """Test MoE-specific model configuration from provider."""
+        """Test MoE-specific model configuration from the builder config."""
         config = recipe_fn()
 
-        # Check MoE settings from HybridModelProvider
+        # Check MoE settings from the nested transformer config.
         assert config.model.num_moe_experts == 128
         assert config.model.moe_ffn_hidden_size == 1856
         assert config.model.moe_shared_expert_intermediate_size == 3712

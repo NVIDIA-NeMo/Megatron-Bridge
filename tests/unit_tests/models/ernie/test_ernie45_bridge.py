@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -27,7 +28,9 @@ from megatron.bridge.models.ernie.ernie_45_bridge import (
     _PPSafeGatedMLPMapping,
     _PPSafeReplicatedMapping,
     _SqueezeBiasMapping,
+    ernie45_decoder_block_spec,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -106,6 +109,19 @@ class TestErnie45BridgeRegistration:
     def test_bridge_instantiation(self):
         bridge = Ernie45Bridge()
         assert bridge is not None
+
+    def test_model_config_bridge_is_direct_and_serializable(self, mock_pretrained):
+        result = Ernie45Bridge().model_config_bridge(mock_pretrained)
+
+        assert type(result) is BridgeGPTModelConfig
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer_layer_spec is ernie45_decoder_block_spec
+        assert result.transformer.moe_layer_freq == [0] + [1] * 27
+        assert result.transformer.mtp_num_layers is None
+        assert "moe_layer_freq" not in result.__dict__
+        restored = type(result).from_dict(result.as_dict())
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is ernie45_decoder_block_spec
 
 
 class TestErnie45BridgeGetNumExperts:

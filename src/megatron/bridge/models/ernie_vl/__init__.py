@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 from megatron.bridge.models.ernie_vl.ernie45_vl_bridge import Ernie45VLBridge
-from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl import Ernie45VLModel
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_decoder_layer_spec import (
     get_ernie45_vl_decoder_block_spec,
@@ -22,6 +23,19 @@ from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import 
     ErnieMultiTypeMoE,
     MultiTypeMoeSubmodules,
 )
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily preserve the legacy provider export."""
+    if name == "Ernie45VLModelProvider":
+        from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+
+        return Ernie45VLModelProvider
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

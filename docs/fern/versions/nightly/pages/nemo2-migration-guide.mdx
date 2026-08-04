@@ -18,9 +18,9 @@ Megatron Bridge derives model provider settings from Hugging Face configs throug
 
 | NeMo 2.0 | Megatron Bridge |
 |----------|-----------------|
-| `llm.Llama3Config8B` | `AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider()` |
-| `llm.Llama31Config70B` | `AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-70B").to_megatron_provider()` |
-| `llm.Qwen2Config7B` | `AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider()` |
+| `llm.Llama3Config8B` | `AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()` |
+| `llm.Llama31Config70B` | `AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-70B").get_model_config()` |
+| `llm.Qwen2Config7B` | `AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").get_model_config()` |
 | `llm.DeepseekV2Config` | `bridge.models.DeepseekV2ModelProvider` |
 
 ### Supported Model Families

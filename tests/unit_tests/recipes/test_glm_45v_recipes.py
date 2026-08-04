@@ -84,7 +84,7 @@ class _FakeAutoBridge:
         """Mock from_hf_pretrained method."""
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         """Return a fake model config."""
         return _FakeModelCfg()
 

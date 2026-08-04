@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from typing import TYPE_CHECKING
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -26,11 +27,15 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
+from megatron.bridge.models.falcon_h1.model_config import FalconH1ModelConfig
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Model
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
 
 
 @MegatronModelBridge.register_bridge(
@@ -50,7 +55,7 @@ class FalconH1Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("tiiuae/Falcon-H1-7B-Instruct", trust_remote_code=True)
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
@@ -76,10 +81,34 @@ class FalconH1Bridge(MegatronModelBridge):
         ("ssm_multipliers", "ssm_multipliers"),
     ]
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> FalconH1ModelProvider:
+    MODEL_CONFIG_CLASS = FalconH1ModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
+        """Map Falcon-H1 fields before constructing its exact MCore config."""
+        kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        kwargs.update(
+            position_embedding_type="rope",
+            rotary_percent=1.0,
+            rotary_base=int(kwargs["rotary_base"]),
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=getattr(hf_config, "projectors_bias", kwargs.get("add_bias_linear", False)),
+            hidden_dropout=getattr(hf_config, "hidden_dropout", 0.0),
+            falconh1_ratio=1.0,
+            use_mamba=True,
+            use_attention=True,
+            use_mlp=True,
+            mlp_multipliers=tuple(hf_config.mlp_multipliers),
+            ssm_multipliers=tuple(hf_config.ssm_multipliers),
+        )
+        return kwargs
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "FalconH1ModelProvider":
         """Convert HuggingFace Falcon H1 config to ``FalconH1ModelProvider``."""
-        provider = super().provider_bridge(hf_pretrained)
+        from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
+
         hf_config = hf_pretrained.config
+        provider = FalconH1ModelProvider(**self.hf_config_to_model_config_kwargs(hf_config))
 
         provider.position_embedding_type = "rope"
         provider.rotary_percent = 1.0
@@ -102,7 +131,7 @@ class FalconH1Bridge(MegatronModelBridge):
         return provider
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: FalconH1ModelProvider) -> dict:
+    def megatron_to_hf_config(cls, provider: "FalconH1ModelProvider") -> dict:
         """Convert ``FalconH1ModelProvider`` to HuggingFace config fields."""
         hf_config = super(FalconH1Bridge, cls).megatron_to_hf_config(provider)
 

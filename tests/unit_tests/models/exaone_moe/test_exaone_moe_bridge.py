@@ -25,6 +25,7 @@ from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import (
     ExaoneMoeModelProvider,
     _MTPDenseLayerSpecsList,
 )
+from megatron.bridge.models.exaone.model_config import ExaoneMoeModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -112,6 +113,18 @@ class TestExaoneMoeBridge:
         assert provider.no_rope_freq == [0, 1, 0, 1]
         assert provider.window_attn_skip_freq == [1, 0, 1, 0]
         assert provider.window_size == (1023, 0)
+
+    def test_model_config_bridge_maps_moe_builder_contract(self):
+        model_config = ExaoneMoeBridge().model_config_bridge(
+            _make_pretrained(_make_config(num_nextn_predict_layers=1))
+        )
+
+        assert isinstance(model_config, ExaoneMoeModelConfig)
+        assert model_config.builder.endswith(".ExaoneMoeModelBuilder")
+        assert model_config.transformer.num_layers == 4
+        assert model_config.transformer.moe_layer_freq == [0, 1, 1, 1]
+        assert model_config.transformer.mtp_num_layers == 1
+        assert model_config.transformer.window_attn_skip_freq == [1, 0, 1, 0]
 
     @pytest.mark.parametrize(
         ("config_overrides", "expected"),

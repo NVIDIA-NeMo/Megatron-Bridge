@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Dict, List, Mapping
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -31,8 +31,13 @@ from megatron.bridge.models.conversion.quantization_utils import (
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge
+from megatron.bridge.models.kimi_vl.model_config import KimiK25VLModelConfig
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 
 
 try:
@@ -46,7 +51,6 @@ except (ImportError, ModuleNotFoundError):
 @MegatronModelBridge.register_bridge(
     source="KimiK25ForConditionalGeneration",
     target=KimiK25VLModel,
-    provider=KimiK25VLModelProvider,
 )
 class KimiK25VLBridge(MegatronModelBridge):
     """
@@ -58,7 +62,12 @@ class KimiK25VLBridge(MegatronModelBridge):
     The language backbone shares the same architecture as Kimi K2 (MoE with MLA).
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK25VLModelProvider:
+    MODEL_CONFIG_CLASS = KimiK25VLModelConfig
+    TRANSFORMER_CONFIG_CLASS = KimiK2Bridge.TRANSFORMER_CONFIG_CLASS
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "KimiK25VLModelProvider":
+        from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
@@ -141,6 +150,43 @@ class KimiK25VLBridge(MegatronModelBridge):
         provider.ignore_index = getattr(hf_config, "ignore_index", -100)
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert Kimi K2.5 HF configs to pure builder-backed kwargs."""
+        text_config = hf_config.text_config
+        config_kwargs = KimiK2Bridge().hf_config_to_model_config_kwargs(text_config)
+        vision_config = hf_config.vision_config
+        vision_dict = vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vars(vision_config))
+        config_kwargs.update(
+            scatter_embedding_sequence_parallel=False,
+            moe_router_score_function="sigmoid",
+            moe_router_bias_update_rate=1e-3,
+            moe_router_topk_scaling_factor=getattr(text_config, "routed_scaling_factor", 2.827),
+            gradient_accumulation_fusion=True,
+            attention_dropout=0.0,
+            make_vocab_size_divisible_by=1280,
+            seq_length=4096,
+            vision_config=vision_dict,
+            media_placeholder_token_id=getattr(hf_config, "media_placeholder_token_id", 163605),
+            image_token_id=getattr(hf_config, "media_placeholder_token_id", 163605),
+            bos_token_id=getattr(text_config, "bos_token_id", 163584),
+            eos_token_id=getattr(text_config, "eos_token_id", 163585),
+            pad_token_id=getattr(hf_config, "pad_token_id", 163839),
+            ignore_index=getattr(hf_config, "ignore_index", -100),
+        )
+        return config_kwargs
+
+    def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK25VLModelConfig:
+        """Create Kimi's serializable multimodal build config."""
+        result = super().model_config_bridge(hf_pretrained)
+        if not isinstance(result, KimiK25VLModelConfig):
+            raise TypeError(f"Expected KimiK25VLModelConfig, got {type(result).__name__}.")
+        hf_model_path = hf_pretrained.model_name_or_path
+        result.hf_model_id = str(hf_model_path) if hf_model_path is not None else ""
+        result.trust_remote_code = bool(getattr(hf_pretrained, "trust_remote_code", False))
+        generation_config = getattr(hf_pretrained, "generation_config", None)
+        result.generation_config = generation_config.to_dict() if hasattr(generation_config, "to_dict") else None
+        return result
 
     def _load_and_dequantize(self, key: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
         """Load a weight, dequantizing INT4 packed tensors when present."""

@@ -14,53 +14,124 @@
 
 """Serializable Bridge extension of Megatron-LM's GPT model config."""
 
-from dataclasses import dataclass
+import functools
+import inspect
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from typing import Any
 
 from megatron.training.models.gpt import GPTModelConfig
 
-from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.config_proxy import FlatTransformerConfigMixin
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
 from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
-@dataclass(kw_only=True)
-class BridgeGPTModelConfig(GPTModelConfig):
-    """GPT model config with strict overrides and callable serialization.
+ACTIVATION_FUNC_METADATA_KEY = "megatron_bridge.activation_func"
 
-    Outer GPT build fields and nested transformer fields keep one declared
-    owner. Flat assignment remains convenient, but unknown names fail instead
-    of silently creating phantom configuration.
 
-    Hugging Face source provenance (model id and revision) is not declared as a
-    dedicated field here. It is recorded in the inherited serializable
-    ``extra_checkpoint_metadata`` mapping so it round-trips through
-    ``run_config.yaml`` without adding model-specific config fields.
+def _callable_target(value: object) -> str:
+    """Return an importable target path for a layer-spec callable."""
+    module = inspect.getmodule(value)
+    qualname = getattr(value, "__qualname__", None)
+    if module is None or not isinstance(qualname, str) or "<locals>" in qualname:
+        raise ValueError(f"Cannot serialize non-importable transformer layer spec: {value!r}.")
+    return f"{module.__name__}.{qualname}"
+
+
+def _serialize_layer_spec(value: object) -> dict[str, Any]:
+    """Serialize a function or partial as an allow-listed code reference."""
+    if isinstance(value, functools.partial):
+        result: dict[str, Any] = {
+            "_target_": _callable_target(value.func),
+            "_partial_": True,
+            "_args_": list(value.args),
+        }
+        result.update(value.keywords or {})
+        return result
+    if inspect.isfunction(value):
+        return {"_target_": _callable_target(value), "_call_": False}
+    raise ValueError(
+        "transformer_layer_spec must be an importable function, functools.partial, ModuleSpec, or None; "
+        f"got {type(value).__name__}."
+    )
+
+
+def _same_layer_spec(left: object, right: object) -> bool:
+    """Return whether two layer-spec callables have the same construction."""
+    if left is right:
+        return True
+    if isinstance(left, functools.partial) and isinstance(right, functools.partial):
+        return left.func is right.func and left.args == right.args and left.keywords == right.keywords
+    return False
+
+
+def _uses_default_layer_spec(config: object) -> bool:
+    """Return whether a dataclass instance still uses its class field default."""
+    config_field = next(field for field in fields(config) if field.name == "transformer_layer_spec")
+    if config_field.default is not MISSING:
+        default = config_field.default
+    elif config_field.default_factory is not MISSING:
+        default = config_field.default_factory()
+    else:
+        return False
+    return _same_layer_spec(getattr(config, config_field.name), default)
+
+
+def _drop_non_init_fields(data: dict[str, Any], config: object) -> None:
+    """Remove derived dataclass fields that cannot be passed to constructors."""
+    for config_field in fields(config):
+        if not config_field.init:
+            data.pop(config_field.name, None)
+            continue
+        value = getattr(config, config_field.name)
+        serialized_value = data.get(config_field.name)
+        if is_dataclass(value) and isinstance(serialized_value, dict):
+            _drop_non_init_fields(serialized_value, value)
+
+
+def restore_model_config_callables(data: dict[str, Any]) -> dict[str, Any]:
+    """Restore symbolic callable fields before nested dataclass construction.
+
+    Args:
+        data: Serialized model config dictionary.
+
+    Returns:
+        A shallow copy with the activation callable restored in the serialized
+        transformer config. The input dictionary is not mutated.
+
+    Raises:
+        ValueError: If activation metadata is present without a nested
+            transformer dictionary or names an unsupported activation.
     """
+    transformer = data.get("transformer")
+    metadata = data.get("extra_checkpoint_metadata")
+    activation_name = transformer.get("activation_func") if isinstance(transformer, dict) else None
+    if activation_name is None and isinstance(metadata, dict):
+        activation_name = metadata.get(ACTIVATION_FUNC_METADATA_KEY)
+    if activation_name is None:
+        return data
+    if not isinstance(activation_name, str):
+        if callable(activation_name):
+            return data
+        raise ValueError(f"Serialized activation function must be a string, got {type(activation_name).__name__}.")
+    if not isinstance(transformer, dict):
+        raise ValueError("Serialized activation metadata requires a nested transformer config.")
 
-    def __setattr__(self, name: str, value: Any, /) -> None:
-        """Assign a declared outer or nested field and reject phantom fields."""
-        try:
-            transformer = object.__getattribute__(self, "transformer")
-        except AttributeError:
-            object.__setattr__(self, name, value)
-            return
+    restored = dict(data)
+    restored_transformer = dict(transformer)
+    restored_transformer["activation_func"] = str_to_callable(activation_name)
+    restored["transformer"] = restored_transformer
+    return restored
 
-        model_fields = getattr(type(self), "__dataclass_fields__", {})
-        transformer_fields = getattr(type(transformer), "__dataclass_fields__", {})
 
-        if name == "transformer":
-            object.__setattr__(self, name, value)
-        elif name in model_fields:
-            object.__setattr__(self, name, value)
-        elif name in transformer_fields:
-            setattr(transformer, name, value)
-        elif name == "builder" or name.startswith("_"):
-            object.__setattr__(self, name, value)
-        else:
-            raise AttributeError(
-                f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
-            )
+@dataclass(kw_only=True)
+class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
+    """GPTModelConfig with strict flat updates and callable round trips.
+
+    The upstream config supplies the builder contract. Bridge keeps inherited
+    outer/nested duplicate fields synchronized, rejects phantom overrides, and
+    serializes activation and layer-spec callables through allow-listed targets.
+    """
 
     def get_builder_cls(self) -> type:
         """Resolve the configured builder through Bridge's target allowlist."""
@@ -70,8 +141,17 @@ class BridgeGPTModelConfig(GPTModelConfig):
         return builder_cls
 
     def as_dict(self) -> dict[str, Any]:
-        """Serialize the config with a symbolic activation function."""
+        """Serialize config while preserving activation and layer-spec callables.
+
+        Returns:
+            Serialized model config with a symbolic activation name.
+
+        Raises:
+            ValueError: If the activation callable is not registered with
+                Bridge's activation map.
+        """
         data = super().as_dict()
+        _drop_non_init_fields(data, self)
         transformer_data = data.get("transformer")
         if not isinstance(transformer_data, dict):
             raise TypeError("Serialized GPT model config must contain a transformer mapping.")
@@ -86,24 +166,19 @@ class BridgeGPTModelConfig(GPTModelConfig):
             raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
 
         transformer_data["activation_func"] = activation_name
+        if callable(self.transformer_layer_spec) and not _uses_default_layer_spec(self):
+            data["transformer_layer_spec"] = _serialize_layer_spec(self.transformer_layer_spec)
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BridgeGPTModelConfig":
-        """Deserialize a config while restoring its activation callable."""
-        restored_data = dict(data)
-        transformer_data = restored_data.get("transformer")
-        if isinstance(transformer_data, dict):
-            restored_transformer = dict(transformer_data)
-            activation_name = restored_transformer.get("activation_func")
-            if isinstance(activation_name, str):
-                restored_transformer["activation_func"] = str_to_callable(activation_name)
-            restored_data["transformer"] = restored_transformer
+        """Deserialize through Bridge's validated ModelConfig loader."""
+        from megatron.bridge.models.common.base import ModelConfig
 
-        result = ModelConfig.from_dict(restored_data)
+        result = ModelConfig.from_dict(restore_model_config_callables(data))
         if not isinstance(result, cls):
             raise TypeError(f"Expected {cls.__name__}, got {type(result).__name__}.")
         return result
 
 
-__all__ = ["BridgeGPTModelConfig"]
+__all__ = ["ACTIVATION_FUNC_METADATA_KEY", "BridgeGPTModelConfig", "restore_model_config_callables"]

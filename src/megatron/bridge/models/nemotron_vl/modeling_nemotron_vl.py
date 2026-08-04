@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 class NemotronVLModel(MegatronModule):

@@ -20,10 +20,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.minimax_m2.layer_specs import minimax_m2_layer_spec
 from megatron.bridge.models.minimax_m2.minimax_m2_bridge import (
     MiniMaxM2Bridge,
     _dequant_fp8_blockwise,
@@ -83,6 +86,19 @@ class TestMiniMaxM2Bridge:
 
     def test_registration(self):
         assert issubclass(MiniMaxM2Bridge, MegatronModelBridge)
+
+    def test_model_config_bridge_is_direct_and_serializable(self, mock_pretrained):
+        result = MiniMaxM2Bridge().model_config_bridge(mock_pretrained)
+
+        assert type(result) is BridgeGPTModelConfig
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer_layer_spec is minimax_m2_layer_spec
+        assert result.transformer.qk_layernorm is True
+        assert result.rotary_percent == mock_pretrained.config.rotary_dim / mock_pretrained.config.head_dim
+        assert "qk_layernorm" not in result.__dict__
+        restored = type(result).from_dict(result.as_dict())
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is minimax_m2_layer_spec
 
     def test_provider_bridge_maps_core_config(self, mock_pretrained):
         bridge = MiniMaxM2Bridge()
@@ -301,11 +317,11 @@ class TestFullDimRMSNorm:
 
         with (
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.dist.get_world_size",
+                "megatron.bridge.models.minimax_m2.layer_specs.dist.get_world_size",
                 return_value=4,
             ),
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.dist.all_reduce",
+                "megatron.bridge.models.minimax_m2.layer_specs.dist.all_reduce",
                 side_effect=fake_all_reduce,
             ),
         ):
@@ -334,11 +350,11 @@ class TestFullDimRMSNorm:
 
         with (
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.get_pg_size",
+                "megatron.bridge.models.minimax_m2.layer_specs.get_pg_size",
                 side_effect=fake_get_pg_size,
             ),
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.get_pg_rank",
+                "megatron.bridge.models.minimax_m2.layer_specs.get_pg_rank",
                 side_effect=fake_get_pg_rank,
             ),
         ):

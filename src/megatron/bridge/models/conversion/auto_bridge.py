@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import warnings
 from collections.abc import Callable
 from contextlib import nullcontext
 from functools import cached_property, partial
@@ -45,6 +46,7 @@ from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
     MegatronModelBridge,
+    ModelConfigNotSupportedError,
     WeightConversionTask,
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
@@ -54,11 +56,50 @@ from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
-from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import (
+    BuildDistributedModelKwargs,
+    GetModelKwargs,
+    ModelParallelKwargs,
+    ModelProviderMixin,
+)
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
 
 logger = logging.getLogger(__name__)
+
+
+def _override_embedded_transformer_configs(model_config: ModelConfig, **overrides: Any) -> TransformerConfig:
+    """Apply in-place construction overrides to every direct nested MCore config.
+
+    Multimodal model configs may own independent language and vision
+    ``TransformerConfig`` instances. Build-time dtype and device overrides must
+    keep all of them synchronized.
+    """
+    config_fields = dataclasses.fields(model_config) if dataclasses.is_dataclass(model_config) else ()
+    transformer_configs: list[TransformerConfig] = []
+    for config_field in config_fields:
+        value = getattr(model_config, config_field.name)
+        if isinstance(value, TransformerConfig):
+            transformer_configs.append(value)
+
+    primary = model_config.transformer
+    if not isinstance(primary, TransformerConfig):
+        raise TypeError(f"{type(model_config).__name__}.transformer must be a TransformerConfig.")
+    if all(config is not primary for config in transformer_configs):
+        transformer_configs.append(primary)
+
+    for transformer_config in transformer_configs:
+        valid_fields = {field.name for field in dataclasses.fields(transformer_config)}
+        unknown_fields = set(overrides) - valid_fields
+        if unknown_fields:
+            raise ValueError(
+                f"Cannot override fields on {type(transformer_config).__name__}: {sorted(unknown_fields)}."
+            )
+        for name, value in overrides.items():
+            setattr(transformer_config, name, value)
+
+    return primary
+
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
@@ -299,8 +340,7 @@ class AutoBridge(Generic[MegatronModelT]):
     Example:
         >>> # Load and convert a model to Megatron format
         >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
-        >>> provider = bridge.to_megatron_provider()
-        >>> megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
+        >>> megatron_model = bridge.get_model(wrap_with_ddp=False)
 
         >>> # Export a Megatron model back to HuggingFace format
         >>> bridge.save_hf_pretrained(megatron_model, "./exported_model")
@@ -354,6 +394,7 @@ class AutoBridge(Generic[MegatronModelT]):
         self.hf_model_revision: str | None = revision if isinstance(revision, str) else None
         trust_remote_code = getattr(hf_pretrained, "trust_remote_code", False)
         self.trust_remote_code = trust_remote_code if isinstance(trust_remote_code, bool) else False
+        self._model_config: ModelConfig | ModelProviderMixin | None = None
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -497,11 +538,11 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> bridge = AutoBridge.from_hf_config(config)
             >>>
             >>> # Create Megatron model with random initialization
-            >>> provider = bridge.to_megatron_provider(load_weights=False)
-            >>> model = provider.provide_distributed_model(wrap_with_ddp=False)
+            >>> model = bridge.get_model(load_weights=False, wrap_with_ddp=False)
 
             >>> # Or use for architecture exploration
-            >>> transformer_config = bridge.transformer_config
+            >>> model_config = bridge.get_model_config()
+            >>> transformer_config = model_config.transformer
             >>> print(f"Hidden size: {transformer_config.hidden_size}")
             >>> print(f"Num layers: {transformer_config.num_layers}")
 
@@ -1270,6 +1311,8 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_tokenizer_path: Optional[str | Path] = None,
         low_memory_save: bool = False,
         hf_tokenizer_kwargs: Optional[dict] = None,
+        *,
+        model_config: ModelConfig | ModelProviderMixin | None = None,
     ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
@@ -1293,7 +1336,8 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
                 Common options include trust_remote_code=True for models with custom tokenizers,
                 or use_fast=True for models that require the fast tokenizer.
-
+            model_config: Exact outer configuration used to build or load ``model``.
+                When omitted, the bridge's current model config is used.
         Example:
             >>> # Save model checkpoint after conversion
             >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
@@ -1302,14 +1346,14 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> bridge.save_megatron_model(
             ...     megatron_model,
             ...     "./megatron_checkpoint",
-            ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+            ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
             ... )
 
             >>> # Low-memory save (destroys model after save)
             >>> bridge.save_megatron_model(
             ...     megatron_model,
             ...     "./megatron_checkpoint",
-            ...     low_memory_save=True
+            ...     low_memory_save=True,
             ... )
 
         Note:
@@ -1317,22 +1361,39 @@ class AutoBridge(Generic[MegatronModelT]):
             - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
             - The checkpoint format follows Megatron's standard structure for compatibility
             - When low_memory_save=True, the model is deleted and cannot be used afterward
+            - Each bridge tracks one current config. Pass ``model_config`` explicitly
+              when saving an older model after another config, build, or load call.
         """
         try:
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
+
+        if model_config is None:
+            model_config = getattr(self, "_model_config", None)
+        if model_config is None:
+            raise ValueError(
+                "No model config is registered on this bridge. Call get_model_config(), "
+                "get_model(), or load_megatron_model() first, or pass model_config explicitly."
+            )
+
         save_megatron_model(
             model,
             path,
             hf_tokenizer_path=hf_tokenizer_path,
             low_memory_save=low_memory_save,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+            model_config=model_config,
         )
 
     def load_megatron_model(
-        self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
-    ) -> list[MegatronModelT]:
+        self,
+        path: str | Path,
+        *,
+        mp_overrides: ModelParallelKwargs | None = None,
+        return_model_config: bool = False,
+        **kwargs: Unpack[GetModelKwargs],
+    ) -> list[MegatronModelT] | tuple[list[MegatronModelT], ModelConfig | ModelProviderMixin]:
         """
         Load a Megatron model from a native Megatron checkpoint.
 
@@ -1343,10 +1404,12 @@ class AutoBridge(Generic[MegatronModelT]):
         Args:
             path: Directory path where the Megatron checkpoint is stored
             mp_overrides: Optional model-parallel overrides to apply to the loaded config.
+            return_model_config: Return the exact loaded outer model config with the model chunks.
             **kwargs: Additional arguments passed to the model provider
 
         Returns:
-            List of Megatron model instances loaded from the checkpoint
+            List of Megatron model instances loaded from the checkpoint. When
+            ``return_model_config=True``, returns ``(models, model_config)``.
 
         Example:
             >>> # Load a previously saved Megatron model
@@ -1357,6 +1420,11 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> model = bridge.load_megatron_model(
             ...     "./megatron_checkpoint",
             ...     wrap_with_ddp=False
+            ... )
+
+            >>> model, model_config = bridge.load_megatron_model(
+            ...     "./megatron_checkpoint",
+            ...     return_model_config=True,
             ... )
 
         Note:
@@ -1393,13 +1461,18 @@ class AutoBridge(Generic[MegatronModelT]):
 
         skip_temp_dist_context = dist.is_initialized()
         # Load the state dict
-        model = load_megatron_model(
+        model, model_config = load_megatron_model(
             str(checkpoint_path),
             use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
             skip_temp_dist_context=skip_temp_dist_context,
             mp_overrides=mp_overrides,
+            return_model_config=True,
         )
-        return model if isinstance(model, list) else [model]
+        models = model if isinstance(model, list) else [model]
+        self._model_config = model_config
+        if return_model_config:
+            return models, model_config
+        return models
 
     @classmethod
     def import_ckpt(
@@ -1451,7 +1524,10 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
 
         # Convert to Megatron model
-        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+        model_config = bridge.get_model_config()
+        _override_embedded_transformer_configs(model_config, use_cpu_initialization=True)
+        model_config.finalize()
+        megatron_model = bridge.get_model(model_config, wrap_with_ddp=False)
 
         # Save as Megatron checkpoint
         hf_tokenizer_kwargs = {}
@@ -1633,11 +1709,20 @@ class AutoBridge(Generic[MegatronModelT]):
         # adapter weights are exported at full precision; bfloat16 downstream
         # PEFT merges can introduce ~1e-3 weight errors that compound into
         # large logit diffs.
-        provider = self.to_megatron_provider(load_weights=True)
-        provider.pipeline_dtype = torch.float32
-        provider.params_dtype = torch.float32
-        provider.finalize()
-        provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+        current_model_config = getattr(self, "_model_config", None)
+        model_config = self.get_model_config()
+        self._model_config = current_model_config
+        transformer_config = _override_embedded_transformer_configs(
+            model_config,
+            pipeline_dtype=torch.float32,
+            params_dtype=torch.float32,
+            autocast_dtype=torch.float32,
+            fp16=False,
+            bf16=False,
+            use_cpu_initialization=True,
+            init_model_with_meta_device=False,
+        )
+        model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
 
         def _load_and_export_adapter(model):
             """Load adapter weights into a materialized model and export them as PEFT."""
@@ -1677,12 +1762,18 @@ class AutoBridge(Generic[MegatronModelT]):
             nullcontext() if torch.distributed.is_initialized() else temporary_distributed_context(backend="gloo")
         )
         with model_context:
-            model = provider.provide_distributed_model(
-                wrap_with_ddp=False,
-                use_cpu_initialization=True,
-                init_model_with_meta_device=False,
-            )
-            _load_and_export_adapter(model)
+            model_config.finalize()
+            pg_collection = self._get_or_initialize_pg_collection(transformer_config)
+            try:
+                model = self.get_model(
+                    model_config,
+                    pg_collection=pg_collection,
+                    wrap_with_ddp=False,
+                    data_parallel_random_init=False,
+                )
+                _load_and_export_adapter(model)
+            finally:
+                self._model_config = current_model_config
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
@@ -1705,18 +1796,25 @@ class AutoBridge(Generic[MegatronModelT]):
             ModelConfigNotSupportedError: If the selected model family explicitly
                 disables the builder path.
         """
-        hf_config = (
-            self.hf_pretrained.config
-            if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES)
-            else self.hf_pretrained
-        )
-        model_config = self._model_bridge.hf_config_to_model_config(hf_config)
+        bridge = self._model_bridge
+        model_config_bridge = getattr(type(bridge), "model_config_bridge", None)
+        if model_config_bridge is MegatronModelBridge.model_config_bridge:
+            hf_config = (
+                self.hf_pretrained.config
+                if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES)
+                else self.hf_pretrained
+            )
+            model_config = bridge.hf_config_to_model_config(hf_config)
+        else:
+            # Some migrated multimodal and heterogeneous families need the
+            # complete pretrained wrapper while constructing their config.
+            model_config = bridge.model_config_bridge(self._provider_bridge_input)
 
         hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
         if hf_name_or_path is None and isinstance(self.hf_pretrained, PretrainedConfig):
             hf_name_or_path = getattr(self.hf_pretrained, "name_or_path", None)
         self._set_source_metadata(model_config, hf_model_id=hf_name_or_path, hf_model_revision=self.hf_model_revision)
-
+        self._model_config = model_config
         return model_config
 
     @staticmethod
@@ -1757,7 +1855,7 @@ class AutoBridge(Generic[MegatronModelT]):
         load_weights: bool = True,
         hf_path: str | Path | None = None,
         pg_collection: ProcessGroupCollection | None = None,
-        **kwargs: Any,
+        **kwargs: Unpack[BuildDistributedModelKwargs],
     ) -> list[MegatronModelT]:
         """Build a Megatron model through its configured ``ModelBuilder``.
 
@@ -1797,8 +1895,9 @@ class AutoBridge(Generic[MegatronModelT]):
                 "Pass load_weights=False or provide hf_path to load weights."
             )
 
-        original_perform_initialization = transformer_config.perform_initialization
-        original_pre_wrap_hooks = list(model_config.pre_wrap_hooks)
+        original_perform_initialization: list[tuple[TransformerConfig, bool]] = []
+        original_pre_wrap_hooks = model_config.pre_wrap_hooks
+        original_pre_wrap_hook_values = list(original_pre_wrap_hooks)
         original_extra_metadata = model_config.extra_checkpoint_metadata
         original_extra_metadata_snapshot = (
             dict(original_extra_metadata) if original_extra_metadata is not None else None
@@ -1806,7 +1905,24 @@ class AutoBridge(Generic[MegatronModelT]):
         succeeded = False
         try:
             if load_weights:
-                transformer_config.perform_initialization = False
+                # HF loading must bypass random initialization for every embedded
+                # MCore config, then run the weight importer before user hooks and
+                # before distributed wrapping. Restore all temporary state below.
+                config_fields = dataclasses.fields(model_config) if dataclasses.is_dataclass(model_config) else ()
+                transformer_configs = [
+                    value
+                    for config_field in config_fields
+                    if isinstance(value := getattr(model_config, config_field.name), TransformerConfig)
+                ]
+                if all(config is not transformer_config for config in transformer_configs):
+                    transformer_configs.append(transformer_config)
+                original_perform_initialization = [
+                    (config, config.perform_initialization) for config in transformer_configs
+                ]
+                transformer_config = _override_embedded_transformer_configs(
+                    model_config,
+                    perform_initialization=False,
+                )
                 if hf_path is None:
                     pretrained = self.hf_pretrained
                 else:
@@ -1815,26 +1931,35 @@ class AutoBridge(Generic[MegatronModelT]):
                         trust_remote_code=self.trust_remote_code,
                     )
                     self._set_source_metadata(model_config, hf_model_id=hf_path, hf_model_revision=None)
-                model_config.pre_wrap_hooks[:] = [
+
+                original_pre_wrap_hooks[:] = [
                     partial(self._model_bridge.load_weights_hf_to_megatron, pretrained),
-                    *original_pre_wrap_hooks,
+                    *original_pre_wrap_hook_values,
                 ]
 
             model_config.finalize()
-            builder = model_config.get_builder_cls()(model_config)
+            builder_cls = model_config.get_builder_cls()
+            builder = builder_cls(model_config)
+
             if pg_collection is None:
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
+
+            # The provider entry point defaulted this option to False, while the
+            # upstream GPT builder currently defaults it to True.
             kwargs.setdefault("data_parallel_random_init", False)
+
             models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
             succeeded = True
         finally:
-            transformer_config.perform_initialization = original_perform_initialization
-            model_config.pre_wrap_hooks[:] = original_pre_wrap_hooks
+            for config, perform_initialization in original_perform_initialization:
+                config.perform_initialization = perform_initialization
             if not succeeded:
                 model_config.extra_checkpoint_metadata = (
                     dict(original_extra_metadata_snapshot) if original_extra_metadata_snapshot is not None else None
                 )
-
+            original_pre_wrap_hooks[:] = original_pre_wrap_hook_values
+            model_config.pre_wrap_hooks = original_pre_wrap_hooks
+        self._model_config = model_config
         return models
 
     @staticmethod
@@ -1876,15 +2001,105 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         load_weights: bool = True,
         hf_path: str | Path | None = None,
+        *,
+        pg_collection: ProcessGroupCollection | None = None,
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
-        provider = self.to_megatron_provider(load_weights, hf_path)
+        """Backward-compatible alias that prepares config before model construction.
 
-        # Finalize the provider before creating models
-        if hasattr(provider, "finalize"):
-            provider.finalize()
+        New code can call :meth:`get_model` directly for defaults. Legacy
+        precision, initialization, or hook overrides must instead be applied to an
+        explicit config before finalization.
+        """
+        warnings.warn(
+            "AutoBridge.to_megatron_model() is deprecated and will be removed in a future release. "
+            "Use get_model() for defaults. For custom precision, initialization, or hooks, "
+            "use get_model_config(), apply the overrides, finalize it, and pass it to get_model().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        try:
+            model_config = self.get_model_config()
+        except ModelConfigNotSupportedError:
+            # Temporary compatibility path for provider-only integrations. New
+            # and migrated bridges always take the builder-backed path above.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"AutoBridge\.to_megatron_provider\(\).*",
+                    category=DeprecationWarning,
+                )
+                provider = self.to_megatron_provider(load_weights=load_weights, hf_path=hf_path)
+            if hasattr(provider, "finalize"):
+                provider.finalize()
+            if pg_collection is not None:
+                kwargs["pg_collection"] = pg_collection
+            return provider.provide_distributed_model(**kwargs)
+        builder_kwargs = dict(kwargs)
+        transformer_overrides: dict[str, Any] = {}
+        fp16_override = builder_kwargs.pop("fp16", None)
+        bf16_override = builder_kwargs.pop("bf16", None)
+        if fp16_override is not None:
+            transformer_overrides["fp16"] = fp16_override
+        if bf16_override is not None:
+            transformer_overrides["bf16"] = bf16_override
+        if fp16_override is True and bf16_override is None:
+            transformer_overrides["bf16"] = False
+        elif bf16_override is True and fp16_override is None:
+            transformer_overrides["fp16"] = False
 
-        return provider.provide_distributed_model(**kwargs)
+        selected_dtype = None
+        if fp16_override is True and bf16_override is not True:
+            selected_dtype = torch.float16
+        elif bf16_override is True and fp16_override is not True:
+            selected_dtype = torch.bfloat16
+        if selected_dtype is not None:
+            transformer_overrides.update(
+                params_dtype=selected_dtype,
+                pipeline_dtype=selected_dtype,
+                autocast_dtype=selected_dtype,
+            )
+        for field_name in ("use_cpu_initialization", "init_model_with_meta_device"):
+            value = builder_kwargs.pop(field_name, None)
+            if value is not None:
+                transformer_overrides[field_name] = value
+        if transformer_overrides:
+            _override_embedded_transformer_configs(model_config, **transformer_overrides)
+
+        pre_wrap_hook = builder_kwargs.pop("pre_wrap_hook", None)
+        custom_weight_loader = load_weights and pre_wrap_hook is not None
+        if pre_wrap_hook is not None:
+            model_config.pre_wrap_hooks = list(pre_wrap_hook) if isinstance(pre_wrap_hook, list) else [pre_wrap_hook]
+        post_wrap_hook = builder_kwargs.pop("post_wrap_hook", None)
+        if post_wrap_hook is not None:
+            model_config.post_wrap_hooks = [post_wrap_hook]
+
+        if custom_weight_loader:
+            if hf_path is None and not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
+                raise ValueError(
+                    "AutoBridge.from_hf_config() does not include weights. "
+                    "Pass load_weights=False or provide hf_path to load weights."
+                )
+            _override_embedded_transformer_configs(model_config, perform_initialization=False)
+            if hf_path is not None:
+                self._set_source_metadata(model_config, hf_model_id=hf_path, hf_model_revision=None)
+        return self.get_model(
+            model_config,
+            load_weights=load_weights and not custom_weight_loader,
+            hf_path=hf_path if not custom_weight_loader else None,
+            pg_collection=pg_collection,
+            **builder_kwargs,
+        )
+
+    def to_megatron_model_config(self) -> ModelConfig:
+        """Legacy config-only alias for :meth:`get_model_config`."""
+        warnings.warn(
+            "AutoBridge.to_megatron_model_config() is deprecated and will be removed in a future release. "
+            "Use get_model_config() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_model_config()
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
         """
@@ -1925,6 +2140,13 @@ class AutoBridge(Generic[MegatronModelT]):
             GPTModelProvider: The provider class for creating models
             load_weights: Method to load weights into existing models
         """
+        warnings.warn(
+            "AutoBridge.to_megatron_provider() and provider-based model construction are deprecated and will be "
+            "removed in a future release. Use get_model() for defaults, or configure and finalize an "
+            "explicit model config before passing it to get_model().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         provider_input = self._provider_bridge_input
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(provider_input)
 
@@ -1962,6 +2184,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if hf_path is None and self.hf_model_revision:
             setattr(provider, "hf_model_revision", self.hf_model_revision)
 
+        self._model_config = provider
         return provider
 
     @staticmethod
@@ -2012,7 +2235,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Example:
             >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
-            >>> megatron_model = bridge.to_megatron_model(load_weights=False, wrap_with_ddp=False)
+            >>> megatron_model = bridge.get_model(wrap_with_ddp=False)
             >>> tasks = bridge.get_conversion_tasks(megatron_model)
             >>>
             >>> for task in tasks:
@@ -2054,23 +2277,19 @@ class AutoBridge(Generic[MegatronModelT]):
 
     @property
     def transformer_config(self) -> TransformerConfig:
-        _model_provider = self.to_megatron_provider(load_weights=False)
-
-        # Finalize the provider before extracting config
-        if hasattr(_model_provider, "finalize"):
-            _model_provider.finalize()
-
-        return self._create_config_from_provider(_model_provider, TransformerConfig)
+        """Return the legacy provider converted to a TransformerConfig."""
+        model_provider = self.to_megatron_provider(load_weights=False)
+        if hasattr(model_provider, "finalize"):
+            model_provider.finalize()
+        return self._create_config_from_provider(model_provider, TransformerConfig)
 
     @property
     def mla_transformer_config(self) -> MLATransformerConfig:
-        _model_provider = self.to_megatron_provider(load_weights=False)
-
-        # Finalize the provider before extracting config
-        if hasattr(_model_provider, "finalize"):
-            _model_provider.finalize()
-
-        return self._create_config_from_provider(_model_provider, MLATransformerConfig)
+        """Return the legacy provider converted to an MLATransformerConfig."""
+        model_provider = self.to_megatron_provider(load_weights=False)
+        if hasattr(model_provider, "finalize"):
+            model_provider.finalize()
+        return self._create_config_from_provider(model_provider, MLATransformerConfig)
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
@@ -2231,7 +2450,7 @@ class AutoBridge(Generic[MegatronModelT]):
                         + "\n".join(f"  • {model}" for model in supported_models)
                         + f"\n\nTo add support for {architecture}, you need to:\n"
                         f"1. Create a new bridge class that inherits from MegatronModelBridge\n"
-                        f"2. Implement the required methods (provider_bridge, mapping_registry)\n"
+                        f"2. Implement the required methods (model_config_bridge, mapping_registry)\n"
                         f"3. Register it with @MegatronModelBridge.register_bridge decorator\n\n"
                         f"Example implementation:\n"
                         f"  from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge\n"
@@ -2239,8 +2458,8 @@ class AutoBridge(Generic[MegatronModelT]):
                         f"  from megatron.core.models.gpt import GPTModel\n\n"
                         f"  @MegatronModelBridge.register_bridge(source={architecture}, target=GPTModel)\n"
                         f"  class Megatron{architecture.replace('ForCausalLM', '')}Bridge(MegatronModelBridge):\n"
-                        f"      def provider_bridge(self, hf_pretrained):\n"
-                        f"          # Return a ModelProvider instance\n"
+                        f"      def model_config_bridge(self, hf_pretrained):\n"
+                        f"          # Return a serializable ModelConfig with a standalone ModelBuilder\n"
                         f"          ...\n\n"
                         f"      def mapping_registry(self):\n"
                         f"          # Return a MegatronMappingRegistry with weight mappings\n"

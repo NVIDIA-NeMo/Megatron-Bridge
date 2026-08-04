@@ -39,7 +39,7 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     # Model config
     cfg.model = AutoBridge.from_hf_pretrained(
         _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
@@ -235,7 +235,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"
@@ -357,7 +357,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Model config
     cfg.model = AutoBridge.from_hf_pretrained(
         _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
@@ -549,7 +549,7 @@ def qwen3_235b_a22b_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"
@@ -696,7 +696,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Model config
     cfg.model = AutoBridge.from_hf_pretrained(
         _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
@@ -859,7 +859,7 @@ def qwen3_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-235B-A22B"

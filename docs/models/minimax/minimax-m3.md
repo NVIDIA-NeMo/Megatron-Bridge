@@ -23,7 +23,7 @@
 - **Full attention only.** The lightning-indexer block-sparse attention branch (`self_attn.index_*` weights) is not executed by Megatron; the model runs full causal attention on every layer. Block selection keeps `index_topk_blocks * index_block_size` (2048) key tokens per query, so full attention is mathematically identical up to that sequence length and an approximation beyond it.
 - **Frozen Lightning Indexer state.** The 228 lightning-indexer tensors are imported, checkpointed, and exported, but are not executed or updated by Megatron. A post-training HF export therefore combines the trained full-attention backbone with the unchanged imported indexer weights.
 - **Combined vision attention.** As in the native Transformers implementation, patches from multiple image/video grids share one bidirectional vision-attention sequence; segmented attention between media items is not yet implemented.
-- **Bundled recipes remain text-only.** The H100 pretraining and SQuAD SFT recipes convert the VLM config to the checkpoint-compatible text provider and do not instantiate the vision, projector, or Lightning Indexer state. VLM training requires a multimodal dataset and the VLM training step.
+- **Bundled recipes remain text-only.** The H100 pretraining and SQuAD SFT recipes convert the VLM config to the checkpoint-compatible text config and do not instantiate the vision, projector, or Lightning Indexer state. VLM training requires a multimodal dataset and the VLM training step.
 - **MTP modules are not mapped.** The released checkpoint advertises `num_nextn_predict_layers` in its config but ships no `mtp.*` weights.
 - **Auxiliary-loss scoring differs for training.** The recipes use MCore's token-global load-balancing loss over normalized sigmoid scores. Hugging Face leaves its optional router loss disabled by default and uses softmax scores when enabled.
 - The MXFP8 variant (`MiniMaxAI/MiniMax-M3-MXFP8`) is not supported; use the bf16 checkpoint.
@@ -34,7 +34,9 @@
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3", trust_remote_code=True)
-provider = bridge.to_megatron_provider()
+model_config = bridge.get_model_config()
+model_config.finalize()
+model = bridge.get_model(model_config, wrap_with_ddp=False)
 ```
 
 The bridge imports and exports the language, vision, projector, and Lightning

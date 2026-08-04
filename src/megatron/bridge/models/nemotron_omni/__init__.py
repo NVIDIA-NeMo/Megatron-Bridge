@@ -20,11 +20,6 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
     NemotronOmniBridge,
     NemotronOmniLlavaBridge,
 )
-from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
-    NemotronOmniLlavaModelProvider,
-    NemotronOmniModelProvider,
-    NemotronVLModelProvider,
-)
 
 
 __all__ = [
@@ -40,6 +35,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    if name in {"NemotronOmniLlavaModelProvider", "NemotronOmniModelProvider", "NemotronVLModelProvider"}:
+        from megatron.bridge.models.nemotron_omni import nemotron_omni_provider
+
+        return getattr(nemotron_omni_provider, name)
     if name == "BridgeSoundEncoder":
         from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
 

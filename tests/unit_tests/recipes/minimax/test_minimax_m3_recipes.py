@@ -18,14 +18,14 @@ import megatron.bridge.recipes.minimax.h100.minimax_m3 as _minimax_m3_module
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
-class _FakeTextProvider:
+class _FakeTextConfig:
     def finalize(self):
         return None
 
 
-class _FakeVLMProvider:
-    def to_text_provider(self):
-        return _FakeTextProvider()
+class _FakeVLMConfig:
+    def to_text_config(self):
+        return _FakeTextConfig()
 
 
 class _FakeAutoBridge:
@@ -34,9 +34,8 @@ class _FakeAutoBridge:
         assert trust_remote_code is True
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, *, load_weights: bool):
-        assert load_weights is False
-        return _FakeVLMProvider()
+    def get_model_config(self):
+        return _FakeVLMConfig()
 
 
 @pytest.mark.parametrize(
@@ -46,9 +45,9 @@ class _FakeAutoBridge:
         _minimax_m3_module.minimax_m3_sft_128gpu_h100_bf16_config,
     ],
 )
-def test_text_recipe_uses_text_only_provider(monkeypatch, recipe):
+def test_text_recipe_uses_text_only_model_config(monkeypatch, recipe):
     patch_recipe_module_global(monkeypatch, _minimax_m3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe()
 
-    assert isinstance(cfg.model, _FakeTextProvider)
+    assert isinstance(cfg.model, _FakeTextConfig)

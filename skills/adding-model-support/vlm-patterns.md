@@ -4,48 +4,33 @@ Reference implementations:
 - **Megatron vision encoder:** Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
 - **HF vision encoder:** Gemma3-VL (`src/megatron/bridge/models/gemma_vl/`)
 
-## Provider Pattern
+## Model Config and Builder Pattern
 
-Subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of standard LLM fields.
+Use a pure outer config for vision, language, projector, and token-ID build data. The builder owns
+construction and process groups; the nested language config is an exact MCore config.
 
 ```python
-@dataclass
-class MyVLModelProvider(GPTModelProvider):
-    # Vision config (passed as a HF config object)
-    vision_config: Optional[Any] = None
-
-    # VLM-specific token IDs
-    image_token_id: Optional[int] = None
-    video_token_id: Optional[int] = None
-
-    # Freeze options
+@dataclass(kw_only=True)
+class MyVLModelConfig(BridgeGPTModelConfig):
+    builder: ClassVar[str] = "megatron.bridge.models.my_vl.model_config.MyVLModelBuilder"
+    transformer: TransformerConfig
+    vision_config: dict[str, Any]
+    image_token_id: int | None = None
+    video_token_id: int | None = None
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
 
-    # Whether to use HF vision model (vs Megatron)
-    use_hf_vision_model: bool = False
-
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MyVLModel:
-        # Build language layer spec
-        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(...)
-        # Build vision config if needed
-        # Instantiate combined model
-        model = MyVLModel(config=self, ...)
-        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
-            model.freeze(self.freeze_language_model, self.freeze_vision_model, self.freeze_vision_projection)
+class MyVLModelBuilder(ModelBuilder[MyVLModel, MyVLModelConfig]):
+    def build_model(self, pg_collection, pre_process=None, post_process=None, vp_stage=None):
+        model = MyVLModel(config=self._model_config, pg_collection=pg_collection, ...)
+        config = self._model_config
+        if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
+            model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_vision_projection)
         return model
-
-    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None):
-        """Returns language-only model (for text-only inference)."""
-        return GPTModel(config=self, ...)
-
-    def validate_parallelism(self):
-        if self.num_query_groups < self.tensor_model_parallel_size:
-            raise ValueError(f"TP ({self.tensor_model_parallel_size}) must be <= num_query_groups ({self.num_query_groups})")
 ```
 
-### Key provider fields by source
+### Key config fields by source
 
 Read these from the correct config level:
 
@@ -65,29 +50,26 @@ Read these from the correct config level:
 @MegatronModelBridge.register_bridge(
     source="MyModelForConditionalGeneration",   # HF class name (string if not importable)
     target=MyVLModel,                            # Megatron model class
-    provider=MyVLModelProvider,                  # Provider class
     model_type="my_model",                       # HF model_type for export
-)
-class MyVLBridge(MegatronModelBridge):
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MyVLModelProvider:
+  )
+  class MyVLBridge(MegatronModelBridge):
+      MODEL_CONFIG_CLASS = MyVLModelConfig
+
+      def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MyVLModelConfig:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
-
-        # Map text config to provider kwargs using base class helper
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider = MyVLModelProvider(**provider_kwargs)
-
-        # CRITICAL: tie_word_embeddings from top-level config
-        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
-
-        # Vision config
-        provider.vision_config = hf_config.vision_config
-
-        # VLM-specific fields from top-level config
-        provider.image_token_id = getattr(hf_config, "image_token_id", None)
-        provider.video_token_id = getattr(hf_config, "video_token_id", None)
-
-        return provider
+        flat = self.hf_config_to_model_config_kwargs(text_config)
+        model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(
+            flat, BridgeGPTModelConfig, TransformerConfig
+        )
+        transformer = TransformerConfig(**transformer_kwargs)
+        return MyVLModelConfig(
+            transformer=transformer,
+            vision_config=hf_config.vision_config.to_dict(),
+            image_token_id=getattr(hf_config, "image_token_id", None),
+            video_token_id=getattr(hf_config, "video_token_id", None),
+            **model_kwargs,
+        )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         return MegatronMappingRegistry(
@@ -159,7 +141,7 @@ class MyVLModel(MegatronModule):
             self.vision_tower = AutoModel.from_config(config.vision_config)
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
             self.multi_modal_projector = MyProjector(config)
-        self.language_model = config.provide_language_model(pre_process, post_process)
+        self.language_model = build_language_model(config, pre_process, post_process)
 
     def forward(self, input_ids, pixel_values, ...):
         text_embeds = self.language_model.embedding(input_ids)

@@ -40,9 +40,7 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     supported runtime for this recipe.
     """
     cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_PRO_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_PRO_HF_PATH, trust_remote_code=True).get_model_config()
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4

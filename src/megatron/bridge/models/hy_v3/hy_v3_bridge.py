@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+from typing import Any
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -25,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -57,8 +59,10 @@ class HYV3Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("tencent/Hy3-preview-Base")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace Hy V3 config to GPTModelProvider."""
@@ -100,6 +104,40 @@ class HYV3Bridge(MegatronModelBridge):
         )
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map HY V3 architecture settings into the builder-backed config."""
+        config = super().hf_config_to_model_config_kwargs(hf_config)
+        config.update(
+            transformer_impl="transformer_engine" if HAVE_TE else "local",
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            qk_layernorm=True,
+            attention_softmax_in_fp32=False,
+            autocast_dtype=torch.bfloat16,
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="none",
+            moe_router_pre_softmax=False,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_bias_update_rate=0,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            moe_shared_expert_overlap=False,
+            moe_aux_loss_coeff=0.0,
+            moe_router_topk_scaling_factor=float(hf_config.router_scaling_factor),
+            moe_shared_expert_intermediate_size=(hf_config.moe_intermediate_size * hf_config.num_shared_experts),
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+        )
+        return config
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:

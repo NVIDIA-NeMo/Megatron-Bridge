@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+from typing import TYPE_CHECKING, Any
 
 import torch
 from transformers import Gemma3ForConditionalGeneration
@@ -30,15 +31,19 @@ from megatron.bridge.models.conversion.transformers_compat import (
     rope_scaling_factor_from_hf,
     rope_theta_from_hf,
 )
-from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
+from megatron.bridge.models.gemma.gemma3_bridge import Gemma3ModelBridge
+from megatron.bridge.models.gemma_vl.model_config import Gemma3VLModelConfig
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source=Gemma3ForConditionalGeneration,
     target=Gemma3VLModel,
-    provider=Gemma3VLModelProvider,
     model_type="gemma3_vl",
 )
 class Gemma3VLBridge(MegatronModelBridge):
@@ -52,10 +57,14 @@ class Gemma3VLBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("google/gemma-3-4b-it")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma3VLModelProvider:
+    MODEL_CONFIG_CLASS = Gemma3VLModelConfig
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Gemma3VLModelProvider":
+        from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
@@ -99,6 +108,32 @@ class Gemma3VLBridge(MegatronModelBridge):
         provider.vision_projector_config.hidden_size = text_config.hidden_size
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert Gemma3 VL HF configs to pure builder-backed kwargs."""
+        text_config = hf_config.text_config
+        vision_config = hf_config.vision_config
+        config_kwargs = Gemma3ModelBridge().hf_config_to_model_config_kwargs(text_config)
+        vision_dict = vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vars(vision_config))
+        vision_dict["vision_use_head"] = False
+        config_kwargs.update(
+            scatter_embedding_sequence_parallel=False,
+            bf16=True,
+            fp16=False,
+            params_dtype=torch.bfloat16,
+            autocast_dtype=torch.bfloat16,
+            make_vocab_size_divisible_by=128,
+            vision_config=vision_dict,
+            vision_projector_input_size=vision_config.hidden_size,
+            vision_projector_hidden_size=text_config.hidden_size,
+            mm_tokens_per_image=hf_config.mm_tokens_per_image,
+            bos_token_id=getattr(hf_config, "bos_token_id", 0),
+            eos_token_id=getattr(hf_config, "eos_token_id", 1),
+            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 255999),
+            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 256000),
+            image_token_id=getattr(hf_config, "image_token_id", 262144),
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

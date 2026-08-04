@@ -4,91 +4,112 @@ Reference implementations:
 - Simple dense: Qwen2 (`src/megatron/bridge/models/qwen/qwen2_bridge.py`)
 - MoE: GLM-4.5 (`src/megatron/bridge/models/glm/glm45_bridge.py`)
 - MoE with custom layer spec: OLMoE (`src/megatron/bridge/models/olmoe/olmoe_bridge.py`)
-- Advanced (YARN, MoE, provider re-wrap): GPT-OSS (`src/megatron/bridge/models/gpt_oss/`)
+- Advanced (YaRN, MoE, custom builder): GPT-OSS (`src/megatron/bridge/models/gpt_oss/`)
 
-## Provider Pattern
+## Model Config and Builder Pattern
 
-Most bridges do **not** need a custom provider subclass. The base `provider_bridge()` uses
-`CONFIG_MAPPING` to auto-create a `GPTModelProvider` from HF config. The bridge then sets
-model-specific attributes directly on the returned provider instance.
-
-```python
-def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-    provider = super().provider_bridge(hf_pretrained)
-
-    provider.normalization = "RMSNorm"
-    provider.gated_linear_unit = True
-    provider.position_embedding_type = "rope"
-    provider.add_bias_linear = False
-    provider.hidden_dropout = 0.0
-    provider.autocast_dtype = torch.bfloat16
-
-    # MoE settings (if applicable)
-    provider.moe_grouped_gemm = True
-    provider.moe_token_dispatcher_type = "alltoall"
-
-    return provider
-```
-
-### When you DO need a provider subclass
-
-Create a `GPTModelProvider` subclass only when:
-
-1. **Extra dataclass fields** — The provider has fields not on `GPTModelProvider` (e.g., YARN
-   RoPE params, custom MoE fields) that need to serialize into `run_config.yaml`.
-2. **Custom `provide()` logic** — The model needs special instantiation (e.g., TE version
-   checks, sink attention, custom layer specs that require runtime logic).
+Most GPT-style bridges use `BridgeGPTModelConfig` and the upstream `GPTModelBuilder`. Map every
+family setting before the exact MCore `TransformerConfig` is constructed:
 
 ```python
-@dataclass
-class MyModelProvider(GPTModelProvider):
-    yarn_rotary_scaling_factor: Optional[float] = None
-    yarn_original_max_position_embeddings: Optional[int] = None
-
-    def provide(self, pre_process=None, post_process=None, vp_stage=None):
-        # Custom logic only if needed
-        return super().provide(pre_process, post_process, vp_stage)
+def hf_config_to_model_config_kwargs(self, hf_config):
+    kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+    kwargs.update(
+        normalization="RMSNorm",
+        gated_linear_unit=True,
+        add_bias_linear=False,
+        hidden_dropout=0.0,
+        moe_grouped_gemm=True,
+        moe_token_dispatcher_type="alltoall",
+    )
+    return kwargs
 ```
 
-If the bridge uses a custom provider, re-wrap the base provider in `provider_bridge()`:
+### Custom layer specs and builders
+
+Do not create an outer config subclass only to select a layer spec. Inject a named, importable layer-spec
+factory while mapping the HF config so `BridgeGPTModelConfig` can serialize it:
 
 ```python
-def provider_bridge(self, hf_pretrained) -> MyModelProvider:
-    provider = super().provider_bridge(hf_pretrained)
-    provider = MyModelProvider(**{f.name: getattr(provider, f.name) for f in fields(provider)})
-    provider.yarn_rotary_scaling_factor = ...
-    return provider
+def my_model_layer_spec(config, vp_stage=None):
+    return get_gpt_decoder_block_spec(
+        config,
+        use_transformer_engine=True,
+        vp_stage=vp_stage,
+    )
+
+
+def hf_config_to_model_config_kwargs(self, hf_config):
+    kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+    kwargs["transformer_layer_spec"] = my_model_layer_spec
+    return kwargs
 ```
 
-### No Size-Specific Provider Classes
+When stock GPT construction needs a different builder but no additional config data, select the builder on
+the bridge and keep using `BridgeGPTModelConfig`:
 
-Do not create provider subclasses whose names combine `ModelProvider` with a
-model-size suffix. Examples of forbidden suffixes include `7B`, `200M`, and
-`A3B`. The bridge should derive architecture fields from the Hugging Face config
-via `AutoBridge` / `MegatronModelBridge` config mapping.
+```python
+class MyModelBridge(MegatronModelBridge):
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.my_model.model_config.MyModelBuilder"
+```
 
-For recipe presets, keep the size in the recipe function name and configure a
-base provider inside the function:
+Create an outer model-config subclass only when the family has additional serializable build fields that are
+absent from MCore `TransformerConfig`. A standalone builder is needed when:
+
+1. Construction needs a custom model, embedding, or RoPE implementation.
+2. The default builder cannot represent a hybrid or multimodal architecture.
+
+```python
+@dataclass(kw_only=True)
+class MyModelConfig(BridgeGPTModelConfig):
+    builder: ClassVar[str] = "megatron.bridge.models.my_model.model_config.MyModelBuilder"
+    yarn_rotary_scaling_factor: float | None = None
+    yarn_original_max_position_embeddings: int | None = None
+
+class MyModelBuilder(GPTModelBuilder):
+    def build_model(self, pg_collection, pre_process=None, post_process=None, vp_stage=None):
+        # Pass family build data explicitly, then construct the model.
+        return super().build_model(pg_collection, pre_process, post_process, vp_stage)
+```
+
+The nested config must remain an exact MCore class:
+
+```python
+config = bridge.model_config_bridge(hf_pretrained)
+assert type(config.transformer) is TransformerConfig
+```
+
+Do not subclass `TransformerConfig` for family fields and do not attach phantom fields during HF
+mapping. Existing provider classes are legacy compatibility only and must not be imported by the
+new model-config/builder path.
+
+### No Size-Specific Config Classes
+
+Do not create config subclasses whose names combine a model class with a model-size suffix. The
+bridge derives architecture fields from the Hugging Face config.
+
+For recipe presets, keep the size in the recipe function name and configure the family model config:
 
 ```python
 def my_model_7b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
-    cfg.model = MyModelProvider(
-        num_layers=32,
-        hidden_size=4096,
-        num_attention_heads=32,
-        num_query_groups=8,
-        ffn_hidden_size=14336,
+    cfg.model = MyModelConfig(
+        transformer=TransformerConfig(
+            num_layers=32,
+            hidden_size=4096,
+            num_attention_heads=32,
+            num_query_groups=8,
+            ffn_hidden_size=14336,
+        ),
         vocab_size=128256,
     )
     return cfg
 ```
 
-When the recipe targets an existing HF checkpoint, prefer deriving the provider
-from HF config:
+When the recipe targets an existing HF checkpoint, derive the model config from HF config:
 
 ```python
-cfg.model = AutoBridge.from_hf_pretrained("org/my-model-7b").to_megatron_provider(load_weights=False)
+cfg.model = AutoBridge.from_hf_pretrained("org/my-model-7b").get_model_config()
 ```
 
 ## Bridge Pattern
@@ -98,7 +119,6 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping, GatedMLPMapping
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 @MegatronModelBridge.register_bridge(
@@ -107,18 +127,15 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
     model_type="my_model",         # HF model_type
 )
 class MyModelBridge(MegatronModelBridge):
-
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-        provider = super().provider_bridge(hf_pretrained)
-
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
-        provider.add_bias_linear = False
-        provider.hidden_dropout = 0.0
-        provider.autocast_dtype = torch.bfloat16
-
-        return provider
+    def hf_config_to_model_config_kwargs(self, hf_config):
+        kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+        )
+        return kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         return MegatronMappingRegistry(
@@ -225,7 +242,6 @@ def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_stat
 |-----------|----------|-------------|
 | `source` | Yes | HF model class or string class name |
 | `target` | Yes | Megatron model class (usually `GPTModel`) |
-| `provider` | No | Provider class (defaults to `GPTModelProvider`) |
 | `model_type` | No | HF `model_type` string for export config |
 
 If `source` is a string (model not importable), the bridge is matched by class name.

@@ -66,7 +66,7 @@ def test_model_config_round_trip_restores_runtime_activation() -> None:
 
     assert serialized["transformer"]["activation_func"] == "silu"
     assert isinstance(restored, BridgeGPTModelConfig)
-    assert restored.transformer.activation_func == "silu"
+    assert restored.transformer.activation_func is F.silu
     assert restored.get_builder_cls().__name__ == "GPTModelBuilder"
 
     restored.finalize()

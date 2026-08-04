@@ -27,7 +27,7 @@
 #
 #   Checkpoint: FSDP supports checkpointing in fsdp_dtensor format only as of now. In the future, we do
 #               plan to support torch_dist checkpointing format as well.
-#   To convert checkpoint formats follow https://github.com/NVIDIA/Megatron-LM/blob/main/examples/megatron_fsdp/sbatch_checkpoint_convert.sh 
+#   To convert checkpoint formats follow https://github.com/NVIDIA/Megatron-LM/blob/main/examples/megatron_fsdp/sbatch_checkpoint_convert.sh
 # ==============================================================================
 
 #SBATCH --job-name=nemotron3-pretrain-hsdp
@@ -65,7 +65,7 @@ WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 # Parallelism configs: "use_megatron_fsdp, num_distributed_optimizer_instances, TP,PP,EP,CP,SP" per entry
 # num_distributed_optimizer_instances: 1 implies no outer-DP, all the GPUs are used for the FSDP-dimension.
 # num_distributed_optimizer_instances: 2 implies DP=2 (or outer-DP to be more explicit), this shards the world_size
-# into 2 DP groups and each group does FSDP internally. This is recommended when to avoid FSDP process group's 
+# into 2 DP groups and each group does FSDP internally. This is recommended when to avoid FSDP process group's
 # communication to not go across-racks. For example, if you are using an NVL72, set fsdp process group size to 64.
 # If scaling beyond 64 GPUs, increase num_distributed_optimizer_instances.
 PARALLELISM_CONFIGS=("True,1,1,1,8,1,False" "True,2,1,1,4,1,False")

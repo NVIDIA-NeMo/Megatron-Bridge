@@ -13,27 +13,34 @@
 # limitations under the License.
 
 import types
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import transformers
 from megatron.core.inference.contexts import BaseInferenceContext
+from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
+from megatron.core.transformer import ModuleSpec, TransformerConfig
 from megatron.core.transformer.module import MegatronModule
 from packaging.version import Version as PkgVersion
 from torch import Tensor
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VisionTransformerPretrainedModel,
     Qwen2_5_VLModel,
+    Qwen2_5_VLVisionConfig,
 )
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.utils.packed_seq_utils import (
     repack_mcore_thd_position_ids,
     unpack_mcore_thd_tensor_for_position_ids,
 )
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_vl.model_config import Qwen25VLModelConfig
 
 
 def is_transformers_min_version(version):
@@ -47,72 +54,61 @@ def is_transformers_min_version(version):
 
 
 class Qwen25VLModel(MegatronModule):
-    """
-    Qwen2.5 VL Model. (Based on GPT Transformer language model.)
-
-    Args:
-        config (GPTModelProvider):
-            language model provider.
-        transformer_layer_spec (ModuleSpec):
-            Specifies module to use for transformer layers
-        vocab_size (int):
-            Vocabulary size
-        max_sequence_length (int):
-            maximum size of sequence. This is used for positional embedding
-        pre_process (bool, optional):
-            Include embedding layer (used with pipeline parallelism). Defaults to True.
-        post_process (bool, optional):
-            Include an output layer (used with pipeline parallelism). Defaults to True.
-        fp16_lm_cross_entropy (bool, optional):
-            Defaults to False.
-        parallel_output (bool, optional):
-            Do not gather the outputs, keep them split across tensor
-            parallel ranks. Defaults to True.
-        share_embeddings_and_output_weights (bool, optional):
-            When True, input embeddings and output logit weights are shared. Defaults to False.
-        position_embedding_type (Literal[learned_absolute,rope], optional):
-            Position embedding type.. Defaults to 'learned_absolute'.
-        rotary_percent (float, optional):
-            Percent of rotary dimension to use for rotary position embeddings.
-            Ignored unless position_embedding_type is 'rope'. Defaults to 1.0.
-        rotary_base (int, optional):
-            Base period for rotary position embeddings. Ignored unless
-            position_embedding_type is 'rope'.
-            Defaults to 10000.
-        rope_scaling (bool, optional): Toggle RoPE scaling.
-        rope_scaling_factor (float): RoPE scaling factor. Default 8.
-        scatter_embedding_sequence_parallel (bool, optional):
-            Whether embeddings should be scattered across sequence parallel
-            region or not. Defaults to True.
-        seq_len_interpolation_factor (Optional[float], optional):
-            scale of linearly interpolating RoPE for longer sequences.
-            The value must be a float larger than 1.0. Defaults to None.
-        pg_collection (ProcessGroupCollection): Model communication process groups
-    """
+    """Qwen2.5-VL model that owns construction of its vision and language modules."""
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        language_transformer_config: TransformerConfig,
+        language_transformer_layer_spec: ModuleSpec,
+        vision_transformer_config: Qwen2_5_VLVisionConfig,
+        *,
+        model_config: "Qwen25VLModelConfig | TransformerConfig",
+        language_vocab_size: int,
+        parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
+        pg_collection: ProcessGroupCollection,
+        mtp_block_spec: ModuleSpec | None = None,
         vp_stage: Optional[int] = None,
     ) -> None:
-        super().__init__(config=config)
+        super().__init__(config=language_transformer_config)
 
+        self.model_config = model_config
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
+        self.pg_collection = pg_collection
+        self.image_token_id = model_config.image_token_id
+        self.video_token_id = model_config.video_token_id
 
         if pre_process:
-            self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
+            self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(vision_transformer_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+        self.language_model = GPTModel(
+            config=language_transformer_config,
+            transformer_layer_spec=language_transformer_layer_spec,
+            vocab_size=language_vocab_size,
+            max_sequence_length=model_config.seq_length,
+            fp16_lm_cross_entropy=model_config.fp16_lm_cross_entropy,
+            parallel_output=parallel_output,
+            share_embeddings_and_output_weights=model_config.share_embeddings_and_output_weights,
+            position_embedding_type=model_config.position_embedding_type,
+            rotary_percent=model_config.rotary_percent,
+            rotary_base=model_config.rotary_base,
+            rope_scaling=model_config.rope_scaling,
+            rope_scaling_factor=model_config.rope_scaling_factor,
+            seq_len_interpolation_factor=model_config.seq_len_interpolation_factor,
+            scatter_embedding_sequence_parallel=model_config.scatter_embedding_sequence_parallel,
+            pre_process=pre_process,
+            post_process=post_process,
+            pg_collection=pg_collection,
+            vp_stage=vp_stage,
+            mtp_block_spec=mtp_block_spec,
         )
 
         # Finalize grad will need these to be bind with module
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.share_embeddings_and_output_weights = model_config.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
         # Bind methods from HF's Qwen2_5_VLModel to this instance
@@ -210,8 +206,7 @@ class Qwen25VLModel(MegatronModule):
             )  # [b, decoder_seq_len, h_language] -> [decoder_seq_len, b, h_language]
 
             if self.config.sequence_parallel:
-                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=self.pg_collection.tp)
 
         # Compute MRoPE position_ids on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator
@@ -227,8 +222,8 @@ class Qwen25VLModel(MegatronModule):
 
         # Build mm_token_type_ids: 0=text, 1=image, 2=video
         mm_token_type_ids = torch.zeros_like(rope_input_ids, dtype=torch.int)
-        mm_token_type_ids[rope_input_ids == self.config.image_token_id] = 1
-        mm_token_type_ids[rope_input_ids == self.config.video_token_id] = 2
+        mm_token_type_ids[rope_input_ids == self.image_token_id] = 1
+        mm_token_type_ids[rope_input_ids == self.video_token_id] = 2
 
         # In transformers 5.3.0+, get_rope_index requires mm_token_type_ids as the second argument
         if is_transformers_min_version("5.3.0"):

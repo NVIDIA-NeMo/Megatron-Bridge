@@ -71,8 +71,7 @@ def test_recipe_constructs_model_owned_flickr8k_provider(monkeypatch: pytest.Mon
             assert path == "stepfun-ai/Step-3.7-Flash"
             return FakeAutoBridge()
 
-        def to_megatron_provider(self, load_weights=False):
-            assert load_weights is False
+        def get_model_config(self):
             return SimpleNamespace()
 
     monkeypatch.setattr(recipe_module, "AutoBridge", FakeAutoBridge)

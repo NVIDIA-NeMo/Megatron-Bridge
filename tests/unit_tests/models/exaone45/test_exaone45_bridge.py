@@ -29,6 +29,7 @@ from megatron.bridge.models.exaone.exaone45.exaone45_provider import (
     Exaone45ModelProvider,
     exaone_45_mtp_block_spec,
 )
+from megatron.bridge.models.exaone.exaone45.model_config import Exaone45ModelConfig
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.transformer_config import get_vision_model_config
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -37,7 +38,7 @@ pytestmark = pytest.mark.unit
 
 
 def _make_text_config(*, tie_word_embeddings: bool, mtp_num_layers: int | None = 0) -> SimpleNamespace:
-    return SimpleNamespace(
+    config = SimpleNamespace(
         num_hidden_layers=4,
         hidden_size=256,
         intermediate_size=768,
@@ -64,6 +65,8 @@ def _make_text_config(*, tie_word_embeddings: bool, mtp_num_layers: int | None =
         mtp_loss_scaling_factor=0.2,
         mtp_share_layers=False,
     )
+    config.to_dict = lambda: {name: value for name, value in vars(config).items() if name != "to_dict"}
+    return config
 
 
 def _make_pretrained(
@@ -174,6 +177,23 @@ class TestExaone45Bridge:
         assert provider.no_rope_freq == [0, 1, 0, 1]
         assert provider.window_attn_skip_freq == [1, 0, 1, 0]
         assert provider.window_size == (1023, 0)
+
+    def test_model_config_bridge_maps_vlm_builder_contract(self):
+        model_config = Exaone45Bridge().model_config_bridge(
+            _make_pretrained(
+                top_level_tie_word_embeddings=False,
+                text_config_tie_word_embeddings=True,
+                mtp_num_layers=1,
+            )
+        )
+
+        assert isinstance(model_config, Exaone45ModelConfig)
+        assert model_config.builder.endswith(".Exaone45ModelBuilder")
+        assert model_config.transformer.num_layers == 4
+        assert model_config.transformer.mtp_num_layers == 1
+        assert model_config.transformer.no_rope_freq == [0, 1, 0, 1]
+        assert model_config.share_embeddings_and_output_weights is False
+        assert model_config.vision_config["hidden_size"] == Exaone4_5_VisionConfig().hidden_size
 
     def test_provider_bridge_supports_default_rope_without_scaling_factor(self):
         pretrained = _make_pretrained(

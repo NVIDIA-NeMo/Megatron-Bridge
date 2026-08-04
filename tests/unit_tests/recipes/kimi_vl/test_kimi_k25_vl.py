@@ -38,7 +38,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 
 
 class _FakeKimiK25VLProvider:
-    """Fake provider returned by AutoBridge.to_megatron_provider.
+    """Fake provider returned by AutoBridge.get_model_config.
 
     Mirrors the attribute surface the recipe touches so that mutation,
     reads (vocab_size, apply_rope_fusion), and finalize() all succeed.
@@ -61,7 +61,7 @@ class _FakeAutoBridge:
     def from_hf_pretrained(cls, *args, **kwargs):
         return cls()
 
-    def to_megatron_provider(self, *args, **kwargs):
+    def get_model_config(self, *args, **kwargs):
         return _FakeKimiK25VLProvider()
 
 
@@ -306,7 +306,7 @@ class TestKimiK25VLSftConfig:
                 self.apply_rope_fusion = True
 
         class _FakeBridgeRopeOn(_FakeAutoBridge):
-            def to_megatron_provider(self, *args, **kwargs):
+            def get_model_config(self, *args, **kwargs):
                 return _FakeProviderRopeOn()
 
         mod = importlib.import_module("megatron.bridge.recipes.kimi_vl.kimi_k25_vl")

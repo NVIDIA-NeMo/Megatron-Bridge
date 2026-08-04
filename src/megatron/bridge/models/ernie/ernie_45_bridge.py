@@ -20,8 +20,12 @@ Megatron-Core GPTModel with single-pool MoE (64 experts, top-6 routing,
 shared experts, expert bias for aux-free load balancing).
 """
 
+from typing import Any
+
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -31,34 +35,24 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-
-
-def _ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
-    """Create a decoder block spec that respects ``moe_layer_freq``.
-
-    The default ``GPTModelProvider.transformer_layer_spec`` calls
-    ``get_gpt_layer_with_transformer_engine_spec`` which returns a single
-    MoE layer spec applied uniformly to ALL layers, ignoring
-    ``moe_layer_freq``.
-
-    ERNIE 4.5 has mixed dense/MoE layers (layer 0 is dense, layers 1-N
-    are MoE).  This function uses ``get_gpt_decoder_block_spec`` which
-    calls ``get_gpt_decoder_layer_specs`` — the code path that parses
-    ``config.moe_layer_freq`` and creates per-layer specs (dense for
-    pattern=0, MoE for pattern=1).
-    """
-    from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-
-    return get_gpt_decoder_block_spec(
-        config=config,
-        use_transformer_engine=True,
-        vp_stage=vp_stage,
-    )
 
 
 # HF class name string; avoids requiring the HF modeling module at import time.
 _ERNIE45_MOE_HF_CLASS_NAME = "Ernie4_5_MoeForCausalLM"
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+def ernie45_decoder_block_spec(config: Any, vp_stage: int | None = None) -> ModuleSpec:
+    """Build ERNIE's mixed dense/MoE block with the available backend."""
+    return get_gpt_decoder_block_spec(config=config, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
 
 
 class _PPSafeMixin:
@@ -157,8 +151,10 @@ class Ernie45Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("baidu/ERNIE-4.5-0.3B-PT")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     @staticmethod
     def _get_num_experts(hf_config) -> int:
@@ -196,7 +192,7 @@ class Ernie45Bridge(MegatronModelBridge):
         # Mixed dense/MoE layers (layer 0 dense, rest MoE): use decoder
         # block spec that parses moe_layer_freq per-layer instead of the
         # default spec which applies MoE uniformly to all layers.
-        provider.transformer_layer_spec = _ernie45_decoder_block_spec
+        provider.transformer_layer_spec = ernie45_decoder_block_spec
 
         # --- MoE settings (ERNIE uses non-standard HF config field names) ---
         num_experts = self._get_num_experts(hf_config)
@@ -253,6 +249,60 @@ class Ernie45Bridge(MegatronModelBridge):
                 provider.moe_layer_freq = [0] + [1] * (num_layers - 1)
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert an ERNIE 4.5 HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        num_experts = self._get_num_experts(hf_config)
+        moe_intermediate = getattr(hf_config, "moe_intermediate_size", None)
+        if isinstance(moe_intermediate, (list, tuple)):
+            moe_ffn_hidden_size = moe_intermediate[0]
+        elif moe_intermediate is not None:
+            moe_ffn_hidden_size = moe_intermediate
+        else:
+            moe_ffn_hidden_size = getattr(hf_config, "intermediate_size", 5120)
+
+        mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
+        if mlp_layer_types is not None:
+            moe_layer_freq = [0 if layer_type == "dense" else 1 for layer_type in mlp_layer_types]
+        else:
+            num_layers = hf_config.num_hidden_layers
+            moe_start = getattr(hf_config, "moe_layer_start_index", None)
+            if moe_start is not None:
+                start = moe_start[0] if isinstance(moe_start, (list, tuple)) else moe_start
+                moe_layer_freq = [0] * start + [1] * (num_layers - start)
+            else:
+                moe_layer_freq = [0] + [1] * (num_layers - 1)
+
+        config_kwargs.update(
+            transformer_layer_spec=ernie45_decoder_block_spec,
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            rotary_base=500000.0,
+            rotary_interleaved=True,
+            moe_router_load_balancing_type="aux_loss",
+            num_moe_experts=num_experts,
+            moe_router_topk=getattr(hf_config, "moe_k", 6),
+            moe_ffn_hidden_size=moe_ffn_hidden_size,
+            moe_shared_expert_intermediate_size=(
+                moe_ffn_hidden_size * getattr(hf_config, "moe_num_shared_experts", 2)
+            ),
+            moe_aux_loss_coeff=getattr(hf_config, "router_aux_loss_coef", 0.001),
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            mtp_num_layers=None,
+            moe_layer_freq=moe_layer_freq,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry with parameter mappings for ERNIE 4.5 MoE."""

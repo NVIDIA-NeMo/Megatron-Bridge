@@ -16,7 +16,7 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.mla_provider import MLAModelProvider
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
@@ -31,23 +31,27 @@ _MOONLIGHT_16B_MODEL_REVISION = "476b36a473d4467f94469414bef6cee75c9c8172"  # pr
 _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE = 163842
 
 
-def _moonlight_16b_model_provider() -> MLAModelProvider:
+def _moonlight_16b_model_config() -> BridgeGPTModelConfig:
     """Build the Moonlight architecture from its Hugging Face configuration."""
-    return AutoBridge.from_hf_pretrained(
+    model = AutoBridge.from_hf_pretrained(
         _MOONLIGHT_16B_MODEL_ID, revision=_MOONLIGHT_16B_MODEL_REVISION
-    ).to_megatron_provider(load_weights=False)
+    ).get_model_config()
+    # Moonlight has no Q LoRA compression (HF q_lora_rank=null), while the
+    # MCore MLA config otherwise defaults this field to 512.
+    model.q_lora_rank = None
+    return model
 
 
-def _moonlight_16b_finetuning_model_provider(
+def _moonlight_16b_finetuning_model_config(
     *,
     tensor_parallel_size: int,
     pipeline_parallel_size: int,
     context_parallel_size: int,
     expert_parallel_size: int,
     sequence_parallel: bool,
-) -> MLAModelProvider:
-    """Build a checkpoint-compatible Moonlight provider for SFT or PEFT."""
-    model = _moonlight_16b_model_provider()
+) -> BridgeGPTModelConfig:
+    """Build a checkpoint-compatible Moonlight config for SFT or PEFT."""
+    model = _moonlight_16b_model_config()
 
     # Preserve all 163842 finetuning-token rows, then explicitly pad to the TP
     # multiple because setup treats a preset model vocab as already padded.
@@ -160,7 +164,7 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config via AutoBridge (dispatches to DeepSeekV3Bridge)
-    cfg.model = _moonlight_16b_model_provider()
+    cfg.model = _moonlight_16b_model_config()
 
     # Tokenizer - uses NullTokenizer with model vocab_size
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -400,7 +404,7 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _sft_common()
 
-    cfg.model = _moonlight_16b_finetuning_model_provider(
+    cfg.model = _moonlight_16b_finetuning_model_config(
         tensor_parallel_size=4,
         pipeline_parallel_size=2,
         context_parallel_size=1,
@@ -686,7 +690,7 @@ def moonlight_16b_peft_2gpu_h100_bf16_config(
     """
     cfg = _peft_common()
 
-    cfg.model = _moonlight_16b_finetuning_model_provider(
+    cfg.model = _moonlight_16b_finetuning_model_config(
         tensor_parallel_size=1,
         pipeline_parallel_size=1,
         context_parallel_size=1,

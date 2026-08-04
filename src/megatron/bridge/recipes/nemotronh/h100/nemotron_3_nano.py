@@ -13,13 +13,13 @@
 # limitations under the License.
 
 
-from typing import cast
-
 import torch
 from megatron.core.activations import squared_relu
+from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.metadata import set_hf_model_id_on_model_config
+from megatron.bridge.models.nemotronh.model_config import NemotronHModelConfig
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -37,13 +37,11 @@ _NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 _OPENMATHINSTRUCT2_REVISION = "469216e3f46f4dacf476b382e192485ea51a143e"  # pragma: allowlist secret
 
 
-def _nemotron_3_nano_finetune_model() -> HybridModelProvider:
-    """Build the Nemotron 3 Nano finetuning provider."""
-    model = cast(
-        HybridModelProvider,
-        AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).to_megatron_provider(load_weights=False),
-    )
+def _nemotron_3_nano_finetune_model() -> NemotronHModelConfig:
+    """Build the Nemotron 3 Nano finetuning model config."""
+    model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).get_model_config()
 
+    model.mtp_num_layers = 0
     model.seq_length = 2048
     model.apply_rope_fusion = False
     model.attention_backend = "fused"
@@ -74,55 +72,58 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model Configuration (MoE)
-    cfg.model = HybridModelProvider(
-        # Architecture (Nemotron 3 Nano 30B-A3B)
+    cfg.model = NemotronHModelConfig(
+        transformer=TransformerConfig(
+            # Architecture (Nemotron 3 Nano 30B-A3B)
+            num_layers=52,
+            hidden_size=2688,
+            mamba_num_heads=64,
+            kv_channels=128,
+            mamba_state_dim=128,
+            ffn_hidden_size=1856,
+            num_attention_heads=32,
+            mamba_head_dim=64,
+            num_query_groups=2,
+            # MoE
+            num_moe_experts=128,
+            moe_ffn_hidden_size=1856,
+            moe_shared_expert_intermediate_size=3712,
+            moe_router_topk=6,
+            moe_router_topk_scaling_factor=2.5,
+            moe_router_num_groups=1,
+            moe_router_group_topk=1,
+            # NemotronH base
+            mamba_num_groups=8,
+            activation_func=squared_relu,
+            masked_softmax_fusion=True,
+            apply_query_key_layer_scaling=False,
+            persist_layer_norm=True,
+            attention_softmax_in_fp32=False,
+            first_last_layers_bf16=True,
+            is_hybrid_model=True,
+            moe_aux_loss_coeff=0.0001,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_dtype="fp32",
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_shared_expert_overlap=True,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            pipeline_dtype=torch.bfloat16,
+            virtual_pipeline_model_parallel_size=None,
+            context_parallel_size=1,
+            sequence_parallel=False,
+            expert_tensor_parallel_size=1,
+            expert_model_parallel_size=8,
+        ),
         hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
-        num_layers=52,
-        hidden_size=2688,
-        mamba_num_heads=64,
-        kv_channels=128,
-        mamba_state_dim=128,
-        ffn_hidden_size=1856,
-        num_attention_heads=32,
-        mamba_head_dim=64,
         seq_length=8192,
-        num_query_groups=2,
-        # MoE
-        num_moe_experts=128,
-        moe_ffn_hidden_size=1856,
-        moe_shared_expert_intermediate_size=3712,
-        moe_router_topk=6,
-        moe_router_topk_scaling_factor=2.5,
-        moe_router_num_groups=1,
-        moe_router_group_topk=1,
-        # NemotronH base
-        mamba_num_groups=8,
         make_vocab_size_divisible_by=128,
-        activation_func=squared_relu,
-        masked_softmax_fusion=True,
-        apply_query_key_layer_scaling=False,
-        persist_layer_norm=True,
-        attention_softmax_in_fp32=False,
-        first_last_layers_bf16=True,
-        is_hybrid_model=True,
-        moe_aux_loss_coeff=0.0001,
-        moe_router_score_function="sigmoid",
-        moe_router_enable_expert_bias=True,
-        moe_router_load_balancing_type="seq_aux_loss",
-        moe_router_dtype="fp32",
-        moe_grouped_gemm=True,
-        moe_token_dispatcher_type="alltoall",
-        moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=False,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8,
     )
+    cfg.model.mtp_num_layers = 0
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_NANO_MODEL_ID
 
@@ -268,7 +269,7 @@ def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    set_hf_model_id_on_model_config(cfg.model, _NEMOTRON_3_5_NANO_MODEL_ID)
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg
 
@@ -413,7 +414,7 @@ def nemotron_3_5_nano_sft_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    set_hf_model_id_on_model_config(cfg.model, _NEMOTRON_3_5_NANO_MODEL_ID)
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg
 
@@ -647,7 +648,7 @@ def nemotron_3_5_nano_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCon
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    set_hf_model_id_on_model_config(cfg.model, _NEMOTRON_3_5_NANO_MODEL_ID)
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg
 

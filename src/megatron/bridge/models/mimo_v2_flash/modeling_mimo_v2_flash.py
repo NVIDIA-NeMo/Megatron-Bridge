@@ -31,7 +31,11 @@ from typing import List, Optional, Tuple
 import torch
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_decoder_block_spec,
+    get_gpt_layer_with_transformer_engine_spec,
+    get_gpt_mtp_block_spec,
+)
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import ModuleSpec, TransformerConfig
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
@@ -112,18 +116,23 @@ class MiMoV2FlashSelfAttention(SelfAttention):
         submodules: SelfAttentionSubmodules,
         layer_number: int,
         *args,
+        hybrid_attention_pattern: list[int],
+        full_attn_num_query_groups: int,
+        swa_num_query_groups: int,
+        v_head_dim: int,
         **kwargs,
     ):
         config = copy.deepcopy(config)
-        if _is_local_attn_layer(layer_number, config.hybrid_attention_pattern):
-            config.num_query_groups = config.swa_num_query_groups
+        if _is_local_attn_layer(layer_number, hybrid_attention_pattern):
+            config.num_query_groups = swa_num_query_groups
         else:
-            config.num_query_groups = config.full_attn_num_query_groups
+            config.num_query_groups = full_attn_num_query_groups
         super().__init__(config, submodules, layer_number, *args, **kwargs)
 
         # --- Asymmetric V head dim fixup ---
-        v_head_dim = config.v_head_dim
         qk_channels = config.kv_channels
+        self.v_head_dim = v_head_dim
+        self.hybrid_attention_pattern = hybrid_attention_pattern
 
         self.val_hidden_size = v_head_dim
 
@@ -164,7 +173,7 @@ class MiMoV2FlashSelfAttention(SelfAttention):
         mixed_qkv, _ = self.linear_qkv(hidden_states)
 
         qk_ch = self.hidden_size_per_attention_head
-        v_ch = self.config.v_head_dim
+        v_ch = self.v_head_dim
 
         # [sq, b, hp] -> [sq, b, ng, (heads_per_group*qk_ch + qk_ch + v_ch)]
         new_tensor_shape = mixed_qkv.size()[:-1] + (
@@ -209,7 +218,7 @@ class MiMoV2FlashSelfAttention(SelfAttention):
         assert isinstance(rotary_pos_emb, torch.Tensor) and rotary_pos_emb.ndim >= 1 and rotary_pos_emb.size(0) == 2
         assert rotary_pos_cos is None and rotary_pos_sin is None
 
-        if _is_local_attn_layer(self.layer_number, self.config.hybrid_attention_pattern):
+        if _is_local_attn_layer(self.layer_number, self.hybrid_attention_pattern):
             final_rotary_pos_emb = rotary_pos_emb[0]
         else:
             final_rotary_pos_emb = rotary_pos_emb[1]
@@ -243,20 +252,33 @@ class MiMoV2FlashTEDotProductAttention(TEDotProductAttention):
         layer_number: int,
         attn_mask_type: AttnMaskType,
         attention_type: str,
+        hybrid_attention_pattern: list[int] | None = None,
+        sliding_window_size: int | None = None,
+        v_head_dim: int | None = None,
+        attention_value_scale: float | None = None,
         attention_dropout: Optional[float] = None,
         **kwargs,
     ):
+        if hybrid_attention_pattern is None:
+            hybrid_attention_pattern = config.hybrid_attention_pattern
+        if sliding_window_size is None:
+            sliding_window_size = config.window_size
+        if v_head_dim is None:
+            v_head_dim = config.v_head_dim
+        if attention_value_scale is None:
+            attention_value_scale = getattr(config, "attention_value_scale", None)
+
         config = copy.deepcopy(config)
-        if _is_local_attn_layer(layer_number, config.hybrid_attention_pattern):
-            config.window_size = (config.window_size - 1, 0)
+        if _is_local_attn_layer(layer_number, hybrid_attention_pattern):
+            config.window_size = (sliding_window_size - 1, 0)
             config.softmax_type = "learnable"
         else:
             config.window_size = None
             config.softmax_type = "vanilla"
-        self._attention_value_scale = getattr(config, "attention_value_scale", None)
+        self._attention_value_scale = attention_value_scale
         # Pass k_channels/v_channels to TE so it knows about asymmetric V head dim
         kwargs["k_channels"] = config.kv_channels
-        kwargs["v_channels"] = config.v_head_dim
+        kwargs["v_channels"] = v_head_dim
 
         super().__init__(
             config=config,
@@ -276,19 +298,9 @@ class MiMoV2FlashTEDotProductAttention(TEDotProductAttention):
 class MiMoV2FlashMTPSelfAttention(MiMoV2FlashSelfAttention):
     """Overrides attention module for MTP"""
 
-    def __init__(self, config, submodules, layer_number, *args, **kwargs):
-        config = copy.deepcopy(config)
-        config.hybrid_attention_pattern = [1] * config.mtp_num_layers
-        super().__init__(config, submodules, layer_number, *args, **kwargs)
-
 
 class MiMoV2FlashMTPTEDotProductAttention(MiMoV2FlashTEDotProductAttention):
     """Overrides core attention for MTP"""
-
-    def __init__(self, config, layer_number, *args, **kwargs):
-        config = copy.deepcopy(config)
-        config.hybrid_attention_pattern = [1] * config.mtp_num_layers
-        super().__init__(config, layer_number, *args, **kwargs)
 
 
 def mimo_v2_flash_layer_spec(config) -> ModuleSpec:
@@ -297,8 +309,60 @@ def mimo_v2_flash_layer_spec(config) -> ModuleSpec:
     Builds the block spec (handles MoE/dense split) then injects custom
     self-attention and core-attention modules into every layer spec.
     """
-    spec = get_gpt_decoder_block_spec(config, use_transformer_engine=True)
+    model_config = config
+    spec = get_gpt_decoder_block_spec(model_config.transformer, use_transformer_engine=True)
     for layer_spec in spec.layer_specs:
-        layer_spec.submodules.self_attention.module = MiMoV2FlashSelfAttention
-        layer_spec.submodules.self_attention.submodules.core_attention = MiMoV2FlashTEDotProductAttention
+        attention_spec = layer_spec.submodules.self_attention
+        attention_spec.module = MiMoV2FlashSelfAttention
+        attention_spec.params.update(
+            hybrid_attention_pattern=model_config.hybrid_attention_pattern,
+            full_attn_num_query_groups=model_config.full_attn_num_query_groups,
+            swa_num_query_groups=model_config.swa_num_query_groups,
+            v_head_dim=model_config.v_head_dim,
+        )
+        attention_spec.submodules.core_attention = ModuleSpec(
+            module=MiMoV2FlashTEDotProductAttention,
+            params={
+                "hybrid_attention_pattern": model_config.hybrid_attention_pattern,
+                "sliding_window_size": model_config.sliding_window_size,
+                "v_head_dim": model_config.v_head_dim,
+                "attention_value_scale": model_config.attention_value_scale,
+            },
+        )
     return spec
+
+
+def mimo_v2_flash_mtp_block_spec(model_config, vp_stage=None) -> ModuleSpec | None:
+    """Build MiMo's stable all-SWA MTP spec from outer family state."""
+    if not model_config.transformer.mtp_num_layers:
+        return None
+    dense_spec = get_gpt_layer_with_transformer_engine_spec(
+        num_experts=None,
+        moe_grouped_gemm=False,
+        qk_layernorm=False,
+        multi_latent_attention=False,
+    )
+    attention_spec = dense_spec.submodules.self_attention
+    attention_spec.module = MiMoV2FlashMTPSelfAttention
+    mtp_pattern = [1] * model_config.transformer.mtp_num_layers
+    attention_spec.params.update(
+        hybrid_attention_pattern=mtp_pattern,
+        full_attn_num_query_groups=model_config.full_attn_num_query_groups,
+        swa_num_query_groups=model_config.swa_num_query_groups,
+        v_head_dim=model_config.v_head_dim,
+    )
+    attention_spec.submodules.core_attention = ModuleSpec(
+        module=MiMoV2FlashMTPTEDotProductAttention,
+        params={
+            "hybrid_attention_pattern": mtp_pattern,
+            "sliding_window_size": model_config.sliding_window_size,
+            "v_head_dim": model_config.v_head_dim,
+            "attention_value_scale": model_config.attention_value_scale,
+        },
+    )
+    return get_gpt_mtp_block_spec(
+        model_config.transformer,
+        dense_spec,
+        use_transformer_engine=True,
+        vp_stage=vp_stage,
+    )

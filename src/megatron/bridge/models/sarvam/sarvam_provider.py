@@ -21,10 +21,14 @@ import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.sarvam.model_config import get_sarvam_moe_pipeline_layout
 from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 logger = logging.getLogger(__name__)
+
+# Backward-compatible import for tests and callers of the legacy provider helper.
+_get_sarvam_moe_pipeline_layout = get_sarvam_moe_pipeline_layout
 
 try:
     import transformer_engine  # type: ignore  # noqa: F401
@@ -35,35 +39,6 @@ except (ImportError, ModuleNotFoundError):
 
 if TYPE_CHECKING:
     from megatron.core.transformer import ModuleSpec
-
-
-def _get_sarvam_moe_pipeline_layout(pp_size: int):
-    """Return supported pipeline layouts for Sarvam MoE's 19 decoder layers."""
-    map_pp_to_layout = {
-        1: None,
-        2: [["embedding"] + ["decoder"] * 10, ["decoder"] * 9 + ["loss"]],
-        4: [["embedding"] + ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 5, ["decoder"] * 4 + ["loss"]],
-        8: [
-            ["embedding"] + ["decoder"] * 3,
-            ["decoder"] * 3,
-            ["decoder"] * 3,
-            ["decoder"] * 2,
-            ["decoder"] * 2,
-            ["decoder"] * 2,
-            ["decoder"] * 2,
-            ["decoder"] * 2 + ["loss"],
-        ],
-    }
-    if pp_size not in map_pp_to_layout:
-        raise ValueError(
-            f"Unsupported PP size {pp_size} for Sarvam MoE pipeline layout. "
-            f"Supported sizes: {sorted(map_pp_to_layout)}. "
-            "Set pipeline_model_parallel_layout explicitly for other PP sizes."
-        )
-    layout = map_pp_to_layout[pp_size]
-    if layout is not None:
-        layout = [list(stage) for stage in layout]
-    return layout
 
 
 @dataclass

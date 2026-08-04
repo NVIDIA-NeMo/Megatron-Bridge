@@ -56,11 +56,11 @@ Supported Override Syntax:
 import argparse
 import logging
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Tuple
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
-from megatron.bridge.recipes.llama import llama32_1b_pretrain_config, llama32_3b_pretrain_config
+from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.distill import distill
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
@@ -77,6 +77,41 @@ logger: logging.Logger = logging.getLogger(__name__)
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_FILENAME: str = "llama32_3b-1b_distill_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
+
+
+def _build_distillation_model_config(kd_config: ModelOptDistillConfig) -> Any:
+    """Build distillation config through ModelConfig, falling back while ModelOpt requires providers."""
+    student_bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+    teacher_bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B")
+
+    try:
+        model_config = convert_to_distillation_provider(
+            student_bridge.get_model_config(),
+            teacher_bridge.get_model_config(),
+            kd_config,
+        )
+    except AssertionError as error:
+        unsupported_config_messages = {
+            "Student provider must be a subclass of GPTModelProvider or HybridModelProvider.",
+            "Teacher provider must be a subclass of GPTModelProvider or HybridModelProvider.",
+        }
+        if str(error) not in unsupported_config_messages:
+            raise
+    else:
+        # A builder-backed distillation config must own persistent loading for
+        # both student and teacher; get_model_config() intentionally does not.
+        if getattr(model_config, "pre_wrap_hooks", None):
+            return model_config
+
+    logger.warning(
+        "ModelOpt distillation does not yet provide a builder config with persistent student/teacher HF loading; "
+        "temporarily falling back to deprecated model providers."
+    )
+    return convert_to_distillation_provider(
+        student_bridge.to_megatron_provider(load_weights=True),
+        teacher_bridge.to_megatron_provider(load_weights=True),
+        kd_config,
+    )
 
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
@@ -122,17 +157,9 @@ def main() -> None:
     logger.info("Megatron-Bridge Llama3.2 3B-1B Distillation Script with YAML & CLI Overrides")
     logger.info("------------------------------------------------------------------")
 
-    # Load base configurations as recipes and wrap provider for distillation mode.
-    # The recipe functions do not accept a load_weights argument; use AutoBridge
-    # directly to create providers that load HuggingFace weights.
     cfg: ConfigContainer = llama32_1b_pretrain_config()
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=True)
-    teacher_cfg = llama32_3b_pretrain_config()
-    teacher_cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_provider(
-        load_weights=True
-    )
     kd_config = ModelOptDistillConfig()
-    cfg.model = convert_to_distillation_provider(cfg.model, teacher_cfg.model, kd_config)
+    cfg.model = _build_distillation_model_config(kd_config)
     logger.info("Loaded base student and teacher configurations")
 
     # Process configuration with YAML and CLI overrides

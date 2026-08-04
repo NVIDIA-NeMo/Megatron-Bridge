@@ -126,7 +126,7 @@ class _FakeMoonlightModelProvider:
 
 
 class _FakeBridge:
-    """Return the checkpoint-compatible fake provider without model I/O."""
+    """Return the checkpoint-compatible fake model config without model I/O."""
 
     @classmethod
     def from_hf_pretrained(cls, model_id: str, **kwargs) -> "_FakeBridge":
@@ -136,8 +136,7 @@ class _FakeBridge:
         }
         return cls()
 
-    def to_megatron_provider(self, *, load_weights: bool) -> _FakeMoonlightModelProvider:
-        assert load_weights is False
+    def get_model_config(self) -> _FakeMoonlightModelProvider:
         return _FakeMoonlightModelProvider()
 
 

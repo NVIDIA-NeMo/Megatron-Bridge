@@ -26,14 +26,20 @@ Supported models:
 Example usage:
     >>> from megatron.bridge import AutoBridge
     >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2-Audio-7B-Instruct")
-    >>> provider = bridge.to_megatron_provider()
+    >>> model_config = bridge.get_model_config()
 """
 
 from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import Qwen2AudioModel
 from megatron.bridge.models.qwen_audio.qwen2_audio_bridge import Qwen2AudioBridge
-from megatron.bridge.models.qwen_audio.qwen2_audio_provider import (
-    Qwen2AudioModelProvider,
-)
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "Qwen2AudioModelProvider":
+        from megatron.bridge.models.qwen_audio.qwen2_audio_provider import Qwen2AudioModelProvider
+
+        return Qwen2AudioModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

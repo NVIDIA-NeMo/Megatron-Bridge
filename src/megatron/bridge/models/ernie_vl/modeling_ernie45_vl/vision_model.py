@@ -48,8 +48,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlock
-
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import ErnieVisionTransformerConfig
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 class ErnieVisionPatchEmbed(nn.Module):
@@ -146,18 +145,22 @@ class ErnieVLVisionModel(VisionModule):
 
     def __init__(
         self,
-        transformer_config: ErnieVisionTransformerConfig,
+        transformer_config: TransformerConfig,
         transformer_layer_spec: ModuleSpec,
+        *,
+        patch_size: int,
+        in_channels: int,
+        spatial_merge_size: int,
     ) -> None:
         super().__init__(config=transformer_config)
 
-        self.spatial_merge_size = transformer_config.spatial_merge_size
-        self.patch_size = transformer_config.patch_size
+        self.spatial_merge_size = spatial_merge_size
+        self.patch_size = patch_size
 
         # Patch embedding: nn.Linear (replicated across TP ranks)
         self.patch_embed = ErnieVisionPatchEmbed(
-            in_channels=transformer_config.in_channels,
-            patch_size=transformer_config.patch_size,
+            in_channels=in_channels,
+            patch_size=patch_size,
             embed_dim=transformer_config.hidden_size,
         )
 

@@ -382,6 +382,7 @@ class MiniMaxM3VLModel(MegatronModule):
     def __init__(
         self,
         config: Any,
+        language_model: MegatronModule | None = None,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: int | None = None,
@@ -414,11 +415,13 @@ class MiniMaxM3VLModel(MegatronModule):
             for module in (self.vision_tower, self.multi_modal_projector, self.patch_merge_mlp):
                 hook_hf_module_setattr_for_tp_grad_sync(module)
 
-        self.language_model = config.provide_language_model(
-            pre_process=pre_process,
-            post_process=post_process,
-            vp_stage=vp_stage,
-        )
+        if language_model is None:
+            language_model = config.provide_language_model(
+                pre_process=pre_process,
+                post_process=post_process,
+                vp_stage=vp_stage,
+            )
+        self.language_model = language_model
         sparse_layer_indices = set(config.lightning_indexer_layers)
         local_layers = getattr(getattr(self.language_model, "decoder", None), "layers", ())
         self.lightning_indexers = nn.ModuleDict()

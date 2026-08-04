@@ -93,6 +93,32 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     cross_entropy_loss_fusion: bool = False
     transformer_impl: str = "local"
 
+    # Legacy provider-only SSM settings. The builder path stores these on
+    # FalconH1ModelConfig and keeps its nested config as exact MCore.
+    mamba_state_dim: int = 128
+    mamba_head_dim: int = 64
+    mamba_num_groups: int = 1
+    mamba_num_heads: int | None = None
+    use_mamba_mem_eff_path: bool = True
+    A_init_dist: str = "uniform"
+    d_conv: int = 4
+    conv_init: float | None = 1.0
+    expand: int = 2
+    A_init_range: tuple[float, float] = (1, 16)
+    D_has_hdim: bool = False
+    rmsnorm: bool = True
+    norm_before_gate: bool = False
+    dt_min: float = 0.001
+    dt_max: float = 0.1
+    dt_init: str = "random"
+    dt_scale: float = 1.0
+    dt_init_floor: float = 1e-4
+    conv_bias: bool = True
+    chunk_size: int = 128
+    use_mamba: bool = True
+    use_attention: bool = True
+    use_mlp: bool = True
+
     # Falcon H1 MuP forward multipliers
     embedding_multiplier: float = 1.0
     lm_head_multiplier: float = 1.0
@@ -137,6 +163,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
 
         return FalconH1Model(
             config=self,
+            model_config=self,
             falconh1_stack_spec=falconh1_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,

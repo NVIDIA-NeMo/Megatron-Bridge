@@ -12,24 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
+from typing import Any
 
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.kimi.layer_specs import kimi_k2_layer_spec
 from megatron.bridge.models.mla_provider import MLAModelProvider
-
-
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
 
 
 @MegatronModelBridge.register_bridge(
@@ -41,11 +35,14 @@ except (ImportError, ModuleNotFoundError):
 class KimiK2Bridge(MegatronModelBridge):
     """Megatron Bridge for Kimi K2."""
 
+    TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = kimi_k2_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"
@@ -86,6 +83,42 @@ class KimiK2Bridge(MegatronModelBridge):
         provider.moe_aux_loss_coeff = 1e-3
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Kimi K2 config to Megatron model-config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            transformer_layer_spec=kimi_k2_layer_spec,
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            position_embedding_type="rope",
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            multi_latent_attention=True,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_shared_expert_overlap=True,
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            apply_rope_fusion=False,
+            bias_activation_fusion=True,
+            bias_dropout_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=1280,
+            seq_length=4096,
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+            moe_aux_loss_coeff=1e-3,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = get_common_mapping_list()

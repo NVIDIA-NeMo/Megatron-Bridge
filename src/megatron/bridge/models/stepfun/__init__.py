@@ -12,10 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
 from megatron.bridge.models.stepfun.step35_bridge import Step35Bridge
 from megatron.bridge.models.stepfun.step37_bridge import Step37Bridge
-from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily preserve the legacy Step3.7 provider export."""
+    if name == "Step37ModelProvider":
+        from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
+
+        return Step37ModelProvider
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

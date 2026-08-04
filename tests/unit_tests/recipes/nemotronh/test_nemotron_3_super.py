@@ -28,7 +28,7 @@ import tempfile
 
 import pytest
 
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.nemotronh.model_config import NemotronHModelConfig
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_peft_config,
     nemotron_3_super_pretrain_config,
@@ -50,7 +50,7 @@ class TestNemotron3SuperPretrain:
         config = nemotron_3_super_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 4
@@ -130,7 +130,7 @@ class TestNemotron3SuperSft:
         config = nemotron_3_super_sft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check parallelism for full SFT
         assert config.model.tensor_model_parallel_size == 1
@@ -232,7 +232,7 @@ class TestNemotron3SuperPeft:
         config = nemotron_3_super_peft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check default parallelism for LoRA
         assert config.model.tensor_model_parallel_size == 1
@@ -278,11 +278,11 @@ class TestNemotron3SuperCommon:
         ],
     )
     def test_config_container_structure(self, recipe_fn):
-        """Test that all configs return proper ConfigContainer with correct model provider."""
+        """Test that all configs return a builder-backed Nemotron-H model config."""
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, HybridModelProvider)
+        assert isinstance(config.model, NemotronHModelConfig)
 
         # Check required sections exist
         assert config.train is not None

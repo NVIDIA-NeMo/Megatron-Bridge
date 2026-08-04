@@ -42,7 +42,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-20b").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-20b").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -167,7 +167,7 @@ def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-120b").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("openai/gpt-oss-120b").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -303,7 +303,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-20b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -433,7 +433,7 @@ def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-120b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -585,7 +585,7 @@ def gpt_oss_20b_peft_1gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-20b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -724,7 +724,7 @@ def gpt_oss_120b_peft_8gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "openai/gpt-oss-120b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
 
 import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import ExaoneMoeForCausalLM
 
@@ -25,17 +27,102 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import ExaoneMoeModelProvider
+from megatron.bridge.models.exaone.model_config import ExaoneMoeModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @MegatronModelBridge.register_bridge(
     source=ExaoneMoeForCausalLM,
     target=GPTModel,
-    provider=ExaoneMoeModelProvider,
     model_type="exaone_moe",
 )
 class ExaoneMoeBridge(MegatronModelBridge):
     """Megatron Bridge for Hugging Face EXAONE MoE causal language models."""
+
+    MODEL_CONFIG_CLASS = ExaoneMoeModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map EXAONE MoE settings into a builder-backed model config."""
+        config = super().hf_config_to_model_config_kwargs(hf_config)
+        rope_parameters = hf_config.rope_parameters
+        rope_scaling_factor = rope_parameters.get("factor")
+
+        is_moe_layer = getattr(hf_config, "is_moe_layer", None)
+        if is_moe_layer is not None:
+            moe_layer_freq = [int(value) for value in is_moe_layer]
+        else:
+            mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
+            if mlp_layer_types is not None:
+                moe_layer_freq = [int(layer_type == "sparse") for layer_type in mlp_layer_types]
+            else:
+                first_dense_layer_count = hf_config.first_k_dense_replace
+                moe_layer_freq = [0] * first_dense_layer_count + [1] * (
+                    hf_config.num_hidden_layers - first_dense_layer_count
+                )
+
+        window_attn_skip_freq: list[int] = []
+        no_rope_freq: list[int] = []
+        layer_types = getattr(hf_config, "layer_types", None) or []
+        has_sliding_attention = False
+        for layer_index in range(hf_config.num_hidden_layers):
+            layer_type = layer_types[layer_index] if layer_index < len(layer_types) else "sliding_attention"
+            is_sliding = layer_type == "sliding_attention"
+            has_sliding_attention = has_sliding_attention or is_sliding
+            no_rope_freq.append(0 if is_sliding else 1)
+            window_attn_skip_freq.append(1 if is_sliding else 0)
+        sliding_window = getattr(hf_config, "sliding_window", None)
+        window_size = (sliding_window - 1, 0) if has_sliding_attention and sliding_window is not None else None
+        model_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        config.update(
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            position_embedding_type="rope",
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            qk_layernorm=True,
+            moe_ffn_hidden_size=hf_config.moe_intermediate_size,
+            num_moe_experts=hf_config.num_experts,
+            moe_router_topk=hf_config.num_experts_per_tok,
+            moe_router_num_groups=hf_config.n_group,
+            moe_router_group_topk=hf_config.topk_group,
+            moe_router_topk_scaling_factor=hf_config.routed_scaling_factor,
+            moe_router_score_function=getattr(hf_config, "scoring_func", "sigmoid"),
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="global_aux_loss",
+            moe_shared_expert_overlap=True,
+            moe_router_dtype="fp32",
+            moe_aux_loss_coeff=1e-2,
+            moe_z_loss_coeff=1e-3,
+            moe_permute_fusion=True,
+            moe_shared_expert_intermediate_size=hf_config.num_shared_experts * hf_config.moe_intermediate_size,
+            moe_router_enable_expert_bias=True,
+            moe_router_bias_update_rate=1e-3,
+            rotary_base=rope_parameters["rope_theta"],
+            rope_scaling=rope_scaling_factor is not None,
+            rope_scaling_factor=rope_scaling_factor,
+            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
+            fp16=model_dtype == torch.float16,
+            bf16=model_dtype == torch.bfloat16,
+            params_dtype=model_dtype,
+            attention_softmax_in_fp32=True,
+            persist_layer_norm=True,
+            apply_rope_fusion=False,
+            bias_activation_fusion=False,
+            bias_dropout_fusion=False,
+            masked_softmax_fusion=False,
+            gradient_accumulation_fusion=False,
+            window_attn_skip_freq=window_attn_skip_freq,
+            window_size=window_size,
+            no_rope_freq=no_rope_freq,
+            moe_layer_freq=moe_layer_freq,
+            mtp_num_layers=getattr(hf_config, "num_nextn_predict_layers", None),
+            mtp_loss_scaling_factor=getattr(hf_config, "mtp_loss_scaling_factor", 0.1),
+            mtp_use_repeated_layer=getattr(hf_config, "mtp_share_layers", False),
+        )
+        return config
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> ExaoneMoeModelProvider:
         hf_config = hf_pretrained.config

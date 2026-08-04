@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
+
 import torch
 from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer import MegatronModule
+from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
     Qwen2_5OmniThinkerConfig as Qwen2_5OmniThinkerConfigHF,
@@ -29,13 +31,16 @@ from transformers.models.qwen2_5_omni.modeling_qwen2_5_omni import (
 )
 
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.rope import get_rope_index
-from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.transformer_config import Qwen25OmniTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_data_cp_rank,
 )
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_omni.model_config import QwenOmniModelConfig
 
 
 class Qwen25OmniThinkerModel(MegatronModule):
@@ -51,7 +56,7 @@ class Qwen25OmniThinkerModel(MegatronModule):
 
     def __init__(
         self,
-        language_transformer_config: Qwen25OmniTransformerConfig,
+        language_transformer_config: TransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         thinker_transformer_config: Qwen2_5OmniThinkerConfigHF,
         parallel_output: bool = True,
@@ -60,8 +65,10 @@ class Qwen25OmniThinkerModel(MegatronModule):
         add_encoder: bool = True,
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection | None = None,
+        model_config: "QwenOmniModelConfig | None" = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
+        build_config = model_config if model_config is not None else language_transformer_config
 
         language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
@@ -74,13 +81,13 @@ class Qwen25OmniThinkerModel(MegatronModule):
         self.visual = None
         self.audio_model = None
         self.language_model = None
-        self.image_token_id = language_transformer_config.image_token_id
-        self.video_token_id = language_transformer_config.video_token_id
-        self.audio_token_id = language_transformer_config.audio_token_id
-        self.vision_start_token_id = language_transformer_config.vision_start_token_id
-        self.audio_start_token_id = language_transformer_config.audio_start_token_id
-        self.position_id_per_seconds = language_transformer_config.position_id_per_seconds
-        self.seconds_per_chunk = language_transformer_config.seconds_per_chunk
+        self.image_token_id = build_config.image_token_id
+        self.video_token_id = build_config.video_token_id
+        self.audio_token_id = build_config.audio_token_id
+        self.vision_start_token_id = build_config.vision_start_token_id
+        self.audio_start_token_id = build_config.audio_start_token_id
+        self.position_id_per_seconds = build_config.position_id_per_seconds
+        self.seconds_per_chunk = build_config.seconds_per_chunk
 
         self.square_merge_size = thinker_transformer_config.vision_config.spatial_merge_size**2
 
@@ -112,16 +119,16 @@ class Qwen25OmniThinkerModel(MegatronModule):
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
             transformer_layer_spec=language_transformer_layer_spec,
-            vocab_size=language_transformer_config.vocab_size,
-            max_sequence_length=language_transformer_config.language_max_sequence_length,
+            vocab_size=build_config.vocab_size,
+            max_sequence_length=build_config.language_max_sequence_length,
             parallel_output=parallel_output,
             position_embedding_type="mrope",
-            rotary_percent=language_transformer_config.rotary_percent,
+            rotary_percent=build_config.rotary_percent,
             pre_process=self.pre_process,
             post_process=self.post_process,
-            rotary_base=language_transformer_config.rotary_base,
-            fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
-            share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
+            rotary_base=build_config.rotary_base,
+            fp16_lm_cross_entropy=build_config.fp16_lm_cross_entropy,
+            share_embeddings_and_output_weights=build_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
             pg_collection=pg_collection,
         )

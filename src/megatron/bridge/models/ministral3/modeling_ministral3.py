@@ -24,14 +24,15 @@ Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
 import types
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import (
     hook_hf_module_setattr_for_tp_grad_sync,
     slice_batch_for_context_parallel,
@@ -41,10 +42,13 @@ from megatron.bridge.utils.common_utils import (
 if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
 
+    from megatron.bridge.models.ministral3.model_config import Ministral3ModelConfig
+
 
 # Import HuggingFace Mistral3 model classes with fallback
 try:
     from transformers import Mistral3ForConditionalGeneration
+    from transformers.models.mistral3.configuration_mistral3 import Mistral3Config
     from transformers.models.mistral3.modeling_mistral3 import Mistral3Model as HFMistral3Model
 
     HAS_MISTRAL3 = True
@@ -52,6 +56,13 @@ except ImportError:
     Mistral3ForConditionalGeneration = None
     HFMistral3Model = None
     HAS_MISTRAL3 = False
+
+
+def _get_hf_config_value(hf_config: object, name: str, default: Any) -> Any:
+    """Read a field from serialized builder configs or legacy HF config objects."""
+    if isinstance(hf_config, dict):
+        return hf_config.get(name, default)
+    return getattr(hf_config, name, default)
 
 
 class Ministral3Model(MegatronModule):
@@ -103,12 +114,16 @@ class Ministral3Model(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: "Ministral3ModelConfig",
+        language_model: GPTModel | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
     ) -> None:
-        super().__init__(config=config)
+        super().__init__(config=getattr(config, "transformer", config))
+        self.config = config
+        self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -124,7 +139,10 @@ class Ministral3Model(MegatronModule):
             # The vision_tower includes: patch_conv, ln_pre, transformer layers
             from transformers import AutoModel
 
-            self.vision_tower = AutoModel.from_config(config.hf_config.vision_config)
+            hf_config = (
+                Mistral3Config.from_dict(config.hf_config) if isinstance(config.hf_config, dict) else config.hf_config
+            )
+            self.vision_tower = AutoModel.from_config(hf_config.vision_config)
 
             # Preserve inv_freq as FP32 during dtype conversions (e.g., when wrapped by Float16Module)
             # This is necessary because inv_freq requires FP32 precision for numerical stability
@@ -154,16 +172,17 @@ class Ministral3Model(MegatronModule):
             # The projector includes: norm, linear layers
             from transformers.models.mistral3.modeling_mistral3 import Mistral3MultiModalProjector
 
-            self.multi_modal_projector = Mistral3MultiModalProjector(config.hf_config)
+            self.multi_modal_projector = Mistral3MultiModalProjector(hf_config)
 
             # Ensure HF visual tower params are marked for TP grad sync
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
             hook_hf_module_setattr_for_tp_grad_sync(self.multi_modal_projector)
 
-        # Initialize Megatron language model
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        if language_model is None:
+            language_model = config.provide_language_model(
+                pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+            )
+        self.language_model = language_model
 
         # Finalize grad requires these to be bound with module
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
@@ -175,11 +194,9 @@ class Ministral3Model(MegatronModule):
             self.get_image_features = types.MethodType(HFMistral3Model.get_image_features, self)
 
         # Some config requires from HF vision tower
-        self.config.spatial_merge_size = getattr(self.config.hf_config, "spatial_merge_size", 2)
-        self.config.vision_feature_layer = getattr(self.config.hf_config, "vision_feature_layer", -1)
-        # HF's get_image_features accesses self.config.return_dict
-        if not hasattr(self.config, "return_dict"):
-            self.config.return_dict = True
+        self.config.spatial_merge_size = _get_hf_config_value(self.config.hf_config, "spatial_merge_size", 2)
+        self.config.vision_feature_layer = _get_hf_config_value(self.config.hf_config, "vision_feature_layer", -1)
+        self.config.return_dict = True
 
     def set_input_tensor(self, input_tensor) -> None:
         """Set model chunk input tensor."""
@@ -260,7 +277,7 @@ class Ministral3Model(MegatronModule):
             position_ids=position_ids,
             attention_mask=attention_mask,
             packed_seq_params=packed_seq_params,
-            pg_collection=self.config._pg_collection,
+            pg_collection=self.pg_collection,
         )
 
         # Apply SP scatter after CP slice, before entering the language model.
@@ -268,7 +285,7 @@ class Ministral3Model(MegatronModule):
         # bypassed when decoder_input is provided. Matches Megatron Core's LLaVA pattern
         # (llava_model.py:747-750): CP slice first, then SP scatter → [S/(CP*TP), B, H].
         if self.config.sequence_parallel and inputs_embeds is not None:
-            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            tp_group = self.pg_collection.tp if self.pg_collection is not None else None
             inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Forward through Megatron language model

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Mapping
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -28,7 +28,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     QKVMapping,
 )
-from megatron.bridge.models.minimax_m2.minimax_m2_provider import minimax_m2_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.minimax_m2.layer_specs import minimax_m2_layer_spec
 
 
 __all__ = ["MiniMaxM2Bridge", "_FullDimQKNormMapping", "_dequant_fp8_blockwise"]
@@ -128,8 +129,10 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M2")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace MiniMax-M2 config to GPTModelProvider."""
@@ -168,6 +171,33 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         provider.moe_router_enable_expert_bias = True
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert MiniMax-M2 HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        rotary_dim = getattr(hf_config, "rotary_dim", None)
+        head_dim = getattr(hf_config, "head_dim", None)
+        rotary_percent = rotary_dim / head_dim if rotary_dim is not None and head_dim is not None else 1.0
+        config_kwargs.update(
+            transformer_layer_spec=minimax_m2_layer_spec,
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            autocast_dtype=torch.bfloat16,
+            rotary_percent=rotary_percent,
+            qk_layernorm=True,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=getattr(hf_config, "router_aux_loss_coef", 1e-3),
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+        )
+        return config_kwargs
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

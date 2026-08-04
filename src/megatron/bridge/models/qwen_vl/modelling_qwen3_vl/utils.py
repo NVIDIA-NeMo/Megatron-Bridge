@@ -20,12 +20,11 @@ import torch
 from megatron.core import mpu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.utils import get_tensor_model_parallel_group_if_none
 from torch import nn
-
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
 
 # copied from https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py
@@ -36,12 +35,14 @@ class Qwen3VLVisionPatchEmbed(nn.Module):
 
     def __init__(
         self,
-        config: Qwen3VLTransformerConfig,
+        config: TransformerConfig,
+        vision_config: object | None = None,
     ) -> None:
         super().__init__()
-        self.patch_size = config.patch_size
-        self.temporal_patch_size = config.temporal_patch_size
-        self.in_channels = config.in_channels
+        vision_config = vision_config if vision_config is not None else config
+        self.patch_size = vision_config.patch_size
+        self.temporal_patch_size = vision_config.temporal_patch_size
+        self.in_channels = vision_config.in_channels
         self.embed_dim = config.hidden_size
 
         kernel_size = [self.temporal_patch_size, self.patch_size, self.patch_size]
@@ -116,14 +117,16 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
 
     def __init__(
         self,
-        config: Qwen3VLTransformerConfig,
+        config: TransformerConfig,
         submodules: PatchMergerSubmodules,
         use_postshuffle_norm=False,
         tp_group: Optional[torch.distributed.ProcessGroup] = None,
+        vision_config: object | None = None,
     ):
         super().__init__(config=config)
+        vision_config = vision_config if vision_config is not None else config
 
-        self.hidden_size = config.hidden_size * (config.spatial_merge_size**2)
+        self.hidden_size = config.hidden_size * (vision_config.spatial_merge_size**2)
         self.use_postshuffle_norm = use_postshuffle_norm
         self.input_size = config.hidden_size
         if self.use_postshuffle_norm:
@@ -156,7 +159,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
         self.linear_fc2 = build_module(
             submodules.linear_fc2,
             self.hidden_size,
-            self.config.out_hidden_size,
+            vision_config.out_hidden_size,
             config=self.config,
             init_method=self.config.output_layer_init_method,
             bias=self.config.add_bias_linear,

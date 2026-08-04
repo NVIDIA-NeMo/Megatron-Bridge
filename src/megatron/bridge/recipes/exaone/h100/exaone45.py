@@ -36,7 +36,7 @@ def _set_optimizer_precision(cfg: ConfigContainer) -> None:
 
 
 def _apply_exaone45_common(cfg: ConfigContainer) -> None:
-    cfg.model = AutoBridge.from_hf_pretrained(_HF_PATH).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_HF_PATH).get_model_config()
     cfg.model.seq_length = 4096
 
     cfg.model.pipeline_dtype = None

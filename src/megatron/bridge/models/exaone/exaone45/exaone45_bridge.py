@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from transformers import Exaone4_5_ForConditionalGeneration
 
@@ -25,7 +27,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.exaone.exaone45.exaone45_provider import Exaone45ModelProvider
+from megatron.bridge.models.exaone.exaone45.model_config import Exaone45ModelConfig
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.model import Exaone45Model
+from megatron.bridge.models.exaone.exaone45.modelling_exaone45.transformer_config import Exaone45TransformerConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -35,7 +39,6 @@ AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
 @MegatronModelBridge.register_bridge(
     source=Exaone4_5_ForConditionalGeneration,
     target=Exaone45Model,
-    provider=Exaone45ModelProvider,
     model_type="exaone4_5",
 )
 class Exaone45Bridge(MegatronModelBridge):
@@ -55,8 +58,75 @@ class Exaone45Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("LGAI-EXAONE/EXAONE-4.5-33B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = Exaone45ModelConfig
+    TRANSFORMER_CONFIG_CLASS = Exaone45TransformerConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map nested EXAONE 4.5 text and vision settings into pure config data."""
+        text_config = hf_config.text_config
+        config = super().hf_config_to_model_config_kwargs(text_config)
+        window_attn_skip_freq: list[int] = []
+        no_rope_freq: list[int] = []
+        layer_types = getattr(text_config, "layer_types", None) or []
+        has_sliding_attention = False
+        for layer_index in range(text_config.num_hidden_layers):
+            layer_type = layer_types[layer_index] if layer_index < len(layer_types) else "sliding_attention"
+            is_sliding = layer_type == "sliding_attention"
+            has_sliding_attention = has_sliding_attention or is_sliding
+            no_rope_freq.append(0 if is_sliding else 1)
+            window_attn_skip_freq.append(1 if is_sliding else 0)
+
+        sliding_window = getattr(text_config, "sliding_window", None)
+        window_size = (sliding_window - 1, 0) if has_sliding_attention and sliding_window is not None else None
+        rope_parameters = text_config.rope_parameters
+        rope_scaling_factor = rope_parameters.get("factor")
+        model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
+        vision_config = hf_config.vision_config.to_dict()
+        vision_config["torch_dtype"] = str(model_dtype).removeprefix("torch.")
+        config.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=getattr(text_config, "attention_bias", False),
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            qk_layernorm=True,
+            attention_softmax_in_fp32=True,
+            apply_rope_fusion=False,
+            bias_activation_fusion=False,
+            bias_dropout_fusion=False,
+            masked_softmax_fusion=True,
+            gradient_accumulation_fusion=False,
+            no_rope_freq=no_rope_freq,
+            window_attn_skip_freq=window_attn_skip_freq,
+            window_size=window_size,
+            rotary_base=rope_parameters["rope_theta"],
+            rope_scaling=rope_scaling_factor is not None,
+            rope_scaling_factor=rope_scaling_factor,
+            position_embedding_type="rope",
+            share_embeddings_and_output_weights=bool(getattr(hf_config, "tie_word_embeddings", False)),
+            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(text_config.vocab_size),
+            fp16=model_dtype == torch.float16,
+            bf16=model_dtype == torch.bfloat16,
+            params_dtype=model_dtype,
+            vision_config=vision_config,
+            hf_text_config=text_config.to_dict(),
+            bos_token_id=getattr(hf_config, "bos_token_id", 1),
+            eos_token_id=getattr(hf_config, "eos_token_id", 53),
+            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 73),
+            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 74),
+            vision_token_id=getattr(hf_config, "vision_token_id", 67),
+            image_token_id=getattr(hf_config, "image_token_id", 67),
+            video_token_id=getattr(hf_config, "video_token_id", 68),
+            moe_layer_freq=[0] * text_config.num_hidden_layers,
+            mtp_num_layers=getattr(text_config, "num_nextn_predict_layers", None),
+            mtp_loss_scaling_factor=getattr(text_config, "mtp_loss_scaling_factor", 0.1),
+            mtp_use_repeated_layer=getattr(text_config, "mtp_share_layers", False),
+        )
+        return config
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Exaone45ModelProvider:
         """

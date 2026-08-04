@@ -47,7 +47,7 @@ class _FakeAutoBridge:
     def from_hf_pretrained(cls, *args, **kwargs):
         return cls()
 
-    def to_megatron_provider(self, *args, **kwargs):
+    def get_model_config(self, *args, **kwargs):
         return _FakeKimiK2Provider()
 
 

@@ -17,6 +17,7 @@
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.metadata import set_hf_model_id_on_model_config
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
     nemotron_3_5_nano_pretrain_config,
@@ -30,6 +31,8 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+# Placeholder until the public Nemotron 3.5 Nano repository is released.
+_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 
 
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
@@ -45,7 +48,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).get_model_config()
     # Pretraining may use a tokenizer other than the HF checkpoint tokenizer.
     # Defer the model vocabulary size to the runtime tokenizer, matching the
     # pre-migration MambaModelProvider recipe behavior.
@@ -157,6 +160,19 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_5_nano_pretrain_4k_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Nano BF16 4K pretraining config."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    set_hf_model_id_on_model_config(cfg.model, _NEMOTRON_3_5_NANO_MODEL_ID)
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    return cfg
+
+
 def nemotron_3_5_nano_pretrain_8k_config() -> ConfigContainer:
     """Return the Nemotron 3.5 Nano BF16 8K pretraining config."""
     cfg = nemotron_3_5_nano_pretrain_config()
@@ -245,6 +261,7 @@ nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16
 
 
 __all__ = [
+    "nemotron_3_5_nano_pretrain_4k_config",
     "nemotron_3_5_nano_pretrain_8k_config",
     "nemotron_3_5_nano_pretrain_8k_fsdp_config",
     "nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config",

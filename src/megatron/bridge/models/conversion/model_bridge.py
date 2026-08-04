@@ -36,13 +36,14 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
 )
 
 import torch
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.core.utils import get_pg_size
 from megatron.training.models.base import ModelConfig
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
@@ -72,13 +73,13 @@ from megatron.bridge.models.conversion.utils import (
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
 from megatron.bridge.utils import fusions
 from megatron.bridge.utils.activation_map import ACTIVATION_FUNC_MAP
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
 logger = logging.getLogger(__name__)
+
 
 MappingT = TypeVar("MappingT", bound=MegatronParamMapping)
 HFPreTrained = TypeVar("HFPreTrained")
@@ -383,14 +384,17 @@ class MegatronModelBridge(
             class MegatronCausalLlamaBridge(MegatronModelBridge):
                 pass
 
-    2. Implement provider_bridge to create Megatron configurations:
+    2. Implement a serializable model config and standalone builder:
 
         .. code-block:: python
 
-            def provider_bridge(self, hf_pretrained) -> GPTModelProvider:
-                return GPTModelProvider(
-                    num_layers=hf_pretrained.config.num_hidden_layers,
-                    hidden_size=hf_pretrained.config.hidden_size,
+            def model_config_bridge(self, hf_pretrained) -> LlamaModelConfig:
+                return LlamaModelConfig(
+                    transformer=TransformerConfig(
+                        num_layers=hf_pretrained.config.num_hidden_layers,
+                        hidden_size=hf_pretrained.config.hidden_size,
+                        ...
+                    ),
                     ...
                 )
 
@@ -413,7 +417,7 @@ class MegatronModelBridge(
             # The bridge is typically not instantiated directly
             # Instead, use AutoBridge or AutoBridge which handle this
             bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
-            provider = bridge.to_megatron_provider()
+            models = bridge.get_model(load_weights=False, wrap_with_ddp=False)
 
     Note:
         This class uses generic type parameters to ensure type safety:
@@ -431,11 +435,14 @@ class MegatronModelBridge(
     # provider, such as one implementing MLA.
     PROVIDER_CLASS = None
 
-    # Builder-backed construction is rolling out incrementally by model family. Override these
-    # when the standard GPT or Transformer config cannot represent the model, and set
-    # MODEL_CONFIG_CLASS to None for families that have not yet migrated.
+    # The two classes select different layers of the new build contract: the
+    # outer serializable ModelConfig/ModelBuilder pair and the exact nested MCore
+    # config type. The latter cannot be inferred from inherited dataclass
+    # annotations for MLA and heterogeneous model families. Set
+    # MODEL_CONFIG_CLASS to None for families that have not migrated.
     MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
-    TRANSFORMER_CONFIG_CLASS: ClassVar[type[BridgeTransformerConfig]] = BridgeTransformerConfig
+    MODEL_BUILDER_CLASS: ClassVar[str | None] = None
+    TRANSFORMER_CONFIG_CLASS: ClassVar[type[TransformerConfig]] = TransformerConfig
 
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
@@ -497,7 +504,7 @@ class MegatronModelBridge(
     ]
 
     # YARN rope scaling field mapping for GPT models: (hf_rope_scaling_key, megatron_yarn_param)
-    # These are only applied when rope_scaling.type == "yarn" and provider is GPTModelProvider
+    # These are applied to the outer GPT model config when rope_scaling.type == "yarn".
     # Uses yarn_ prefix (e.g., yarn_mscale, yarn_rotary_scaling_factor)
     YARN_ROPE_SCALING_MAPPING = [
         ("factor", "yarn_rotary_scaling_factor"),
@@ -651,28 +658,117 @@ class MegatronModelBridge(
         return self._hf_config_to_megatron_kwargs(hf_config)
 
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Return flat kwargs for a builder-backed model config.
+        """Convert a Hugging Face config to flat Megatron model-config kwargs.
 
-        Model-family bridges should call ``super()`` and add their architecture
-        defaults here. This path intentionally does not call the provider-era
-        override hook.
+        This method intentionally handles only the common GPT configuration
+        mapping. Model-family bridges should override this method, call
+        ``super()``, and update the returned kwargs with their architecture
+        settings. The base :meth:`model_config_bridge` then constructs the
+        nested transformer config once, so all settings are present when its
+        ``__post_init__`` validation runs.
+
+        Args:
+            hf_config: Hugging Face model configuration object.
+
+        Returns:
+            Flat keyword arguments for the model config and its nested
+            transformer config. :meth:`model_config_bridge` validates and
+            partitions these fields before constructing either dataclass.
+
+        Raises:
+            NotImplementedError: If the config uses a provider-specific YaRN
+                representation that the default GPTModelConfig cannot express.
         """
-        config_kwargs = self._hf_config_to_megatron_kwargs(hf_config)
-        config_kwargs.update(
+        model_config_kwargs: dict[str, Any] = {}
+
+        for hf_name, megatron_name in self.CONFIG_MAPPING:
+            has_value = False
+            value = None
+            if "." in hf_name:
+                parent_name, child_name = hf_name.split(".", 1)
+                parent = getattr(hf_config, parent_name, None)
+                if isinstance(parent, dict) and child_name in parent:
+                    value = parent[child_name]
+                    has_value = True
+            else:
+                value = getattr(hf_config, hf_name, None)
+                has_value = hasattr(hf_config, hf_name)
+
+            if (
+                has_value
+                and megatron_name not in model_config_kwargs
+                and self._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
+            ):
+                model_config_kwargs[megatron_name] = value
+
+        if "rotary_base" not in model_config_kwargs:
+            try:
+                model_config_kwargs["rotary_base"] = rope_theta_from_hf(hf_config)
+            except ValueError:
+                pass
+
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        rope_type = None
+        if isinstance(rope_scaling, dict) and rope_scaling:
+            rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
+        is_mla_config = issubclass(self.TRANSFORMER_CONFIG_CLASS, MLATransformerConfig)
+        if rope_type == "yarn":
+            if not is_mla_config:
+                raise ModelConfigNotSupportedError(
+                    f"{type(self).__name__}.model_config_bridge() does not support YaRN configs yet. "
+                    "Override model_config_bridge() with a model config and builder that represent all YaRN fields."
+                )
+            model_config_kwargs["rope_type"] = "yarn"
+            for hf_key, megatron_key in self.MLA_ROPE_SCALING_MAPPING:
+                value = rope_scaling.get(hf_key)
+                if value is not None:
+                    model_config_kwargs[megatron_key] = value
+        elif is_mla_config:
+            if rope_type not in (None, "default"):
+                logger.warning(
+                    "Unsupported rope_type=%s for MLA model config; defaulting to unscaled RoPE.", rope_type
+                )
+            model_config_kwargs.update(
+                rope_type="rope",
+                rotary_scaling_factor=1.0,
+                mscale=1.0,
+                mscale_all_dim=1.0,
+            )
+        model_config_kwargs["position_embedding_type"] = "rope"
+
+        vocab_size = model_config_kwargs.get("vocab_size")
+        if vocab_size is not None:
+            model_config_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(vocab_size)
+
+        params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        model_config_kwargs["fp16"] = params_dtype == torch.float16
+        model_config_kwargs["bf16"] = params_dtype == torch.bfloat16
+        model_config_kwargs["params_dtype"] = params_dtype
+
+        hidden_act = getattr(hf_config, "hidden_act", None) or getattr(hf_config, "hidden_activation", "silu")
+        model_config_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
+
+        model_config_kwargs.update(
             attention_softmax_in_fp32=False,
             cross_entropy_loss_fusion=True,
             deallocate_pipeline_outputs=True,
             gradient_accumulation_fusion=fusions.can_enable_gradient_accumulation_fusion(),
         )
-        return config_kwargs
+
+        return model_config_kwargs
 
     @staticmethod
     def _partition_model_config_kwargs(
         config_kwargs: Mapping[str, Any],
         model_config_class: type[ModelConfig],
-        transformer_config_class: type[BridgeTransformerConfig],
+        transformer_config_class: type[TransformerConfig],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Partition flat kwargs between outer and nested config dataclasses."""
+        """Partition flat kwargs between model and transformer dataclasses.
+
+        Model-config fields take precedence if a field name exists on both
+        dataclasses. Unknown fields raise instead of becoming phantom attributes
+        through ``GPTModelConfig.__setattr__``.
+        """
         if not is_dataclass(model_config_class):
             raise TypeError(f"Model config class {model_config_class.__name__} must be a dataclass.")
         if not is_dataclass(transformer_config_class):
@@ -726,8 +822,38 @@ class MegatronModelBridge(
             model_config_class,
             self.TRANSFORMER_CONFIG_CLASS,
         )
+        if issubclass(self.TRANSFORMER_CONFIG_CLASS, MLATransformerConfig):
+            # GPTModel and MLA attention both consume these overlapping fields.
+            # Keep the outer build config and nested attention config synchronized.
+            for name in ("rotary_base", "rotary_percent"):
+                if name in config_kwargs:
+                    transformer_kwargs[name] = config_kwargs[name]
         transformer_config = self.TRANSFORMER_CONFIG_CLASS(**transformer_kwargs)
-        return model_config_class(transformer=transformer_config, **model_kwargs)
+        model_config = model_config_class(transformer=transformer_config, **model_kwargs)
+        if self.MODEL_BUILDER_CLASS is not None:
+            model_config.builder = self.MODEL_BUILDER_CLASS
+        return model_config
+
+    def model_config_bridge(self, hf_pretrained: HFPreTrained) -> ModelConfig:
+        """Create a builder-backed model config from a Hugging Face wrapper.
+
+        This compatibility entry point remains for model-family bridges whose
+        conversion needs the complete pretrained wrapper. New generic paths
+        should use :meth:`hf_config_to_model_config` directly.
+        """
+        bridge_type = type(self)
+        legacy_provider_override = bridge_type.provider_bridge is not MegatronModelBridge.provider_bridge
+        config_mapping_override = (
+            bridge_type.hf_config_to_model_config_kwargs is not MegatronModelBridge.hf_config_to_model_config_kwargs
+        )
+        model_config_override = bridge_type.model_config_bridge is not MegatronModelBridge.model_config_bridge
+        if legacy_provider_override and not (config_mapping_override or model_config_override):
+            raise ModelConfigNotSupportedError(
+                f"{bridge_type.__name__} overrides provider_bridge() without a builder-backed config path. "
+                "Override hf_config_to_model_config_kwargs(), hf_config_to_model_config(), or "
+                "model_config_bridge() with the matching ModelConfig and ModelBuilder implementation."
+            )
+        return self.hf_config_to_model_config(hf_pretrained.config)
 
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None
@@ -735,6 +861,11 @@ class MegatronModelBridge(
 
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.
+
+        .. deprecated::
+            Provider-based model construction is retained only for compatibility.
+            Implement and call :meth:`model_config_bridge` with a standalone
+            ``ModelBuilder`` for new integrations.
 
         Default implementation that:
         1. Converts HF config to provider kwargs using CONFIG_MAPPING
@@ -802,11 +933,11 @@ class MegatronModelBridge(
         return provider
 
     @classmethod
-    def megatron_to_hf_config(cls, provider) -> dict:
-        """Convert Megatron provider config to HuggingFace config dict.
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Convert a Megatron model config to a HuggingFace config dictionary.
 
         Default implementation that:
-        1. Converts provider to HF config using CONFIG_MAPPING
+        1. Converts the model config to HF config using CONFIG_MAPPING
         2. Handles YARN rope scaling parameters
         3. Converts activation function and dtype
         4. Adds architectures and model_type from decorator
@@ -816,7 +947,7 @@ class MegatronModelBridge(
         on the returned dict (e.g., hf_config["rope_scaling"] = {...}).
 
         Args:
-            provider: Megatron model provider instance
+            model_config: Builder-backed model config or legacy provider config.
 
         Returns:
             dict: HuggingFace config dictionary
@@ -826,8 +957,8 @@ class MegatronModelBridge(
         # Map config fields using CONFIG_MAPPING (reverse direction)
         # Supports dot notation for nested dict building (e.g., "rope_scaling.factor")
         for hf_name, megatron_name in cls.CONFIG_MAPPING:
-            has_value = hasattr(provider, megatron_name)
-            value = getattr(provider, megatron_name, None)
+            has_value = hasattr(model_config, megatron_name)
+            value = getattr(model_config, megatron_name, None)
             if has_value:
                 if "." in hf_name:
                     # Nested dict: "parent.child" -> hf_config["parent"]["child"] = value
@@ -838,31 +969,40 @@ class MegatronModelBridge(
                 else:
                     hf_config[hf_name] = value
 
-        # Handle YARN rope scaling: check if provider has yarn_* params and build rope_scaling dict
-        yarn_rotary_scaling_factor = getattr(provider, "yarn_rotary_scaling_factor", None)
-        if yarn_rotary_scaling_factor is not None:
+        # Handle YARN rope scaling: check if model config has yarn_* params and build rope_scaling dict
+        yarn_rotary_scaling_factor = getattr(model_config, "yarn_rotary_scaling_factor", None)
+        position_embedding_type = getattr(model_config, "position_embedding_type", None)
+        if position_embedding_type == "yarn" and yarn_rotary_scaling_factor is not None:
             if "rope_scaling" not in hf_config:
                 hf_config["rope_scaling"] = {}
             hf_config["rope_scaling"]["rope_type"] = "yarn"
 
             for hf_key, megatron_key in cls.YARN_ROPE_SCALING_MAPPING:
-                value = getattr(provider, megatron_key, None)
+                value = getattr(model_config, megatron_key, None)
                 if value is not None:
                     hf_config["rope_scaling"][hf_key] = value
 
-            yarn_correction_range_round_to_int = getattr(provider, "yarn_correction_range_round_to_int", None)
+            yarn_correction_range_round_to_int = getattr(model_config, "yarn_correction_range_round_to_int", None)
             if yarn_correction_range_round_to_int is not None:
                 hf_config["rope_scaling"]["truncate"] = yarn_correction_range_round_to_int
+        elif getattr(model_config, "rope_type", None) == "yarn":
+            # MLA configs keep YaRN state on the nested TransformerConfig and
+            # expose it through the outer config's flat proxy.
+            hf_config.setdefault("rope_scaling", {})["rope_type"] = "yarn"
+            for hf_key, megatron_key in cls.MLA_ROPE_SCALING_MAPPING:
+                value = getattr(model_config, megatron_key, None)
+                if value is not None:
+                    hf_config["rope_scaling"][hf_key] = value
 
         # Convert activation function back to HF format
-        activation_func = getattr(provider, "activation_func", None)
+        activation_func = getattr(model_config, "activation_func", None)
         if activation_func is not None:
             hf_config["hidden_act"] = cls.megatron_to_hf_activation(activation_func)
 
         # Determine torch_dtype
-        if getattr(provider, "bf16", False):
+        if getattr(model_config, "bf16", False):
             hf_config["torch_dtype"] = "bfloat16"
-        elif getattr(provider, "fp16", False):
+        elif getattr(model_config, "fp16", False):
             hf_config["torch_dtype"] = "float16"
         else:
             hf_config["torch_dtype"] = "float32"
@@ -1194,7 +1334,8 @@ class MegatronModelBridge(
 
         _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
-            # None means megatron module not on current rank, skip if this task is not going to happen
+            # Conversion tasks are synchronized across ranks and are never None;
+            # a missing module only means this parameter belongs to another PP rank.
             if task.megatron_module is None:
                 continue
             # 1) Fetch source tensor(s) from HF state dict, with caching for grouped mappings
@@ -1322,7 +1463,8 @@ class MegatronModelBridge(
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         for task in conversion_tasks:
-            # None means megatron module not on current rank, skip if this task is not going to happen
+            # Conversion tasks are synchronized across ranks and are never None;
+            # a missing module only means this parameter belongs to another PP rank.
             if task.megatron_module is None:
                 continue
             hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state
@@ -1427,7 +1569,7 @@ class MegatronModelBridge(
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._model_shares_embeddings_and_output_weights(unwrapped_model)
         tied_mapping_registry = self.mapping_registry() if embeddings_are_tied else None
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
@@ -1580,7 +1722,8 @@ class MegatronModelBridge(
 
         raise ValueError("torch_dtype is not of type str/torch.dtype")
 
-    def dtype_from_str(self, dtype: str) -> torch.dtype:
+    @staticmethod
+    def dtype_from_str(dtype: str) -> torch.dtype:
         """Convert a string precision identifier to equivalent torch dtype.
 
         Delegates to ``megatron.bridge.utils.activation_map.str_to_dtype``.
@@ -1600,7 +1743,8 @@ class MegatronModelBridge(
         except ValueError:
             return torch.float32
 
-    def make_vocab_size_divisible_by(self, vocab_size: int) -> int:
+    @staticmethod
+    def make_vocab_size_divisible_by(vocab_size: int) -> int:
         """Calculate an appropriate divisor for vocabulary size padding.
 
         Megatron requires vocabulary sizes to be divisible by certain values for
@@ -1633,19 +1777,63 @@ class MegatronModelBridge(
             base //= 2
         return base
 
-    def _get_provider_from_model(self, model: MegatronModule) -> ModelProviderTarget:
-        """Extract provider/config from model."""
+    def _model_shares_embeddings_and_output_weights(
+        self,
+        model: MegatronModule | list[MegatronModule],
+    ) -> bool:
+        """Return whether a built model shares its input and output embeddings.
+
+        The value belongs to the runtime model rather than the outer builder
+        config. Composite models may expose it on an inner language module, while
+        diffusion providers may retain it on the runtime ``config`` object.
+        """
+        if isinstance(model, list):
+            if not model:
+                raise ValueError("Cannot inspect shared embeddings on an empty model list.")
+            model = model[0]
         model = unwrap_model(model)
-        return model.config
+        if isinstance(model, list):
+            if not model:
+                raise ValueError("Cannot inspect shared embeddings on an empty unwrapped model list.")
+            model = model[0]
+
+        # Keep the legacy provider hook usable by model-family overrides and
+        # downstream callers while the builder path discovers the setting from
+        # the actual runtime model. An override is authoritative; the base
+        # implementation would otherwise turn a missing outer VLM field into a
+        # false result before the inner language model is inspected.
+        if (
+            type(self)._share_embeddings_and_output_weights
+            is not MegatronModelBridge._share_embeddings_and_output_weights
+            or "_share_embeddings_and_output_weights" in self.__dict__
+        ):
+            return self._share_embeddings_and_output_weights(getattr(model, "config", None))
+
+        runtime_candidates = [model, getattr(model, "config", None)]
+        if hasattr(model, "modules"):
+            for module in model.modules():
+                if module is model:
+                    continue
+                runtime_candidates.extend((module, getattr(module, "config", None)))
+
+        for candidate in runtime_candidates:
+            value = getattr(candidate, "share_embeddings_and_output_weights", None)
+            if isinstance(value, bool):
+                return value
+
+        raise AttributeError(
+            f"{type(model).__name__} and its runtime submodules have no share_embeddings_and_output_weights attribute."
+        )
 
     def _share_embeddings_and_output_weights(
         self,
-        model_config: TransformerConfig,
+        model_config: TransformerConfig | None,
     ) -> bool:
-        """Shared embedding setting."""
+        """Return the legacy provider-config shared-embedding setting."""
         return getattr(model_config, "share_embeddings_and_output_weights", False)
 
-    def _unwrap_name(self, name: str) -> str:
+    @staticmethod
+    def _unwrap_name(name: str) -> str:
         """Unwrap name from DDP or other wrappers.
 
         Args:
@@ -1688,7 +1876,7 @@ class MegatronModelBridge(
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
-        share_embeddings = self._share_embeddings_and_output_weights(model_config)
+        share_embeddings = self._model_shares_embeddings_and_output_weights(unwrapped_model)
 
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
             is_first_pp_stage or is_last_pp_stage
@@ -1709,8 +1897,8 @@ class MegatronModelBridge(
                 if hasattr(unwrapped_model, "output_layer"):
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
+    @staticmethod
     def _should_skip_mtp_duplicate_embedding_export(
-        self,
         task: WeightConversionTask,
         megatron_model: List[MegatronModel],
     ) -> bool:
@@ -1765,7 +1953,7 @@ class MegatronModelBridge(
         hf_pretrained: HFPreTrained,
         megatron_model: List[MegatronModel],
         weight_dtype: Optional[torch.dtype] = None,
-    ) -> List[None | WeightConversionTask]:
+    ) -> List[WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
 
         Args:
@@ -1792,7 +1980,7 @@ class MegatronModelBridge(
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._model_shares_embeddings_and_output_weights(unwrapped_model)
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
@@ -1877,7 +2065,16 @@ class MegatronModelBridge(
                     weight_dtype=weight_dtype,
                 )
 
-        return tasks
+        missing_tasks = [
+            global_name for global_name, task in zip(sorted_global_param_names_all_pp_ranks, tasks) if task is None
+        ]
+        if missing_tasks:
+            raise RuntimeError(
+                "Conversion tasks must be synchronized and non-None on every rank; "
+                f"no mapping was found for: {missing_tasks}"
+            )
+
+        return cast(List[WeightConversionTask], tasks)
 
     def _detect_fp8_params(
         self,
@@ -1961,7 +2158,7 @@ class MegatronModelBridge(
         *,
         scale_inv_suffix: str = "_scale_inv",
         fp8_scale_inv_attr: str = "_rowwise_scale_inv",
-    ) -> List[None | WeightConversionTask]:
+    ) -> List[WeightConversionTask]:
         """
         Build Megatron→(export) conversion tasks, inserting extra *scale_inv* tasks for blockwise FP8 params.
         """
@@ -1975,7 +2172,7 @@ class MegatronModelBridge(
         mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        embeddings_are_tied = self._model_shares_embeddings_and_output_weights(unwrapped_model)
         pp_rank = _get_pp_rank(megatron_model)
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
@@ -2098,10 +2295,17 @@ class MegatronModelBridge(
                 mapping=mapping,
             )
 
-        return tasks
+        missing_tasks = [global_name for global_name, task in zip(expanded_global_names, tasks) if task is None]
+        if missing_tasks:
+            raise RuntimeError(
+                "FP8 export tasks must be synchronized and non-None on every rank; "
+                f"no mapping was found for: {missing_tasks}"
+            )
 
+        return cast(List[WeightConversionTask], tasks)
+
+    @staticmethod
     def _trim_blockwise_fp8_scale_inv_padding(
-        self,
         local_weights: Optional[torch.Tensor],
         scale_tensor: Optional[torch.Tensor],
     ) -> Optional[torch.Tensor]:

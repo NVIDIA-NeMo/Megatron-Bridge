@@ -20,6 +20,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -30,6 +31,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
 )
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
+from megatron.bridge.models.glm.layer_specs import glm_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -197,6 +200,24 @@ class TestGLM45Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
+    def test_model_config_bridge_preserves_glm45_specialization(self, mock_pretrained_355b):
+        result = GLM45Bridge().model_config_bridge(mock_pretrained_355b)
+
+        assert type(result) is BridgeGPTModelConfig
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer_layer_spec is glm_layer_spec
+        assert result.transformer.normalization == "RMSNorm"
+        assert result.transformer.moe_shared_expert_overlap is True
+        assert result.transformer.moe_router_score_function == "sigmoid"
+        assert result.transformer.mtp_loss_scaling_factor == 0.3
+        assert result.transformer.moe_layer_freq == [0] * 3 + [1] * (92 - 3)
+        assert "moe_layer_freq" not in result.__dict__
+
+        restored = type(result).from_dict(result.as_dict())
+
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is glm_layer_spec
+
     def test_provider_bridge_maps_config_air_106b(self, mock_pretrained_air_106b):
         """Test provider bridge correctly maps config for GLM 4.5 Air 106B."""
         bridge = GLM45Bridge()
@@ -269,10 +290,13 @@ class TestGLM45Bridge:
         """Test fused expert layout is detected from HF state source without enumerating all keys."""
         source = mock_pretrained_355b.state.source
         source.get_all_keys.side_effect = AssertionError("mapping registry should not enumerate all HF keys")
-        source.has_glob.side_effect = lambda pattern: pattern in {
-            "*mlp.experts.gate_up_proj*",
-            "*mlp.experts.down_proj*",
-        }
+        source.has_glob.side_effect = lambda pattern: (
+            pattern
+            in {
+                "*mlp.experts.gate_up_proj*",
+                "*mlp.experts.down_proj*",
+            }
+        )
 
         bridge = GLM45Bridge()
         bridge.hf_pretrained = mock_pretrained_355b

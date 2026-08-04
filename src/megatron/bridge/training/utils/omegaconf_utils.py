@@ -70,6 +70,21 @@ def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dic
     if base_dict is _EXCLUDE_FIELD:
         raise ValueError("Root configuration object was excluded (likely a callable)")
 
+    # Builder-backed model configs keep MCore fields under ``model.transformer``
+    # while their Python API proxies those fields at ``model.<field>`` for
+    # compatibility. Mirror that proxy in the temporary OmegaConf tree so
+    # existing Hydra overrides keep working. The aliases are inserted after the
+    # nested config, which also makes the recursive apply step preserve an
+    # explicitly overridden alias.
+    model_dict = base_dict.get("model") if isinstance(base_dict, dict) else None
+    if isinstance(model_dict, dict):
+        transformer_dict = model_dict.get("transformer")
+        if isinstance(transformer_dict, dict):
+            for field_name in transformer_dict:
+                # Keep untouched aliases synchronized with nested overrides;
+                # overriding the alias itself replaces this interpolation.
+                model_dict[field_name] = f"${{model.transformer.{field_name}}}"
+
     # Verify no callables remain
     if not _verify_no_callables(base_dict, "root"):
         raise ValueError("Callable objects found in converted dictionary")
@@ -180,10 +195,41 @@ def parse_hydra_overrides(cfg: DictConfig, overrides: List[str]) -> DictConfig:
         OmegaConf.set_struct(cfg, True)
         parser = OverridesParser.create()
         parsed = parser.parse_overrides(overrides=overrides)
-        ConfigLoaderImpl._apply_overrides_to_config(overrides=parsed, cfg=cfg)
+        for override in parsed:
+            ConfigLoaderImpl._apply_overrides_to_config(overrides=[override], cfg=cfg)
+            _sync_builder_transformer_override_alias(cfg, override.key_or_group)
         return cfg
     except Exception as e:
         raise OverridesError(f"Failed to parse Hydra overrides: {str(e)}") from e
+
+
+def _sync_builder_transformer_override_alias(cfg: DictConfig, override_key: str) -> None:
+    """Synchronize flat and nested builder-model aliases after one override.
+
+    Applying overrides one at a time preserves Hydra's last-override-wins
+    semantics when callers mix ``model.<field>`` and
+    ``model.transformer.<field>`` compatibility paths.
+    """
+    parts = override_key.split(".")
+    if len(parts) == 2 and parts[0] == "model" and parts[1] != "transformer":
+        field_name = parts[1]
+        source_path = override_key
+        target_path = f"model.transformer.{field_name}"
+    elif len(parts) == 3 and parts[:2] == ["model", "transformer"]:
+        field_name = parts[2]
+        source_path = override_key
+        target_path = f"model.{field_name}"
+    else:
+        return
+
+    model_cfg = OmegaConf.select(cfg, "model")
+    transformer_cfg = OmegaConf.select(cfg, "model.transformer")
+    if not isinstance(model_cfg, DictConfig) or not isinstance(transformer_cfg, DictConfig):
+        return
+    if field_name not in model_cfg or field_name not in transformer_cfg:
+        return
+
+    OmegaConf.update(cfg, target_path, OmegaConf.select(cfg, source_path), merge=False)
 
 
 class OverridesError(Exception):

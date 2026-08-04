@@ -33,14 +33,20 @@ Supported models:
 Example usage:
     >>> from megatron.bridge import AutoBridge
     >>> bridge = AutoBridge.from_hf_pretrained("mistralai/Ministral-3-3B-Base-2512")
-    >>> provider = bridge.to_megatron_provider()
+    >>> model_config = bridge.get_model_config()
 """
 
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
-from megatron.bridge.models.ministral3.ministral3_provider import (
-    Ministral3ModelProvider,
-)
 from megatron.bridge.models.ministral3.modeling_ministral3 import Ministral3Model
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "Ministral3ModelProvider":
+        from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
+
+        return Ministral3ModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

@@ -32,6 +32,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
@@ -60,7 +61,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
 
     def __init__(
         self,
-        config: Qwen3VLTransformerConfig,
+        config: TransformerConfig,
         spec: Union[TransformerBlockSubmodules, ModuleSpec],
         post_layer_norm: bool = True,
         pre_process: bool = True,
@@ -68,6 +69,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         vp_stage: Optional[int] = None,
         patch_merger_spec: ModuleSpec = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
+        vision_config: object | None = None,
     ):
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(
@@ -86,7 +88,8 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         self.tp_group = pg_collection.tp
         self.pp_group = pg_collection.pp
 
-        self.deepstack_visual_indexes = config.deepstack_visual_indexes
+        vision_config = vision_config if vision_config is not None else config
+        self.deepstack_visual_indexes = getattr(vision_config, "deepstack_visual_indexes", [])
         self.deepstack_merger_list = nn.ModuleList(
             [
                 Qwen3VLVisionPatchMerger(
@@ -94,8 +97,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     patch_merger_spec,
                     use_postshuffle_norm=True,
                     tp_group=self.tp_group,
+                    vision_config=vision_config,
                 )
-                for _ in range(len(config.deepstack_visual_indexes))
+                for _ in range(len(self.deepstack_visual_indexes))
             ]
         )
 

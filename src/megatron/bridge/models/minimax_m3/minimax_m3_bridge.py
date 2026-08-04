@@ -13,17 +13,14 @@
 # limitations under the License.
 
 import copy
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields
 from functools import partial
 from typing import Any
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
-from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
-from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -35,6 +32,13 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.minimax_m3.model_config import (
+    MiniMaxM3TopKRouter,
+    MiniMaxM3VLModelConfig,
+    _promote_router_weights_to_float32,
+    minimax_m3_block_spec,
+    quick_gelu,
+)
 from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3VLModel
 
 
@@ -45,72 +49,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
-try:
-    from megatron.core.fusions.fused_bias_geglu import quick_gelu
-except ImportError:
-    # Fallback if fused_bias_geglu is not available
-    quick_gelu = torch.nn.functional.gelu
-
-
-class MiniMaxM3TopKRouter(TopKRouter):
-    """MiniMax-M3 router that computes its projection in the weight dtype."""
-
-    def gating(self, input: torch.Tensor) -> torch.Tensor:
-        """Match HF by widening router inputs to the FP32 router weight dtype."""
-        return super().gating(input.to(dtype=self.weight.dtype))
-
-
-def minimax_m3_block_spec(
-    config: TransformerConfig,
-    use_transformer_engine: bool = True,
-    normalization: str | None = None,
-    qk_l2_norm: bool | None = False,
-    vp_stage: int | None = None,
-    pp_rank: int | None = None,
-    **kwargs: object,
-) -> TransformerBlockSubmodules:
-    """Build a GPT block spec that uses MiniMax-M3's FP32 router projection."""
-    block_spec = get_gpt_decoder_block_spec(
-        config,
-        use_transformer_engine=use_transformer_engine,
-        normalization=normalization,
-        qk_l2_norm=qk_l2_norm,
-        vp_stage=vp_stage,
-        pp_rank=pp_rank,
-        **kwargs,
-    )
-
-    for layer_spec in block_spec.layer_specs:
-        mlp_spec = layer_spec.submodules.mlp
-        if isinstance(mlp_spec, partial) and isinstance(mlp_spec.func, type) and issubclass(mlp_spec.func, MoELayer):
-            mlp_kwargs = dict(mlp_spec.keywords or {})
-            mlp_submodules = mlp_kwargs["submodules"]
-            if mlp_submodules.router is not TopKRouter:
-                continue
-            mlp_kwargs["submodules"] = replace(mlp_submodules, router=MiniMaxM3TopKRouter)
-            layer_spec.submodules.mlp = partial(mlp_spec.func, *mlp_spec.args, **mlp_kwargs)
-
-    return block_spec
-
-
 AutoMapping.register_module_type("MiniMaxM3TopKRouter", "replicated")
-
-
-def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[torch.nn.Module]:
-    """Keep MiniMax-M3 router parameters in FP32 for every load path.
-
-    Megatron initializes router parameters in ``params_dtype`` even when
-    ``moe_router_dtype="fp32"``. Promoting them immediately after construction
-    prevents truncation when loading either HF weights or a native Megatron
-    checkpoint.
-    """
-    for model_chunk in model:
-        for module in model_chunk.modules():
-            if isinstance(module, TopKRouter) and module.weight.dtype != torch.float32:
-                module.weight.data = module.weight.data.float()
-            if isinstance(module, TopKRouter):
-                module._keep_in_float32_parameter_names = ("weight",)
-    return model
 
 
 @dataclass
@@ -275,8 +214,10 @@ class MiniMaxM3Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3", trust_remote_code=True)
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = MiniMaxM3VLModelConfig
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
@@ -292,6 +233,129 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         if hidden_act == "swigluoai":
             return quick_gelu
         return super().hf_to_megatron_activation(hidden_act)
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map MiniMax-M3's nested text and vision configs into pure model data."""
+        text_config = getattr(hf_config, "text_config", hf_config)
+        config = super().hf_config_to_model_config_kwargs(text_config)
+        config.update(
+            transformer_layer_spec=partial(minimax_m3_block_spec, use_transformer_engine=HAVE_TE),
+            normalization="RMSNorm",
+            layernorm_zero_centered_gamma=bool(getattr(text_config, "use_gemma_norm", True)),
+            qk_layernorm=bool(getattr(text_config, "use_qk_norm", True)),
+            position_embedding_type="rope",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            share_embeddings_and_output_weights=bool(
+                getattr(hf_config, "tie_word_embeddings", getattr(text_config, "tie_word_embeddings", False))
+            ),
+            activation_func=quick_gelu,
+            activation_func_clamp_value=float(getattr(text_config, "swiglu_limit", 7.0)),
+            glu_linear_offset=1.0,
+            moe_ffn_hidden_size=text_config.intermediate_size,
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_pre_softmax=False,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=getattr(text_config, "router_aux_loss_coef", 1e-3),
+            moe_router_topk_scaling_factor=getattr(text_config, "routed_scaling_factor", 1.0),
+            moe_shared_expert_overlap=False,
+            mtp_num_layers=None,
+            persist_layer_norm=True,
+            bias_activation_fusion=False,
+            bias_dropout_fusion=True,
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            autocast_dtype=torch.bfloat16,
+            seq_length=4096,
+            vision_config=_config_to_dict(getattr(hf_config, "vision_config", None)),
+            hf_config_dict=_config_to_dict(hf_config),
+        )
+
+        rotary_dim = getattr(text_config, "rotary_dim", None)
+        head_dim = getattr(text_config, "head_dim", None)
+        if rotary_dim is not None and head_dim:
+            config["rotary_percent"] = rotary_dim / head_dim
+
+        dense_ffn_hidden_size = getattr(text_config, "dense_intermediate_size", None)
+        if dense_ffn_hidden_size is not None:
+            config["ffn_hidden_size"] = dense_ffn_hidden_size
+
+        n_shared_experts = getattr(text_config, "n_shared_experts", None)
+        shared_intermediate_size = getattr(text_config, "shared_intermediate_size", 0) or 0
+        if n_shared_experts is None:
+            n_shared_experts = 1 if shared_intermediate_size else 0
+        config["moe_shared_expert_intermediate_size"] = (n_shared_experts * shared_intermediate_size) or None
+
+        moe_layer_freq = getattr(text_config, "moe_layer_freq", None)
+        if moe_layer_freq is None:
+            mlp_layer_types = getattr(text_config, "mlp_layer_types", None)
+            if mlp_layer_types is not None:
+                moe_layer_freq = [1 if layer_type == "sparse" else 0 for layer_type in mlp_layer_types]
+        if moe_layer_freq is not None:
+            config["moe_layer_freq"] = [int(frequency) for frequency in moe_layer_freq]
+
+        vision_config = getattr(hf_config, "vision_config", None)
+        compression_config = _config_value(hf_config, "img_token_compression_config", None)
+        if compression_config is None and vision_config is not None:
+            compression_config = _config_value(vision_config, "img_token_compression_config", None)
+        compression_config = compression_config or {}
+        config["spatial_merge_size"] = int(
+            _config_value(
+                vision_config,
+                "spatial_merge_size",
+                _config_value(compression_config, "spatial_merge_size", 2),
+            )
+        )
+        config["temporal_patch_size"] = int(
+            _config_value(
+                vision_config,
+                "temporal_patch_size",
+                _config_value(compression_config, "temporal_patch_size", 2),
+            )
+        )
+        config["vision_config"].setdefault("spatial_merge_size", config["spatial_merge_size"])
+        config["vision_config"].setdefault("temporal_patch_size", config["temporal_patch_size"])
+
+        image_token_id = _config_value(hf_config, "image_token_id")
+        if image_token_id is None:
+            image_token_id = _config_value(hf_config, "image_token_index", 200025)
+        config["image_token_id"] = int(image_token_id)
+
+        video_token_id = _config_value(hf_config, "video_token_id")
+        if video_token_id is None:
+            video_token_id = _config_value(hf_config, "video_token_index", 200026)
+        config["video_token_id"] = int(video_token_id)
+        config["projector_hidden_size"] = int(
+            _config_value(hf_config, "projector_hidden_size", text_config.hidden_size)
+        )
+        config["multimodal_projector_bias"] = bool(_config_value(hf_config, "multimodal_projector_bias", True))
+
+        sparse_config = _config_value(text_config, "sparse_attention_config", {}) or {}
+        layer_types = _config_value(text_config, "layer_types")
+        if layer_types is not None:
+            config["lightning_indexer_layers"] = [
+                layer_index for layer_index, layer_type in enumerate(layer_types) if layer_type == "minimax_m3_sparse"
+            ]
+        else:
+            sparse_attention_freq = _config_value(sparse_config, "sparse_attention_freq", []) or []
+            config["lightning_indexer_layers"] = [
+                layer_index for layer_index, enabled in enumerate(sparse_attention_freq) if enabled
+            ]
+        config["index_n_heads"] = int(
+            _config_value(text_config, "index_n_heads", _config_value(sparse_config, "sparse_num_index_heads", 4))
+        )
+        config["index_head_dim"] = int(
+            _config_value(text_config, "index_head_dim", _config_value(sparse_config, "sparse_index_dim", 128))
+        )
+        return config
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MiniMaxM3VLModelProvider:
         """Convert the Hugging Face MiniMax-M3 config to a full VLM provider."""
@@ -478,11 +542,11 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         return provider
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict[str, Any]:
+    def megatron_to_hf_config(cls, provider: GPTModelProvider | MiniMaxM3VLModelConfig) -> dict[str, Any]:
         """Build the nested MiniMax-M3 VLM config used for Hugging Face export."""
         hf_config = (
             copy.deepcopy(provider.hf_config_dict)
-            if isinstance(provider, MiniMaxM3VLModelProvider) and provider.hf_config_dict
+            if isinstance(provider, (MiniMaxM3VLModelProvider, MiniMaxM3VLModelConfig)) and provider.hf_config_dict
             else {}
         )
         text_config = copy.deepcopy(hf_config.get("text_config", {}))
@@ -535,7 +599,7 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         )
         text_config.setdefault("max_position_embeddings", provider.seq_length)
 
-        if isinstance(provider, MiniMaxM3VLModelProvider):
+        if isinstance(provider, (MiniMaxM3VLModelProvider, MiniMaxM3VLModelConfig)):
             sparse_layer_indices = set(provider.lightning_indexer_layers)
             sparse_attention_freq = [
                 int(layer_idx in sparse_layer_indices) for layer_idx in range(provider.num_layers)
@@ -700,3 +764,15 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+
+__all__ = [
+    "MiniMaxM3Bridge",
+    "MiniMaxM3ModelProvider",
+    "MiniMaxM3TopKRouter",
+    "MiniMaxM3VLModelProvider",
+    "TopKRouter",
+    "_promote_router_weights_to_float32",
+    "minimax_m3_block_spec",
+    "quick_gelu",
+]

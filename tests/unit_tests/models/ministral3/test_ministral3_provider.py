@@ -19,9 +19,22 @@ from megatron.bridge.models.ministral3.ministral3_provider import (
     Ministral3ModelProvider,
     MinistralTEDotProductAttention,
 )
+from megatron.bridge.models.ministral3.modeling_ministral3 import _get_hf_config_value
 
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "hf_config",
+    [
+        {"spatial_merge_size": 4},
+        type("LegacyHFConfig", (), {"spatial_merge_size": 4})(),
+    ],
+)
+def test_get_hf_config_value_supports_serialized_and_legacy_configs(hf_config):
+    assert _get_hf_config_value(hf_config, "spatial_merge_size", 2) == 4
+    assert _get_hf_config_value(hf_config, "vision_feature_layer", -1) == -1
 
 
 class TestMinistral3ModelProvider:

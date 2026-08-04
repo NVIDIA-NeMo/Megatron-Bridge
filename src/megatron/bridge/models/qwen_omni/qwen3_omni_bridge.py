@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from typing import TYPE_CHECKING, Any
 
 import torch
 from transformers import Qwen3OmniMoeForConditionalGeneration
@@ -26,8 +27,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen_omni.model_config import Qwen3OmniModelConfig
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
-from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelProvider
 
 
 logger = logging.getLogger(__name__)
@@ -36,13 +41,14 @@ logger = logging.getLogger(__name__)
 @MegatronModelBridge.register_bridge(
     source=Qwen3OmniMoeForConditionalGeneration,
     target=Qwen3OmniModel,
-    provider=Qwen3OmniModelProvider,
     model_type="qwen3_omni",
 )
 class Qwen3OmniBridge(MegatronModelBridge):
     """Bridge for Qwen3-Omni."""
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3OmniModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen3OmniModelProvider":
+        from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelProvider
+
         hf_config = hf_pretrained.config
         if getattr(hf_config, "enable_audio_output", False):
             logger.warning(
@@ -163,3 +169,48 @@ class Qwen3OmniBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = Qwen3OmniModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map Qwen3-Omni HF settings to pure model-config fields."""
+        thinker = hf_config.thinker_config
+        text = thinker.text_config
+        vision = thinker.vision_config
+        kwargs = super().hf_config_to_model_config_kwargs(text)
+        rope_scaling = getattr(text, "rope_scaling", None) or getattr(text, "rope_parameters", None) or {}
+        kwargs.update(
+            thinker_config=thinker.to_dict(),
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=getattr(text, "attention_bias", False),
+            qk_layernorm=True,
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            num_moe_experts=getattr(text, "num_experts", 128),
+            moe_router_topk=getattr(text, "num_experts_per_tok", 8),
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            language_max_sequence_length=text.max_position_embeddings,
+            image_token_id=getattr(thinker, "image_token_id", 151655),
+            video_token_id=getattr(thinker, "video_token_id", 151656),
+            audio_token_id=getattr(thinker, "audio_token_id", 151646),
+            vision_start_token_id=getattr(thinker, "vision_start_token_id", 151652),
+            vision_end_token_id=getattr(thinker, "vision_end_token_id", 151653),
+            audio_start_token_id=getattr(thinker, "audio_start_token_id", 151647),
+            audio_end_token_id=getattr(thinker, "audio_end_token_id", 151648),
+            bos_token_id=getattr(hf_config, "bos_token_id", 151643),
+            eos_token_id=getattr(hf_config, "eos_token_id", 151645),
+            position_id_per_seconds=getattr(thinker, "position_id_per_seconds", 25),
+            seconds_per_chunk=getattr(thinker, "seconds_per_chunk", 2),
+            patch_size=getattr(vision, "patch_size", 16),
+            temporal_patch_size=getattr(vision, "temporal_patch_size", 2),
+            spatial_merge_size=getattr(vision, "spatial_merge_size", 2),
+            mrope_section=rope_scaling.get("mrope_section", [24, 20, 20]),
+        )
+        return kwargs

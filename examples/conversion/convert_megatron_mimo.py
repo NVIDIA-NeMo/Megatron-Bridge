@@ -16,7 +16,7 @@
 """Generic MegatronMIMO conversion CLI: HF <-> MIMO.
 
 Loads an HF model via ``AutoBridge``, resolves MIMO route metadata from the
-standard bridge/provider or an explicit conversion spec, and imports or exports
+standard bridge or an explicit conversion spec, and imports or exports
 a MegatronMIMO distributed checkpoint.
 
 Usage:

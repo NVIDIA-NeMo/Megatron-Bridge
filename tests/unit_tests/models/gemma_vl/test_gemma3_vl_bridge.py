@@ -17,11 +17,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig, SiglipVisionConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.gemma_vl.gemma3_vl_bridge import Gemma3VLBridge
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
+from megatron.bridge.models.gemma_vl.model_config import Gemma3VLModelBuilder, Gemma3VLModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -97,6 +99,33 @@ def mock_hf_pretrained(mock_hf_config):
 def gemma3_vl_bridge():
     """Create a Gemma3VLBridge instance."""
     return Gemma3VLBridge()
+
+
+class TestGemma3VLBridgeInitialization:
+    """Test Gemma3VLBridge initialization and basic functionality."""
+
+    def test_bridge_initialization(self, gemma3_vl_bridge):
+        """Test that bridge can be initialized."""
+        assert isinstance(gemma3_vl_bridge, Gemma3VLBridge)
+
+    def test_bridge_has_required_methods(self, gemma3_vl_bridge):
+        """Test that bridge has required methods."""
+        assert hasattr(gemma3_vl_bridge, "provider_bridge")
+        assert callable(gemma3_vl_bridge.provider_bridge)
+
+        assert hasattr(gemma3_vl_bridge, "mapping_registry")
+        assert callable(gemma3_vl_bridge.mapping_registry)
+
+    def test_model_config_bridge_is_serializable(self, gemma3_vl_bridge, mock_hf_pretrained):
+        result = gemma3_vl_bridge.model_config_bridge(mock_hf_pretrained)
+
+        assert isinstance(result, Gemma3VLModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.vision_projector_input_size == 1152
+        assert result.vision_projector_hidden_size == 2560
+        assert result.get_builder_cls() is Gemma3VLModelBuilder
+        restored = type(result).from_dict(result.as_dict())
+        assert restored.vision_config["hidden_size"] == 1152
 
 
 class TestGemma3VLBridgeProviderBridge:
