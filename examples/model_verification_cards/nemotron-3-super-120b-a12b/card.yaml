@@ -3,13 +3,13 @@
 
 title: nemotron_3_super_120b_a12b
 summary: >
-  Performance scope: pretrain_performance.GB200 tracks the tuned canonical
-  64-GPU performance recipe. Timing and throughput from functional H100 and
-  GB200 training are support-verification sanity checks rather than optimized
-  performance results. Hardware evidence is scoped strictly by accelerator:
-  the GB200 results do not establish GB300 behavior. Nemotron 3 Super
-  120B-A12B verification covers conversion, inference, bounded real-data
-  training, checkpoint resume, and the canonical GB200 benchmark.
+  Performance scope: pretrain_performance.H100 and pretrain_performance.GB200
+  track tuned canonical 64-GPU performance recipes. Timing and throughput from
+  functional H100 and GB200 training are support-verification sanity checks
+  rather than optimized performance results. Hardware evidence is scoped
+  strictly by accelerator. Nemotron 3 Super 120B-A12B verification covers
+  conversion, inference, bounded real-data training, checkpoint resume, and
+  canonical H100 and GB200 benchmarks.
 verification_index:
   model_level:
     verified:
@@ -28,6 +28,7 @@ verification_index:
       verified: [peft]
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
   performance:
+    H100: verified
     GB200: verified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
@@ -151,28 +152,25 @@ items:
     H100:
       status: unverified
       precision: bf16
-      enabled_features: {}
+      enabled_features:
+        moe_dispatcher: hybridep
       command: >
-        ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_config
+        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
+        --recipe nemotron_3_super_pretrain_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
-        --seq_length 4096 model.cuda_graph_impl=none
-        --lr 4.5e-4 --min_lr 4.5e-6 --warmup_iters 10
         'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3-super-120b-a12b/rp2
         tokenizer.tokenizer_type=SentencePieceTokenizer
         tokenizer.tokenizer_model=work/data/rp2-tokenizer/tokenizer.model
-        rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=100
+        rng.seed=1234 dataset.random_seed=1234
         validation.eval_iters=0 validation.eval_interval=0
-        optimizer.optimizer_cpu_offload=true
-        optimizer.optimizer_offload_fraction=0.75
-        optimizer.overlap_cpu_optimizer_d2h_h2d=false
-        model.recompute_granularity=full model.recompute_method=uniform
-        model.recompute_num_layers=1 checkpoint.ckpt_format=torch_dist
-        checkpoint.async_save=false checkpoint.load=null
+        checkpoint.ckpt_format=torch_dist checkpoint.async_save=false
+        checkpoint.load=null
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-reference
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
         logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
       last_verified: null
       metrics:
         initial_loss: null
@@ -180,15 +178,16 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        On 16 H100s, the BF16 support run must complete exactly 100 bounded RP2
-        optimizer steps at TP8/PP1/CP1/EP16/ETP1 and the recipe's cohort
-        GBS/MBS 1024/1. Full activation recompute, 75% optimizer CPU offload,
-        and eager execution keep the 120B model and complete optimizer
-        checkpoint within memory. Loss must stay finite with no skipped or NaN
-        iteration, all four metrics and the resolved configuration must be
-        recorded, and complete iter_0000050 and iter_0000100 checkpoints must
-        save. The recipe moved from GBS 16 to the cohort GBS 1024, so the
-        earlier metrics no longer describe this command and it needs a rerun.
+        On exactly 64 H100s, the BF16 support run must complete 100 bounded RP2
+        optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural
+        routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager
+        execution, selective recompute of layernorm, moe_act, moe, and
+        core_attn, no optimizer-state CPU offload, and ordered gradient
+        reduction. Loss must stay finite with no skipped or NaN iteration, all
+        four metrics and the resolved configuration must be recorded, and
+        complete iter_0000050 and
+        iter_0000100 checkpoints must save. Earlier TP8/PP1/EP16 evidence no
+        longer describes this command and cannot verify it.
 
     GB200:
       status: unverified
@@ -551,28 +550,23 @@ items:
       precision: bf16
       depends_on: pretrain
       command: >
-        ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_super_pretrain_16gpu_h100_bf16_config
+        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
+        --recipe nemotron_3_super_pretrain_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
-        --seq_length 4096 model.cuda_graph_impl=none
-        --lr 4.5e-4 --min_lr 4.5e-6 --warmup_iters 10
         'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3-super-120b-a12b/rp2
         tokenizer.tokenizer_type=SentencePieceTokenizer
         tokenizer.tokenizer_model=work/data/rp2-tokenizer/tokenizer.model
-        rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=100
+        rng.seed=1234 dataset.random_seed=1234
         validation.eval_iters=0 validation.eval_interval=0
-        optimizer.optimizer_cpu_offload=true
-        optimizer.optimizer_offload_fraction=0.75
-        optimizer.overlap_cpu_optimizer_d2h_h2d=false
-        model.recompute_granularity=full model.recompute_method=uniform
-        model.recompute_num_layers=1 checkpoint.ckpt_format=torch_dist
-        checkpoint.async_save=false
+        checkpoint.ckpt_format=torch_dist checkpoint.async_save=false
         --load_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-reference
         checkpoint.ckpt_step=50
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-resumed
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
         logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -640,6 +634,36 @@ items:
         before this item can be verified.
 
   pretrain_performance:
+    H100:
+      status: verified
+      precision: bf16
+      command: >
+        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
+        --recipe nemotron_3_super_pretrain_64gpu_h100_bf16_config
+        --max_steps 50 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-performance/ConfigContainer.yaml
+      last_verified: 2026-08-03
+      metrics:
+        initial_loss: 12.19134
+        final_loss: 0.006422824
+        last_10_steps_step_time_ms_avg: 27588.580
+        last_10_steps_model_tflops_per_gpu_avg: 248.610
+      expected_result: >
+        On exactly 64 H100s, the canonical BF16 performance recipe must
+        complete 50 mock-data steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1,
+        forced routing, HybridEP flex dispatch with 1.10x fixed expert
+        capacity, eager execution, selective recompute of layernorm, moe_act,
+        moe, and core_attn, no optimizer-state CPU offload, and ordered
+        gradient reduction. All keyed rows have finite loss and throughput with
+        zero skipped or NaN
+        iterations. The final ten steps average 27588.580 ms and 248.610
+        TFLOP/s/GPU, passing gates of at most 28000 ms and at least 240
+        TFLOP/s/GPU. Peak device memory is 59.000 GiB allocated and 69.344 GiB
+        reserved, and the resolved configuration persists. Mock data and forced
+        routing make the loss a finiteness check rather than convergence
+        evidence.
+
     GB200:
       status: verified
       precision: bf16

@@ -338,6 +338,17 @@ def test_full_recipe_auto_detects_benchmark_recipe(monkeypatch):
     )
 
 
+def test_main_resolves_relative_paths_from_repository_root(monkeypatch):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+    change_directory = Mock()
+    monkeypatch.setattr(module.os, "chdir", change_directory)
+
+    module.main(["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"])
+
+    change_directory.assert_called_once_with(module.REPO_ROOT)
+
+
 @pytest.mark.parametrize(
     "override",
     [

@@ -157,6 +157,96 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the convergence-oriented Nemotron 3 Super config for 64 H100 GPUs.
+
+    The public hardware-agnostic ``nemotron_3_super_pretrain_config`` alias
+    exposes this configuration. Its execution layout matches the canonical
+    H100 performance recipe while it retains natural routing, runtime checks,
+    and checkpointing for real-data training evidence.
+
+    Returns:
+        BF16 pretraining configuration for 64 H100 GPUs.
+    """
+    cfg = nemotron_3_super_pretrain_16gpu_h100_bf16_config()
+
+    # The measured H100 layout avoids TP communication while using PP to fit
+    # the dense layers and EP to shard the experts across all 64 GPUs.
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.overlap_p2p_comm = False
+    cfg.model.batch_p2p_comm = True
+
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    # Match the canonical GPT-OSS 120B H100 benchmark shape. DP=1 for
+    # TP1/PP2/EP32, so this yields 1,280 microbatches per optimizer step.
+    cfg.train.global_batch_size = 1280
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_deepep_num_sms = None
+    cfg.model.moe_hybridep_num_sms = None
+    # Keep HybridEP inputs static without its per-layer metadata all-reduce.
+    # At this shape, 1.10x capacity gives each expert 10% headroom over the
+    # 5,632-token mean. The fixed expert padding keeps downstream collective
+    # shapes consistent under natural routing without over-sizing activations.
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
+    cfg.model.moe_expert_capacity_factor = 1.10
+    cfg.model.moe_pad_expert_input_to_capacity = True
+    cfg.model.moe_shared_expert_overlap = False
+    # Forced routing changes the training objective and remains benchmark-only.
+    cfg.model.moe_router_force_load_balancing = False
+
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+    # Keep the provider-owned vocabulary shape identical between real-data
+    # convergence and mock-data performance runs.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+    cfg.model.recompute_granularity = "selective"
+    # Fixed-capacity dispatch keeps MoE replay collectives shape-stable while
+    # full MoE recompute provides the measured H100 activation headroom.
+    cfg.model.recompute_modules = ["layernorm", "moe_act", "moe", "core_attn"]
+
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.optimizer_cpu_offload = False
+    cfg.optimizer.optimizer_offload_fraction = 0.0
+    cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
+
+    # Keep DDP collectives ordered with PP and expert communication.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    # Retain enough watchdog headroom for first-step bring-up of the 120B model.
+    cfg.dist.distributed_timeout_minutes = 15
+
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
 # =============================================================================
 # SFT Config
 # =============================================================================

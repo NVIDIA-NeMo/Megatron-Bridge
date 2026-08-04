@@ -60,21 +60,21 @@ class TestNemotron3SuperPretrain:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 8
-        assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is True
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 2
+        assert config.model.sequence_parallel is False
 
         # Check expert parallelism defaults
         assert config.model.expert_tensor_parallel_size == 1
-        assert config.model.expert_model_parallel_size == 16
+        assert config.model.expert_model_parallel_size == 32
 
         # Check training configuration
         assert config.train.train_iters == 100
-        assert config.train.global_batch_size == 1024
+        assert config.train.global_batch_size == 1280
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration
-        assert config.dataset.seq_length == 8192
+        assert config.dataset.seq_length == 4096
 
         # Check tokenizer (HuggingFace for this recipe)
         assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
@@ -83,13 +83,24 @@ class TestNemotron3SuperPretrain:
         # Check precision
         assert config.mixed_precision.bf16 is True
         assert config.mixed_precision.grad_reduce_in_fp32 is False
+        assert config.optimizer.main_grads_dtype == torch.bfloat16
+        assert config.optimizer.optimizer_cpu_offload is False
+        assert config.optimizer.optimizer_offload_fraction == 0.0
+        assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
+        assert config.model.apply_rope_fusion is True
+        assert config.tokenizer.use_tokenizer_vocab_size is False
 
     def test_pretrain_config_moe_settings(self):
         """Test MoE settings for pretrain config."""
         config = nemotron_3_super_pretrain_config()
 
         # Verify MoE settings
-        assert config.model.moe_token_dispatcher_type == "alltoall"
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "hybridep"
+        assert config.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+        assert config.model.moe_expert_capacity_factor == 1.10
+        assert config.model.moe_pad_expert_input_to_capacity is True
+        assert config.model.moe_router_force_load_balancing is False
         assert config.model.moe_shared_expert_overlap is False
         assert config.model.moe_grouped_gemm is True
         assert config.model.moe_permute_fusion is True
@@ -306,20 +317,20 @@ class TestNemotron3SuperCommon:
         assert config.mixed_precision is not None
 
     @pytest.mark.parametrize(
-        "recipe_fn",
+        ("recipe_fn", "overlap_grad_reduce", "overlap_param_gather"),
         [
-            nemotron_3_super_pretrain_config,
-            nemotron_3_super_sft_config,
-            nemotron_3_super_peft_config,
+            (nemotron_3_super_pretrain_config, False, False),
+            (nemotron_3_super_sft_config, False, False),
+            (nemotron_3_super_peft_config, True, True),
         ],
     )
-    def test_ddp_configuration(self, recipe_fn):
+    def test_ddp_configuration(self, recipe_fn, overlap_grad_reduce, overlap_param_gather):
         """Test distributed data parallel configuration."""
         config = recipe_fn()
 
         assert config.ddp.check_for_nan_in_grad is True
-        assert config.ddp.overlap_grad_reduce is True
-        assert config.ddp.overlap_param_gather is True
+        assert config.ddp.overlap_grad_reduce is overlap_grad_reduce
+        assert config.ddp.overlap_param_gather is overlap_param_gather
         assert config.ddp.use_distributed_optimizer is True
 
     @pytest.mark.parametrize(

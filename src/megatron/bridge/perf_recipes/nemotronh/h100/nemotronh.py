@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     nemotron_3_nano_pretrain_config,
     nemotronh_56b_pretrain_config,
 )
+from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
@@ -61,6 +62,28 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    return cfg
+
+
+def nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× H100, BF16."""
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+
+    # The library recipe owns the measured execution layout. Performance mode
+    # adds only benchmark policy and forced routing on top of that shared base.
+    cfg.model.moe_router_force_load_balancing = True
+    _benchmark_common(cfg)
+    # `_benchmark_common` enables parameter prefetch globally. Restore the
+    # shared natural-routing-safe execution mapping owned by the library
+    # recipe; otherwise performance and convergence silently diverge here.
+    cfg.ddp.overlap_param_gather = False
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.checkpoint.async_save = False
+
+    # Keep the process settings inherited from the convergence recipe. In
+    # particular, do not silently change CUDA stream scheduling between the
+    # natural-routing and forced-routing measurements.
     return cfg
 
 
