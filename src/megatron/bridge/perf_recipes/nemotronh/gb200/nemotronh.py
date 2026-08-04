@@ -215,21 +215,19 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_3_ultra_gb200_fp8mx_config(
-    *,
-    num_gpus: int,
-    expert_model_parallel_size: int,
-    global_batch_size: int,
-    hybrid_ep_ranks_per_nvlink_domain: int,
-) -> ConfigContainer:
-    """Shared builder for Nemotron 3 Ultra GB200 MXFP8 Megatron-FSDP perf recipes.
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB200, MXFP8, Megatron-FSDP (HSDP).
 
-    Same Megatron-FSDP (HSDP) layout as the GB300 recipe, but with TP2 + sequence
-    parallelism instead of TP1. GB200 carries less HBM per GPU, and TP alone would not
-    help much: it shards the internal GEMM dimensions but leaves the residual stream and
-    the norm inputs/outputs replicated. Sequence parallelism is what shards those, so the
-    two are enabled together.
+    TP2 + SP (due to smaller GB200 HBM) / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
+    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective recompute +
+    fine-grained activation offload of the expert MLP, MTP=2.
     """
+
+    num_gpus = 256
+    expert_model_parallel_size = 64
+    global_batch_size = 256
+    hybrid_ep_ranks_per_nvlink_domain = 64
+
     cfg = nemotron_3_ultra_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
@@ -248,9 +246,9 @@ def _nemotron_3_ultra_gb200_fp8mx_config(
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = 8192
 
-    # Only tensors larger than 500MB are offloaded, which
-    # approximates offloading the moe_act input for seq 8192 / MBS 1.
-    cfg.model.min_offloaded_tensor_size = 500_000_000
+    # Only tensors larger than 350M elements are offloaded, which
+    # approximates offloading the moe_act (pre-activation input) for seq 8192/2 (due to SP) / MBS 1.
+    cfg.model.min_offloaded_tensor_size = 350_000_000
 
     # MXFP8 requires router padding for quantization.
     cfg.model.moe_router_padding_for_quantization = True
@@ -261,7 +259,7 @@ def _nemotron_3_ultra_gb200_fp8mx_config(
 
     # Fine-grained activation offloading. Requires NVTE_CPU_OFFLOAD_V1=1 in the
     # launch environment (set in this recipe's env_vars).
-    # NOTE: also requires setting the min_offloaded_tensor_size to avoid CPU OOM issues
+    # NOTE: also requires setting the min_offloaded_tensor_size to selectively offload moe_act of the fused_group_mlp, to avoid CPU OOM issues
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["fused_group_mlp"]
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
@@ -271,16 +269,6 @@ def _nemotron_3_ultra_gb200_fp8mx_config(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act"]
 
-    # full iteration cuda graph
-    cfg.model.cuda_graph_impl = "full_iteration"  # "transformer_engine"
-    cfg.model.cuda_graph_scope = []  # ["attn", "mamba", "moe_router", "moe_preprocess"]
-    cfg.ddp.megatron_fsdp_cuda_graph_mode = True
-    cfg.ddp.fsdp_all_gather_in_start_param_sync = False
-    cfg.model.moe_expert_rank_capacity_factor = 1.2
-    # cfg.model.moe_paged_stash = True
-    # cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    # cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -288,23 +276,14 @@ def _nemotron_3_ultra_gb200_fp8mx_config(
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        # graph_capture_record_stream_reuse is required here, not an
-        # optimization: fine_grained_activation_offloading calls record_stream()
-        # on every D2H staging tensor, and cudaEventQuery is illegal during graph
-        # capture, so without this the allocator cannot recycle any of them until
-        # capture ends. Offloading then frees nothing on the capture step and
-        # reserved memory overshoots the eager peak (OOM at 256 GPUs / EP64). The
-        # option uses the captured DAG topology instead of events, which makes
-        # the one-time capture slower. TORCH_NCCL_AVOID_RECORD_STREAMS below
-        # covers only the NCCL buffers, not the offload path.
+        # TODO: graph_capture_record_stream_reuse might be potentially useful
+        # when enabling CG, because it allows the freed-up memory buffers of the offloaded tensors
+        # to be reused during the CG capture, thus keeping the peak memory usage lower.
         "PYTORCH_CUDA_ALLOC_CONF": ("expandable_segments:True,graph_capture_record_stream_reuse:True"),
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system. The per-domain rank count has to track
-        # EP: HybridEP splits the all-to-all into an intra-domain and an inter-domain leg
-        # using this value, so leaving it at the 256-GPU 64 on a smaller job would
-        # describe a domain larger than the job itself.
+        # HybridEP topology for the target system.
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": hybrid_ep_ranks_per_nvlink_domain,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
@@ -321,50 +300,6 @@ def _nemotron_3_ultra_gb200_fp8mx_config(
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
-
-
-def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB200, MXFP8, Megatron-FSDP (HSDP).
-
-    TP2 + SP / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
-    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective recompute +
-    fine-grained activation offload of the expert MLP, MTP=2.
-
-    This is the GB300 recipe's layout with TP raised from 1 to 2 and sequence parallelism
-    turned on, to fit GB200's smaller HBM. Megatron-FSDP shards params, grads and
-    optimizer state within each 64-GPU NVLink domain and replicates optimizer-sharded
-    across the four domains.
-    """
-    return _nemotron_3_ultra_gb200_fp8mx_config(
-        num_gpus=256,
-        expert_model_parallel_size=64,
-        global_batch_size=256,
-        hybrid_ep_ranks_per_nvlink_domain=64,
-    )
-
-
-def nemotron_3_ultra_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pipeclean: 8× GB200, MXFP8, Megatron-FSDP.
-
-    Shrunk-grid counterpart of the 256-GPU recipe, for validating that the full feature
-    stack launches and trains before committing a full-scale job. EP drops 64 -> 4 so the
-    expert grid (``ETP1 x EP4`` = 4) divides an 8-GPU world, and GBS drops 256 -> 8. With
-    TP2 the batch splits over DP = 8 / 2 = 4, so GBS 8 / MBS 1 runs 2 microbatches.
-
-    Below one NVLink domain ``_apply_nemotron_3_ultra_fsdp_hsdp`` resolves
-    ``num_distributed_optimizer_instances`` to 1, which turns HSDP off and correspondingly
-    sets ``outer_dp_sharding_strategy`` to ``no_shard``.
-
-    This recipe only rescales parallelism: the model is still full-size Nemotron 3 Ultra,
-    which does not fit on 8 GPUs. Pair it with model-shrinking overrides (see
-    ``perf_bash_scripts/nt3_ultra_gb200/toy_run_perf_test_nemotron_3_ultra_gb200_fp8mx.sh``).
-    """
-    return _nemotron_3_ultra_gb200_fp8mx_config(
-        num_gpus=8,
-        expert_model_parallel_size=4,
-        global_batch_size=8,
-        hybrid_ep_ranks_per_nvlink_domain=8,
-    )
 
 
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
