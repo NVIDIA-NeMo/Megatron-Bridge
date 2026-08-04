@@ -1097,15 +1097,22 @@ def _validate_inference(
         task_values = _argument_values(command, "--task")
         if len(task_values) != 1 or task_values[0] not in {
             "text-generation",
+            "legacy-full-prefix-generation",
             "vlm-generation",
             "model-comparison",
         }:
             errors.append(f"{_pointer(*resolved_command_path)}: infer.sh must specify one supported --task")
+        if task_values == ["legacy-full-prefix-generation"] and "--legacy-full-prefix" not in command_tokens:
+            errors.append(
+                f"{_pointer(*resolved_command_path)}: legacy-full-prefix-generation requires --legacy-full-prefix"
+            )
         for resource_flag in ("--nodes", "--gpus-per-node"):
             if len(_argument_values(command, resource_flag)) != 1:
                 errors.append(
                     f"{_pointer(*resolved_command_path)}: infer.sh must specify {resource_flag} exactly once"
                 )
+        if any(option in command_tokens for option in ("--dry-run", "--submission-dry-run")):
+            errors.append(f"{_pointer(*resolved_command_path)}: verified inference command must submit the workload")
     prompts = _argument_values(command, "--prompt")
     if len(prompts) != 1:
         errors.append(f"{_pointer(*resolved_command_path)}: specify --prompt exactly once")
