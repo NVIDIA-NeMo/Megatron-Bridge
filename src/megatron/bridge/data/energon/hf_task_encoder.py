@@ -156,18 +156,19 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             The exact batch dictionary returned by the selected HF collate
             function for this processor type.
         """
-        return self._collate_impl(
-            examples,
-            self.processor,
-            visual_keys=self.visual_keys,
-            min_pixels=self.min_pixels,
-            max_pixels=self.max_pixels,
-            sequence_length=self.seq_length,
-            pad_to_max_length=self.pad_to_max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            enable_in_batch_packing=self.enable_in_batch_packing,
-            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
-        )
+        collate_kwargs: dict[str, Any] = {
+            "visual_keys": self.visual_keys,
+            "sequence_length": self.seq_length,
+            "pad_to_max_length": self.pad_to_max_length,
+            "pad_to_multiple_of": self.pad_to_multiple_of,
+            "enable_in_batch_packing": self.enable_in_batch_packing,
+            "in_batch_packing_pad_to_multiple_of": self.in_batch_packing_pad_to_multiple_of,
+        }
+        if self.min_pixels is not None:
+            collate_kwargs["min_pixels"] = self.min_pixels
+        if self.max_pixels is not None:
+            collate_kwargs["max_pixels"] = self.max_pixels
+        return self._collate_impl(examples, self.processor, **collate_kwargs)
 
     # ------------------------------------------------------------------
     # batch

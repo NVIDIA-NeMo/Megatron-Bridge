@@ -46,7 +46,7 @@ def test_modelopt_restore_prefers_native_resume_checkpoint(resume_has_modelopt_s
         model=SimpleNamespace(
             fine_grained_activation_offloading=False,
             restore_modelopt_state=True,
-            vocab_size=32,
+            vocab_size=64,
         ),
         peft=None,
         profiling=SimpleNamespace(),
@@ -96,6 +96,8 @@ def test_modelopt_restore_prefers_native_resume_checkpoint(resume_has_modelopt_s
         with pytest.raises(StopAfterHooksRegistered):
             training_setup.setup(state, Mock())
 
+        assert cfg.model.vocab_size == 64
+        assert cfg.model.should_pad_vocab is False
         assert len(hooks) == 1
         if resume_has_modelopt_state:
             hooks[0]([])
