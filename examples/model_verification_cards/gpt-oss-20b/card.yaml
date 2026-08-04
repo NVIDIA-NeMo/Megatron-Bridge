@@ -5,13 +5,15 @@ title: gpt_oss_20b
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. GPT-OSS 20B H100 support verification is pending for conversion,
-  inference, full SFT, long-context SFT, PEFT, and checkpoint resume.
+  results. GPT-OSS 20B H100 support verification has completed GPU
+  HF-to-Megatron conversion; CPU conversion, export, inference, full SFT,
+  long-context SFT, PEFT, and checkpoint resume remain pending.
 verification_index:
   model_level:
+    verified:
+      - hf_to_megatron_gpu
     unverified:
       - hf_to_megatron_cpu
-      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
@@ -46,7 +48,7 @@ items:
       revision.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -56,11 +58,12 @@ items:
       --megatron-path work/model-verification/gpt-oss-20b/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 2 --ep 2 --etp 1
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-04
     expected_result: >
-      Future verification must import the pinned MXFP4 Hugging Face checkpoint
-      on 8 GPUs, persist iter_0000000, reload the distributed Megatron
-      checkpoint at TP2/PP2/EP2/ETP1, and audit the dequantized BF16 tensors.
+      The command exits successfully, imports the pinned MXFP4 Hugging Face
+      checkpoint on 8 GPUs, and creates iter_0000000 as a distributed
+      TP2/PP2/EP2/ETP1 Megatron checkpoint with eight DistCP shards, metadata,
+      train state, tokenizer artifacts, and latest-checkpoint markers.
 
   megatron_to_hf_cpu:
     status: unverified
