@@ -28,7 +28,26 @@ from megatron.bridge.training.config import ConfigContainer
 
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
-    return deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
+    cfg = deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
 
 
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
