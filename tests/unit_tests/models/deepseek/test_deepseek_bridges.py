@@ -332,6 +332,40 @@ class TestDeepSeekV3MaybeModifyLoadedHFWeight:
         assert result["up"] is w2
 
 
+class TestCommonMappingSingleMatrixQProjection:
+    """Input-norm coverage when q_lora_rank is None, so MLA uses a single q projection."""
+
+    def test_fused_input_norm_is_mapped(self):
+        """TE fuses the input norm into linear_q_proj, and that spelling must map."""
+        registry = MegatronMappingRegistry(*get_common_mapping_list())
+
+        mapping = registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_q_proj.layer_norm_weight")
+
+        assert mapping is not None
+        assert mapping.hf_param == "model.layers.0.input_layernorm.weight"
+
+    def test_standalone_input_norm_still_maps(self):
+        """The q_lora_rank set case keeps its own input_layernorm module."""
+        registry = MegatronMappingRegistry(*get_common_mapping_list())
+
+        mapping = registry.megatron_to_hf_lookup("decoder.layers.0.input_layernorm.weight")
+
+        assert mapping is not None
+        assert mapping.hf_param == "model.layers.0.input_layernorm.weight"
+
+    def test_mtp_layers_pick_up_the_fused_input_norm(self):
+        """MTP mappings are rewritten from the same dict, so they inherit the new entry."""
+        hf_config = SimpleNamespace(num_nextn_predict_layers=1, num_hidden_layers=61)
+        registry = MegatronMappingRegistry(*get_common_mapping_list(hf_config=hf_config))
+
+        mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.0.mtp_model_layer.self_attention.linear_q_proj.layer_norm_weight"
+        )
+
+        assert mapping is not None
+        assert mapping.hf_param == "model.layers.61.input_layernorm.weight"
+
+
 class TestCommonMappingExpertBias:
     """Router expert_bias coverage in the shared DeepSeek-family mapping list (issue #4199)."""
 

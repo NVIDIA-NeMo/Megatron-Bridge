@@ -57,8 +57,12 @@ def get_common_mapping_list(hf_config=None) -> list:
         "decoder.layers.*.self_attention.linear_q_up_proj.layer_norm_weight": "model.layers.*.self_attn.q_a_layernorm.weight",
         # Mcore local spec
         "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_a_layernorm.weight",
-        # For models without MLA
+        # Single-matrix q projection: used both without MLA and by MLA with q_lora_rank=None,
+        # which has no q_a_proj/q_a_layernorm to map.
         "decoder.layers.*.self_attention.linear_q_proj.weight": "model.layers.*.self_attn.q_proj.weight",
+        # TE fuses the input norm into that projection, so no standalone input_layernorm module
+        # exists. Both spellings target the same HF tensor; only one exists per model.
+        "decoder.layers.*.self_attention.linear_q_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
     }
 
     mapping_list = []

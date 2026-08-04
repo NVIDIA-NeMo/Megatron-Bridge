@@ -1194,6 +1194,11 @@ class MegatronModelBridge(
 
         _hf_import_cache: Dict[str, torch.Tensor] = {}
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
+            # build_conversion_tasks returns List[None | WeightConversionTask]; a slot stays None
+            # when no mapping matched that global parameter. It already warned, and crashing here
+            # with AttributeError buries which parameter was unmapped.
+            if task is None:
+                continue
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
@@ -1322,6 +1327,11 @@ class MegatronModelBridge(
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         for task in conversion_tasks:
+            # build_conversion_tasks returns List[None | WeightConversionTask]; a slot stays None
+            # when no mapping matched that global parameter. It already warned, and crashing here
+            # with AttributeError buries which parameter was unmapped.
+            if task is None:
+                continue
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
