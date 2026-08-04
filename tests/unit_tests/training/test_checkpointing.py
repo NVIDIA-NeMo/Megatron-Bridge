@@ -1934,6 +1934,28 @@ class TestCleanupNonPersistentCheckpoints:
         assert retained_checkpoint.is_dir()
         assert future_incomplete_checkpoint.is_dir()
 
+    @patch("torch.distributed.is_initialized", return_value=True)
+    @patch("torch.distributed.get_rank", return_value=0)
+    def test_cleanup_keeps_complete_checkpoint_generation_with_energon_state(
+        self, mock_get_rank, mock_dist_init, tmp_path
+    ):
+        """Retention counts a model checkpoint and its Energon state as one generation."""
+        dataloader_checkpoint = tmp_path / "energon" / "iter_0000010"
+        dataloader_checkpoint.mkdir(parents=True)
+        (dataloader_checkpoint / "train_dataloader_dprank000.pt").touch()
+        model_checkpoint = tmp_path / "iter_0000010"
+        model_checkpoint.mkdir()
+
+        cleanup_old_non_persistent_checkpoint(
+            str(tmp_path),
+            leave_ckpt_num=1,
+            do_async=False,
+            max_iteration=10,
+        )
+
+        assert model_checkpoint.is_dir()
+        assert dataloader_checkpoint.is_dir()
+
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
     def test_cleanup_old_non_persistent_checkpoint_retain_interval(self, mock_get_rank, mock_dist_init):
