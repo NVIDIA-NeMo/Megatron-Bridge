@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GB200 training recipes for Nemotron 3 Nano."""
+"""GB200 library recipes for Nemotron 3 and 3.5 Nano."""
 
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.nemotronh._nemotron_3_nano import (
+    _nemotron_3_nano_peft_reference_config,
+    _nemotron_3_nano_sft_reference_config,
+)
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
     nemotron_3_5_nano_pretrain_config,
     nemotron_3_5_nano_sft_openmathinstruct2_packed_config,
@@ -70,16 +75,16 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_flex_dispatcher_num_sms = None
-    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
 
     cfg.train.train_iters = 39735
-    cfg.train.global_batch_size = 512
+    cfg.train.global_batch_size = 3072
     cfg.train.micro_batch_size = 2
-    cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 100
+    cfg.train.manual_gc = False
+    cfg.train.manual_gc_interval = 0
 
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -120,39 +125,23 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_bootstrap_backend="nccl",
-        tp_comm_overlap=True,
+        tp_comm_overlap=False,
     )
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
     cfg.checkpoint.save_interval = 200
-    cfg.checkpoint.async_save = False
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
-    cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.check_for_large_grads = True
+    cfg.ddp.check_for_nan_in_grad = False
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     cfg.model.init_method_std = 0.0173
     cfg.model.use_fused_weighted_squared_relu = True
-
-    cfg.env_vars = {
-        **COMMON_RECIPE_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-    }
 
     return cfg
 
@@ -238,6 +227,56 @@ def nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config() -> ConfigContain
     return cfg
 
 
+def _apply_gb200_finetune_execution_config(cfg: ConfigContainer) -> None:
+    """Apply safe GB200 packed-finetuning execution settings."""
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+
+    # DeepEP is unsupported on compute capability 10, while packed HybridEP
+    # lacks matching workload evidence. Use the correctness-first fallback.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_router_force_load_balancing = False
+
+
+def nemotron_3_nano_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the Nemotron 3 Nano SFT config for eight GB200 GPUs.
+
+    Packed SFT remains eager because CUDA graphs require static input shapes.
+    Optimizer, schedule, data, and routing semantics remain unchanged.
+
+    Returns:
+        GB200 BF16 SFT configuration.
+    """
+    cfg = _nemotron_3_nano_sft_reference_config()
+    _apply_gb200_finetune_execution_config(cfg)
+    return cfg
+
+
+def nemotron_3_nano_peft_8gpu_gb200_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return the Nemotron 3 Nano PEFT config for eight GB200 GPUs.
+
+    Args:
+        peft_scheme: PEFT scheme, or a custom PEFT instance.
+
+    Returns:
+        GB200 BF16 PEFT configuration.
+    """
+    cfg = _nemotron_3_nano_peft_reference_config(peft_scheme=peft_scheme)
+    _apply_gb200_finetune_execution_config(cfg)
+    return cfg
+
+
 # NeMo-CI appends ``_pretrain_config`` to MODEL_RECIPE_NAME. This explicit
 # alias lets the GB200 release case select the hardware recipe without changing
 # the legacy ``nemotron_3_nano_pretrain_config`` default.
@@ -249,5 +288,7 @@ __all__ = [
     "nemotron_3_5_nano_pretrain_8k_fsdp_config",
     "nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",
+    "nemotron_3_nano_peft_8gpu_gb200_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_sft_8gpu_gb200_bf16_config",
 ]

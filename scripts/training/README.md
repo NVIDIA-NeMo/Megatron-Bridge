@@ -93,7 +93,7 @@ Text SFT/PEFT benchmark recipes retain the flat runner's mock-data default. Qwen
 model-specific dataset configuration. Exported benchmark PEFT recipes are fixed LoRA configs; DoRA remains available
 through configurable library recipes. Explicit benchmark dataset replacement remains on the compatibility launcher.
 
-Five legacy duplicate names resolve to the benchmark definition; their library workloads remain available through
+Known duplicate names resolve to the benchmark definition; their library workloads remain available through
 the corresponding generic recipe aliases. New recipe names should be unique across both packages.
 
 Text recipes default to `llm_step`; all recipes infer their modality-specific forward step from the same registry.

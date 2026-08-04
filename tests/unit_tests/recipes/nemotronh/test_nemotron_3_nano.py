@@ -16,10 +16,13 @@
 Unit tests for Nemotron 3 and 3.5 Nano recipe configuration builders.
 
 Tests cover:
+- Pretrain configuration defaults (parameterless API)
+- SFT configuration (parameterless API for full supervised fine-tuning)
+- PEFT configuration with LoRA and DoRA (``peft_scheme`` parameter)
+- MoE-specific settings (HybridEP pretraining, DeepEP finetuning, expert parallelism)
 - Separate Nemotron 3 and 3.5 pretrain configurations
 - SFT configuration with explicit Nemotron 3.5 MTP overrides
 - PEFT configuration with explicit Nemotron 3.5 MTP overrides, LoRA, and DoRA
-- MoE-specific settings (DeepEP, expert parallelism)
 - Parallelism and tokenizer configurations
 """
 
@@ -61,9 +64,9 @@ class TestNemotron3NanoPretrain:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is False
+        assert config.model.sequence_parallel is True
 
         # Check expert parallelism defaults
         assert config.model.expert_tensor_parallel_size == 1
@@ -71,8 +74,8 @@ class TestNemotron3NanoPretrain:
 
         # Check training configuration
         assert config.train.train_iters == 39735
-        assert config.train.global_batch_size == 1024
-        assert config.train.micro_batch_size == 1
+        assert config.train.global_batch_size == 3072
+        assert config.train.micro_batch_size == 2
 
         # Check dataset configuration
         assert config.dataset.seq_length == 8192
@@ -83,12 +86,11 @@ class TestNemotron3NanoPretrain:
 
         # Check comm overlap
         assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_overlap is False
         assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
         # Check precision
-        assert config.mixed_precision.bf16 is True
-        assert config.mixed_precision.grad_reduce_in_fp32 is False
+        assert config.mixed_precision == "bf16_mixed"
 
         # MTP is opt-in for pretraining.
         assert config.model.mtp_num_layers == 0
@@ -105,7 +107,8 @@ class TestNemotron3NanoPretrain:
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
-        assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
+        assert config.model.use_te_rng_tracker is True
+        assert base_config.model.use_te_rng_tracker is False
         assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
         assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
@@ -138,7 +141,7 @@ class TestNemotron3NanoPretrain:
         assert config.model.moe_router_fusion is False
         assert config.model.moe_permute_fusion is True
         assert config.model.moe_grouped_gemm is True
-        assert config.model.cross_entropy_loss_fusion is True
+        assert config.model.cross_entropy_loss_fusion is False
         assert config.model.cross_entropy_fusion_impl == "native"
 
     def test_pretrain_config_optimizer_settings(self):
@@ -157,6 +160,7 @@ class TestNemotron3NanoPretrain:
         assert config.optimizer.main_params_dtype == torch.float32
         assert config.optimizer.exp_avg_dtype == torch.float32
         assert config.optimizer.exp_avg_sq_dtype == torch.float32
+        assert config.optimizer.optimizer_cpu_offload is False
 
     def test_pretrain_config_checkpoint_settings(self):
         """Test checkpoint settings for pretrain config."""
@@ -185,9 +189,9 @@ class TestNemotron3NanoSft:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check default parallelism for SFT
-        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.tensor_model_parallel_size == 4
         assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is False
+        assert config.model.sequence_parallel is True
 
         # Check expert parallelism
         assert config.model.expert_tensor_parallel_size == 1
@@ -207,11 +211,12 @@ class TestNemotron3NanoSft:
         assert config.mixed_precision == "bf16_mixed"
 
     def test_sft_config_deepep_settings(self):
-        """Test that SFT config has correct DeepEP/MoE dispatcher settings."""
+        """Test that SFT config retains the established DeepEP dispatcher."""
         config = nemotron_3_nano_sft_config()
 
         # Check MoE dispatcher settings
-        assert config.model.moe_token_dispatcher_type is not None
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "deepep"
 
     def test_sft_config_custom_parallelism(self):
         """Test SFT config with custom parallelism applied after creation."""
@@ -273,18 +278,10 @@ class TestNemotron3NanoSft:
         mtp_num_layers,
         tokenizer_model,
     ):
-        """SFT and PEFT derive the provider from Nemotron 3 before applying MTP."""
-        provider = HybridModelProvider()
-        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
-        bridge = Mock()
-        bridge.to_megatron_provider.return_value = provider
+        """SFT and PEFT use the shared Nano provider before applying MTP."""
+        config = recipe_factory()
 
-        with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
-            config = recipe_factory()
-
-        from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
-        bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
-        assert config.model is provider
+        assert isinstance(config.model, HybridModelProvider)
         assert config.model.mtp_num_layers == mtp_num_layers
         assert config.model.mtp_hybrid_override_pattern == ("*E" if mtp_num_layers else None)
         assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
@@ -293,39 +290,27 @@ class TestNemotron3NanoSft:
         assert config.model.hf_model_id == tokenizer_model
         assert config.tokenizer.tokenizer_model == tokenizer_model
 
-    @pytest.mark.parametrize(
-        ("recipe_factory", "base_factory_name", "recipe_kwargs", "base_args"),
-        [
-            (
-                nemotron_3_5_nano_sft_config,
-                "nemotron_3_nano_sft_8gpu_h100_bf16_config",
-                {},
-                (),
-            ),
-            (
-                nemotron_3_5_nano_peft_config,
-                "nemotron_3_nano_peft_8gpu_h100_bf16_config",
-                {"peft_scheme": "dora"},
-                ("dora",),
-            ),
-        ],
-    )
-    def test_nemotron_3_5_finetuning_overrides_base_recipe(
-        self,
-        recipe_factory,
-        base_factory_name,
-        recipe_kwargs,
-        base_args,
-    ):
-        """Nemotron 3.5 SFT and PEFT mutate their corresponding Nemotron 3 config."""
+    def test_nemotron_3_5_sft_retains_generic_topology(self):
+        """Nemotron 3.5 SFT remains independent of the specialized TP4 recipe."""
+        config = nemotron_3_5_nano_sft_config()
+
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.sequence_parallel is False
+
+    def test_nemotron_3_5_peft_overrides_base_recipe(self):
+        """Nemotron 3.5 PEFT mutates the corresponding Nemotron 3 config."""
         base_config = Mock()
         base_config.model = HybridModelProvider()
         base_config.tokenizer = Mock()
 
-        with patch.object(recipe_module, base_factory_name, return_value=base_config) as base_factory:
-            config = recipe_factory(**recipe_kwargs)
+        with patch.object(
+            recipe_module,
+            "nemotron_3_nano_peft_8gpu_h100_bf16_config",
+            return_value=base_config,
+        ) as base_factory:
+            config = nemotron_3_5_nano_peft_config(peft_scheme="dora")
 
-        base_factory.assert_called_once_with(*base_args)
+        base_factory.assert_called_once_with("dora")
         assert config is base_config
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
@@ -344,15 +329,8 @@ class TestNemotron3NanoSft:
 
     def test_nemotron_3_5_openmath_sft_recipe_owns_verified_h100_defaults(self):
         """The dedicated H100 recipe makes the standard packed SFT command concise."""
-        provider = HybridModelProvider()
-        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
-        bridge = Mock()
-        bridge.to_megatron_provider.return_value = provider
+        config = recipe_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
 
-        with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
-            config = recipe_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
-
-        from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
         assert config.model.mtp_use_repeated_layer is True
@@ -468,8 +446,9 @@ class TestNemotron3NanoPeft:
         """Test that PEFT config has correct MoE dispatcher settings."""
         config = nemotron_3_nano_peft_config()
 
-        # Check MoE dispatcher settings exist
-        assert config.model.moe_token_dispatcher_type is not None
+        # Check MoE dispatcher settings
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "deepep"
 
     def test_peft_config_custom_parallelism(self):
         """Test PEFT config with custom parallelism applied after creation."""
