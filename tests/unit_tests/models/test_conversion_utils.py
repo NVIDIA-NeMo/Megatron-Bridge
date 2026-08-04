@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import pytest
+import torch
 
+from megatron.bridge.models.conversion import utils as conversion_utils
 from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
 
 
@@ -33,3 +35,56 @@ def test_mcore_to_hf_window_size(window_size, expected):
 def test_mcore_to_hf_window_size_rejects_malformed_pair():
     with pytest.raises(ValueError, match="two-element MCore window"):
         mcore_to_hf_window_size([2047])
+
+
+def test_unwrap_model_supports_mcore_fsdp_factory(monkeypatch):
+    from megatron.core.distributed.fsdp import mcore_fsdp_adapter
+
+    class FakeFullyShardedDataParallelV1(torch.nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+    class FakeFullyShardedDataParallelV2(torch.nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+    def fsdp_factory(*args, **kwargs):
+        return FakeFullyShardedDataParallelV2(*args, **kwargs)
+
+    monkeypatch.setattr(mcore_fsdp_adapter, "FullyShardedDataParallel", fsdp_factory)
+    monkeypatch.setattr(
+        mcore_fsdp_adapter,
+        "FullyShardedDataParallelV1",
+        FakeFullyShardedDataParallelV1,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        mcore_fsdp_adapter,
+        "FullyShardedDataParallelV2",
+        FakeFullyShardedDataParallelV2,
+        raising=False,
+    )
+
+    model = torch.nn.Linear(2, 2)
+
+    assert conversion_utils.unwrap_model(FakeFullyShardedDataParallelV1(model)) is model
+    assert conversion_utils.unwrap_model(FakeFullyShardedDataParallelV2(model)) is model
+
+
+def test_unwrap_model_supports_legacy_mcore_fsdp_class(monkeypatch):
+    from megatron.core.distributed.fsdp import mcore_fsdp_adapter
+
+    class FakeFullyShardedDataParallel(torch.nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+    monkeypatch.setattr(mcore_fsdp_adapter, "FullyShardedDataParallel", FakeFullyShardedDataParallel)
+    monkeypatch.delattr(mcore_fsdp_adapter, "FullyShardedDataParallelV1", raising=False)
+    monkeypatch.delattr(mcore_fsdp_adapter, "FullyShardedDataParallelV2", raising=False)
+
+    model = torch.nn.Linear(2, 2)
+
+    assert conversion_utils.unwrap_model(FakeFullyShardedDataParallel(model)) is model
