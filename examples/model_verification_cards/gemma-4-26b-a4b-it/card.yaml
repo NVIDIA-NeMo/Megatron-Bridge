@@ -5,13 +5,16 @@ title: gemma_4_26b_a4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact CPU and GPU
-  export, and deterministic multimodal inference are verified. Manual forward
-  comparison remains unverified because the recorded run compared a
+  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import and exact CPU and GPU
+  export are verified. Deterministic multimodal inference remains unverified
+  because the recorded run stopped after 29 of the requested 32 tokens. Manual
+  forward comparison remains unverified because the recorded run compared a
   tensor-parallel padding position rather than the prompt's next token. Full
   SFT remains unverified: the current two-node EP8 recipe does not complete its
   first optimizer step, while the supported single-node TP4/PP2/EP1 fallback
-  completes one finite step but stalls during the second. Long-context SFT and
+  completes one finite step before running out of memory during the second.
+  The formerly reported stall was failure cleanup waiting on outstanding
+  collectives, not a pipeline-boundary shape mismatch. Long-context SFT and
   PEFT are pending. The published Bridge recipes do not currently provide VLM
   pretraining.
 verification_index:
@@ -21,9 +24,9 @@ verification_index:
       - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
-      - inference
     unverified:
       - manual_forward_pass
+      - inference
   training:
     H100:
       unverified: [sft, sft_export_inference, sft_long_context, peft]
@@ -129,9 +132,8 @@ items:
       agreement and cosine similarity of at least 0.99.
 
   inference:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: c4250ac1382eccc8e2b58c2424b3db85415fbf6f  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/hf_to_megatron_generate_vlm.py
@@ -142,17 +144,18 @@ items:
       --prompt "What animal is on the candy?"
       --max_new_tokens 32
       --tp 2 --pp 1 --ep 4 --etp 1
-    last_verified: 2026-07-23
+    last_verified: null
     expected_result: >
-      One BF16 deterministic greedy run terminated on EOS after 29 generated
-      tokens. The JSON-escaped
-      literal completion was "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
+      The 2026-07-23 BF16 deterministic greedy run stopped on EOS after 29 of
+      the requested 32 tokens, so it does not satisfy the exact-length gate.
+      Its JSON-escaped diagnostic completion was
+      "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
       animal on the candy is a
       turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u002f\u002fthought\n\u003cchannel|\u003eThe
       animal on the candy is a
       turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u003ceos\u003e".
-      The input was
-      p-blog/candy.JPG from huggingface/documentation-images at revision
+      Verification requires a fresh run that emits exactly 32 tokens. The
+      input was p-blog/candy.JPG from huggingface/documentation-images at revision
       44c3249461c5a5336585d1e31e0a4ce7fce06a5a, with SHA-256
       fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
 
@@ -203,11 +206,15 @@ items:
         single-node TP4/PP2/EP1 run with selective recompute and a frozen vision
         encoder completed one optimizer step in 54,344.4 ms with lm loss
         1.293086, grad norm 46.201, 1.8 TFLOP/s/GPU, zero skipped iterations,
-        and zero NaN iterations. Its second step then made no observable
-        progress for more than nine minutes while all four ranks on the second
-        pipeline stage remained active and the first stage waited. No valid
-        10-step metrics or iter_0000010 checkpoint were produced, so SFT
-        remains unverified.
+        and zero NaN iterations. A controlled full-dimension reproduction
+        showed that the apparent second-step stall is a 352 MiB CUDA OOM on all
+        first-stage ranks in the MoE combine reduce-scatter. Those ranks then
+        waited in process-group cleanup while second-stage ranks waited in
+        pipeline communication. Tiny multimodal PP1 and PP2 controls completed
+        three steps with compatible BF16 boundary tensors and matching
+        recompute shapes, so the evidence does not indicate a PP boundary
+        contract mismatch. No valid 10-step metrics or iter_0000010 checkpoint
+        were produced, so SFT remains unverified.
 
   sft_export_inference:
     H100:

@@ -64,12 +64,23 @@ class TestDestroyProcessGroupIfNeeded:
         mock_dist.barrier.assert_not_called()
         mock_dist.destroy_process_group.assert_not_called()
 
+    @patch("megatron.bridge.training.pretrain.dist")
+    def test_abort_does_not_wait_for_outstanding_collectives(self, mock_dist):
+        """Test failure cleanup aborts process groups without synchronization."""
+        mock_dist.is_initialized.return_value = True
+
+        _maybe_destroy_process_group(should_destroy=True, synchronize=False, abort=True)
+
+        mock_dist.distributed_c10d._abort_process_group.assert_called_once_with()
+        mock_dist.barrier.assert_not_called()
+        mock_dist.destroy_process_group.assert_not_called()
+
 
 class TestPretrainProcessGroupOwnership:
     """Test process group ownership across exceptional pretrain exits."""
 
-    def test_framework_owned_process_group_is_destroyed_when_setup_raises(self):
-        """Test Bridge destroys a process group initialized during failed setup."""
+    def test_framework_owned_process_group_is_aborted_when_setup_raises(self):
+        """Test Bridge aborts process groups initialized during failed setup."""
         state = MagicMock()
 
         with (
@@ -88,9 +99,10 @@ class TestPretrainProcessGroupOwnership:
 
         mock_destroy_global_state.assert_called_once_with()
         mock_dist.barrier.assert_not_called()
-        mock_dist.destroy_process_group.assert_called_once_with()
+        mock_dist.distributed_c10d._abort_process_group.assert_called_once_with()
+        mock_dist.destroy_process_group.assert_not_called()
 
-    def test_framework_owned_async_worker_is_aborted_before_process_group_destroyed(self):
+    def test_framework_owned_async_worker_is_aborted_before_process_groups(self):
         """Test failed setup aborts its async checkpoint worker before distributed cleanup."""
         state = MagicMock()
         async_queue = MagicMock()
@@ -109,12 +121,14 @@ class TestPretrainProcessGroupOwnership:
             patch("megatron.bridge.training.pretrain.setup", side_effect=setup_then_fail),
         ):
             mock_dist.is_initialized.side_effect = [False, True]
-            mock_dist.destroy_process_group.side_effect = lambda: cleanup_order.append(("process_group", None))
+            mock_dist.distributed_c10d._abort_process_group.side_effect = lambda: cleanup_order.append(
+                ("process_group", "abort")
+            )
 
             with pytest.raises(RuntimeError, match="setup failed after async worker initialization"):
                 _pretrain(state, MagicMock())
 
-        assert cleanup_order == [("async_queue", True), ("process_group", None)]
+        assert cleanup_order == [("async_queue", True), ("process_group", "abort")]
         assert state._async_calls_queue is None
 
     def test_caller_owned_process_group_is_preserved_when_setup_raises(self):
