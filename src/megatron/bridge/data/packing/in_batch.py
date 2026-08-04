@@ -336,5 +336,5 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
     ):
         if key in packed:
             batch[key] = packed[key]
-        elif key in {"cu_seqlens_q_padded", "cu_seqlens_kv_padded"}:
+        elif key in {"padding_mask", "cu_seqlens_q_padded", "cu_seqlens_kv_padded"}:
             batch.pop(key, None)

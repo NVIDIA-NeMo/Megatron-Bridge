@@ -184,6 +184,19 @@ class TestPackBatchSequences:
         assert batch["cu_seqlens_q"].tolist() == [0, 3, 5]
         assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
 
+    def test_packing_removes_stale_padding_mask_when_not_emitted(self):
+        """Packing without mask emission removes an incompatible input mask."""
+        batch = {
+            "tokens": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
+            "position_ids": torch.arange(4).unsqueeze(0).expand(2, -1),
+            "padding_mask": torch.tensor([[False, False, False, True], [False, False, True, True]]),
+        }
+
+        pack_right_padded_sequence_batch_to_mcore_thd(batch, pad_token_id=0)
+
+        assert batch["tokens"].shape == (1, 5)
+        assert "padding_mask" not in batch
+
     def test_packing_with_larger_multiple(self):
         """Test packing with larger pad_to_multiple_of (e.g., for CP=4)."""
         tokens = torch.tensor(
