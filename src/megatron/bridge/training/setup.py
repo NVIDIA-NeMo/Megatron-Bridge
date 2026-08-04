@@ -248,6 +248,7 @@ def setup(
     cfg.model.vocab_size, cfg.model.should_pad_vocab = _validate_and_set_vocab_size(
         model_vocab_size=cfg.model.vocab_size,
         tokenizer_vocab_size=tokenizer.vocab_size,
+        use_tokenizer_vocab_size=getattr(cfg.tokenizer, "use_tokenizer_vocab_size", False),
     )
 
     if hasattr(cfg.dataset, "tokenizer"):
@@ -630,12 +631,18 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     return transformed_model
 
 
-def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
+def _validate_and_set_vocab_size(
+    model_vocab_size: Optional[int],
+    tokenizer_vocab_size: int,
+    use_tokenizer_vocab_size: bool = False,
+) -> tuple[int, bool]:
     """Validate and determine the correct vocab size for the model.
 
     Args:
         model_vocab_size: Vocab size set in model config (can be None)
         tokenizer_vocab_size: Unpadded tokenizer vocab size
+        use_tokenizer_vocab_size: Ignore a preset model vocabulary and derive it
+            from the tokenizer. Intended for from-scratch pretraining recipes.
 
     Returns:
         tuple[int, bool]: The validated unpadded vocab size and padding flag
@@ -645,8 +652,9 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
     Raises:
         ValueError: If model vocab size is invalid
     """
-    if model_vocab_size is None:
-        # If model vocab size is not set, use the tokenizer's vocab size
+    if use_tokenizer_vocab_size or model_vocab_size is None:
+        # Use the tokenizer's vocab size when the model vocab is unset, or when
+        # use_tokenizer_vocab_size forces it for from-scratch pretraining.
         # Enable padding since this came from tokenizer
         return tokenizer_vocab_size, True
     elif model_vocab_size < tokenizer_vocab_size:
