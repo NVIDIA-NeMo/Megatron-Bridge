@@ -6,19 +6,19 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. GPT-OSS 20B H100 support verification has completed GPU
-  HF-to-Megatron conversion and GPU Megatron-to-HF export; CPU conversion,
-  manual forward pass, inference, full SFT, long-context SFT, PEFT, and
-  checkpoint resume remain pending.
+  HF-to-Megatron conversion, GPU Megatron-to-HF export, manual forward-pass
+  correlation, and deterministic Megatron inference; CPU conversion, full SFT,
+  long-context SFT, PEFT, and checkpoint resume remain pending.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - manual_forward_pass
-      - inference
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -105,7 +105,7 @@ items:
       BF16 reference bitwise.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
@@ -116,15 +116,16 @@ items:
       --tp 2 --pp 2 --ep 2 --etp 1
       --prompt "The capital of France is the city of"
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-04
     expected_result: >
-      Future verification must compare Hugging Face and Megatron logits for the
-      same pinned prompt, confirm the next-token predictions match, record
-      cosine similarity of at least 0.99, and record maximum and mean absolute
-      logit differences as diagnostics.
+      The pinned-revision one-step comparison exits successfully; the Hugging
+      Face and Megatron next-token predictions match at token ID 12650
+      (" Paris"), and cosine similarity is 0.999913, above the 0.99 correlation
+      gate. The maximum and mean absolute logit differences are 0.406250 and
+      0.051723, respectively; both are report-only diagnostic observations.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
@@ -134,11 +135,14 @@ items:
       --prompt "The capital of France is"
       --max_new_tokens 32 --tp 2 --pp 2 --ep 2 --etp 1
       --use-legacy-generation --attention-backend local --trust-remote-code
-    last_verified: null
-    expected_result: >
-      Future verification must run deterministic greedy Megatron generation
-      from the imported checkpoint, generate exactly 32 new tokens, and record
-      the literal completion including whitespace.
+    last_verified: 2026-08-04
+    expected_result: |
+      The command exits successfully after exactly 32 new tokens and prints this
+      literal completion, including its leading space and trailing space:
+       Paris."
+          # Test with a non-existent article
+          article = fetch_article_by_id(999)
+          assert article is None, "Article with ID 
 
   pretrain:
     H100:
