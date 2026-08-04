@@ -20,6 +20,7 @@ from megatron.core.transformer.attention import SelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen_vl import qwen35_vl_provider as provider_module
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
     _TRANSFORMERS_HAS_QWEN3_5_MOE,
@@ -83,6 +84,31 @@ class TestQwen35VLModelProvider:
         assert provider.vision_end_token_id == 248054
         assert provider.bos_token_id == 248045
         assert provider.eos_token_id == 248044
+        assert provider.apply_rope_fusion is False
+
+    def test_direct_vlm_provider_preserves_explicit_rope_fusion(self, monkeypatch):
+        """The VLM provider bypass keeps Bridge-owned mRoPE fusion enabled."""
+        provider = Qwen35VLModelProvider(
+            num_layers=4,
+            hidden_size=512,
+            num_attention_heads=2,
+            apply_rope_fusion=True,
+        )
+        monkeypatch.setattr(provider, "build_language_spec", lambda **kwargs: object())
+        monkeypatch.setattr(provider, "build_mtp_spec", lambda **kwargs: None)
+        captured = {}
+
+        def fake_model(**kwargs):
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(provider_module, "Qwen3VLModel", fake_model)
+        model = provider.provide(pre_process=True, post_process=True)
+
+        assert model is not None
+        assert provider.apply_rope_fusion is True
+        assert captured["language_transformer_config"] is provider
+        assert captured["language_transformer_config"].apply_rope_fusion is True
 
     def test_common_llm_defaults(self):
         provider = Qwen35VLModelProvider(

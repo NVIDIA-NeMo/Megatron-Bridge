@@ -25,6 +25,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from torch import nn
 from torch.nn import functional as F
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import is_raw_mrope_freqs
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLVisionTransformerBlock
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
@@ -44,7 +45,8 @@ def _maybe_pad_vision_sequence_for_cuda_graph(
 
     Args:
         hidden_states: ``[seq_len, hidden_size]``.
-        rotary_pos_emb: ``[seq_len, 1, 1, dim]`` (same layout as after ``reshape``/``repeat`` in :meth:`Qwen3VLVisionModel.forward`).
+        rotary_pos_emb: Legacy ``[seq_len, 1, 1, dim]`` embeddings or raw
+            ``[3, 1, seq_len, rotary_dim / 2]`` frequencies.
         seq_len: Current sequence length (must match tensor leading size).
         max_seq_len: Target length for CUDA graph capture.
 
@@ -62,7 +64,10 @@ def _maybe_pad_vision_sequence_for_cuda_graph(
     if seq_len < max_seq_len:
         pad_len = max_seq_len - seq_len
         hidden_states = F.pad(hidden_states, (0, 0, 0, pad_len), value=0.0)
-        rotary_pos_emb = F.pad(rotary_pos_emb, (0, 0, 0, 0, 0, 0, 0, pad_len), value=0.0)
+        if is_raw_mrope_freqs(rotary_pos_emb, sequence_length=seq_len):
+            rotary_pos_emb = F.pad(rotary_pos_emb, (0, 0, 0, pad_len), value=0.0)
+        else:
+            rotary_pos_emb = F.pad(rotary_pos_emb, (0, 0, 0, 0, 0, 0, 0, pad_len), value=0.0)
         seq_len = max_seq_len
     return hidden_states, rotary_pos_emb, seq_len
 
@@ -222,6 +227,17 @@ class Qwen3VLVisionModel(VisionModule):
 
         embeddings = freq_table[pos_ids]  # lookup rotary embeddings
         embeddings = embeddings.flatten(1)
+        if self.config.apply_rope_fusion:
+            section = list(self.config.mrope_section)
+            if section[0] != 0 or section[1] + section[2] != embeddings.size(-1):
+                raise ValueError(
+                    "Vision mRoPE section must be [0, height, width] and cover the raw frequency dimension, "
+                    f"got section={section}, frequency_dim={embeddings.size(-1)}"
+                )
+            raw_freqs = embeddings.new_zeros((3, 1, total_tokens, embeddings.size(-1)))
+            raw_freqs[1, 0, :, : section[1]] = embeddings[:, : section[1]]
+            raw_freqs[2, 0, :, section[1] :] = embeddings[:, section[1] :]
+            return raw_freqs
         return embeddings
 
     def fast_pos_embed_interpolate(self, grid_thw):
@@ -332,7 +348,8 @@ class Qwen3VLVisionModel(VisionModule):
         seq_len, _ = hidden_states.size()
 
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
-        rotary_pos_emb = rotary_pos_emb.reshape(seq_len, 1, 1, -1).repeat(1, 1, 1, 2)
+        if not self.config.apply_rope_fusion:
+            rotary_pos_emb = rotary_pos_emb.reshape(seq_len, 1, 1, -1).repeat(1, 1, 1, 2)
 
         # Check if we need to pad for CUDA graphs
         use_cuda_graph_padding = self._uses_vision_cuda_graph()

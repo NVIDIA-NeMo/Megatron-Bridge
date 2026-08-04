@@ -109,6 +109,7 @@ class Qwen3VLGPTModel(GPTModel):
             seq_len_interpolation_factor=seq_len_interpolation_factor,
             rotary_base=rotary_base,
             cp_group=self.pg_collection.cp,
+            return_raw_freqs=bool(self.config.apply_rope_fusion),
         )
         self.mrope_section = self.config.mrope_section
         assert self.mrope_section is not None, (

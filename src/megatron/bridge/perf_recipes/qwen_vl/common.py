@@ -72,10 +72,9 @@ def _qwen35_vl_common(cfg: ConfigContainer) -> None:
 def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     """VLM post-overrides that must run after ``_benchmark_common``.
 
-    Qwen3.5-VL disables RoPE fusion and CUDA graphs for VLM variable-length
-    inputs; these override the perf defaults that ``_benchmark_common`` sets.
+    Qwen3.5-VL keeps generic benchmark RoPE fusion opt-in and disables CUDA
+    graphs for VLM variable-length inputs.
     """
-    cfg.model.apply_rope_fusion = False
     cfg.model.cuda_graph_impl = "none"
     cfg.optimizer.overlap_param_gather = False
 

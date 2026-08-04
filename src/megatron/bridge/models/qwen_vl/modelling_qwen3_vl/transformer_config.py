@@ -48,6 +48,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
 
     # Multimodal rope section for [temporal, height, width] dimensions
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
+    mrope_interleaved: bool = True
     apply_rope_fusion: bool = False
 
     image_token_id: int = 151655
@@ -108,10 +109,13 @@ def get_vision_model_config(hf_config, megatron_config=None):
     # defensively with the same default (``modelling_qwen3_vl/model.py:193``).
     config.deepstack_visual_indexes = deepcopy(getattr(hf_config, "deepstack_visual_indexes", []))
 
-    config.apply_rope_fusion = False
     config.gated_linear_unit = False  # no gated
     config.activation_func = partial(F.gelu, approximate="tanh")  # hidden_act
     config.kv_channels = config.hidden_size // config.num_attention_heads
+    vision_axis_section = config.kv_channels // 4
+    config.mrope_section = [0, vision_axis_section, vision_axis_section]
+    config.mrope_interleaved = False
+    config.apply_rope_fusion = bool(getattr(megatron_config, "apply_rope_fusion", False))
     config.num_query_groups = config.num_attention_heads  # no GQA
     config.layernorm_zero_centered_gamma = False  # False
     config.apply_query_key_layer_scaling = False  # factor=math.sqrt(head_dim)

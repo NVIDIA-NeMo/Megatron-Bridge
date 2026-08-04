@@ -28,7 +28,31 @@ from megatron.core.transformer.attention import (
 from megatron.core.transformer.dot_product_attention import DotProductAttention
 from torch import Tensor
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import apply_rotary_pos_emb_absolute
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
+    apply_rotary_pos_emb_absolute,
+    is_raw_mrope_freqs,
+    materialize_mrope_freqs,
+)
+
+
+def _get_packed_rotary_metadata(
+    packed_seq_params: PackedSeqParams | None,
+    *,
+    for_query: bool,
+) -> tuple[Tensor | None, int | None]:
+    """Return the padded-preferred cu-seqlens and matching max sequence length."""
+    if packed_seq_params is None:
+        return None, None
+    if for_query:
+        cu_seqlens = packed_seq_params.cu_seqlens_q_padded
+        if cu_seqlens is None:
+            cu_seqlens = packed_seq_params.cu_seqlens_q
+        return cu_seqlens, packed_seq_params.max_seqlen_q
+
+    cu_seqlens = packed_seq_params.cu_seqlens_kv_padded
+    if cu_seqlens is None:
+        cu_seqlens = packed_seq_params.cu_seqlens_kv
+    return cu_seqlens, packed_seq_params.max_seqlen_kv
 
 
 class Qwen3VLSelfAttention(SelfAttention):
@@ -114,6 +138,37 @@ class Qwen3VLSelfAttention(SelfAttention):
         else:
             assert rotary_pos_cos is None and rotary_pos_sin is None
 
+        # MCore inference mutates/slices the legacy sequence-first embedding
+        # layout before RoPE application. Materialize raw frequencies here so
+        # fused training support does not alter the inference contract.
+        if inference_context is not None and rotary_pos_emb is not None:
+            embeddings_are_tuple = isinstance(rotary_pos_emb, tuple)
+            raw_embeddings = rotary_pos_emb if embeddings_are_tuple else (rotary_pos_emb,)
+            if any(
+                is_raw_mrope_freqs(
+                    embedding,
+                    sequence_length=hidden_states.size(0),
+                    mrope_section=list(self.config.mrope_section),
+                )
+                for embedding in raw_embeddings
+            ):
+                materialized_embeddings = tuple(
+                    materialize_mrope_freqs(
+                        embedding,
+                        list(self.config.mrope_section),
+                        interleaved_mrope=bool(getattr(self.config, "mrope_interleaved", True)),
+                        rotary_interleaved=self.config.rotary_interleaved,
+                    )
+                    if is_raw_mrope_freqs(
+                        embedding,
+                        sequence_length=hidden_states.size(0),
+                        mrope_section=list(self.config.mrope_section),
+                    )
+                    else embedding
+                    for embedding in raw_embeddings
+                )
+                rotary_pos_emb = materialized_embeddings if embeddings_are_tuple else materialized_embeddings[0]
+
         # For self attention we just duplicate the rotary_pos_emb if it isn't already
         if rotary_pos_emb is not None and not isinstance(rotary_pos_emb, tuple):
             rotary_pos_emb = (rotary_pos_emb,) * 2
@@ -191,17 +246,8 @@ class Qwen3VLSelfAttention(SelfAttention):
         if rotary_pos_emb is not None and not self.config.flash_decode:
             q_pos_emb, k_pos_emb = rotary_pos_emb
 
-            if packed_seq_params is not None:
-                if packed_seq_params.cu_seqlens_q_padded is not None:
-                    cu_seqlens_q = packed_seq_params.cu_seqlens_q_padded
-                else:
-                    cu_seqlens_q = packed_seq_params.cu_seqlens_q
-                if packed_seq_params.cu_seqlens_kv_padded is not None:
-                    cu_seqlens_kv = packed_seq_params.cu_seqlens_kv_padded
-                else:
-                    cu_seqlens_kv = packed_seq_params.cu_seqlens_kv
-            else:
-                cu_seqlens_q = cu_seqlens_kv = None
+            cu_seqlens_q, max_seqlen_q = _get_packed_rotary_metadata(packed_seq_params, for_query=True)
+            cu_seqlens_kv, max_seqlen_kv = _get_packed_rotary_metadata(packed_seq_params, for_query=False)
 
             if q_pos_emb is not None:
                 # TODO VIJAY: simplify
@@ -211,6 +257,8 @@ class Qwen3VLSelfAttention(SelfAttention):
                         q_pos_emb,
                         config=self.config,
                         cu_seqlens=cu_seqlens_q,
+                        cp_group=self.pg_collection.cp,
+                        max_seqlen=max_seqlen_q,
                     )
                 else:
                     query = inference_context.apply_rotary_emb_query(
@@ -218,7 +266,7 @@ class Qwen3VLSelfAttention(SelfAttention):
                         q_pos_emb,
                         self.config,
                         cu_seqlens_q,
-                        self.model_comm_pgs.cp,
+                        self.pg_collection.cp,
                     )
             if k_pos_emb is not None:
                 key = apply_rotary_pos_emb_absolute(
@@ -226,6 +274,8 @@ class Qwen3VLSelfAttention(SelfAttention):
                     k_pos_emb,
                     config=self.config,
                     cu_seqlens=cu_seqlens_kv,
+                    cp_group=self.pg_collection.cp,
+                    max_seqlen=max_seqlen_kv,
                 )
 
             # TODO, can apply positional embedding to value_layer so it has

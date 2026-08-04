@@ -19,18 +19,24 @@ Run with: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_
 
 import datetime
 import os
+from types import SimpleNamespace
 
 import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.attention import AttnMaskType
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import attention as qwen_attention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import (
+    Qwen3VLSelfAttention,
+    _get_packed_rotary_metadata,
+)
 
 
 class TestQwen3VLSelfAttention:
@@ -144,6 +150,126 @@ class TestQwen3VLSelfAttention:
 
         assert actual.shape == (2, 1, 2)
         torch.testing.assert_close(actual, expected)
+
+    def test_packed_rotary_metadata_propagates_q_and_kv_max_seqlen(self):
+        """Qwen's direct rotary call receives layout-specific padded metadata."""
+        q = torch.tensor([0, 5, 12], dtype=torch.int32)
+        kv = torch.tensor([0, 7, 16], dtype=torch.int32)
+        q_padded = torch.tensor([0, 8, 16], dtype=torch.int32)
+        kv_padded = torch.tensor([0, 10, 20], dtype=torch.int32)
+        packed = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=q,
+            cu_seqlens_kv=kv,
+            cu_seqlens_q_padded=q_padded,
+            cu_seqlens_kv_padded=kv_padded,
+            max_seqlen_q=8,
+            max_seqlen_kv=10,
+        )
+
+        actual_q, actual_max_q = _get_packed_rotary_metadata(packed, for_query=True)
+        actual_kv, actual_max_kv = _get_packed_rotary_metadata(packed, for_query=False)
+
+        assert actual_q is q_padded
+        assert actual_kv is kv_padded
+        assert actual_max_q == 8
+        assert actual_max_kv == 10
+
+    def test_inference_materializes_raw_mrope_and_propagates_q_k_metadata(self, monkeypatch):
+        """Static inference materializes raw mRoPE before cache adjustment and rotary calls."""
+        sequence_length = 4
+        hidden_size = 8
+        raw_freqs = torch.randn(3, 1, sequence_length, hidden_size // 2)
+        expected_freqs = qwen_attention.materialize_mrope_freqs(
+            raw_freqs,
+            [2, 1, 1],
+            interleaved_mrope=True,
+        )
+        cu_seqlens_q = torch.tensor([0, sequence_length], dtype=torch.int32)
+        cu_seqlens_kv = torch.tensor([0, sequence_length], dtype=torch.int32)
+        packed = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q_padded=cu_seqlens_q,
+            cu_seqlens_kv_padded=cu_seqlens_kv,
+            max_seqlen_q=7,
+            max_seqlen_kv=11,
+        )
+        cp_group = object()
+        rotary_calls = []
+
+        def fake_apply_rotary(tensor, freqs, config, cu_seqlens=None, *, cp_group=None, max_seqlen=None):
+            rotary_calls.append((freqs, cu_seqlens, cp_group, max_seqlen))
+            return tensor
+
+        def adjust_key_value_for_inference(
+            inference_context,
+            query,
+            key,
+            value,
+            rotary_pos_emb,
+            rotary_pos_cos,
+            rotary_pos_sin,
+            sequence_len_offset,
+        ):
+            del (
+                inference_context,
+                rotary_pos_cos,
+                rotary_pos_sin,
+                sequence_len_offset,
+            )
+            assert isinstance(rotary_pos_emb, tuple)
+            assert len(rotary_pos_emb) == 2
+            torch.testing.assert_close(rotary_pos_emb[0], expected_freqs)
+            torch.testing.assert_close(rotary_pos_emb[1], expected_freqs)
+            return query, key, value, rotary_pos_emb, AttnMaskType.causal, None
+
+        monkeypatch.setattr(qwen_attention, "apply_rotary_pos_emb_absolute", fake_apply_rotary)
+        monkeypatch.setattr(qwen_attention, "nvtx_range_push", lambda **kwargs: None)
+        monkeypatch.setattr(qwen_attention, "nvtx_range_pop", lambda **kwargs: None)
+
+        query = torch.randn(sequence_length, 1, 1, hidden_size)
+        key = torch.randn_like(query)
+        value = torch.randn_like(query)
+        attention = SimpleNamespace(
+            config=SimpleNamespace(
+                no_rope_freq=None,
+                flash_decode=False,
+                mrope_section=[2, 1, 1],
+                mrope_interleaved=True,
+                rotary_interleaved=False,
+                attention_output_gate=False,
+            ),
+            layer_number=1,
+            training=False,
+            pg_collection=SimpleNamespace(cp=cp_group),
+            get_query_key_value_tensors=lambda hidden_states, key_value_states: (query, key, value),
+            _adjust_key_value_for_inference=adjust_key_value_for_inference,
+            core_attention=lambda query, key, value, attention_mask, **kwargs: query,
+            checkpoint_core_attention=False,
+            linear_proj=lambda context: (context, None),
+        )
+        inference_context = SimpleNamespace(
+            is_dynamic_batching=lambda: False,
+            is_decode_only=lambda: False,
+            is_static_batching=lambda: True,
+        )
+
+        output, bias = Qwen3VLSelfAttention.forward(
+            attention,
+            torch.randn(sequence_length, 1, hidden_size),
+            attention_mask=None,
+            inference_context=inference_context,
+            rotary_pos_emb=raw_freqs,
+            packed_seq_params=packed,
+        )
+
+        assert output.shape == (sequence_length, 1, hidden_size)
+        assert bias is None
+        assert len(rotary_calls) == 2
+        torch.testing.assert_close(rotary_calls[0][0], expected_freqs)
+        torch.testing.assert_close(rotary_calls[1][0], expected_freqs)
+        assert rotary_calls[0][1:] == (cu_seqlens_q, cp_group, 7)
+        assert rotary_calls[1][1:] == (cu_seqlens_kv, cp_group, 11)
 
     def run_self_attention(self, pg_collection):
         tensor_model_parallel_size = torch.distributed.get_world_size(pg_collection.tp)
