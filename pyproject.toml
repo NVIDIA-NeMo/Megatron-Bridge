@@ -129,7 +129,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@e7c550c5f80636cf841a8204b1d6f85a5f3f28b7",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@cfda38340769c432c12db3c0df574f8e6ce46c8c",
     "mlflow>=3.15.0",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -168,7 +168,7 @@ requires-dist = []
 # above) changes — an out-of-date entry sends uv back to building TE.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.18.0+e7c550c5"
+version = "2.18.0+cfda3834"
 requires-dist = [
     "einops",
     "importlib-metadata>=1.0",
