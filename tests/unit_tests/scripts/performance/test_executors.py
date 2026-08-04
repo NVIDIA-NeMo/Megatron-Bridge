@@ -191,6 +191,20 @@ def test_recipe_env_vars_are_exported_and_forced_into_container(tmp_path):
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_vr200_slurm_executor_uses_two_gpus_per_numa_node(tmp_path):
+    executor = slurm_executor(
+        gpu="vr200",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=4,
+    )
+
+    assert "SLURM_LOCALID/2" in executor.launcher.template_vars["pre_cmds"]
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 def test_recipe_env_vars_are_added_to_kubeflow_trainer_environment(monkeypatch):
     """Kubeflow workers should inherit launcher-resolved recipe variables."""
     monkeypatch.setattr(

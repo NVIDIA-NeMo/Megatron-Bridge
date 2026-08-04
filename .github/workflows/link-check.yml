@@ -44,6 +44,8 @@ jobs:
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           fail: true
+          # TODO(kimi-k3): drop the two kimi_k3 / kimi-k3 excludes below once this PR is
+          # merged. They point at files added by the same PR, so blob/main 404s until then.
           args: >-
             --no-progress
             --max-retries 3
@@ -56,6 +58,8 @@ jobs:
             --exclude 'github\.com/NVIDIA-NeMo/Megatron-Bridge/stargazers'
             --exclude 'sched\.com'
             --exclude 'llama\.com'
+            --exclude 'Megatron-Bridge/blob/main/src/megatron/bridge/models/kimi/kimi_k3_'
+            --exclude 'Megatron-Bridge/blob/main/examples/model_verification_cards/kimi-k3/'
             "docs/fern/**/*.mdx"
             "docs/**/*.md"
         env:
