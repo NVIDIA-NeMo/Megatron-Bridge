@@ -17,6 +17,7 @@ Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 """
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
@@ -1534,7 +1535,11 @@ class TestAutoBridge:
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt
-        AutoBridge.import_ckpt("meta-llama/Meta-Llama-3-8B", "./megatron_checkpoint")
+        with patch(
+            "megatron.bridge.training.model_load_save.temporary_distributed_context",
+            return_value=nullcontext(),
+        ):
+            AutoBridge.import_ckpt("meta-llama/Meta-Llama-3-8B", "./megatron_checkpoint")
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Meta-Llama-3-8B")
@@ -1562,13 +1567,17 @@ class TestAutoBridge:
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
 
         # Test import_ckpt with kwargs
-        AutoBridge.import_ckpt(
-            "./local_model",
-            "./megatron_checkpoint",
-            torch_dtype=torch.float16,
-            device_map="auto",
-            revision="0123456789abcdef",  # pragma: allowlist secret
-        )
+        with patch(
+            "megatron.bridge.training.model_load_save.temporary_distributed_context",
+            return_value=nullcontext(),
+        ):
+            AutoBridge.import_ckpt(
+                "./local_model",
+                "./megatron_checkpoint",
+                torch_dtype=torch.float16,
+                device_map="auto",
+                revision="0123456789abcdef",  # pragma: allowlist secret
+            )
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with(
@@ -1600,12 +1609,16 @@ class TestAutoBridge:
         mock_bridge.save_megatron_model = Mock()
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
 
-        AutoBridge.import_ckpt(
-            "meta-llama/Meta-Llama-3-8B",
-            "./megatron_checkpoint",
-            low_memory_save=True,
-            torch_dtype=torch.bfloat16,
-        )
+        with patch(
+            "megatron.bridge.training.model_load_save.temporary_distributed_context",
+            return_value=nullcontext(),
+        ):
+            AutoBridge.import_ckpt(
+                "meta-llama/Meta-Llama-3-8B",
+                "./megatron_checkpoint",
+                low_memory_save=True,
+                torch_dtype=torch.bfloat16,
+            )
 
         mock_from_hf_pretrained.assert_called_once_with(
             "meta-llama/Meta-Llama-3-8B",
@@ -1619,47 +1632,16 @@ class TestAutoBridge:
             low_memory_save=True,
         )
 
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.destroy_model_parallel")
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.is_initialized", return_value=False)
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.destroy_process_group")
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", side_effect=[False, True])
+    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=False)
     @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_cleans_up_distributed_state_it_creates(
+    def test_import_ckpt_scopes_standalone_cpu_state_to_gloo_context(
         self,
         mock_from_hf_pretrained,
         mock_dist_is_initialized,
-        mock_destroy_process_group,
-        mock_parallel_state_is_initialized,
-        mock_destroy_model_parallel,
+        mock_temporary_distributed_context,
     ):
-        """Import releases a temporary Gloo group before later GPU work starts."""
-        mock_bridge = Mock(spec=AutoBridge)
-        mock_bridge.to_megatron_model.return_value = [Mock()]
-        mock_bridge.save_megatron_model = Mock()
-        mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
-        mock_from_hf_pretrained.return_value = mock_bridge
-
-        AutoBridge.import_ckpt("./local_model", "./megatron_checkpoint")
-
-        assert mock_dist_is_initialized.call_count == 2
-        mock_parallel_state_is_initialized.assert_called_once_with()
-        mock_destroy_model_parallel.assert_called_once_with()
-        mock_destroy_process_group.assert_called_once_with()
-
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.destroy_model_parallel")
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.is_initialized", return_value=False)
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.destroy_process_group")
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=True)
-    @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_cleans_up_model_parallel_state_it_creates(
-        self,
-        mock_from_hf_pretrained,
-        mock_dist_is_initialized,
-        mock_destroy_process_group,
-        mock_parallel_state_is_initialized,
-        mock_destroy_model_parallel,
-    ):
-        """Import preserves a caller's process group but releases model-parallel groups it creates."""
+        """Standalone CPU import uses the shared temporary Gloo lifecycle."""
         mock_bridge = Mock(spec=AutoBridge)
         mock_bridge.to_megatron_model.return_value = [Mock()]
         mock_bridge.save_megatron_model = Mock()
@@ -1669,110 +1651,20 @@ class TestAutoBridge:
         AutoBridge.import_ckpt("./local_model", "./megatron_checkpoint")
 
         mock_dist_is_initialized.assert_called_once_with()
-        mock_parallel_state_is_initialized.assert_called_once_with()
-        mock_destroy_model_parallel.assert_called_once_with()
-        mock_destroy_process_group.assert_not_called()
+        mock_temporary_distributed_context.assert_called_once_with(backend="gloo")
+        mock_temporary_distributed_context.return_value.__enter__.assert_called_once_with()
+        mock_temporary_distributed_context.return_value.__exit__.assert_called_once()
 
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.destroy_model_parallel")
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.is_initialized", return_value=False)
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.destroy_process_group")
+    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=True)
     @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_cleans_up_partial_model_parallel_state_on_failure(
+    def test_import_ckpt_preserves_existing_distributed_context(
         self,
         mock_from_hf_pretrained,
         mock_dist_is_initialized,
-        mock_destroy_process_group,
-        mock_parallel_state_is_initialized,
-        mock_destroy_model_parallel,
+        mock_temporary_distributed_context,
     ):
-        """Import releases partial model-parallel state even when initialization fails."""
-        mock_bridge = Mock(spec=AutoBridge)
-        mock_bridge.to_megatron_model.side_effect = RuntimeError("model-parallel initialization failed")
-        mock_from_hf_pretrained.return_value = mock_bridge
-
-        with pytest.raises(RuntimeError, match="model-parallel initialization failed"):
-            AutoBridge.import_ckpt("./local_model", "./megatron_checkpoint")
-
-        mock_dist_is_initialized.assert_called_once_with()
-        mock_parallel_state_is_initialized.assert_called_once_with()
-        mock_destroy_model_parallel.assert_called_once_with()
-        mock_destroy_process_group.assert_not_called()
-
-    @patch(
-        "megatron.bridge.models.conversion.auto_bridge.parallel_state.destroy_model_parallel",
-        side_effect=RuntimeError("model-parallel cleanup failed"),
-    )
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.is_initialized", return_value=False)
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.destroy_process_group")
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", side_effect=[False, True])
-    @patch.object(AutoBridge, "from_hf_pretrained", side_effect=RuntimeError("checkpoint import failed"))
-    def test_import_ckpt_preserves_failure_and_finishes_process_group_cleanup(
-        self,
-        mock_from_hf_pretrained,
-        mock_dist_is_initialized,
-        mock_destroy_process_group,
-        mock_parallel_state_is_initialized,
-        mock_destroy_model_parallel,
-    ):
-        """Cleanup failures do not mask an import failure or skip default-group teardown."""
-        with pytest.raises(RuntimeError, match="checkpoint import failed"):
-            AutoBridge.import_ckpt("./local_model", "./megatron_checkpoint")
-
-        mock_from_hf_pretrained.assert_called_once_with("./local_model")
-        assert mock_dist_is_initialized.call_count == 2
-        mock_parallel_state_is_initialized.assert_called_once_with()
-        mock_destroy_model_parallel.assert_called_once_with()
-        mock_destroy_process_group.assert_called_once_with()
-
-    @patch(
-        "megatron.bridge.models.conversion.auto_bridge.parallel_state.destroy_model_parallel",
-        side_effect=RuntimeError("model-parallel cleanup failed"),
-    )
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.is_initialized", return_value=False)
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.destroy_process_group")
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", side_effect=[False, True])
-    @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_propagates_cleanup_failure_inside_outer_exception_handler(
-        self,
-        mock_from_hf_pretrained,
-        mock_dist_is_initialized,
-        mock_destroy_process_group,
-        mock_parallel_state_is_initialized,
-        mock_destroy_model_parallel,
-    ):
-        """An outer exception context does not make a successful import suppress cleanup failures."""
-        mock_bridge = Mock(spec=AutoBridge)
-        mock_bridge.to_megatron_model.return_value = [Mock()]
-        mock_bridge.save_megatron_model = Mock()
-        mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
-        mock_from_hf_pretrained.return_value = mock_bridge
-
-        try:
-            raise ValueError("outer caller error")
-        except ValueError:
-            with pytest.raises(RuntimeError, match="model-parallel cleanup failed"):
-                AutoBridge.import_ckpt("./local_model", "./megatron_checkpoint")
-
-        assert mock_dist_is_initialized.call_count == 2
-        mock_parallel_state_is_initialized.assert_called_once_with()
-        mock_destroy_model_parallel.assert_called_once_with()
-        mock_destroy_process_group.assert_called_once_with()
-
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.destroy_model_parallel")
-    @patch("megatron.bridge.models.conversion.auto_bridge.parallel_state.is_initialized", return_value=True)
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.destroy_process_group")
-    @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=True)
-    @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_preserves_existing_distributed_state(
-        self,
-        mock_from_hf_pretrained,
-        mock_dist_is_initialized,
-        mock_destroy_process_group,
-        mock_parallel_state_is_initialized,
-        mock_destroy_model_parallel,
-    ):
-        """Import does not tear down distributed state owned by its caller."""
+        """Import reuses distributed state owned by its caller."""
         mock_bridge = Mock(spec=AutoBridge)
         mock_bridge.to_megatron_model.return_value = [Mock()]
         mock_bridge.save_megatron_model = Mock()
@@ -1782,9 +1674,7 @@ class TestAutoBridge:
         AutoBridge.import_ckpt("./local_model", "./megatron_checkpoint")
 
         mock_dist_is_initialized.assert_called_once_with()
-        mock_parallel_state_is_initialized.assert_called_once_with()
-        mock_destroy_model_parallel.assert_not_called()
-        mock_destroy_process_group.assert_not_called()
+        mock_temporary_distributed_context.assert_not_called()
 
     def test_export_ckpt_basic(self):
         """Test basic export_ckpt functionality."""

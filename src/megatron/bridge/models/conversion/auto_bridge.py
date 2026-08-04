@@ -30,7 +30,6 @@ import transformers
 if TYPE_CHECKING:
     from megatron.bridge.peft.base import PEFT
 
-from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from safetensors.torch import save_file
@@ -1390,13 +1389,13 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     low_memory_save=True
             ... )
         """
-        owns_distributed_state = not dist.is_initialized()
-        owns_model_parallel_state = not parallel_state.is_initialized()
-        body_failed = False
-        try:
-            # Load the HuggingFace model
-            bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
+        # Load the HuggingFace model before creating temporary distributed state.
+        bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
 
+        from megatron.bridge.training.model_load_save import temporary_distributed_context
+
+        model_context = nullcontext() if dist.is_initialized() else temporary_distributed_context(backend="gloo")
+        with model_context:
             # Convert to Megatron model
             megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
@@ -1418,25 +1417,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 hf_tokenizer_kwargs=hf_tokenizer_kwargs,
                 low_memory_save=low_memory_save,
             )
-        except BaseException:
-            body_failed = True
-            raise
-        finally:
-            try:
-                if owns_model_parallel_state:
-                    parallel_state.destroy_model_parallel()
-            except Exception:
-                if not body_failed:
-                    raise
-                logger.exception("Failed to release model-parallel state after checkpoint import failure")
-            finally:
-                try:
-                    if owns_distributed_state and dist.is_initialized():
-                        dist.destroy_process_group()
-                except Exception:
-                    if not body_failed:
-                        raise
-                    logger.exception("Failed to release the process group after checkpoint import failure")
 
     def export_ckpt(
         self,
