@@ -217,6 +217,19 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× H100, TP2/CP2/PP1 BF16 FSDP."""
+    cfg = nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config()
+    # Keep DP64 and the canonical GBS512 workload while replacing TP4 with
+    # TP2/CP2. Context parallelism halves the sequence-local MTP loss
+    # workspace without introducing pipeline parallelism, which is not part of
+    # the pinned Megatron-FSDP expert mesh. Block64 supplies the already-proven
+    # main-layer activation relief without the cost of all-layer replay.
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.context_parallel_size = 2
+    return cfg
+
+
 def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, BF16, recompute MoE+layernorm."""
     cfg = nemotron_3_nano_pretrain_config()

@@ -14,6 +14,7 @@ from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
 from megatron.bridge.perf_recipes.nemotronh.h100.nemotronh import (
     nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config,
     nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config,
+    nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config,
 )
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -165,18 +166,21 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
     (
         "recipe_factory",
         "tensor_parallel_size",
+        "context_parallel_size",
         "virtual_pipeline_parallel_size",
         "global_batch_size",
         "recompute_num_layers",
     ),
     [
-        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 2, None, 256, 108),
-        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, None, 512, 64),
+        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 2, 1, None, 256, 108),
+        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, 1, None, 512, 64),
+        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config, 2, 2, None, 512, 64),
     ],
 )
 def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     recipe_factory,
     tensor_parallel_size: int,
+    context_parallel_size: int,
     virtual_pipeline_parallel_size: int | None,
     global_batch_size: int,
     recompute_num_layers: int,
@@ -188,7 +192,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
     assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.virtual_pipeline_model_parallel_size == virtual_pipeline_parallel_size
-    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.context_parallel_size == context_parallel_size
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.sequence_parallel is True
@@ -261,6 +265,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
         (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp4_config, 256),
         (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 128),
         (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 256),
+        (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config, 256),
     ],
 )
 def test_ultra_fsdp_recipes_validate_for_declared_world_size(
@@ -275,7 +280,15 @@ def test_ultra_fsdp_recipes_validate_for_declared_world_size(
     training_config.runtime_config_update(cfg)
 
     assert cfg.model.pipeline_model_parallel_size == 1
-    assert world_size == cfg.model.tensor_model_parallel_size * (world_size // cfg.model.tensor_model_parallel_size)
+    data_parallel_size = world_size // (
+        cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
+    )
+    assert world_size == (
+        data_parallel_size
+        * cfg.model.tensor_model_parallel_size
+        * cfg.model.pipeline_model_parallel_size
+        * cfg.model.context_parallel_size
+    )
     expert_data_parallel_size = world_size // (
         cfg.model.pipeline_model_parallel_size
         * cfg.model.expert_tensor_parallel_size
