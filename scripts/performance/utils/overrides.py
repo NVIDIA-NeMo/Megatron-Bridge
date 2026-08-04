@@ -44,7 +44,13 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
-from utils.utils import WorkloadBaseConfig, get_workload_base_config
+from utils.utils import (
+    WorkloadBaseConfig,
+    _validated_data_parallel_size,
+    _weak_scaled_global_batch_size,
+    get_workload_base_config,
+    topology_from_config,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +60,8 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     """Set the common performance overrides."""
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
+    recipe.train.manual_gc = True
+    recipe.train.manual_gc_interval = 100
 
     # Checkpoint save is disabled by default for performance benchmarks
     # Users can enable it via command-line arguments
@@ -187,6 +195,110 @@ def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: boo
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
         recipe.comm_overlap.delay_wgrad_compute = True
         recipe.model.moe_shared_expert_overlap = False
+
+    return recipe
+
+
+def _set_recipe_env(
+    recipe: ConfigContainer,
+    name: str,
+    value: str | int | float | bool,
+    protected_env_names: set[str],
+) -> None:
+    if name not in protected_env_names:
+        recipe.env_vars[name] = value
+
+
+def _remove_recipe_env(recipe: ConfigContainer, name: str, protected_env_names: set[str]) -> None:
+    if name not in protected_env_names:
+        recipe.env_vars.pop(name, None)
+
+
+def _apply_flat_cli_environment_compatibility(
+    recipe: ConfigContainer,
+    args: argparse.Namespace,
+    *,
+    base_dispatcher_backend: str | None,
+    base_moe_a2a_overlap: bool,
+    protected_env_names: set[str] | None = None,
+) -> ConfigContainer:
+    """Apply legacy argparse-to-environment coupling for a flat perf recipe.
+
+    This is an internal ``run_script.py`` compatibility helper, not a general
+    recipe environment API. Flat recipes own their default ``env_vars``, but
+    the removed launcher plugin also changed a small set of environment values
+    when users explicitly overrode TP, PP, CP, EP, MoE A2A overlap, or NCCL UB
+    through the legacy argparse interface. Call this after applying both Hydra
+    and argparse config overrides so those old commands retain their effective
+    process environment.
+
+    With no relevant argparse override, the recipe environment is unchanged.
+    Names explicitly overridden through Hydra ``env_vars`` are protected and
+    remain final. Existing shell or launcher values retain higher precedence
+    later, when the recipe environment is installed with ``os.environ.setdefault``.
+    """
+    protected = protected_env_names or set()
+    model = recipe.model
+    tp_size = getattr(model, "tensor_model_parallel_size", 1) or 1
+    pp_size = getattr(model, "pipeline_model_parallel_size", 1) or 1
+    cp_size = getattr(model, "context_parallel_size", 1) or 1
+    ep_size = getattr(model, "expert_model_parallel_size", 1) or 1
+    gpu = args.gpu.lower()
+
+    connection_override = any(
+        value is not None
+        for value in (
+            args.tensor_model_parallel_size,
+            args.context_parallel_size,
+            args.moe_a2a_overlap,
+        )
+    )
+    if connection_override:
+        moe_a2a_overlap = args.moe_a2a_overlap if args.moe_a2a_overlap is not None else base_moe_a2a_overlap
+        max_connections = 32 if base_dispatcher_backend in {"deepep", "hybridep"} else 8
+        if gpu in {"b200", "b300", "gb200", "gb300", "vr200"}:
+            max_connections = 32
+        elif (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
+            max_connections = 1
+        _set_recipe_env(recipe, "CUDA_DEVICE_MAX_CONNECTIONS", max_connections, protected)
+
+    if args.expert_model_parallel_size is not None and base_dispatcher_backend == "hybridep":
+        if ep_size <= 0:
+            raise ValueError("HybridEP expert parallel size must be positive.")
+        if gpu in {"h100", "b200", "b300"}:
+            domain_size = 8
+            ranks_per_domain = min(ep_size, domain_size)
+        elif gpu in {"gb200", "gb300", "vr200", "r100"}:
+            domain_size = 72
+            if ep_size > domain_size:
+                raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
+            ranks_per_domain = ep_size
+        else:
+            raise ValueError(f"Unsupported GPU type for HybridEP topology: {args.gpu!r}.")
+        _set_recipe_env(
+            recipe,
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+            ranks_per_domain,
+            protected,
+        )
+
+    if args.pipeline_model_parallel_size is not None:
+        use_large_pp_chunk = pp_size > 1 and (
+            (
+                args.model_family_name == "llama"
+                and args.model_recipe_name in {"llama3_70b", "llama31_405b"}
+                and args.task == "pretrain"
+            )
+            or (args.model_family_name == "llama" and args.task == "sft")
+        )
+        if use_large_pp_chunk:
+            _set_recipe_env(recipe, "NCCL_P2P_NET_CHUNKSIZE", 2097152, protected)
+        else:
+            _remove_recipe_env(recipe, "NCCL_P2P_NET_CHUNKSIZE", protected)
+
+    if args.nccl_ub is True:
+        _set_recipe_env(recipe, "NCCL_NVLS_ENABLE", 1, protected)
+        _set_recipe_env(recipe, "NCCL_CTA_POLICY", 1, protected)
 
     return recipe
 
@@ -419,7 +531,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
-            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.seq_length,
             index_mapping_dir=args.index_mapping_dir,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,
@@ -429,7 +541,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if not args.c4_root:
             raise ValueError("--c4_root is required for c4 dataset")
         recipe.dataset = create_c4_dataset_config(
-            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.seq_length,
             c4_root=args.c4_root,
             train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,
@@ -480,6 +592,8 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if args.num_layers is not None:
             recipe.model.num_layers = args.num_layers
         recipe.model.moe_layer_freq = [0] * num_dense_layers + [1] * (recipe.model.num_layers - num_dense_layers)
+    if args.num_moe_experts is not None:
+        recipe.model.num_moe_experts = args.num_moe_experts
     if args.pipeline_model_parallel_layout is not None:
         recipe.model.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
@@ -512,10 +626,11 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
 
-    if args.moe_flex_dispatcher_backend is not None:
-        apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
-    elif hasattr(recipe.model, "moe_token_dispatcher_type"):
+    if args.moe_flex_dispatcher_backend is None:
+        recipe.model.moe_flex_dispatcher_backend = None
         recipe.model.moe_token_dispatcher_type = "alltoall"
+    elif args.moe_flex_dispatcher_backend != -1:
+        apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
 
     pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
     if args.task == "peft" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
@@ -556,7 +671,14 @@ def set_post_overrides(
     cp = recipe.model.context_parallel_size
     vp = recipe.model.virtual_pipeline_model_parallel_size or 1
 
-    dp = int(num_gpus / (tp * pp * cp))
+    base_dp = _validated_data_parallel_size(
+        num_gpus=workload_base_config.num_gpus,
+        topology=topology_from_config(workload_base_config),
+    )
+    dp = _validated_data_parallel_size(
+        num_gpus=num_gpus,
+        topology=topology_from_config(recipe.model),
+    )
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     # NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
@@ -566,16 +688,20 @@ def set_post_overrides(
             if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
                 recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
-    default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
         # Only auto-rescale if the recipe's current GBS still equals the
         # workload default — i.e., no one (Hydra or earlier step) has already
         # expressed an intent. Otherwise Hydra-set GBS gets silently stomped.
-        if recipe.train.global_batch_size == workload_base_config.global_batch_size and num_gpus != default_num_gpus:
-            new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
+        if recipe.train.global_batch_size == workload_base_config.global_batch_size and dp != base_dp:
+            new_gbs = _weak_scaled_global_batch_size(
+                base_gbs=workload_base_config.global_batch_size,
+                base_data_parallel=base_dp,
+                data_parallel=dp,
+            )
             recipe.train.global_batch_size = new_gbs
             logger.info(
-                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
+                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} "
+                f"based on DP {base_dp} -> {dp}."
             )
 
     return recipe

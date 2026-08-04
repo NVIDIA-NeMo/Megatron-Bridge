@@ -120,14 +120,9 @@ def get_dataset_provider(
     Returns:
         The callable dataset provider function corresponding to the config type.
     """
-    if isinstance(dataset_config, GPTSFTDatasetConfig):
-        return gpt_sft_train_valid_test_datasets_provider
-    if isinstance(dataset_config, DirectHFSFTDatasetConfig):
-        return direct_hf_sft_train_valid_test_datasets_provider
-    if isinstance(dataset_config, EnergonDatasetConfig):
-        return energon_train_valid_test_datasets_provider
-    if isinstance(dataset_config, MockVLMSFTDatasetConfig):
-        return mock_vlm_sft_train_valid_test_datasets_provider
+    for config_type, provider in _REGISTRY.items():
+        if isinstance(dataset_config, config_type):
+            return provider
 
     # Check if config implements the DatasetProvider protocol
     if isinstance(dataset_config, DatasetProvider):
@@ -150,5 +145,4 @@ def get_dataset_provider(
 
         return protocol_adapter
 
-    # Fall back to existing registry
-    return _REGISTRY[type(dataset_config)]
+    raise KeyError(type(dataset_config))

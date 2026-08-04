@@ -16,57 +16,48 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from megatron.bridge.recipes.utils.dataset_utils import (
-    DATASET_TYPES,
-    LLM_FINETUNE_PRESETS,
-    apply_dataset_override,
-    extract_and_remove_override,
-    get_blend_fields_from_data_paths,
-    infer_mode_from_dataset,
+from megatron.bridge.data.builders import (
+    DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
+    GPTSFTDatasetConfig,
+    HFEnergonTaskEncoderConfig,
+    MockVLMSFTDatasetConfig,
+    QwenVLEnergonTaskEncoderConfig,
 )
+from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
+from megatron.bridge.recipes.utils.dataset_utils import (
+    DATASET_PRESETS,
+    build_dataset_config,
+    dataset_train_mode,
+    get_blend_fields_from_data_paths,
+)
+from megatron.bridge.training.config import GPTDatasetConfig, MockGPTDatasetConfig
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
-@pytest.mark.unit
+pytestmark = pytest.mark.unit
+
+
 class TestGetBlendFieldsFromDataPaths:
-    """Test cases for the get_blend_fields_from_data_paths function."""
-
-    def test_mock_mode_explicit(self):
-        """Test function with explicit mock=True."""
-        blend, blend_per_split, split = get_blend_fields_from_data_paths(mock=True)
-
-        assert blend is None
-        assert blend_per_split is None
-        assert split == "1,1,1"
-
-    def test_mock_mode_no_data_config(self):
-        """Test function with no data configuration (should default to mock)."""
+    def test_mock_mode_without_data(self):
         blend, blend_per_split, split = get_blend_fields_from_data_paths()
 
         assert blend is None
         assert blend_per_split is None
         assert split == "1,1,1"
 
-    def test_mock_mode_with_data_paths_but_mock_true(self):
-        """Test function with data paths but mock=True (should ignore data paths)."""
+    def test_explicit_mock_ignores_paths(self):
         blend, blend_per_split, split = get_blend_fields_from_data_paths(
-            data_paths=["/path/to/data1", "/path/to/data2"], mock=True
+            data_paths=["/path/to/data"],
+            mock=True,
         )
 
         assert blend is None
         assert blend_per_split is None
         assert split == "1,1,1"
 
-    def test_data_paths(self):
-        """Test function with data_paths and blend weights returned."""
-        blend, blend_per_split, split = get_blend_fields_from_data_paths(
-            data_paths=["/path/to/data1", "/path/to/data2"]
-        )
-
-        assert blend == (["/path/to/data1", "/path/to/data2"], None)
-        assert blend_per_split is None
-        assert split == "9999,8,2"
-
+    def test_data_paths_use_blend(self):
         blend, blend_per_split, split = get_blend_fields_from_data_paths(
             data_paths=["0.6", "/path/to/data1", "0.4", "/path/to/data2"]
         )
@@ -75,434 +66,318 @@ class TestGetBlendFieldsFromDataPaths:
         assert blend_per_split is None
         assert split == "9999,8,2"
 
-    def test_data_args_path_with_blend_weights(self):
-        """Test function with data_args_path and blend weights returned."""
-
-        import tempfile
-
-        content = "0.6\n/path/to/data1\n0.4\n/path/to/data2\n"
-        with tempfile.NamedTemporaryFile(prefix="datasrc_") as data_args_file:
-            data_args_file.write(str.encode(content))
-            data_args_file.seek(0)
-
-            blend, blend_per_split, split = get_blend_fields_from_data_paths(data_args_path=data_args_file.name)
-
-            assert blend == (["/path/to/data1", "/path/to/data2"], [0.6, 0.4])
-            assert blend_per_split is None
-            assert split == "9999,8,2"
-
-    def test_per_split_paths_with_blend_per_split_weights(self):
-        """Test function with train/valid/test paths and blend_per_split weights."""
+    def test_split_paths_use_blend_per_split(self):
         blend, blend_per_split, split = get_blend_fields_from_data_paths(
-            train_data_path=["/path/to/train1", "/path/to/train2"],
-            valid_data_path=["/path/to/valid1"],
-            test_data_path=["/path/to/test1", "/path/to/test2"],
+            train_data_path=["/path/to/train"],
+            valid_data_path=["/path/to/valid"],
+            test_data_path=["/path/to/test"],
         )
 
         assert blend is None
         assert blend_per_split == [
-            (["/path/to/train1", "/path/to/train2"], None),
-            (["/path/to/valid1"], None),
-            (["/path/to/test1", "/path/to/test2"], None),
+            (["/path/to/train"], None),
+            (["/path/to/valid"], None),
+            (["/path/to/test"], None),
         ]
         assert split is None
-
-        blend, blend_per_split, split = get_blend_fields_from_data_paths(
-            train_data_path=["0.8", "/path/to/train1", "0.2", "/path/to/train2"],
-            valid_data_path=["0.7", "/path/to/valid1", "0.3", "/path/to/valid2"],
-            test_data_path=["0.6", "/path/to/test1", "0.4", "/path/to/test2"],
-        )
-
-        assert blend is None
-        assert blend_per_split == [
-            (["/path/to/train1", "/path/to/train2"], [0.8, 0.2]),
-            (["/path/to/valid1", "/path/to/valid2"], [0.7, 0.3]),
-            (["/path/to/test1", "/path/to/test2"], [0.6, 0.4]),
-        ]
-        assert split is None
-
-    def test_per_split_data_args_path_with_blend_per_split_weights(self):
-        """Test function with per_split_data_args_path and blend_per_split weights."""
-
-        import json
-        import tempfile
-
-        content = {
-            "train": ["0.8", "/path/to/train1", "0.2", "/path/to/train2"],
-            "valid": ["0.7", "/path/to/valid1", "0.3", "/path/to/valid2"],
-            "test": ["0.6", "/path/to/test1", "0.4", "/path/to/test2"],
-        }
-        with tempfile.NamedTemporaryFile("w+", prefix="datasrc_", suffix=".json") as per_split_data_args_file:
-            json.dump(content, per_split_data_args_file)
-            per_split_data_args_file.seek(0)
-
-            blend, blend_per_split, split = get_blend_fields_from_data_paths(
-                per_split_data_args_path=per_split_data_args_file.name
-            )
-
-            assert blend is None
-            assert blend_per_split == [
-                (["/path/to/train1", "/path/to/train2"], [0.8, 0.2]),
-                (["/path/to/valid1", "/path/to/valid2"], [0.7, 0.3]),
-                (["/path/to/test1", "/path/to/test2"], [0.6, 0.4]),
-            ]
-            assert split is None
-
-    def test_prioritize_blend_over_blend_per_split(self):
-        """Test that data_paths takes priority over split data paths when both are provided."""
-
-        blend, blend_per_split, split = get_blend_fields_from_data_paths(
-            data_paths=["/path/to/data1", "/path/to/data2"],
-            train_data_path=["/path/to/train1", "/path/to/train2"],
-            valid_data_path=["/path/to/valid1", "/path/to/valid2"],
-            test_data_path=["/path/to/test1", "/path/to/test2"],
-        )
-
-        # Should prioritize blend over blend_per_split
-        assert blend == (["/path/to/data1", "/path/to/data2"], None)
-        assert blend_per_split is None
-        assert split == "9999,8,2"
 
     @patch("megatron.bridge.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
-    def test_fallback_to_mock_when_no_weights(self, mock_get_blend):
-        """Test function falls back to mock mode when no weights are returned."""
+    def test_empty_resolved_blend_falls_back_to_mock(self, mock_get_blend):
         mock_get_blend.return_value = (None, None)
 
-        blend, blend_per_split, split = get_blend_fields_from_data_paths(data_paths=["/some/path"])
-
-        # Should fall back to mock mode
-        assert blend is None
-        assert blend_per_split is None
-        assert split == "1,1,1"
-
-    def test_blend_per_split_with_empty_paths(self):
-        """Test blend_per_split with empty paths (should create None entries)."""
-        blend, blend_per_split, split = get_blend_fields_from_data_paths(
-            valid_data_path=["/path/to/valid1"],  # Only valid paths
-            test_data_path=None,  # No test paths
-        )
-
-        assert blend is None
-        assert blend_per_split == [
-            None,  # train_paths is empty, so None
-            (["/path/to/valid1"], None),  # valid_paths exists
-            None,  # test_paths is None, so None
-        ]
-        assert split is None
-
-    def test_edge_case_empty_lists(self):
-        """Test edge case with empty lists for all path parameters."""
-
-        blend, blend_per_split, split = get_blend_fields_from_data_paths(
-            data_paths=[],
-            train_data_path=[],
-            valid_data_path=[],
-            test_data_path=[],
-        )
+        blend, blend_per_split, split = get_blend_fields_from_data_paths(data_paths=["/path/to/data"])
 
         assert blend is None
         assert blend_per_split is None
         assert split == "1,1,1"
 
 
-# ---------------------------------------------------------------------------
-# Helper to build a lightweight mock ConfigContainer for apply_dataset_override
-# ---------------------------------------------------------------------------
-
-
-def _make_mock_config(dataset=None, model_seq_length=4096, micro_batch_size=2, global_batch_size=32):
-    """Return a MagicMock that quacks like ConfigContainer for dataset override tests."""
+def _make_config(dataset=None, *, model_seq_length=4096):
     config = MagicMock()
     config.dataset = dataset
     config.model.seq_length = model_seq_length
-    config.train.micro_batch_size = micro_batch_size
-    config.train.global_batch_size = global_batch_size
     return config
 
 
-# ---------------------------------------------------------------------------
-# Tests for extract_and_remove_override
-# ---------------------------------------------------------------------------
+def _make_vlm_config(*, do_validation=True, do_test=True):
+    dataset = DirectHFSFTDatasetConfig(
+        seq_length=4096,
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
+        preprocessing=ChatSFTPreprocessingConfig(),
+        hf_processor_path="Qwen/Qwen3-VL-8B-Instruct",
+        do_validation=do_validation,
+        do_test=do_test,
+        dataloader_type="single",
+        num_workers=3,
+        persistent_workers=False,
+        enable_in_batch_packing=True,
+    )
+    config = _make_config(dataset)
+    config.model.temporal_patch_size = 2
+    config.model.spatial_merge_size = 2
+    config.model.patch_size = 16
+    return config
 
 
-@pytest.mark.unit
-class TestExtractAndRemoveOverride:
-    """Test cases for the extract_and_remove_override helper."""
-
-    def test_extracts_matching_override(self):
-        overrides = ["dataset.hf_dataset.dataset_name=gsm8k", "train.train_iters=100"]
-        result = extract_and_remove_override(overrides, "dataset.hf_dataset.dataset_name")
-        assert result == "gsm8k"
-        assert overrides == ["train.train_iters=100"]
-
-    def test_returns_default_when_not_found(self):
-        overrides = ["train.train_iters=100"]
-        result = extract_and_remove_override(overrides, "dataset.hf_dataset.dataset_name", default="squad")
-        assert result == "squad"
-        assert overrides == ["train.train_iters=100"]
-
-    def test_returns_none_when_not_found_and_no_default(self):
-        overrides = ["train.train_iters=100"]
-        result = extract_and_remove_override(overrides, "dataset.hf_dataset.dataset_name")
-        assert result is None
-
-    def test_handles_empty_list(self):
-        overrides = []
-        result = extract_and_remove_override(overrides, "dataset.path", default="/data")
-        assert result == "/data"
-        assert overrides == []
-
-    def test_handles_value_with_equals_sign(self):
-        overrides = ["dataset.blend=path/a=b"]
-        result = extract_and_remove_override(overrides, "dataset.blend")
-        assert result == "path/a=b"
-        assert overrides == []
-
-    def test_only_removes_first_match(self):
-        overrides = ["dataset.path=/a", "dataset.path=/b"]
-        result = extract_and_remove_override(overrides, "dataset.path")
-        assert result == "/a"
-        assert overrides == ["dataset.path=/b"]
-
-
-# ---------------------------------------------------------------------------
-# Tests for infer_mode_from_dataset
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestInferModeFromDataset:
-    """Test cases for infer_mode_from_dataset."""
-
-    @pytest.mark.parametrize("dataset_type", ["llm-pretrain", "llm-pretrain-mock"])
-    def test_pretrain_types(self, dataset_type):
-        assert infer_mode_from_dataset(dataset_type) == "pretrain"
+class TestDatasetPresets:
+    def test_registry_contains_only_public_names_and_factories(self):
+        assert set(DATASET_PRESETS) == {
+            "mock",
+            "megatron-indexed",
+            "energon",
+            "squad",
+            "tulu3",
+            "openmathinstruct2",
+            "openmathinstruct2-thinking",
+            "gsm8k",
+            "local-jsonl",
+            "local-vlm",
+            "cord-v2",
+            "llava-video-178k",
+            "medpix",
+            "raven",
+            "rdr",
+        }
+        assert all(callable(factory) for factory in DATASET_PRESETS.values())
 
     @pytest.mark.parametrize(
-        "dataset_type",
-        ["llm-finetune", "llm-finetune-preloaded", "vlm-energon", "vlm-hf"],
+        ("dataset_name", "expected_type"),
+        [("mock", MockGPTDatasetConfig), ("megatron-indexed", GPTDatasetConfig)],
     )
-    def test_finetune_types(self, dataset_type):
-        assert infer_mode_from_dataset(dataset_type) == "finetune"
+    def test_pretraining_presets_use_model_sequence_length(self, dataset_name, expected_type):
+        dataset = build_dataset_config(_make_config(model_seq_length=2048), dataset_name)
 
-    def test_all_dataset_types_covered(self):
-        """Every entry in DATASET_TYPES should return a valid mode."""
-        for dt in DATASET_TYPES:
-            mode = infer_mode_from_dataset(dt)
-            assert mode in ("pretrain", "finetune"), f"Unexpected mode '{mode}' for dataset type '{dt}'"
+        assert isinstance(dataset, expected_type)
+        assert dataset.seq_length == 2048
+        assert dataset_train_mode(dataset) == "pretrain"
 
+    def test_pretraining_seq_length_override_syncs_to_mcore_during_finalize(self):
+        dataset = build_dataset_config(_make_config(model_seq_length=2048), "mock")
 
-# ---------------------------------------------------------------------------
-# Tests for apply_dataset_override
-# ---------------------------------------------------------------------------
+        process_config_with_overrides(dataset, cli_overrides=["seq_length=4096"])
 
+        assert dataset.seq_length == 4096
+        assert dataset.sequence_length == 2048
+        serialized = dataset.to_cfg_dict()
+        assert serialized["seq_length"] == 4096
+        assert "sequence_length" not in serialized
+        dataset.finalize()
+        assert dataset.sequence_length == 4096
 
-@pytest.mark.unit
-class TestApplyDatasetOverride:
-    """Test cases for apply_dataset_override."""
+    def test_energon_preset_uses_recipe_processor_and_batch_size(self):
+        config = _make_vlm_config()
+        config.train.micro_batch_size = 2
+        dataset = build_dataset_config(config, "energon")
 
-    # -- LLM pretrain ---------------------------------------------------------
-
-    def test_llm_pretrain_creates_gpt_dataset_config(self):
-        from megatron.bridge.training.config import GPTDatasetConfig
-
-        config = _make_mock_config()
-        result = apply_dataset_override(config, "llm-pretrain", seq_length=2048)
-        assert isinstance(result.dataset, GPTDatasetConfig)
-        assert result.dataset.sequence_length == 2048
-
-    def test_llm_pretrain_uses_model_seq_length_as_fallback(self):
-        from megatron.bridge.training.config import GPTDatasetConfig
-
-        config = _make_mock_config(model_seq_length=8192)
-        result = apply_dataset_override(config, "llm-pretrain")
-        assert isinstance(result.dataset, GPTDatasetConfig)
-        assert result.dataset.sequence_length == 8192
-
-    # -- LLM pretrain mock ----------------------------------------------------
-
-    def test_llm_pretrain_mock_creates_mock_gpt_dataset_config(self):
-        from megatron.bridge.training.config import MockGPTDatasetConfig
-
-        config = _make_mock_config()
-        result = apply_dataset_override(config, "llm-pretrain-mock", seq_length=1024)
-        assert isinstance(result.dataset, MockGPTDatasetConfig)
-
-    # -- LLM finetune ---------------------------------------------------------
-
-    def test_llm_finetune_defaults_to_squad(self):
-        from megatron.bridge.data.builders import GPTSFTDatasetConfig
-
-        config = _make_mock_config()
-        result = apply_dataset_override(config, "llm-finetune", seq_length=512)
-        assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.hf_dataset.dataset_name == "squad"
-
-    def test_llm_finetune_extracts_dataset_name_from_cli(self):
-        from megatron.bridge.data.builders import GPTSFTDatasetConfig
-
-        config = _make_mock_config()
-        overrides = ["dataset.hf_dataset.dataset_name=gsm8k", "train.train_iters=10"]
-        result = apply_dataset_override(config, "llm-finetune", seq_length=2048, cli_overrides=overrides)
-        assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.hf_dataset.dataset_name == "gsm8k"
-        assert "dataset.hf_dataset.dataset_name=gsm8k" not in overrides
-        assert "train.train_iters=10" in overrides
-
-    def test_llm_finetune_openmathinstruct2(self):
-        from megatron.bridge.data.builders import GPTSFTDatasetConfig
-
-        config = _make_mock_config()
-        overrides = ["dataset.hf_dataset.dataset_name=openmathinstruct2"]
-        result = apply_dataset_override(config, "llm-finetune", seq_length=4096, cli_overrides=overrides)
-        assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.hf_dataset.dataset_name == "openmathinstruct2"
-
-    def test_llm_finetune_unknown_preset_raises(self):
-        config = _make_mock_config()
-        overrides = ["dataset.hf_dataset.dataset_name=nonexistent"]
-        with pytest.raises(ValueError, match="Unknown finetune dataset preset"):
-            apply_dataset_override(config, "llm-finetune", cli_overrides=overrides)
-
-    # -- LLM finetune preloaded -----------------------------------------------
-
-    def test_llm_finetune_preloaded_creates_finetuning_config(self):
-        from megatron.bridge.data.builders import GPTSFTDatasetConfig
-
-        config = _make_mock_config()
-        overrides = ["dataset.dataset_root=/data/sft", "train.train_iters=10"]
-        result = apply_dataset_override(
-            config,
-            "llm-finetune-preloaded",
-            seq_length=2048,
-            cli_overrides=overrides,
-        )
-        assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.seq_length == 2048
-        assert result.dataset.dataset_root == "/data/sft"
-        assert result.dataset.dataloader_type == "batch"
-        assert "dataset.dataset_root=/data/sft" not in overrides
-        assert "train.train_iters=10" in overrides
-
-    def test_llm_finetune_preloaded_requires_local_source(self):
-        config = _make_mock_config()
-
-        with pytest.raises(ValueError, match="requires dataset.dataset_root"):
-            apply_dataset_override(config, "llm-finetune-preloaded", seq_length=2048)
-
-    # -- VLM energon ----------------------------------------------------------
-
-    def test_vlm_energon_keeps_existing_declarative_config(self):
-        from megatron.bridge.data.builders import EnergonDatasetConfig, HFEnergonTaskEncoderConfig
-
-        existing = EnergonDatasetConfig(
-            path="/data/shards",
-            seq_length=4096,
-            micro_batch_size=2,
-            task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
-        )
-        config = _make_mock_config(dataset=existing)
-        result = apply_dataset_override(config, "vlm-energon")
-        assert result.dataset is existing
-
-    def test_vlm_energon_applies_explicit_sequence_length_to_dataset_and_model(self):
-        from megatron.bridge.data.builders import EnergonDatasetConfig, HFEnergonTaskEncoderConfig
-
-        existing = EnergonDatasetConfig(
-            path="/data/shards",
-            seq_length=4096,
-            micro_batch_size=2,
-            task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
-        )
-        config = _make_mock_config(dataset=existing, model_seq_length=4096)
-
-        result = apply_dataset_override(config, "vlm-energon", seq_length=8192)
-
-        assert result.dataset is existing
-        assert result.dataset.seq_length == 8192
-        assert result.model.seq_length == 8192
-
-    def test_vlm_energon_requires_recipe_specific_task_encoder_config(self):
-        config = _make_mock_config(dataset=None, micro_batch_size=4, global_batch_size=64)
-
-        with pytest.raises(ValueError, match="model-specific task_encoder"):
-            apply_dataset_override(config, "vlm-energon", seq_length=4096)
-
-    # -- VLM HF ---------------------------------------------------------------
-
-    def test_vlm_hf_creates_config(self):
-        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
-
-        config = _make_mock_config()
-        result = apply_dataset_override(config, "vlm-hf", seq_length=4096)
-        assert isinstance(result.dataset, DirectHFSFTDatasetConfig)
-        assert result.dataset.seq_length == 4096
-        assert result.dataset.source.dataset_name == "cord_v2"
-
-    def test_vlm_hf_accepts_tutorial_json_source_overrides(self):
-        config = _make_mock_config()
-        result = apply_dataset_override(config, "vlm-hf", seq_length=1024)
+        assert isinstance(dataset, EnergonDatasetConfig)
+        assert dataset.path is None
+        assert dataset.seq_length == 4096
+        assert dataset.micro_batch_size == 2
+        assert dataset.num_workers == 3
+        assert isinstance(dataset.task_encoder, HFEnergonTaskEncoderConfig)
+        assert dataset.task_encoder.hf_processor_path == "Qwen/Qwen3-VL-8B-Instruct"
+        assert dataset.enable_in_batch_packing is True
+        assert dataset.defer_in_batch_packing_to_step is False
+        assert dataset_train_mode(dataset) is None
 
         process_config_with_overrides(
-            result.dataset,
+            dataset,
             cli_overrides=[
-                "source.dataset_name=null",
-                "source.path_or_dataset=json",
-                "source.split=train",
-                "source.load_kwargs={data_files:{train:/tmp/training.jsonl}}",
+                "path=/data/datacomp-energon",
+                "task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B",
+                "task_encoder.hf_processor_revision=0123456789abcdef",
             ],
         )
 
-        assert result.dataset.seq_length == 1024
-        assert result.model.seq_length == 1024
-        assert result.dataset.source.path_or_dataset == "json"
-        assert result.dataset.source.load_kwargs == {"data_files": {"train": "/tmp/training.jsonl"}}
+        assert dataset.task_encoder.hf_processor_revision == "0123456789abcdef"
+        dataset.validate()
 
-    # -- Unknown type ---------------------------------------------------------
+    def test_energon_preset_preserves_recipe_owned_task_encoder(self):
+        original = EnergonDatasetConfig(
+            path="/data/original",
+            seq_length=2048,
+            micro_batch_size=4,
+            num_workers=1,
+            task_encoder=QwenVLEnergonTaskEncoderConfig(
+                hf_processor_path="Qwen/model",
+                patch_size=16,
+            ),
+            shuffle_buffer_size=321,
+            defer_in_batch_packing_to_step=True,
+        )
+        config = _make_config(original, model_seq_length=4096)
+        config.train.micro_batch_size = 2
 
-    def test_unknown_dataset_type_raises(self):
-        config = _make_mock_config()
-        with pytest.raises(ValueError, match="Unknown dataset type"):
-            apply_dataset_override(config, "not-a-real-type")
+        dataset = build_dataset_config(config, "energon")
 
-    # -- seq_length sync ------------------------------------------------------
+        assert dataset is not original
+        assert dataset.path is None
+        assert dataset.seq_length == 4096
+        assert dataset.micro_batch_size == 2
+        assert dataset.num_workers == 1
+        assert dataset.shuffle_buffer_size == 321
+        assert dataset.defer_in_batch_packing_to_step is True
+        assert isinstance(dataset.task_encoder, QwenVLEnergonTaskEncoderConfig)
+        assert dataset.task_encoder.patch_size == 16
+        assert dataset_train_mode(dataset) is None
 
-    def test_model_seq_length_synced_when_explicit(self):
-        config = _make_mock_config(model_seq_length=4096)
-        apply_dataset_override(config, "llm-pretrain-mock", seq_length=2048)
-        assert config.model.seq_length == 2048
+    def test_energon_preset_accepts_mock_vlm_pretraining_recipe(self):
+        source = MockVLMSFTDatasetConfig(
+            seq_length=4096,
+            hf_processor_path="Qwen/Qwen3.5-35B-A3B",
+            num_workers=1,
+            persistent_workers=False,
+            pad_to_max_length=True,
+        )
+        config = _make_config(source)
+        config.train.micro_batch_size = 1
 
-    def test_model_seq_length_not_overwritten_when_implicit(self):
-        """When seq_length is None, model.seq_length should not be changed."""
-        config = _make_mock_config(model_seq_length=8192)
-        apply_dataset_override(config, "llm-pretrain-mock")
-        assert config.model.seq_length == 8192
+        dataset = build_dataset_config(config, "energon")
 
+        assert dataset.do_validation is True
+        assert dataset.persistent_workers is False
+        assert dataset.pad_to_max_length is True
+        assert dataset.task_encoder.hf_processor_path == "Qwen/Qwen3.5-35B-A3B"
 
-# ---------------------------------------------------------------------------
-# Tests for registry constants
-# ---------------------------------------------------------------------------
+    def test_energon_preset_rejects_incompatible_recipe(self):
+        with pytest.raises(ValueError, match="EnergonDatasetConfig or exposing dataset.hf_processor_path"):
+            build_dataset_config(_make_config(), "energon")
 
+    def test_energon_preset_rejects_invalid_workers(self):
+        config = _make_vlm_config()
+        config.train.micro_batch_size = 1
+        config.dataset.num_workers = -1
 
-@pytest.mark.unit
-class TestRegistryConstants:
-    """Sanity checks for DATASET_TYPES and LLM_FINETUNE_PRESETS."""
+        with pytest.raises(ValueError, match="non-negative"):
+            build_dataset_config(config, "energon")
 
-    def test_dataset_types_has_expected_entries(self):
-        assert "llm-pretrain" in DATASET_TYPES
-        assert "llm-pretrain-mock" in DATASET_TYPES
-        assert "llm-finetune" in DATASET_TYPES
-        assert "llm-finetune-preloaded" in DATASET_TYPES
-        assert "vlm-energon" in DATASET_TYPES
-        assert "vlm-hf" in DATASET_TYPES
-        assert "vlm-local" not in DATASET_TYPES
-        assert "vlm-preloaded" not in DATASET_TYPES
+    @pytest.mark.parametrize(
+        ("dataset_name", "source_name"),
+        [
+            ("squad", "squad"),
+            ("tulu3", "tulu3"),
+            ("openmathinstruct2", "openmathinstruct2"),
+            ("openmathinstruct2-thinking", "openmathinstruct2_thinking"),
+            ("gsm8k", "gsm8k"),
+        ],
+    )
+    def test_text_sft_presets_return_complete_configs(self, dataset_name, source_name):
+        dataset = build_dataset_config(_make_config(model_seq_length=2048), dataset_name)
 
-    def test_llm_finetune_presets_has_expected_keys(self):
-        assert "squad" in LLM_FINETUNE_PRESETS
-        assert "gsm8k" in LLM_FINETUNE_PRESETS
-        assert "openmathinstruct2" in LLM_FINETUNE_PRESETS
+        assert isinstance(dataset, GPTSFTDatasetConfig)
+        assert dataset.hf_dataset is not None
+        assert dataset.hf_dataset.dataset_name == source_name
+        assert dataset.seq_length == 2048
+        assert dataset.enable_offline_packing is False
+        assert dataset_train_mode(dataset) == "finetune"
 
-    def test_llm_finetune_presets_are_callable(self):
-        for name, factory in LLM_FINETUNE_PRESETS.items():
-            assert callable(factory), f"Preset '{name}' is not callable"
+    def test_tulu3_preset_allows_typed_config_overrides(self):
+        dataset = build_dataset_config(_make_config(model_seq_length=2048), "tulu3")
+
+        process_config_with_overrides(
+            dataset,
+            cli_overrides=[
+                "max_train_samples=128",
+                "hf_validation_proportion=0.1",
+            ],
+        )
+
+        assert dataset.max_train_samples == 128
+        assert dataset.hf_validation_proportion == 0.1
+        dataset.validate()
+
+    def test_local_jsonl_is_a_config_preset_with_direct_overrides(self):
+        dataset = build_dataset_config(_make_config(model_seq_length=1024), "local-jsonl")
+
+        assert isinstance(dataset, GPTSFTDatasetConfig)
+        assert dataset.dataset_root is None
+
+        process_config_with_overrides(
+            dataset,
+            cli_overrides=[
+                "dataset_root=/data/sft",
+                "dataset_kwargs={custom_option:17}",
+            ],
+        )
+
+        assert dataset.dataset_root == "/data/sft"
+        assert dataset.dataset_kwargs == {"custom_option": 17}
+        dataset.validate()
+
+    def test_local_vlm_preserves_recipe_config_and_exposes_source_fields(self):
+        dataset = build_dataset_config(_make_vlm_config(), "local-vlm")
+
+        assert isinstance(dataset, DirectHFSFTDatasetConfig)
+        assert dataset.num_workers == 3
+        assert dataset.persistent_workers is False
+        assert dataset.enable_in_batch_packing is True
+        assert dataset.do_validation is False
+        assert dataset.do_test is False
+
+        process_config_with_overrides(
+            dataset,
+            cli_overrides=[
+                "source.load_kwargs.data_files.train=/data/vlm/train.jsonl",
+                "validation_source.load_kwargs.data_files.validation=/data/vlm/validation.jsonl",
+                "do_validation=true",
+                "hf_processor_path=org/processor",
+            ],
+        )
+
+        assert dataset.source.load_kwargs == {"data_files": {"train": "/data/vlm/train.jsonl"}}
+        assert dataset.validation_source is not None
+        assert dataset.validation_source.load_kwargs == {"data_files": {"validation": "/data/vlm/validation.jsonl"}}
+        assert dataset.hf_processor_path == "org/processor"
+        dataset.validate()
+
+    def test_local_vlm_requires_a_train_path_after_overrides(self):
+        dataset = build_dataset_config(_make_vlm_config(), "local-vlm")
+
+        with pytest.raises(ValueError, match="data_files must contain non-empty paths"):
+            dataset.validate()
+
+    @pytest.mark.parametrize(
+        ("dataset_name", "source_name"),
+        [("cord-v2", "cord_v2"), ("medpix", "medpix")],
+    )
+    def test_hf_vlm_presets_select_sources_and_preserve_processor(self, dataset_name, source_name):
+        dataset = build_dataset_config(_make_vlm_config(), dataset_name)
+
+        assert isinstance(dataset, DirectHFSFTDatasetConfig)
+        assert dataset.source.dataset_name == source_name
+        assert dataset.hf_processor_path == "Qwen/Qwen3-VL-8B-Instruct"
+        assert dataset.num_workers == 3
+
+    @pytest.mark.parametrize("dataset_name", ["raven", "rdr"])
+    def test_train_only_vlm_presets_define_deterministic_validation_slices(self, dataset_name):
+        dataset = build_dataset_config(_make_vlm_config(), dataset_name)
+
+        assert isinstance(dataset, DirectHFSFTDatasetConfig)
+        assert dataset.source.split == "train[:95%]"
+        assert dataset.validation_source is not None
+        assert dataset.validation_source.split == "train[95%:]"
+        assert dataset.do_test is False
+
+    def test_llava_video_exposes_required_adapter_kwargs(self):
+        dataset = build_dataset_config(_make_vlm_config(), "llava-video-178k")
+
+        with pytest.raises(ValueError, match="requires adapter_kwargs"):
+            dataset.validate()
+
+        process_config_with_overrides(
+            dataset,
+            cli_overrides=["source.adapter_kwargs.video_root_path=/data/llava-video"],
+        )
+
+        assert dataset.source.adapter_kwargs == {"video_root_path": "/data/llava-video"}
+        dataset.validate()
+        assert dataset.validation_source is not None
+        assert dataset.validation_source.adapter_kwargs == {"video_root_path": "/data/llava-video"}
+
+    def test_vlm_preset_rejects_a_non_direct_hf_recipe(self):
+        with pytest.raises(ValueError, match="DirectHFSFTDatasetConfig"):
+            build_dataset_config(_make_config(), "medpix")
+
+    def test_unknown_dataset_name_is_rejected(self):
+        with pytest.raises(ValueError, match="Unknown dataset name"):
+            build_dataset_config(_make_config(), "unknown")

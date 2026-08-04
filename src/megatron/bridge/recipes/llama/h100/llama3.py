@@ -17,8 +17,9 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
@@ -48,7 +49,7 @@ def llama32_1b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -134,6 +135,10 @@ def llama32_1b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -144,7 +149,7 @@ def llama32_3b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -215,6 +220,10 @@ def llama32_3b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -230,7 +239,7 @@ def llama3_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -301,6 +310,10 @@ def llama3_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -311,7 +324,7 @@ def llama3_8b_pretrain_16gpu_h100_bf16_16k_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -382,6 +395,10 @@ def llama3_8b_pretrain_16gpu_h100_bf16_16k_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -392,7 +409,7 @@ def llama3_8b_pretrain_32gpu_h100_bf16_64k_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -463,6 +480,10 @@ def llama3_8b_pretrain_32gpu_h100_bf16_64k_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -473,7 +494,7 @@ def llama3_8b_pretrain_64gpu_h100_bf16_128k_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -544,6 +565,10 @@ def llama3_8b_pretrain_64gpu_h100_bf16_128k_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -574,7 +599,7 @@ def _llama3_8b_pretrain_2gpu_h100_low_precision(mixed_precision_recipe: str) -> 
 
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -653,17 +678,35 @@ def _llama3_8b_pretrain_2gpu_h100_low_precision(mixed_precision_recipe: str) -> 
 
 def llama3_8b_pretrain_2gpu_h100_fp8mx_config() -> ConfigContainer:
     """Return a MXFP8 pre-training config for Llama 3 8B on H100."""
-    return _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_mxfp8_mixed")
+    cfg = _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_mxfp8_mixed")
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
 
 
 def llama3_8b_pretrain_2gpu_h100_fp8cs_config() -> ConfigContainer:
     """Return a FP8 current-scaling pre-training config for Llama 3 8B on H100."""
-    return _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_fp8_current_scaling_mixed")
+    cfg = _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_fp8_current_scaling_mixed")
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
 
 
 def llama3_8b_pretrain_2gpu_h100_nvfp4_config() -> ConfigContainer:
     """Return a NVFP4 pre-training config for Llama 3 8B on H100."""
-    return _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_nvfp4_mixed")
+    cfg = _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_nvfp4_mixed")
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
 
 
 # =============================================================================
@@ -678,7 +721,7 @@ def llama3_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -758,6 +801,10 @@ def llama3_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     # Mixed precision - explicitly use bf16_mixed
     cfg.mixed_precision = bf16_mixed()
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -766,11 +813,16 @@ def llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config() -> ConfigContaine
 
     Wraps :func:`llama3_70b_pretrain_config` and applies
     :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
-    Bit-exact reproducibility also requires the executor-side env vars set by
-    ``PerfEnvPlugin(deterministic=True)``.
     """
     cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
     apply_determinism_overrides(cfg)
+    # Keep the complete deterministic process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
     return cfg
 
 
@@ -781,7 +833,7 @@ def llama3_70b_pretrain_32gpu_h100_bf16_16k_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -860,6 +912,10 @@ def llama3_70b_pretrain_32gpu_h100_bf16_16k_config() -> ConfigContainer:
 
     cfg.mixed_precision = bf16_mixed()
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -870,7 +926,7 @@ def llama3_70b_pretrain_256gpu_h100_bf16_64k_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -949,6 +1005,10 @@ def llama3_70b_pretrain_256gpu_h100_bf16_64k_config() -> ConfigContainer:
 
     cfg.mixed_precision = bf16_mixed()
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -964,7 +1024,7 @@ def llama31_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -1035,6 +1095,10 @@ def llama31_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
     cfg.mixed_precision = bf16_mixed()
@@ -1047,7 +1111,7 @@ def llama31_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -1126,6 +1190,10 @@ def llama31_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.mixed_precision = bf16_mixed()
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1136,9 +1204,7 @@ def llama31_405b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -1221,6 +1287,10 @@ def llama31_405b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.mixed_precision = bf16_mixed()
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1229,11 +1299,16 @@ def llama31_405b_pretrain_256gpu_h100_bf16_deterministic_config() -> ConfigConta
 
     Wraps :func:`llama31_405b_pretrain_config` and applies
     :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
-    Bit-exact reproducibility also requires the executor-side env vars set by
-    ``PerfEnvPlugin(deterministic=True)``.
     """
     cfg = llama31_405b_pretrain_256gpu_h100_bf16_config()
     apply_determinism_overrides(cfg)
+    # Keep the complete deterministic process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
     return cfg
 
 
@@ -1254,7 +1329,7 @@ def llama32_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-1B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1285,7 +1360,7 @@ def llama32_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.train_iters = 1000
     cfg.validation.eval_interval = 30
     cfg.validation.eval_iters = 32
-    cfg.train.global_batch_size = 8  # packed_sequence=True, else 128
+    cfg.train.global_batch_size = 8  # enable_offline_packing=True, else 128
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
@@ -1350,6 +1425,10 @@ def llama32_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1365,7 +1444,7 @@ def llama32_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1459,6 +1538,10 @@ def llama32_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1474,7 +1557,7 @@ def llama3_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1562,6 +1645,10 @@ def llama3_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1577,7 +1664,7 @@ def llama31_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1665,6 +1752,10 @@ def llama31_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1680,7 +1771,7 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1768,6 +1859,10 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1783,7 +1878,7 @@ def llama31_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1871,6 +1966,10 @@ def llama31_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1887,7 +1986,7 @@ def llama31_405b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-405B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1988,6 +2087,10 @@ def llama31_405b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -2013,7 +2116,7 @@ def llama32_1b_peft_1gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-1B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2106,6 +2209,10 @@ def llama32_1b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -2126,7 +2233,7 @@ def llama32_3b_peft_1gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2219,6 +2326,10 @@ def llama32_3b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -2239,7 +2350,7 @@ def llama3_8b_peft_1gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2335,6 +2446,10 @@ def llama3_8b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -2355,7 +2470,7 @@ def llama31_8b_peft_1gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2451,6 +2566,10 @@ def llama31_8b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -2471,7 +2590,7 @@ def llama3_70b_peft_8gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2567,6 +2686,10 @@ def llama3_70b_peft_8gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -2587,7 +2710,7 @@ def llama31_70b_peft_8gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2683,6 +2806,10 @@ def llama31_70b_peft_8gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -2704,7 +2831,7 @@ def llama31_405b_peft_32gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-405B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2809,6 +2936,10 @@ def llama31_405b_peft_32gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

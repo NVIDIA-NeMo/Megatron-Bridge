@@ -14,40 +14,44 @@ MiniMax-M2 requires **at least 2 nodes (16 GPUs)** for inference and conversion.
 
 ## Checkpoint Conversion
 
-[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple TP/PP/EP configs to verify HF ↔ Megatron round-trip conversion.
+[slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to
+submit a fixed `TP=2`, `PP=1`, `EP=8` config and verify HF ↔ Megatron
+round-trip conversion. Run the wrapper from a Slurm login node; it waits for
+the job by default. Validation happens in memory rather than producing another
+checkpoint.
 
 ### Setup
 
-Edit the variables at the top of `slurm_conversion.sh`:
-
 ```bash
-CONTAINER_IMAGE="/path/to/container.sqsh"
-# Optional:
-export HF_TOKEN="hf_your_token_here"
-export HF_HOME="/path/to/shared/HF_HOME"
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+export SLURM_PARTITION=batch
+export CONTAINER_MOUNTS=/shared:/shared
+# Optional: export HF_TOKEN and HF_HOME before launching.
 ```
+
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and
+must be on storage visible from the compute nodes. Add other comma-separated
+host-to-container mounts through `CONTAINER_MOUNTS`.
 
 ### Submit
 
 ```bash
-sbatch examples/models/minimax/minimax_m2/slurm_conversion.sh
+bash examples/models/minimax/minimax_m2/slurm_conversion.sh
 ```
 
-### Expected output (per config)
+Cluster-specific `srun` options are not enabled by default. Forward any that
+your cluster requires, for example:
 
+```bash
+bash examples/models/minimax/minimax_m2/slurm_conversion.sh \
+    --srun-arg=--mpi=pmix
 ```
-MiniMax-M2 Round-Trip Conversion Sweep
-Job: <JOB_ID> | Nodes: 2
-Parallelism configs: 2,1,8 1,2,8 2,2,4
-======================================
-Config 1/3: TP=2, PP=1, EP=8
-...
-All parameters match: True ✅
-[OK] Config 1: TP=2, PP=1, EP=8 passed
-...
-All 3 configs passed
-======================================
-```
+
+### Expected output
+
+The round-trip launcher prints a parameter comparison table with successful
+matches marked ✅ and exits nonzero if any converted weight differs.
 
 ## Inference
 

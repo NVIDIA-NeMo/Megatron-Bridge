@@ -62,6 +62,11 @@ class TestDataSamplers:
 
                     return GPTModelProvider()
 
+                def get_model_config(self):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
         cfg.train.train_iters = 1000
@@ -102,6 +107,11 @@ class TestDataSamplers:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
+                def get_model_config(self):
                     from megatron.bridge.models.gpt_provider import GPTModelProvider
 
                     return GPTModelProvider()
@@ -155,6 +165,11 @@ class TestDataSamplers:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
+                def get_model_config(self):
                     from megatron.bridge.models.gpt_provider import GPTModelProvider
 
                     return GPTModelProvider()
@@ -845,6 +860,26 @@ class TestBatchUtilities:
 class TestBatchDataloaderIntegration:
     """Integration tests for batch dataloader type."""
 
+    def test_build_batch_dataloader_explicit_seed_is_independent_of_model_rng(self):
+        """Pipeline-stage model seeds must not change the fine-tuning sample order."""
+        import torch
+
+        def first_global_batch(model_seed: int) -> list[int]:
+            torch.manual_seed(model_seed)
+            dataloader = build_pretraining_data_loader(
+                dataset=list(range(64)),
+                consumed_samples=0,
+                dataloader_type="batch",
+                micro_batch_size=1,
+                num_workers=0,
+                data_sharding=False,
+                global_batch_size=8,
+                seed=1234,
+            )
+            return next(iter(dataloader.batch_sampler))
+
+        assert first_global_batch(5678) == first_global_batch(5778)
+
     def test_build_batch_dataloader_basic(self):
         """Test building a dataloader with dataloader_type='batch'."""
         from unittest import mock as _mock
@@ -853,6 +888,11 @@ class TestBatchDataloaderIntegration:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
+                def get_model_config(self):
                     from megatron.bridge.models.gpt_provider import GPTModelProvider
 
                     return GPTModelProvider()
@@ -891,6 +931,11 @@ class TestBatchDataloaderIntegration:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
+                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+                    return GPTModelProvider()
+
+                def get_model_config(self):
                     from megatron.bridge.models.gpt_provider import GPTModelProvider
 
                     return GPTModelProvider()

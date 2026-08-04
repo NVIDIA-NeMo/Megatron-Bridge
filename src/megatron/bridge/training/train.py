@@ -358,16 +358,20 @@ def train(
             ),
         )
 
-    # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
-    # or random initialization don't propagate to all ranks in first all-gather (which is a
-    # no-op if things work correctly).
+    # Keep the forward pre-hook enabled for MXFP8 resume so parameter gathering
+    # and MXFP8 staging match an uninterrupted iteration. Other runs retain the
+    # first-iteration validation path below.
     if should_toggle_forward_pre_hook:
-        disable_forward_pre_hook(model, param_sync=False)
-        # Also remove param_sync_func temporarily so that sync calls made in
-        # `forward_backward_func` are no-ops.
         param_sync_func = model_config.param_sync_func
-        model_config.param_sync_func = None
-        pre_hook_enabled = False
+        is_mxfp8_resume = start_iteration > 0 and str(model_config.fp8_recipe).lower().endswith("mxfp8")
+        if not is_mxfp8_resume:
+            disable_forward_pre_hook(model, param_sync=False)
+            # Also remove param_sync_func temporarily so that sync calls made in
+            # `forward_backward_func` are no-ops.
+            model_config.param_sync_func = None
+            pre_hook_enabled = False
+        else:
+            pre_hook_enabled = True
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -537,7 +541,7 @@ def train(
                 # Enable forward pre-hook after training step has successfully run. All subsequent
                 # forward passes will use the forward pre-hook / `param_sync_func` in
                 # `forward_backward_func`.
-                if should_toggle_forward_pre_hook:
+                if should_toggle_forward_pre_hook and not pre_hook_enabled:
                     enable_forward_pre_hook(model)
                     model_config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
@@ -1607,7 +1611,7 @@ def _handle_mxfp8_param_buffer_copy(
 
     However, we should skip this on the first iteration when forward_pre_hook is disabled,
     because:
-    1. The first iteration's params are already in param.data (from init or checkpoint).
+    1. A fresh run's first-iteration params are already in param.data from initialization.
     2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
        so the main grads will be polluted by the main params.
 
@@ -1646,15 +1650,22 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     print_rank_0("Deleting CUDA graphs")
 
-    # Explicitly delete the training CUDA graph because of
+    # Explicitly delete full CUDA graphs because of
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
-    if "training" in FullCudaGraphWrapper.cuda_graph:
-        del FullCudaGraphWrapper.cuda_graph["training"]
+    for stage in ("training", "validation"):
+        if stage in FullCudaGraphWrapper.cuda_graph:
+            del FullCudaGraphWrapper.cuda_graph[stage]
+        FullCudaGraphWrapper.cuda_graph[stage] = None
+        FullCudaGraphWrapper.result[stage] = None
+        FullCudaGraphWrapper.curr_iteration[stage] = 0
 
     # Explicitly delete optimizer CUDA graph
-    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
-        del OptimizerCudaGraphWrapper.cuda_graph
+    if HAS_OPTIMIZER_CUDA_GRAPH:
+        if OptimizerCudaGraphWrapper.cuda_graph is not None:
+            del OptimizerCudaGraphWrapper.cuda_graph
         OptimizerCudaGraphWrapper.cuda_graph = None
+        OptimizerCudaGraphWrapper.result = None
+        OptimizerCudaGraphWrapper.curr_iteration = 0
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper

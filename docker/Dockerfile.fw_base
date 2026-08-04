@@ -97,7 +97,7 @@ ARG REINSTALL_CUDNN
 ARG CUDNN_VERSION
 ENV NSIGHT_SYSTEMS_VERSION $NSYS_VERSION
 ARG REINSTALL_NCCL
-ARG NCCL_VERSION
+ARG NCCL_VERSION=2.30.7-1+cuda13.3
 ARG REINSTALL_CUBLAS
 ARG CUBLAS_VERSION
 
@@ -131,6 +131,23 @@ RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
     pushd /usr/local/lib/python3.12/dist-packages/vllm && \
     patch -p1 < /opt/vllm.patch && \
     popd
+
+##############################################################################
+##
+## Reinstall the aws-ofi-nccl EFA plugin
+##
+## NVIDIA PyTorch >= 26.06 dropped aws-ofi-nccl and defaults
+## NCCL_NET_PLUGIN=spcx (HPCX Spectrum-X), which cannot drive EFA -> NCCL falls
+## back to TCP sockets on AWS. Rebuild the plugin against the reinstalled NCCL and
+## the image's libfabric so EFA jobs keep their fabric. Selection stays per-CSP in
+## the launcher (EKSEnvPlugin pins NCCL_NET_PLUGIN for AWS). Kept last so it does
+## not invalidate the CUDA-toolkit or vLLM layer caches.
+##############################################################################
+
+ARG AWS_OFI_NCCL_VERSION=v1.17.3
+
+RUN --mount=type=bind,source=docker/common/install_aws_ofi_nccl.sh,target=/opt/install_aws_ofi_nccl.sh \
+    bash /opt/install_aws_ofi_nccl.sh --AWS_OFI_NCCL_VER=$AWS_OFI_NCCL_VERSION
 
 ##############################################################################
 ##

@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
 from pathlib import Path
 from typing import Callable, Optional
 
 import pytest
 
 from megatron.bridge.models.distillation_provider import convert_to_distillation_provider
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.llama import (
     llama32_1b_pretrain_config,
     llama32_3b_pretrain_config,
@@ -31,6 +34,20 @@ from tests.functional_tests.utils import (
     initialize_distributed,
     verify_checkpoint_files,
 )
+
+
+def _to_legacy_provider(model_config: BridgeGPTModelConfig) -> GPTModelProvider:
+    """Adapt a builder config to the legacy provider required by distillation."""
+    provider_fields = {field.name for field in fields(GPTModelProvider)}
+    provider_kwargs = {
+        field_name: getattr(model_config, field_name)
+        for field_name in provider_fields
+        if field_name not in {"transformer_layer_spec", "_pg_collection"} and hasattr(model_config, field_name)
+    }
+    metadata = model_config.extra_checkpoint_metadata or {}
+    provider_kwargs["hf_model_id"] = metadata.get("hf_model_id")
+    provider_kwargs["hf_model_revision"] = metadata.get("hf_model_revision")
+    return GPTModelProvider(**provider_kwargs)
 
 
 LLAMA_DISTILL_RECIPES = [
@@ -90,8 +107,10 @@ def run_distill_recipe_test(
     try:
         # Load student config - pretrain configs use parameterless API
         config: ConfigContainer = student_config_func()
+        config.model = _to_legacy_provider(config.model)
         # Load teacher config - pretrain configs use parameterless API
         teacher_config = teacher_config_func()
+        teacher_config.model = _to_legacy_provider(teacher_config.model)
 
         # Set up output directories after instantiation
         run_output_dir = shared_base_dir / f"{recipe_name}_functional_test"
@@ -114,7 +133,7 @@ def run_distill_recipe_test(
         test_seq_length = 512
         config.model.seq_length = test_seq_length
         config.model.teacher.seq_length = test_seq_length
-        config.dataset.sequence_length = test_seq_length
+        config.dataset.seq_length = test_seq_length
         config.train.global_batch_size = 8
         # Keep dataloader light-weight for CI
         if hasattr(config.dataset, "pin_memory"):

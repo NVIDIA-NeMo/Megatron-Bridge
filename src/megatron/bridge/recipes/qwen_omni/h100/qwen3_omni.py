@@ -23,6 +23,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 
 
@@ -90,6 +91,10 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -116,11 +121,15 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
             split="test",
             load_kwargs={"data_files": {"test": None}},
         ),
-        dataloader_type="single",
+        dataloader_type="cyclic",
         num_workers=2,
         enable_in_batch_packing=False,
         skip_getting_attention_mask_from_dataset=False,
     )
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

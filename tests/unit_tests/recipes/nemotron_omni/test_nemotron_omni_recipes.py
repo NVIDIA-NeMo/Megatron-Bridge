@@ -45,6 +45,8 @@ _RECIPE_FUNCS = [
 
 
 class _FakeModelCfg:
+    dynamic_resolution = True
+
     def finalize(self):
         return None
 
@@ -69,7 +71,7 @@ class _FakeAutoBridge:
 def fake_processor(monkeypatch: pytest.MonkeyPatch):
     processor = SimpleNamespace(
         tokenizer=SimpleNamespace(pad_token_id=0, eos_token_id=11),
-        image_processor=SimpleNamespace(max_num_tiles=12),
+        image_processor=SimpleNamespace(max_num_patches=13312),
     )
 
     import transformers
@@ -146,6 +148,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     assert cfg.dataset.source.dataset_name == "cord_v2"
     assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
+    assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.model.temporal_patch_dim == 1
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
@@ -156,8 +159,16 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
 
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.peft is not None
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
     assert cfg.peft.dim == 16
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None
@@ -193,7 +204,14 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.peft is not None
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
     assert cfg.peft.dim == 16
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None

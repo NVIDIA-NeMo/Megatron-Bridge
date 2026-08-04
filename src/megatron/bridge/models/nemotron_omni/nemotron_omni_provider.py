@@ -16,9 +16,8 @@ import copy
 from abc import ABC
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
-import torch
 from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
@@ -28,7 +27,12 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import get_language_mlp_submodules
+
+
+NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT = "expanded_sequence_v1"
+NEMOTRON_OMNI_LLAVA_CONTRACT = "llava_collapse_expand_v1"
 
 
 @dataclass
@@ -140,12 +144,17 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
 
 
 @dataclass
-class NemotronOmniModelProvider(NemotronVLModelProvider):
-    """Provider for Nemotron Omni (VL + sound) models.
+class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
+    """Shared configuration and builders for Nemotron Omni models.
 
-    Extends NemotronVLModelProvider with sound-specific fields. When has_sound
-    is False, behaves identically to the VL provider (backward compatible).
+    Extends NemotronVLModelProvider with sound-specific fields and fixes RADIO
+    to the public model's dynamic-resolution input contract.
     """
+
+    # The public Nemotron-3 Omni processor emits variable-resolution images
+    # which Bridge pre-patchifies for RADIO. The inherited static RADIO mode
+    # accepts a different 4D tensor contract and is not an Omni configuration.
+    dynamic_resolution: Literal[True] = True
 
     has_sound: bool = False
     sound_model_type: str = "parakeet"
@@ -161,6 +170,55 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
 
+    # This field is serialized in run_config.yaml. It prevents an older
+    # checkpoint whose provider had the same class name but LLaVA semantics
+    # from being loaded as the canonical expanded-sequence implementation.
+    nemotron_omni_contract: Optional[str] = None
+
+    def _validate_omni_config(self) -> None:
+        if self.dynamic_resolution is not True:
+            raise ValueError("Nemotron Omni only supports dynamic_resolution=True.")
+        if self.image_token_index is None or self.image_token_index <= 0:
+            raise ValueError(
+                "Nemotron Omni requires a positive image_token_index from the checkpoint configuration; "
+                f"got {self.image_token_index}. Construct the provider through AutoBridge or set it explicitly."
+            )
+        if self.has_sound and self.sound_context_token_id <= 0:
+            raise ValueError(
+                "Sound-enabled Nemotron Omni requires a positive sound_context_token_id from the checkpoint "
+                f"configuration; got {self.sound_context_token_id}."
+            )
+        if self.has_sound and self.sound_config is None:
+            raise ValueError("Sound-enabled Nemotron Omni requires sound_config from the checkpoint configuration.")
+
+    def finalize(self) -> None:
+        """Finalize a dynamic-resolution Nemotron Omni provider."""
+        self._validate_omni_config()
+        super().finalize()
+
+    def _require_model_contract(self, expected: str, implementation: str) -> None:
+        actual = self.nemotron_omni_contract
+        if actual == expected:
+            return
+
+        if actual is None:
+            raise RuntimeError(
+                f"Cannot construct {implementation}: the Nemotron Omni model contract is missing. "
+                "Older branches used the name NemotronOmniModelProvider for the LLaVAModel "
+                "collapse/expand implementation, while this branch uses that name for the "
+                "expanded-sequence implementation. Refusing to guess which checkpoint layout "
+                "was intended. Reconvert the checkpoint with this branch, or use the explicit "
+                "NemotronOmniLlavaModelProvider/NemotronOmniLlavaBridge with a compatible legacy "
+                "Megatron-LM implementation."
+            )
+
+        raise RuntimeError(
+            f"Cannot construct {implementation}: run_config.yaml declares Nemotron Omni contract "
+            f"{actual!r}, but this implementation requires {expected!r}. Use the provider/bridge "
+            "that matches the checkpoint contract instead of reusing a provider class name across "
+            "the LLaVA collapse/expand and expanded-sequence implementations."
+        )
+
     def _build_vision_config(self, language_cfg):
         """Pin vision encoder to PP=1 (Omni training uses PP>1 on the LLM).
 
@@ -173,14 +231,14 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
         return vision_cfg
 
     def _build_vision_projection_config(self, language_cfg):
-        """Build vision projection MLP config, overriding activation to ReLU.
+        """Build the vision projection MLP config.
 
-        The HF Nemotron-Omni model uses plain ReLU in its vision projection
-        MLP (mlp1), not the squared_relu used by the language model. Also
-        pin to PP=1 (see :meth:`_build_vision_config`).
+        Nemotron Omni applies squared ReLU in the vision projection MLP,
+        matching the HF checkpoint and vLLM implementation. Also pin the
+        projector to PP=1 (see :meth:`_build_vision_config`).
         """
         vision_proj_cfg = super()._build_vision_projection_config(language_cfg)
-        vision_proj_cfg.activation_func = torch.nn.functional.relu
+        vision_proj_cfg.activation_func = squared_relu
         vision_proj_cfg.pipeline_model_parallel_size = 1
         return vision_proj_cfg
 
@@ -218,16 +276,21 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
         )
         return BridgeSoundEncoder(config)
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None):
-        """Assemble NemotronOmniModel wrapping a LLaVAModel with optional sound support.
+    def _provide_llava(self, pre_process=None, post_process=None, vp_stage=None):
+        """Assemble the legacy LLaVA collapse/expand implementation.
 
         Duplicates the VL provide() logic because LLaVAModel requires sound kwargs
         at construction time -- they can't be added after. This is intentional to
         maintain zero changes to nemotron_vl/.
         """
+        self._validate_omni_config()
         language_cfg = copy.deepcopy(self)
 
         vision_cfg = self._build_vision_config(language_cfg)
+        # Nano Omni checkpoints were trained with RADIO's ten class tokens.
+        # This MCore LLaVAModel consumes the setting from the vision config;
+        # its generic RADIO fallback otherwise assumes eight.
+        vision_cfg.class_token_len = self.vision_class_token_len or 10
         vision_proj_cfg = self._build_vision_projection_config(language_cfg)
 
         language_spec = hybrid_stack_spec
@@ -295,7 +358,14 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
             temporal_ckpt_compat=self.temporal_ckpt_compat,
         )
 
-        model = NemotronOmniModel(llava_model=llava_model)
+        if self.temporal_patch_dim == 1:
+            # Dynamic image batches already express the exact replacement-token
+            # count in num_image_tiles. Vision-less PP stages cannot infer
+            # LLaVAModel's internal is_packed_dynamic_res flag, so make its
+            # label-only expansion use those counts directly as well.
+            llava_model.img_seq_len = 1
+
+        model = NemotronOmniLlavaModel(llava_model=llava_model)
 
         llava_model.img_start_token_id = self.img_start_token_id
         llava_model.img_end_token_id = self.img_end_token_id
@@ -314,3 +384,117 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
             )
 
         return model
+
+
+@dataclass
+class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
+    """Provider for the canonical expanded-sequence Nemotron Omni model."""
+
+    # Match the RADIO position-embedding behavior used by the canonical
+    # processor-expanded implementation without changing shared VL defaults.
+    radio_interpolate_only_cpe: bool = False
+
+    def validate_model_contract(self) -> None:
+        """Reject ambiguous or legacy serialized provider configurations."""
+        self._require_model_contract(
+            NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+            "NemotronOmniModel",
+        )
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        """Build the top-level model from the shared Nano/Super fields."""
+
+        self.validate_model_contract()
+
+        language_cfg = copy.deepcopy(self)
+        vision_cfg = self._build_vision_config(language_cfg)
+        vision_proj_cfg = self._build_vision_projection_config(language_cfg)
+
+        language_spec = hybrid_stack_spec
+        vision_spec = get_vit_layer_with_transformer_engine_spec()
+        vision_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
+
+        add_encoder = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
+
+        sound_model = None
+        sound_projection = None
+        if self.has_sound and add_encoder:
+            sound_model = self._build_sound_encoder()
+            sound_projection = MultimodalProjector(
+                config=self._build_sound_projection_config(language_cfg),
+                submodules=copy.deepcopy(get_language_mlp_submodules(language_spec)),
+                projector_type="mlp",
+                input_size=self.sound_hidden_size,
+            )
+
+        model = NemotronOmniModel(
+            language_transformer_config=language_cfg,
+            language_transformer_layer_spec=language_spec,
+            language_vocab_size=self.vocab_size,
+            language_max_sequence_length=self.seq_length,
+            vision_transformer_config=vision_cfg,
+            vision_transformer_layer_spec=vision_spec,
+            vision_projection_config=vision_proj_cfg,
+            vision_projection_layer_spec=vision_proj_spec,
+            image_token_index=self.image_token_index,
+            parallel_output=self.parallel_output,
+            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+            language_position_embedding_type=self.position_embedding_type,
+            pre_process=True if pre_process is None else pre_process,
+            post_process=True if post_process is None else post_process,
+            add_encoder=add_encoder,
+            add_decoder=True,
+            hybrid_layer_pattern=self.hybrid_layer_pattern,
+            dynamic_resolution=self.dynamic_resolution,
+            vision_class_token_len=self.vision_class_token_len or 10,
+            radio_force_eval_mode=self.radio_force_eval_mode,
+            radio_force_cpe_eval_mode=self.radio_force_cpe_eval_mode,
+            radio_interpolate_only_cpe=self.radio_interpolate_only_cpe,
+            radio_cpe_aspect_ratio_select=self.radio_cpe_aspect_ratio_select,
+            radio_disable_cpe=self.radio_disable_cpe,
+            temporal_patch_dim=self.temporal_patch_dim,
+            separate_video_embedder=self.separate_video_embedder,
+            temporal_ckpt_compat=self.temporal_ckpt_compat,
+            sound_model=sound_model,
+            sound_projection=sound_projection,
+            sound_token_index=self.sound_context_token_id,
+            vp_stage=vp_stage,
+        )
+
+        if any(
+            (
+                self.freeze_language_model,
+                self.freeze_vision_model,
+                self.freeze_vision_projection,
+                self.freeze_sound_encoder,
+                self.freeze_sound_projection,
+            )
+        ):
+            model.freeze(
+                freeze_language_model=self.freeze_language_model,
+                freeze_vision_model=self.freeze_vision_model,
+                freeze_vision_projection=self.freeze_vision_projection,
+                freeze_sound_model=self.freeze_sound_encoder,
+                freeze_sound_projection=self.freeze_sound_projection,
+            )
+
+        return model
+
+
+@dataclass
+class NemotronOmniLlavaModelProvider(NemotronOmniModelProvider):
+    """Explicit fallback provider for the historical collapse/expand path."""
+
+    # Preserve the existing LLaVA provider default for compatibility.
+    radio_interpolate_only_cpe: bool = True
+
+    def validate_model_contract(self) -> None:
+        """Require an explicitly selected legacy LLaVA contract."""
+        self._require_model_contract(
+            NEMOTRON_OMNI_LLAVA_CONTRACT,
+            "NemotronOmniLlavaModel",
+        )
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        self.validate_model_contract()
+        return self._provide_llava(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

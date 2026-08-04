@@ -16,12 +16,20 @@ import importlib
 from typing import Callable
 
 import pytest
+from transformers import LlamaConfig
 
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _llama_module = importlib.import_module("megatron.bridge.recipes.llama")
 _LLAMA_RECIPE_FUNCS = [
+    getattr(_llama_module, name)
+    for name in getattr(_llama_module, "__all__", [])
+    if callable(getattr(_llama_module, name, None)) and not name.startswith("llama2")
+]
+_ALL_LLAMA_RECIPE_FUNCS = [
     getattr(_llama_module, name)
     for name in getattr(_llama_module, "__all__", [])
     if callable(getattr(_llama_module, name, None))
@@ -88,20 +96,47 @@ class _FakeBridge:
     def __init__(self):
         pass
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Llama recipes must use get_model_config(), not the legacy provider API")
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
 
 
+class _BuilderOnlyBridge:
+    """Return a real strict ModelConfig while rejecting the provider API."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs) -> "_BuilderOnlyBridge":
+        return _BuilderOnlyBridge()
+
+    def get_model_config(self) -> BridgeGPTModelConfig:
+        config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=32,
+            num_attention_heads=8,
+            num_key_value_heads=8,
+            max_position_embeddings=131072,
+            vocab_size=128256,
+        )
+        model_config = AutoBridge.from_hf_config(config).get_model_config()
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        return model_config
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        raise AssertionError("Llama recipes must not call the legacy provider API")
+
+
 @pytest.fixture(autouse=True)
 def _patch_llama_autobridge(monkeypatch: pytest.MonkeyPatch):
     for module_name in [
-        "megatron.bridge.recipes.llama.llama2",
         "megatron.bridge.recipes.llama.llama3",
-        "megatron.bridge.recipes.llama.h100.llama2",
         "megatron.bridge.recipes.llama.h100.llama3",
     ]:
         mod = importlib.import_module(module_name)
@@ -152,6 +187,19 @@ def _assert_basic_config(cfg):
     else:
         # Some other dataset type
         assert cfg.dataset is not None
+
+
+@pytest.mark.parametrize("recipe_func", _ALL_LLAMA_RECIPE_FUNCS)
+def test_each_llama_recipe_uses_strict_builder_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every Llama recipe should configure a ModelConfig without provider fallback."""
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _BuilderOnlyBridge)
+
+    if "peft" in recipe_func.__name__.lower():
+        cfg = recipe_func(peft_scheme="lora")
+    else:
+        cfg = recipe_func()
+
+    assert isinstance(cfg.model, BridgeGPTModelConfig)
 
 
 @pytest.mark.parametrize("recipe_func", _LLAMA_RECIPE_FUNCS)
@@ -271,9 +319,8 @@ def test_llama3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatc
     assert cfg.peft is not None
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_llama3_8b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_llama3_8b_sft_offline_packing_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that offline packing is configured through real dataset fields."""
     from megatron.bridge.recipes.llama import llama3_8b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
@@ -282,10 +329,9 @@ def test_llama3_8b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyP
     cfg = llama3_8b_sft_config()
     _apply_test_overrides(cfg, "llama3_8b_sft_config")
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None
 
 
 def test_llama31_405b_has_account_for_settings(monkeypatch: pytest.MonkeyPatch):
@@ -552,3 +598,6 @@ def test_llama_deterministic_wrapper_applies_overrides(recipe_name: str, monkeyp
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert cfg.env_vars["NCCL_ALGO"] == "Ring"
+    assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0

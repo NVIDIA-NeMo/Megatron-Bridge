@@ -16,6 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -29,7 +30,7 @@ def llama2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b-hf").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b-hf").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -117,6 +118,10 @@ def llama2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

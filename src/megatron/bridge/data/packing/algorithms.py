@@ -16,7 +16,7 @@
 
 import collections
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple, TypeVar
 
 import numpy as np
 from tqdm import tqdm
@@ -27,6 +27,8 @@ from megatron.bridge.utils.safe_pickle import safe_load_npy
 PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 
 logger = logging.getLogger(__name__)
+
+_ItemT = TypeVar("_ItemT")
 
 
 class _SegmentTree:
@@ -66,56 +68,114 @@ class _SegmentTree:
         return self._query(1, 0, self._n - 1, need)
 
 
-def first_fit(seqlens: List[int], pack_size: int) -> List[List[int]]:
+def first_fit(
+    seqlens: Sequence[_ItemT],
+    pack_size: int,
+    *,
+    item_lengths: Sequence[int] | None = None,
+) -> list[list[_ItemT]]:
     """
     Packs sequences of varying lengths into bins using the First-Fit algorithm
     with a segment-tree index for O(N log N) performance.
 
+    A segment-tree index over per-bin remaining capacity makes each placement O(log N)
+    instead of a scan over every open bin.
+
+    By default the entries of `seqlens` are themselves the lengths. Callers that pack
+    objects rather than raw integers (for example diffusion samples keyed on padded
+    query sequence length) pass `item_lengths` separately and get their original
+    objects back in the bins.
+
     Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
+      seqlens: The entries to pack, in the order they should be considered. Integer
+        lengths unless `item_lengths` is given, in which case these may be any objects.
       pack_size: The maximum capacity of each bin.
+      item_lengths: Optional length of each entry in `seqlens`, in the same order. When
+        omitted, each entry is used as its own length.
 
     Returns:
       A list of lists, where each inner list represents a bin and contains the
-        lengths of the sequences assigned to that bin.
+        entries assigned to that bin.
+
+    Raises:
+      ValueError: If `item_lengths` is given and does not have the same number of
+        entries as `seqlens`.
     """
+    lengths: Sequence[int] = seqlens if item_lengths is None else item_lengths  # type: ignore[assignment]
+    if item_lengths is not None and len(seqlens) != len(item_lengths):
+        raise ValueError(
+            f"seqlens and item_lengths must have the same number of entries, "
+            f"got {len(seqlens)} and {len(item_lengths)}"
+        )
     if not seqlens:
         return []
 
     n = len(seqlens)
     tree = _SegmentTree(n)
-    res = []
-    remaining = []
+    res: list[list[_ItemT]] = []
+    remaining: list[int] = []
 
-    for s in seqlens:
-        first_bin = tree.query_first_fit(s)
+    for item, length in zip(seqlens, lengths):
+        first_bin = tree.query_first_fit(length)
+        # An unopened bin still reads as 0 remaining capacity, so a zero-length item can
+        # match an index past the end of `res`; that case must open a bin, not index it.
         if first_bin == -1 or first_bin >= len(res):
             new_idx = len(res)
-            res.append([s])
-            remaining.append(pack_size - s)
+            res.append([item])
+            remaining.append(pack_size - length)
             tree.update(new_idx, remaining[new_idx])
         else:
-            res[first_bin].append(s)
-            remaining[first_bin] -= s
+            res[first_bin].append(item)
+            remaining[first_bin] -= length
             tree.update(first_bin, remaining[first_bin])
     return res
 
 
-def first_fit_decreasing(seqlens: List[int], pack_size: int) -> List[List[int]]:
+def first_fit_decreasing(
+    seqlens: Sequence[_ItemT],
+    pack_size: int,
+    *,
+    item_lengths: Sequence[int] | None = None,
+) -> list[list[_ItemT]]:
     """
     Packs sequences of varying lengths into bins using the First-Fit Decreasing algorithm.
 
     This is a variation of the First-Fit algorithm where the sequences are sorted by decreasing length before packing.
 
+    Like `first_fit`, callers that pack objects rather than raw integers (for example
+    diffusion samples keyed on padded query sequence length) pass `item_lengths`
+    separately: the entries are then ordered by those lengths, longest first, and the
+    original objects are what end up in the bins.
+
     Args:
-      seqlens: A list of integers, representing the lengths of the sequences to be packed.
+      seqlens: The entries to pack. Integer lengths unless `item_lengths` is given, in
+        which case these may be any objects.
       pack_size: The maximum capacity of each bin.
+      item_lengths: Optional length of each entry in `seqlens`, in the same order. When
+        omitted, each entry is used as its own length.
 
     Returns:
       A list of lists, similar to the output of the 'first_fit' function.
+
+    Raises:
+      ValueError: If `item_lengths` is given and does not have the same number of
+        entries as `seqlens`.
     """
-    sorted_seqlens = sorted(seqlens, reverse=True)
-    return first_fit(sorted_seqlens, pack_size)
+    if item_lengths is None:
+        return first_fit(sorted(seqlens, reverse=True), pack_size)
+    if len(seqlens) != len(item_lengths):
+        raise ValueError(
+            f"seqlens and item_lengths must have the same number of entries, "
+            f"got {len(seqlens)} and {len(item_lengths)}"
+        )
+    # Order entries by their supplied length, longest first, keeping each entry paired
+    # with its length. `sorted(..., reverse=True)` is stable, so entries of equal length
+    # keep their original relative order -- matching `sorted(items, reverse=True)` when
+    # the items compare by that same length.
+    order = sorted(range(len(seqlens)), key=lambda i: item_lengths[i], reverse=True)
+    sorted_items = [seqlens[i] for i in order]
+    sorted_lengths = [item_lengths[i] for i in order]
+    return first_fit(sorted_items, pack_size, item_lengths=sorted_lengths)
 
 
 def first_fit_shuffle(seqlens: List[int], pack_size: int) -> List[List[int]]:
@@ -349,7 +409,10 @@ def calculate_avg_seqlen(
     """Calculate average sequence length statistics from a packed dataset.
 
     Args:
-        dataset_file: Path to the .npy packed dataset file.
+        dataset_file: Path to the packed dataset. Either a legacy ``.npy`` file, or a
+            parquet spec (``.parquet`` / ``.pq``) which may be a single file, a glob
+            pattern, or a directory -- resolved via ``resolve_packed_parquet_paths``
+            so this matches the specs accepted by the FLOP-accounting existence gate.
         gbs: Global batch size used to determine how many rows to process.
         max_seq_len: Maximum sequence length (reserved for future use).
         drop_remainder: If True, drop rows that don't fill a complete batch.
@@ -364,8 +427,24 @@ def calculate_avg_seqlen(
     Raises:
         ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
     """
-    with open(dataset_file, "rb") as f:
-        data = safe_load_npy(f.read())
+    # Same predicate the packed-parquet loader (and flop_utils._packed_data_exists)
+    # uses, so the format detected here matches the spec accepted by the existence
+    # gate -- covers single file, glob pattern, and directory specs.
+    from megatron.bridge.data.packing.paths import is_packed_parquet_spec, resolve_packed_parquet_paths
+
+    if is_packed_parquet_spec(dataset_file):
+        import pyarrow.parquet as pq
+
+        # Resolve the spec (single file / glob / directory) to concrete shard paths
+        # before reading, so a glob/dir spec that passes the existence gate does not
+        # then crash pq.read_table (which cannot take a raw glob string).
+        shards = resolve_packed_parquet_paths(dataset_file)
+        table = pq.read_table(shards, columns=["input_ids", "seq_start_id"])
+        ids, starts = table.column("input_ids"), table.column("seq_start_id")
+        data = [{"input_ids": ids[i].as_py(), "seq_start_id": starts[i].as_py()} for i in range(table.num_rows)]
+    else:
+        with open(dataset_file, "rb") as f:
+            data = safe_load_npy(f.read())
 
     total_len_accum = 0
     seqlen_sq_accum = 0

@@ -106,6 +106,38 @@ The provider pattern is especially useful when you need to:
 - Configure advanced features like MoE, activation recomputation, or mixed precision
 - Set up distributed training parameters
 
+### Using Builder-backed Llama Configs
+
+Llama also supports the builder-backed configuration path. This keeps model
+configuration as serializable data and leaves construction to Megatron Core's
+`GPTModelBuilder`. The provider API remains available for compatibility while
+other model families migrate. Calling the legacy provider API for a
+builder-backed family emits a deprecation warning.
+
+```python
+from megatron.bridge import AutoBridge
+
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+model_config = bridge.get_model_config()
+
+# Flat assignment routes declared transformer fields to the nested config.
+model_config.tensor_model_parallel_size = 1
+model_config.pipeline_model_parallel_size = 1
+
+model = bridge.get_model(
+    model_config,
+    wrap_with_ddp=False,
+)
+```
+
+Use `load_weights=False` for random initialization. A bridge created with
+`from_hf_config()` has no weights, so it requires `load_weights=False` or an
+explicit `hf_path`.
+
+Llama training recipes store the result of `get_model_config()` in
+`ConfigContainer.model`. The training setup recognizes `ModelConfig` and calls
+its `ModelBuilder` directly; it does not create a legacy model provider.
+
 ## Check Supported Models
 
 Before loading a model, you can check if it's supported by Megatron Bridge.
@@ -243,7 +275,7 @@ Or with a helper script:
 
 ```bash
 huggingface-cli login --token <your token>
-uv run python examples/conversion/convert_checkpoints.py import --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b
+./scripts/conversion/convert.sh import --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b
 ```
 
 ### Megatron → HF export (one call)
@@ -255,7 +287,7 @@ uv run python -c "from megatron.bridge import AutoBridge; b=AutoBridge.from_hf_p
 Or with a helper script:
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b --hf-path ./hf_exports/llama32_1b
+./scripts/conversion/convert.sh export --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b --hf-path ./hf_exports/llama32_1b
 ```
 
 ### Create Megatron models and run locally
@@ -297,6 +329,9 @@ AutoBridge.list_supported_models() -> list[str]
 AutoBridge.supports(config: Any) -> bool
 
 # Provider/model construction
+# Builder-backed APIs are available only for model families migrated during the incremental rollout.
+AutoBridge.get_model_config() -> ModelConfig
+AutoBridge.get_model(model_config: ModelConfig | None = None, *, load_weights: bool = True, hf_path: str | Path | None = None, pg_collection: ProcessGroupCollection | None = None, **kwargs) -> list[MegatronModule]
 AutoBridge.to_megatron_provider(load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider
 AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]
 

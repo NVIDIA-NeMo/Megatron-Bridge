@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.minimax_m3.minimax_m3_bridge import MiniMaxM3Bridge  # noqa: F401
+from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (  # noqa: F401
+    MiniMaxM3Bridge,
+    MiniMaxM3VLModelProvider,
+)
+from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3VLModel  # noqa: F401
 
 
 __all__ = [
     "MiniMaxM3Bridge",
+    "MiniMaxM3VLModel",
+    "MiniMaxM3VLModelProvider",
 ]

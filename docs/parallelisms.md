@@ -225,6 +225,22 @@ model_config = GPTModelProvider(
 apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="hybridep")
 ```
 
+Megatron Bridge automatically enables `moe_hybridep_pad_uneven_dispatch_inputs`
+when an eager model config uses the HybridEP flex backend. HybridEP requires
+equal per-rank dispatch shapes, but dynamically packed THD batches can produce
+different local token counts. The safety path takes the group-wide maximum token
+count, aligns it for the kernel, pads each rank before dispatch, and removes the
+padding after combine.
+
+This adds a MAX all-reduce and temporary padding overhead, including when every
+rank already supplies the same number of tokens. The safety path does not enable
+HybridEP or sequence packing; configure those separately.
+
+CUDA-graph configs preserve their explicit padding setting because the uneven-input
+path performs a host scalar synchronization that is not capture-safe. They must
+provide equal per-rank dispatch shapes. Disable CUDA graphs when runtime token
+counts can differ so Bridge can enable safe padding.
+
 **GPU Architecture Requirements:**
 
 - **DeepEP**: Ampere (SM 8.x), Hopper (SM 9.x), B200, B300
@@ -378,8 +394,8 @@ Megatron Bridge leverages functionalities from both Megatron Core and Transforme
 
 For more detailed technical information and implementation details, visit:
 - [Megatron Core Context Parallelism Documentation](https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/features/context_parallel.html)
-- [Megatron Core wrappers for Transformer Engine](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/custom_layers/transformer_engine.py)
-- [Transformer Engine attention modules](https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/attention.py)
+- [Megatron Core wrappers for Transformer Engine](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/extensions/transformer_engine.py)
+- [Transformer Engine attention modules](https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/attention/__init__.py)
 
 ## Combined Parallelism Example
 

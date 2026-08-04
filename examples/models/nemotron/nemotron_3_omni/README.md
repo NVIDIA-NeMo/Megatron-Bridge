@@ -2,9 +2,8 @@
 
 This directory contains example scripts for **Nemotron-3 Nano Omni**, a 30B-A3B
 MoE multimodal model that jointly processes image, video, audio, and text
-inputs. It pairs a MoE Mamba/attention hybrid language backbone with a RADIO
-vision tower (static-resolution image path or dynamic-resolution temporal video
-embedder) and a Parakeet sound encoder.
+inputs. It pairs a MoE Mamba/attention hybrid language backbone with a
+dynamic-resolution RADIO vision tower and a Parakeet sound encoder.
 
 | Model | HF ID | Architecture |
 |---|---|---|
@@ -193,6 +192,11 @@ All training scripts use the Nemotron-3-Nano-Omni-30B-A3B-Reasoning
 pretrained checkpoint and enable in-batch sequence packing via
 `dataset.enable_in_batch_packing=True`. Default GPU layout per script:
 
+For the canonical expanded-sequence image path, the collator owns THD packing.
+The model receives the final packed tensors and global boundaries, inserts
+image embeddings without changing sequence length, and then selects its
+rank-local context-parallel shard.
+
 - **Full SFT** — 2 nodes / 16 GPUs (full optimizer state for ~33 B params)
 - **LoRA PEFT** — 1 node / 8 GPUs
 
@@ -214,13 +218,39 @@ The two task flavors below are orthogonal — pick whichever dataset/modality
 combo matches your target task and either full-parameter (SFT) or LoRA
 (PEFT).
 
+### Vision Input Processing Modes
+
+Nemotron-3 Nano Omni pairs each vision modality with exactly one input processing
+mode:
+
+- Image inputs → dynamic resolution: The vision encoder keeps each
+  image's native H×W and produces a variable per-image token count
+  (`temporal_patch_dim=1`, no temporal fusion). Images are supported on **both** the
+  HF (`DirectHFSFTDatasetConfig`) path and the Energon path.
+- Video inputs → temporal video embedder (non-dynamic resolution): Frames are resized onto a fixed 512×512 canvas and fused in consecutive
+  pairs (`temporal_patch_dim=2`, `separate_video_embedder=True`), so every
+  video contributes a constant number of tokens per frame-pair. Videos are supported
+  on the **Energon path only**.
+
+Set the four flags below as a matched column — a mismatched set produces incorrect model's expected input.
+
+| Field                                              | Dynamic resolution (images, variable H×W) | Temporal video (videos, fused pairs, 512²) |
+|----------------------------------------------------|-------------------------------------------|--------------------------------------------|
+| `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                                     |
+| `model.temporal_patchrecipe_dim`                         | `1`                                       | `2`                                        |
+| `model.separate_video_embedder`                    | `False`                                   | `True`                                     |
+| `model.temporal_ckpt_compat`                       | `False`                                   | `True`                                     |
+
+Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.
+
+
 ### Image-Text — CORD-V2
 
 [CORD-V2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) is a
 document-image parsing dataset (restaurant receipts → structured JSON). The
 vision path uses one embedding per frame (`temporal_patch_dim=1`, no
-temporal video embedder); `dynamic_resolution=True` is inherited from the
-base config. Recipe base: `nemotron_omni_cord_v2_*_config` in
+temporal video embedder). Nemotron Omni always uses its dynamic-resolution
+RADIO input contract. Recipe base: `nemotron_omni_cord_v2_*_config` in
 `src/megatron/bridge/recipes/nemotron_omni/nemotron_omni.py`.
 
 | Mode | Script | Recipe |
@@ -245,6 +275,14 @@ multiple-choice QA dataset. This path exercises the temporal video
 embedder: frames are fused in pairs (`temporal_patch_dim=2`,
 `separate_video_embedder=True`) and audio is fed through the Parakeet
 encoder. Recipe base: `nemotron_omni_valor32k_*_config`.
+
+The public processor uses aspect-preserving dynamic sizes for video inference.
+Pinned MCore does not yet support ragged non-square temporal tubelets, so the
+Bridge training path uses an antialiased bicubic 512×512 compatibility canvas.
+Temporal mode uses that canvas for every visual item in the batch, including
+standalone images. Non-temporal image recipes use the public dynamic-resolution
+sizes. Supporting the public non-square video layout requires MCore to
+pixel-shuffle each temporal chunk with its own spatial grid.
 
 Prepare the Energon shards once. For the full walkthrough, see
 [`tutorials/data/valor32k-avqa/data-preparation.md`](../../../../tutorials/data/valor32k-avqa/data-preparation.md).

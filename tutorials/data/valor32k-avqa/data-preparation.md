@@ -170,7 +170,7 @@ EOF
 Import the pretrained checkpoint (if not already done):
 
 ```shell
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model <HF_MODEL_PATH> \
   --megatron-path /checkpoints/nemotron_omni \
   --trust-remote-code

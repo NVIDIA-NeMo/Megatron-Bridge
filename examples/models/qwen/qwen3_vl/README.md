@@ -21,14 +21,14 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
   --megatron-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
   --megatron-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct-hf-export
@@ -114,6 +114,8 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 For hosted or local Hugging Face data and a complete one-GPU Qwen3-VL run, start with the
 [Hugging Face multimodal tutorial](../../../../tutorials/data/hf-multimodal/README.md). For sharded WebDataset data,
 use the [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md).
+For a worked image-caption training example, see the
+[DataComp Energon tutorial](../../../../tutorials/data/datacomp/README.md).
 
 ## Controlling Energon visual-token computation budget
 

@@ -17,7 +17,6 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -28,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     GatedMLPMapping,
     GDNConv1dMapping,
     GDNLinearMappingSeparate,
+    MegatronParamMapping,
     QKVMapping,
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
@@ -135,7 +135,7 @@ def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, tran
     ]
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3_5MoeForCausalLM, target=GPTModel, model_type="qwen3_5_moe_text")
+@MegatronModelBridge.register_bridge(source="Qwen3_5MoeForCausalLM", target=GPTModel, model_type="qwen3_5_moe_text")
 class Qwen35MoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Language Model (MoE variant).
@@ -450,7 +450,7 @@ class Qwen35MoEBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3_5ForCausalLM, target=GPTModel, model_type="qwen3_5_text")
+@MegatronModelBridge.register_bridge(source="Qwen3_5ForCausalLM", target=GPTModel, model_type="qwen3_5_text")
 class Qwen35Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Dense Language Model.
@@ -482,7 +482,12 @@ class Qwen35Bridge(MegatronModelBridge):
     """
 
     @staticmethod
-    def _get_dense_lm_mappings(hf_prefix="model.", megatron_prefix=""):
+    def _get_dense_lm_mappings(
+        *,
+        hf_prefix: str = "model.",
+        megatron_prefix: str = "",
+        output_layer_hf_param: str | None = "lm_head.weight",
+    ) -> list[MegatronParamMapping]:
         """Get language model parameter mappings for dense (non-MoE) Qwen3.5.
 
         Args:
@@ -490,6 +495,8 @@ class Qwen35Bridge(MegatronModelBridge):
                 for LM and "model.language_model.layers.*" for VL models.
             megatron_prefix: Prefix for Megatron param names. Use "" for LM
                 (default) and "language_model." for VL models.
+            output_layer_hf_param: HF output-head parameter name. If ``None``,
+                omit the output-head mapping.
 
         Returns:
             List of mapping objects for the dense LM portion.
@@ -499,7 +506,6 @@ class Qwen35Bridge(MegatronModelBridge):
             # Language Model: Embeddings and output
             # =================================================================
             f"{megatron_prefix}embedding.word_embeddings.weight": f"{hf_prefix}embed_tokens.weight",
-            f"{megatron_prefix}output_layer.weight": "lm_head.weight",
             f"{megatron_prefix}decoder.final_layernorm.weight": f"{hf_prefix}norm.weight",
             # =================================================================
             # Language Model: Dense MLP (pre-MLP layernorm fused into linear_fc1)
@@ -521,6 +527,8 @@ class Qwen35Bridge(MegatronModelBridge):
             f"{megatron_prefix}decoder.layers.*.self_attention.A_log": f"{hf_prefix}layers.*.linear_attn.A_log",
             f"{megatron_prefix}decoder.layers.*.self_attention.dt_bias": f"{hf_prefix}layers.*.linear_attn.dt_bias",
         }
+        if output_layer_hf_param is not None:
+            param_mappings[f"{megatron_prefix}output_layer.weight"] = output_layer_hf_param
 
         mapping_list = []
         for megatron_param, hf_param in param_mappings.items():

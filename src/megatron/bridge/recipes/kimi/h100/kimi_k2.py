@@ -16,6 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
@@ -25,7 +26,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-def _get_kimi_k2_pipeline_layout(pp_size: int, vp_size: int):
+def _get_kimi_k2_pipeline_layout(pp_size: int, vp_size: int | None) -> list[list[str]] | None:
     """Get pipeline layout for Kimi-K2 based on PP and VP size."""
     map_pp_vp_to_layout = {
         (1, 1): None,
@@ -120,6 +121,7 @@ def kimi_k2_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.num_layers_in_last_pipeline_stage = None
 
     # Set pipeline layout
+    cfg.model._pipeline_model_parallel_layout_builder = _get_kimi_k2_pipeline_layout
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(16, 1)
 
     # Tokenizer - uses NullTokenizer with model vocab_size
@@ -129,7 +131,7 @@ def kimi_k2_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 
     # MoE Token Dispatcher settings
@@ -209,6 +211,10 @@ def kimi_k2_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

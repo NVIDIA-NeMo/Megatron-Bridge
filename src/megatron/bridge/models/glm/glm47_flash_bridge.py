@@ -25,13 +25,14 @@ by the runtime model, so the DeepSeek common mapping list works directly.
 """
 
 from functools import partial
+from typing import Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -111,3 +112,38 @@ class GLM47FlashBridge(MegatronModelBridge):
         hf_config = getattr(self, "hf_config", None)
         mapping_list = get_common_mapping_list(hf_config=hf_config)
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        """Restore GLM MTP embedding and output aliases on HF export."""
+        converted_weights_dict = super().maybe_modify_converted_hf_weight(
+            task,
+            converted_weights_dict,
+            hf_state_dict,
+        )
+
+        hf_config = getattr(self, "hf_config", None)
+        if hf_config is None:
+            return converted_weights_dict
+
+        num_hidden_layers = hf_config.num_hidden_layers
+        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
+        alias_specs = (
+            ("model.embed_tokens.weight", "model.layers.{}.embed_tokens.weight"),
+            ("lm_head.weight", "model.layers.{}.shared_head.head.weight"),
+        )
+        for source_name, alias_template in alias_specs:
+            if source_name not in converted_weights_dict:
+                continue
+
+            source_weight = converted_weights_dict[source_name]
+            for mtp_layer in range(num_mtp_layers):
+                alias_name = alias_template.format(num_hidden_layers + mtp_layer)
+                if alias_name not in converted_weights_dict:
+                    converted_weights_dict[alias_name] = source_weight.clone()
+
+        return converted_weights_dict

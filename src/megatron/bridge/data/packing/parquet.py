@@ -81,7 +81,10 @@ def write_packed_parquet(
     table = pa.table(
         {
             "input_ids": [row["input_ids"] for row in rows],
-            "loss_mask": [row["loss_mask"] for row in rows],
+            "loss_mask": pa.array(
+                [[int(value) for value in row["loss_mask"]] for row in rows],
+                type=pa.list_(pa.int8()),
+            ),
             "seq_start_id": [row["seq_start_id"] for row in rows],
         }
     )

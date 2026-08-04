@@ -14,14 +14,18 @@
 
 import inspect
 import logging
+import random
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
+import numpy as np
 import torch
+from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -40,12 +44,18 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.checkpointing import (
     CheckpointLoadContext,
     CheckpointManager,
+    _has_global_non_persistent_checkpoint,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
+    maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.optim import setup_optimizer, sync_hybrid_device_optimizer_fp32_master_copies
+from megatron.bridge.training.optim import (
+    memory_efficient_fp32_optimizer_state_loading,
+    setup_optimizer,
+    sync_hybrid_device_optimizer_fp32_master_copies,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -56,6 +66,12 @@ from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, i
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
+
+
+try:
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1 as megatron_FSDP
+except ImportError:
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 
 
 class SetupOutput(NamedTuple):
@@ -107,11 +123,15 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
+        cfg.checkpoint.load, cfg.checkpoint
+    )
 
     if cfg.peft is not None:
-        return cfg.checkpoint.load is not None and (
+        load_checkpoint_exists = cfg.checkpoint.load is not None and (
             checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
         )
+        return load_checkpoint_exists or has_global_non_persistent_checkpoint
 
     load_checkpoint_exists = cfg.checkpoint.load is not None and (
         checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
@@ -120,7 +140,12 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
         or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
     )
-    should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
+    should_load_checkpoint = (
+        load_checkpoint_exists
+        or has_pretrained_checkpoint
+        or has_local_checkpoint
+        or has_global_non_persistent_checkpoint
+    )
 
     if cfg._checkpoint_load_required and not should_load_checkpoint:
         raise FileNotFoundError(
@@ -128,6 +153,33 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         )
 
     return should_load_checkpoint
+
+
+@contextmanager
+def _preserve_rng_state() -> Iterator[None]:
+    """Restore every training RNG stream after a disposable warmup."""
+    python_rng_state = random.getstate()
+    numpy_rng_state = np.random.get_state()
+    cuda_rng_tracker = tensor_parallel.get_cuda_rng_tracker()
+    graph_safe_rng = tensor_parallel.is_graph_safe_cuda_rng_tracker(cuda_rng_tracker)
+    rng_tracker_states = {
+        name: tensor_parallel.convert_cuda_rng_state(state).clone()
+        for name, state in cuda_rng_tracker.get_states().items()
+    }
+    cuda_devices = [torch.cuda.current_device()] if torch.cuda.is_available() else []
+
+    with torch.random.fork_rng(devices=cuda_devices):
+        try:
+            yield
+        finally:
+            random.setstate(python_rng_state)
+            np.random.set_state(numpy_rng_state)
+            cuda_rng_tracker.set_states(
+                {
+                    name: tensor_parallel.convert_cuda_rng_state(state, to_graphable=graph_safe_rng)
+                    for name, state in rng_tracker_states.items()
+                }
+            )
 
 
 def setup(
@@ -233,6 +285,7 @@ def setup(
     cfg.model.vocab_size, cfg.model.should_pad_vocab = _validate_and_set_vocab_size(
         model_vocab_size=cfg.model.vocab_size,
         tokenizer_vocab_size=tokenizer.vocab_size,
+        use_tokenizer_vocab_size=getattr(cfg.tokenizer, "use_tokenizer_vocab_size", False),
     )
 
     if hasattr(cfg.dataset, "tokenizer"):
@@ -276,7 +329,7 @@ def setup(
     # Register PEFT pre-wrap hook if PEFT is configured
     if cfg.peft is not None:
         peft_hook = _create_peft_pre_wrap_hook(cfg, state)
-        _register_pre_wrap_hook(cfg.model, peft_hook)
+        _register_setup_pre_wrap_hook(cfg.model, peft_hook, setup_hook_name="peft")
         print_rank_0("Registered PEFT pre-wrap hook")
 
     if getattr(cfg.model, "restore_modelopt_state", False):
@@ -285,25 +338,29 @@ def setup(
         def modelopt_pre_wrap_hook(model):
             from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
-            # Check which checkpoint path has modelopt state
-            if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
-                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
-                ckpt_step = None
-            elif cfg.checkpoint.load and has_modelopt_state(
-                cfg.checkpoint.load, ckpt_step=cfg.checkpoint.ckpt_step
-            ):
+            has_resume_checkpoint = cfg.checkpoint.load is not None and (
+                checkpoint_exists(cfg.checkpoint.load)
+                or is_hf_checkpoint_dir(cfg.checkpoint.load)
+                or _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
+            )
+            if has_resume_checkpoint:
                 checkpoint_path = cfg.checkpoint.load
                 ckpt_step = cfg.checkpoint.ckpt_step
+            elif cfg.checkpoint.pretrained_checkpoint:
+                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
+                ckpt_step = None
             else:
                 raise RuntimeError(
-                    f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
-                    f"or load={cfg.checkpoint.load}"
+                    "No checkpoint source is available for ModelOpt state restoration"
                 )
+
+            if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
+                raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
 
             load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
 
-        _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
+        _register_setup_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook, setup_hook_name="modelopt")
 
     # Enable CUDA allocator history tracing before any model tensors are allocated,
     # so snapshots dumped later in training contain a full timeline + stack context.
@@ -336,15 +393,17 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_manager.load(
-            CheckpointLoadContext(
-                state=state,
-                model=model,
-                optimizer=optimizer,
-                opt_param_scheduler=scheduler,
-                skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim and not cfg.checkpoint.finetune else None
+        with memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
+            checkpoint_manager.load(
+                CheckpointLoadContext(
+                    state=state,
+                    model=model,
+                    optimizer=optimizer,
+                    opt_param_scheduler=scheduler,
+                    skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+                )
             )
-        )
         # Workaround for upstream mcore: reload_model_params() only refreshes the
         # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
         # clones and level-3 FP32 working copies retain their random init.  Without
@@ -385,7 +444,11 @@ def setup(
             scheduler=scheduler,
             user_state=callback_manager.user_state,
         )
-        callback_manager.fire("on_data_init_start", context)
+        if should_load_checkpoint and cfg.checkpoint.load_rng and not cfg.checkpoint.finetune:
+            with _preserve_rng_state():
+                callback_manager.fire("on_data_init_start", context)
+        else:
+            callback_manager.fire("on_data_init_start", context)
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
@@ -404,6 +467,24 @@ def setup(
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
+
+    # Resume the dataloader stream position so a resumed run continues over the same data (currently
+    # only Megatron Energon). Runs after the iterator is built and the model checkpoint load restored
+    # state.train_state.step. The default source is resolved by load_checkpoint from the checkpoint
+    # actually selected (recorded as "dataloader_state_dir"); an explicit dataset.dataloader_load
+    # overrides. Gated on step > 0 so only a real resume restores -- fresh, finetune, and
+    # pretrained-init runs (step reset to 0) start the data stream from the beginning.
+    if state.train_state.step > 0:
+        dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
+        if dataloader_load_path is None:
+            ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
+            dataloader_load_path = ckpt_ctx.get("dataloader_state_dir")
+        maybe_load_dataloader_state(
+            train_data_iterator,
+            state.train_state.step,
+            dataloader_load_path,
+            pg_collection=pg_collection,
+        )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
     #     ft_integration.get_rank_monitor_client().init_workload_monitoring()
@@ -427,12 +508,39 @@ def setup(
     )
 
 
-def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
+def _register_pre_wrap_hook(
+    model_cfg: ModelConfig | ModelProviderMixin,
+    hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+) -> None:
     """Register a pre-wrap hook on either ModelConfig or ModelProviderMixin."""
     if isinstance(model_cfg, ModelConfig):
         model_cfg.pre_wrap_hooks.append(hook)
     else:
         model_cfg.register_pre_wrap_hook(hook)
+
+
+def _register_setup_pre_wrap_hook(
+    model_cfg: ModelConfig | ModelProviderMixin,
+    hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+    *,
+    setup_hook_name: str,
+) -> None:
+    """Replace one setup-owned hook while preserving user registrations."""
+    setup_hooks = getattr(model_cfg, "_megatron_bridge_setup_pre_wrap_hooks", {})
+    previous_hook = setup_hooks.get(setup_hook_name)
+    if previous_hook is not None:
+        if isinstance(model_cfg, ModelConfig):
+            model_cfg.pre_wrap_hooks[:] = [
+                registered_hook for registered_hook in model_cfg.pre_wrap_hooks if registered_hook is not previous_hook
+            ]
+        else:
+            model_cfg._pre_wrap_hooks[:] = [
+                registered_hook for registered_hook in model_cfg._pre_wrap_hooks if registered_hook is not previous_hook
+            ]
+
+    setup_hooks[setup_hook_name] = hook
+    model_cfg._megatron_bridge_setup_pre_wrap_hooks = setup_hooks
+    _register_pre_wrap_hook(model_cfg, hook)
 
 
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
@@ -591,12 +699,18 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     return transformed_model
 
 
-def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
+def _validate_and_set_vocab_size(
+    model_vocab_size: Optional[int],
+    tokenizer_vocab_size: int,
+    use_tokenizer_vocab_size: bool = False,
+) -> tuple[int, bool]:
     """Validate and determine the correct vocab size for the model.
 
     Args:
         model_vocab_size: Vocab size set in model config (can be None)
         tokenizer_vocab_size: Unpadded tokenizer vocab size
+        use_tokenizer_vocab_size: Ignore a preset model vocabulary and derive it
+            from the tokenizer. Intended for from-scratch pretraining recipes.
 
     Returns:
         tuple[int, bool]: The validated unpadded vocab size and padding flag
@@ -606,8 +720,9 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
     Raises:
         ValueError: If model vocab size is invalid
     """
-    if model_vocab_size is None:
-        # If model vocab size is not set, use the tokenizer's vocab size
+    if use_tokenizer_vocab_size or model_vocab_size is None:
+        # Use the tokenizer's vocab size when the model vocab is unset, or when
+        # use_tokenizer_vocab_size forces it for from-scratch pretraining.
         # Enable padding since this came from tokenizer
         return tokenizer_vocab_size, True
     elif model_vocab_size < tokenizer_vocab_size:

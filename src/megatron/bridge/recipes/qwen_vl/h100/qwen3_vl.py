@@ -29,9 +29,9 @@ from megatron.bridge.data.builders import (
 )
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
@@ -76,13 +76,16 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -122,13 +125,16 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -169,14 +175,17 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.average_in_collective = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -325,6 +334,10 @@ def qwen3_vl_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -462,6 +475,10 @@ def qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -599,6 +616,10 @@ def qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -744,6 +765,10 @@ def qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -890,6 +915,10 @@ def qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1036,6 +1065,10 @@ def qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lo
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1051,6 +1084,10 @@ def qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config(peft_scheme: str | PEFT = "lo
     cfg = qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
     cfg.dataset = _make_energon_dataset(hf_path, cfg.model.seq_length, cfg.train.micro_batch_size)
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

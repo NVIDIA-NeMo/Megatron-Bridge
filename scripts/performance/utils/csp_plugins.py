@@ -34,6 +34,14 @@ from nemo_run import Plugin
 from nemo_run.core.execution.kubeflow import KubeflowExecutor
 
 
+# Absolute path to the aws-ofi-nccl EFA net plugin in the FW image (installed by
+# docker/common/install_aws_ofi_nccl.sh). NVIDIA PyTorch >= 26.06 base images drop
+# aws-ofi-nccl and default NCCL_NET_PLUGIN=spcx (HPCX Spectrum-X), which cannot
+# drive EFA. Pinning the absolute path forces NCCL back onto aws-ofi and is
+# unambiguous (the image also ships HPCX libnccl-net.so on the ldconfig path).
+AWS_OFI_NCCL_NET_PLUGIN = "/opt/amazon/ofi-nccl/lib/libnccl-net.so"
+
+
 @dataclass(kw_only=True)
 class EKSEnvPlugin(Plugin):
     """AWS EKS (EFA) fabric.
@@ -41,9 +49,9 @@ class EKSEnvPlugin(Plugin):
     Selecting this plugin means the job runs on an EFA-equipped EKS cluster, so
     EFA is enabled unconditionally: the pod requests EFA devices, runs
     privileged with the host RDMA device nodes mounted, and NCCL uses the
-    aws-ofi / libfabric EFA provider. NCCL discovers the aws-ofi plugin and
-    libfabric via the image's ldconfig (``/etc/ld.so.conf.d``), so no
-    ``LD_LIBRARY_PATH`` override is needed.
+    aws-ofi / libfabric EFA provider. The plugin pins ``NCCL_NET_PLUGIN`` to the
+    aws-ofi net plugin because newer base images default it to ``spcx`` (HPCX
+    Spectrum-X), which cannot drive EFA and silently degrades NCCL to TCP.
 
     Attributes:
         efa_device_count: ``vpc.amazonaws.com/efa`` devices requested per node.
@@ -58,9 +66,11 @@ class EKSEnvPlugin(Plugin):
         efa = {"vpc.amazonaws.com/efa": str(self.efa_device_count)}
         executor.extra_resource_requests = {**executor.extra_resource_requests, **efa}
         executor.extra_resource_limits = {**executor.extra_resource_limits, **efa}
-        # libfabric EFA provider; NCCL loads the aws-ofi net plugin from ldconfig.
+        # libfabric EFA provider + the aws-ofi net plugin (overriding the base
+        # image's spcx default, which does not speak EFA).
         executor.env_vars.setdefault("FI_PROVIDER", "efa")
         executor.env_vars.setdefault("FI_EFA_USE_HUGE_PAGE", "0")
+        executor.env_vars.setdefault("NCCL_NET_PLUGIN", AWS_OFI_NCCL_NET_PLUGIN)
         # EFA requires a privileged container and the host /dev/infiniband nodes.
         security_context = {**executor.container_kwargs.get("securityContext", {}), "privileged": True}
         executor.container_kwargs = {**executor.container_kwargs, "securityContext": security_context}

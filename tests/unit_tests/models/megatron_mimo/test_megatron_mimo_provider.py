@@ -13,6 +13,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import _get_gtp_remat_process_group_kwargs
 
 
 class FakeStandardProvider:
@@ -559,19 +560,20 @@ class TestMegatronMIMOInfra:
 class TestEmbeddingGroupHelpers:
     """Test cases for embedding group helper functions."""
 
+    @patch("torch.distributed.get_rank")
     @patch("torch.distributed.new_group")
-    @patch("torch.distributed.get_process_group_ranks")
-    def test_populate_embedding_groups_single_pp_rank(self, mock_get_ranks, mock_new_group):
+    def test_populate_embedding_groups_single_pp_rank(self, mock_new_group, mock_get_rank):
         """Test embedding groups with single PP rank (PP=1)."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
             populate_embedding_and_position_groups,
         )
 
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0]  # Single PP rank
-        mock_new_group.return_value = MagicMock()
+        mock_get_rank.return_value = 0
+        mock_pos_embd = MagicMock()
+        mock_embd = MagicMock()
+        mock_new_group.side_effect = [mock_pos_embd, mock_embd]
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        pos_embd_pg, embd_pg = populate_embedding_and_position_groups([[0]])
 
         # Should create groups for both position and word embeddings
         assert mock_new_group.call_count == 2
@@ -579,28 +581,33 @@ class TestEmbeddingGroupHelpers:
         calls = mock_new_group.call_args_list
         assert calls[0].kwargs["ranks"] == [0]
         assert calls[1].kwargs["ranks"] == [0]
+        assert pos_embd_pg is mock_pos_embd
+        assert embd_pg is mock_embd
 
+    @patch("torch.distributed.get_rank")
     @patch("torch.distributed.new_group")
-    @patch("torch.distributed.get_process_group_ranks")
-    def test_populate_embedding_groups_multiple_pp_ranks(self, mock_get_ranks, mock_new_group):
-        """Test embedding groups with multiple PP ranks (PP>1)."""
+    @patch("torch.distributed.get_process_group_ranks", return_value=[0, 4])
+    def test_populate_embedding_groups_multiple_pp_groups(self, _mock_get_ranks, mock_new_group, mock_get_rank):
+        """Test every PP subgroup is created in one global order."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
             populate_embedding_and_position_groups,
         )
 
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]  # PP=4
-        mock_new_group.return_value = MagicMock()
+        mock_get_rank.return_value = 0
+        created_groups = [MagicMock() for _ in range(4)]
+        mock_new_group.side_effect = created_groups
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        pos_embd_pg, embd_pg = populate_embedding_and_position_groups([[0, 4], [1, 5]])
 
-        # Should create two groups
-        assert mock_new_group.call_count == 2
+        # Every rank makes the same calls for every PP subgroup, not just its local subgroup.
+        assert mock_new_group.call_count == 4
         calls = mock_new_group.call_args_list
-        # pos_embd only on first rank
         assert calls[0].kwargs["ranks"] == [0]
-        # embd on first and last ranks
-        assert calls[1].kwargs["ranks"] == [0, 12]
+        assert calls[1].kwargs["ranks"] == [0, 4]
+        assert calls[2].kwargs["ranks"] == [1]
+        assert calls[3].kwargs["ranks"] == [1, 5]
+        assert pos_embd_pg is created_groups[0]
+        assert embd_pg is created_groups[1]
 
     def test_populate_embedding_groups_none_pp_group(self):
         """Test embedding groups with None PP group."""
@@ -676,6 +683,34 @@ class TestEmbeddingGroupHelpers:
 
 class TestProcessGroupCollectionWithEmbeddingGroups:
     """Test that ProcessGroupCollection includes embedding groups."""
+
+    @patch(
+        "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.ProcessGroupCollection.__dataclass_fields__",
+        {"tp": Mock()},
+    )
+    def test_gtp_remat_aliases_omitted_for_older_mcore_contract(self):
+        """Test that aliases absent from the MCore contract are not passed to its constructor."""
+        assert _get_gtp_remat_process_group_kwargs(Mock(), Mock(), Mock()) == {}
+
+    @patch(
+        "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.ProcessGroupCollection.__dataclass_fields__",
+        {
+            "dp_cp_gtp_remat": Mock(),
+            "expt_dp_gtp_remat": Mock(),
+            "tp_ep_pp_with_egtp_remat": Mock(),
+        },
+    )
+    def test_gtp_remat_aliases_preserved_for_current_mcore_contract(self):
+        """Test that current MCore receives all collapsed GTP-remat aliases."""
+        dp_cp_group = Mock()
+        expt_dp_group = Mock()
+        tp_ep_pp_group = Mock()
+
+        assert _get_gtp_remat_process_group_kwargs(dp_cp_group, expt_dp_group, tp_ep_pp_group) == {
+            "dp_cp_gtp_remat": dp_cp_group,
+            "expt_dp_gtp_remat": expt_dp_group,
+            "tp_ep_pp_with_egtp_remat": tp_ep_pp_group,
+        }
 
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.is_pp_first_stage")
@@ -831,10 +866,15 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         assert pgc.expt_dp == mock_expt_dp
         assert pgc.dp_cp == mock_dp_cp
         assert pgc.intra_dp_cp == mock_dp_cp
+        if "expt_dp_gtp_remat" in pgc.__dataclass_fields__:
+            assert pgc.expt_dp_gtp_remat == mock_expt_dp
+            assert pgc.dp_cp_gtp_remat == mock_dp_cp
         assert pgc.tp_cp == mock_tp_cp
         assert pgc.tp_dp_cp == mock_tp_dp_cp
         assert pgc.mp == mock_mp
         assert pgc.tp_ep == mock_tp_ep
         assert pgc.tp_ep_pp == mock_tp_ep_pp
+        if "tp_ep_pp_with_egtp_remat" in pgc.__dataclass_fields__:
+            assert pgc.tp_ep_pp_with_egtp_remat == mock_tp_ep_pp
         assert pgc.intra_expt_dp == mock_expt_dp
         assert pgc.intra_dist_opt == mock_intra_dist_opt

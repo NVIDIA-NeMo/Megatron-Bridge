@@ -20,7 +20,10 @@ from dataclasses import dataclass
 
 import pytest
 
-from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
+from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
+    NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+    NemotronOmniModelProvider,
+)
 from megatron.bridge.recipes.nemotron_omni import nemotron_omni_cord_v2_sft_config
 from megatron.bridge.training import nemotron_omni_step
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
@@ -52,12 +55,12 @@ class _TinyNemotronOmniModelProvider(NemotronOmniModelProvider):
     img_end_token_id: int = 22
     sound_context_token_id: int = 27
     tokenizer_type: str = "nemotron6-moe"
-    dynamic_resolution: bool = False
     use_vision_backbone_fp8_arch: bool = False
     vision_proj_ffn_hidden_size: int = 256
     tensor_model_parallel_size: int = 1
     pipeline_model_parallel_size: int = 1
     sequence_parallel: bool = False
+    nemotron_omni_contract: str = NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
 
     def _build_vision_config(self, language_cfg):
         vision_cfg = copy.deepcopy(language_cfg)

@@ -21,9 +21,15 @@ from unittest.mock import Mock, patch
 import pytest
 import yaml
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.config import DistributedInitConfig
-from megatron.bridge.training.initialize import _initialize_tp_communicators, _setup_flight_recorder_env
+from megatron.bridge.training.initialize import (
+    _initialize_tp_communicators,
+    _setup_flight_recorder_env,
+    set_jit_fusion_options,
+)
 
 
 _FR_ENV_VARS = [
@@ -35,6 +41,29 @@ _FR_ENV_VARS = [
     "TORCH_INCLUDE_ONLY_ACTIVE",
     "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
 ]
+
+
+def test_set_jit_fusion_options_preserves_builder_config_for_warmup() -> None:
+    """JIT warmup needs GPT outer fields like seq_length plus transformer proxy fields."""
+    model_config = BridgeGPTModelConfig(
+        transformer=TransformerConfig(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            ffn_hidden_size=256,
+            use_cpu_initialization=True,
+        ),
+        vocab_size=256,
+        seq_length=128,
+    )
+
+    with (
+        patch("megatron.bridge.training.initialize.is_torch_min_version", return_value=True),
+        patch("megatron.bridge.training.initialize._warmup_jit_function") as warmup_jit_function,
+    ):
+        set_jit_fusion_options(model_config, micro_batch_size=1)
+
+    warmup_jit_function.assert_called_once_with(model_config, 1)
 
 
 class TestInitializeTPCommunicators:
@@ -74,7 +103,7 @@ class TestInitializeTPCommunicators:
             ):
                 _initialize_tp_communicators(mock_gpt_config, micro_batch_size=4)
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_from_string_file(self, mock_init_ub, mock_gpt_config):
         """Test loading tp_comm_overlap_cfg from a string file path."""
         # Create a temporary YAML file
@@ -96,7 +125,7 @@ class TestInitializeTPCommunicators:
         finally:
             Path(config_file_path).unlink()
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_from_dict(self, mock_init_ub, mock_gpt_config):
         """Test loading tp_comm_overlap_cfg from a dictionary."""
         config_data = {"buffer_size": 2048, "overlap_enabled": False}
@@ -110,7 +139,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["ub_cfgs"] == config_data
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_none(self, mock_init_ub, mock_gpt_config):
         """Test when tp_comm_overlap_cfg is None."""
         mock_gpt_config.tp_comm_overlap_cfg = None
@@ -123,7 +152,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["ub_cfgs"] == {}
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_input_shape_calculation_gpt(self, mock_init_ub, mock_gpt_config):
         """Test input_shape calculation for GPT model."""
         mock_gpt_config.seq_length = 1024
@@ -142,13 +171,13 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["shape"] == expected_shape
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_disabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 disabled."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_disabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 disabled."""
         mock_gpt_config.fp8 = None
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -160,13 +189,13 @@ class TestInitializeTPCommunicators:
             assert call_args[1]["tp_size"] == mock_gpt_config.tensor_model_parallel_size
             assert call_args[1]["bootstrap_backend"] == mock_gpt_config.tp_comm_bootstrap_backend
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_enabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 enabled."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_enabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 enabled."""
         mock_gpt_config.fp8 = "e4m3"
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -176,16 +205,16 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_with_bf16_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 and BF16 first/last layers."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_with_bf16_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 and BF16 first/last layers."""
         mock_gpt_config.fp8 = "e4m3"
         mock_gpt_config.first_last_layers_bf16 = True
         mock_gpt_config.num_layers_at_start_in_bf16 = 2
         mock_gpt_config.num_layers_at_end_in_bf16 = 1
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -195,16 +224,16 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8", "NONE"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
-    def test_te_version_2_7_0_fp8_with_bf16_layers_no_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
-        """Test TE version 2.7.0+ path with FP8 and BF16 flag but no BF16 layers."""
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
+    def test_te_version_2_8_0_fp8_with_bf16_layers_no_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
+        """Test TE version 2.8.0+ path with FP8 and BF16 flag but no BF16 layers."""
         mock_gpt_config.fp8 = "e4m3"
         mock_gpt_config.first_last_layers_bf16 = True
         mock_gpt_config.num_layers_at_start_in_bf16 = 0
         mock_gpt_config.num_layers_at_end_in_bf16 = 0
 
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             mock_quant_mode.FP8 = "FP8"
             mock_quant_mode.NONE = "NONE"
 
@@ -214,7 +243,19 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
+    def test_te_version_2_7_0_uses_legacy_fp8_flag(self, mock_init_ub, mock_gpt_config):
+        """TE 2.7 predates the public quantization-mode enum and uses use_fp8."""
+        mock_gpt_config.fp8 = "e4m3"
+
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "1.9.0"):
+            _initialize_tp_communicators(mock_gpt_config, micro_batch_size=4)
+
+        call_args = mock_init_ub.call_args
+        assert call_args[1]["use_fp8"] is True
+        assert "quantization_modes" not in call_args[1]
+
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_te_version_1_9_0_fp8_disabled(self, mock_init_ub, mock_gpt_config):
         """Test TE version 1.9.0+ path with FP8 disabled."""
         mock_gpt_config.fp8 = None
@@ -228,7 +269,7 @@ class TestInitializeTPCommunicators:
             assert call_args[1]["tp_size"] == mock_gpt_config.tensor_model_parallel_size
             assert call_args[1]["bootstrap_backend"] == mock_gpt_config.tp_comm_bootstrap_backend
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_te_version_1_9_0_fp8_enabled(self, mock_init_ub, mock_gpt_config):
         """Test TE version 1.9.0+ path with FP8 enabled."""
         mock_gpt_config.fp8 = "e4m3"
@@ -240,7 +281,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is True
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_mpi_backend(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with MPI backend."""
@@ -258,7 +299,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is False
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_non_mpi_backend_warning(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with non-MPI backend shows warning."""
@@ -280,7 +321,7 @@ class TestInitializeTPCommunicators:
             mock_new_group.assert_called_once_with(backend="mpi")
             mock_init_ub.assert_called_once()
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_fp8_enabled(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with FP8 enabled."""
@@ -297,12 +338,12 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is True
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_version_checking_logic(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test that version checking logic works correctly."""
-        # Test 2.7.0+ path
-        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.7.0"):
+        # Test 2.8.0+ path, where TE publicly exports UserBufferQuantizationMode.
+        with patch("megatron.bridge.training.initialize.is_te_min_version", side_effect=lambda v: v == "2.8.0"):
             _initialize_tp_communicators(mock_gpt_config, micro_batch_size=4)
             call_args = mock_init_ub.call_args
             assert "quantization_modes" in call_args[1]

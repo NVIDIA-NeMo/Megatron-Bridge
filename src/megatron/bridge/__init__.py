@@ -13,6 +13,11 @@
 # limitations under the License.
 """Megatron Bridge - A component of the Megatron ecosystem."""
 
+try:
+    import modelopt.torch  # noqa: F401
+except ImportError:
+    pass
+
 import megatron.bridge.diffusion.models  # noqa: F401 — registers diffusion bridges
 import megatron.bridge.models  # noqa: F401 — triggers all bridge and HF Auto class registrations
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge

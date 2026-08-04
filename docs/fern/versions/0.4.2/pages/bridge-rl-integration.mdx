@@ -9,7 +9,7 @@ Megatron Bridge provides a clean, parallelism-aware path to use 🤗 Hugging Fac
 The examples mirror how NeMo-RL integrates Megatron Bridge:
 
 - [nemo_rl/models/megatron/community_import.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/megatron/community_import.py)
-- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/megatron_policy_worker.py)
+- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/workers/megatron_policy_worker.py)
 
 - Local example script in this repo: [examples/rl/rlhf_with_bridge.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/rl/rlhf_with_bridge.py)
 
@@ -492,4 +492,4 @@ class MegatronBridgeAdapter:
 
 - [Bridge with 🤗 Hugging Face](./bridge-guide.md) for HF↔Megatron conversion overview
 - [nemo_rl/models/megatron/community_import.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/megatron/community_import.py) for import/export helpers
-- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/megatron_policy_worker.py) for end-to-end RL integration (training, logprobs, generation, refit)
+- [nemo_rl/models/policy/megatron_policy_worker.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/policy/workers/megatron_policy_worker.py) for end-to-end RL integration (training, logprobs, generation, refit)

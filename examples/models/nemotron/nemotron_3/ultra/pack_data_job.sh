@@ -27,14 +27,12 @@ set -euo pipefail
 CONTAINER_IMAGE=${CONTAINER_IMAGE:-}
 CONTAINER_MOUNTS=${CONTAINER_MOUNTS:-}
 WORKDIR=${WORKDIR:-/opt/Megatron-Bridge}
-HF_MODEL_PATH=${HF_MODEL_PATH:-nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16}
 RECIPE_NAME=${RECIPE_NAME:-nemotron_3_ultra_sft_openmathinstruct2_packed_config}
-SEQ_LENGTH=${SEQ_LENGTH:-4096}
 
 [ -n "${HF_HOME:-}" ] && export HF_HOME
 [ -n "${NEMO_HOME:-}" ] && export NEMO_HOME
 [ -n "${UV_CACHE_DIR:-}" ] && export UV_CACHE_DIR
-export WORKDIR HF_MODEL_PATH RECIPE_NAME SEQ_LENGTH
+export WORKDIR RECIPE_NAME
 
 if [ -z "$CONTAINER_IMAGE" ]; then
     echo "ERROR: CONTAINER_IMAGE must be set."
@@ -54,9 +52,7 @@ cd "$WORKDIR"
 export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/Megatron-LM:${PYTHONPATH:-}"
 
 uv run --no-sync python scripts/training/prepare_gpt_sft_packed_data.py \
-    --recipe "$RECIPE_NAME" \
-    --seq-length "$SEQ_LENGTH" \
-    --hf-path "$HF_MODEL_PATH"
+    --recipe "$RECIPE_NAME"
 '
 
 echo PACK_DATA_DONE

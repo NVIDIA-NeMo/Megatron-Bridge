@@ -65,6 +65,7 @@ class HFEnergonBatch(Batch):
     cu_seqlens_kv_padded: torch.Tensor | None = None
     max_seqlen_q: torch.Tensor | None = None
     max_seqlen_kv: torch.Tensor | None = None
+    total_tokens: int | None = None
 
 
 class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonBatch, dict]):
@@ -155,25 +156,26 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             The exact batch dictionary returned by the selected HF collate
             function for this processor type.
         """
-        return self._collate_impl(
-            examples,
-            self.processor,
-            visual_keys=self.visual_keys,
-            min_pixels=self.min_pixels,
-            max_pixels=self.max_pixels,
-            sequence_length=self.seq_length,
-            pad_to_max_length=self.pad_to_max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            enable_in_batch_packing=self.enable_in_batch_packing,
-            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
-        )
+        collate_kwargs: dict[str, Any] = {
+            "visual_keys": self.visual_keys,
+            "sequence_length": self.seq_length,
+            "pad_to_max_length": self.pad_to_max_length,
+            "pad_to_multiple_of": self.pad_to_multiple_of,
+            "enable_in_batch_packing": self.enable_in_batch_packing,
+            "in_batch_packing_pad_to_multiple_of": self.in_batch_packing_pad_to_multiple_of,
+        }
+        if self.min_pixels is not None:
+            collate_kwargs["min_pixels"] = self.min_pixels
+        if self.max_pixels is not None:
+            collate_kwargs["max_pixels"] = self.max_pixels
+        return self._collate_impl(examples, self.processor, **collate_kwargs)
 
     # ------------------------------------------------------------------
     # batch
     # ------------------------------------------------------------------
 
-    def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
-        """Collate normalized samples with the selected HF VLM collator."""
+    def _collate_batch_kwargs(self, samples: List[HFEnergonSample]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Collate samples and build kwargs shared by generic/model batches."""
         examples = [sample.example for sample in samples]
         collated = self.collate_fn(examples)
         collated_seq_len = (
@@ -204,8 +206,13 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             cu_seqlens_kv_padded=collated.get("cu_seqlens_kv_padded"),
             max_seqlen_q=collated.get("max_seqlen_q"),
             max_seqlen_kv=collated.get("max_seqlen_kv"),
+            total_tokens=collated.get("total_tokens"),
         )
+        return collated, batch_kwargs
 
+    def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
+        """Collate normalized samples with the selected HF VLM collator."""
+        _, batch_kwargs = self._collate_batch_kwargs(samples)
         return HFEnergonBatch(**batch_kwargs)
 
     # ------------------------------------------------------------------

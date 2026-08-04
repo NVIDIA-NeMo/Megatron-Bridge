@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.models.qwen_audio import Qwen2AudioModelProvider
+from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import _QWEN2_AUDIO_MERGE_METHOD
 
 
 class TestQwen2AudioModelProvider:
@@ -29,6 +30,10 @@ class TestQwen2AudioModelProvider:
         assert provider.num_layers == 32
         assert provider.hidden_size == 4096
         assert provider.num_attention_heads == 32
+
+    def test_hf_audio_merge_method_is_available(self):
+        """Test that the installed Transformers version exposes the audio merge helper."""
+        assert _QWEN2_AUDIO_MERGE_METHOD is not None
 
     def test_audio_specific_defaults(self):
         """Test Qwen2AudioModelProvider audio-specific default configuration."""

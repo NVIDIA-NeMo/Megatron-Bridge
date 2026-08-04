@@ -55,7 +55,7 @@ All training scripts use SLURM for containerized multi-node training.
 
 ### Nano
 
-See the SLURM scripts in [nano/](nano/): [slurm_pretrain.sh](nano/slurm_pretrain.sh), [slurm_sft.sh](nano/slurm_sft.sh), [slurm_peft.sh](nano/slurm_peft.sh).
+See the SLURM scripts in [nano/](nano/): [slurm_pretrain.sh](nano/slurm_pretrain.sh), [slurm_pretrain_fsdp.sh](nano/slurm_pretrain_fsdp.sh) - fsdp_dtensor is the ckpt format supported as of now. To convert to torch_dcp format follow this [guide](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/megatron_fsdp#sbatch_checkpoint_convertsh) , [slurm_sft.sh](nano/slurm_sft.sh), [slurm_peft.sh](nano/slurm_peft.sh).
 
 ### Super
 
