@@ -230,6 +230,38 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config() -> ConfigCo
     return cfg
 
 
+def nemotron_3_ultra_pretrain_512gpu_h100_bf16_fsdp_tp8_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 512× H100, TP8/PP1 BF16 FSDP."""
+    cfg = _nemotron_3_ultra_pretrain_h100_bf16_fsdp_config(
+        num_gpus=512,
+        tensor_model_parallel_size=8,
+        global_batch_size=512,
+        recompute_num_layers=64,
+    )
+    # Keep TP inside one eight-GPU H100 NVLink domain while preserving DP64
+    # and the canonical GBS512 workload. Relative to TP4, TP8 halves the
+    # sequence-vocabulary workspace and per-rank model shard without changing
+    # the number of microbatches accumulated by each dense DP replica.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # Megatron-FSDP requires more than one CUDA device connection. Eight
+        # bounds Hopper driver/stream resources while retaining stream independence.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 8,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # Bound NCCL pair buffers to 256 KiB for this capacity-constrained model.
+        "NCCL_BUFFSIZE": 262144,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
 def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, BF16, recompute MoE+layernorm."""
     cfg = nemotron_3_nano_pretrain_config()

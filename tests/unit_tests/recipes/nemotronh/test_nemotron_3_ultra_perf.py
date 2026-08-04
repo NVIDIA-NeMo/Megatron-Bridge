@@ -15,6 +15,7 @@ from megatron.bridge.perf_recipes.nemotronh.h100.nemotronh import (
     nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config,
     nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config,
     nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config,
+    nemotron_3_ultra_pretrain_512gpu_h100_bf16_fsdp_tp8_config,
 )
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -175,6 +176,7 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
         (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 2, 1, None, 256, 108),
         (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, 1, None, 512, 64),
         (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config, 2, 2, None, 512, 64),
+        (nemotron_3_ultra_pretrain_512gpu_h100_bf16_fsdp_tp8_config, 8, 1, None, 512, 64),
     ],
 )
 def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
@@ -266,6 +268,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
         (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 128),
         (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 256),
         (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config, 256),
+        (nemotron_3_ultra_pretrain_512gpu_h100_bf16_fsdp_tp8_config, 512),
     ],
 )
 def test_ultra_fsdp_recipes_validate_for_declared_world_size(
