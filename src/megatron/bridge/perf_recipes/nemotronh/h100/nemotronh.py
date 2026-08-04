@@ -162,10 +162,10 @@ def nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config() -> ConfigContai
         num_gpus=128,
         tensor_model_parallel_size=2,
         global_batch_size=256,
-        # Block 64 missed a first-forward 2-MiB expert output with the H100
-        # effectively full. Four more Mamba/expert pairs provide bounded
-        # activation headroom without the all-108-layer replay cost.
-        recompute_num_layers=72,
+        # Block 64 and 72 both left the H100 effectively full during a
+        # first-forward expert output. Checkpoint every main HybridStack layer;
+        # MTP remains on its normal backward path under the block method.
+        recompute_num_layers=108,
     )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

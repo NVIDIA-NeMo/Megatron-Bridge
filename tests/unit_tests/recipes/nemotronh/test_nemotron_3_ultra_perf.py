@@ -170,7 +170,7 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
         "recompute_num_layers",
     ),
     [
-        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 2, None, 256, 72),
+        (nemotron_3_ultra_pretrain_128gpu_h100_bf16_fsdp_tp2_config, 2, None, 256, 108),
         (nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config, 4, None, 512, 64),
     ],
 )
