@@ -14,6 +14,7 @@
 
 """Unit tests for pretrain module process group cleanup."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -79,28 +80,80 @@ class TestDestroyProcessGroupIfNeeded:
 class TestPretrainProcessGroupOwnership:
     """Test process group ownership across exceptional pretrain exits."""
 
-    def test_framework_owned_process_group_is_aborted_when_setup_raises(self):
-        """Test Bridge aborts process groups initialized during failed setup."""
+    def test_framework_owned_failure_is_logged_before_cleanup_and_abort(self, caplog):
+        """Test Bridge logs the original failure before cleaning up framework-owned state."""
         state = MagicMock()
+        async_queue = MagicMock()
+        state._async_calls_queue = async_queue
+        original_error = RuntimeError("setup failed after distributed initialization")
+
+        def assert_failure_was_logged():
+            failure_records = [
+                record for record in caplog.records if record.getMessage().startswith("Pretrain failed")
+            ]
+            assert len(failure_records) == 1
 
         with (
             patch("megatron.bridge.training.pretrain.dist") as mock_dist,
             patch("megatron.bridge.training.pretrain.destroy_global_state") as mock_destroy_global_state,
             patch("megatron.bridge.training.pretrain.get_dataset_provider"),
-            patch(
-                "megatron.bridge.training.pretrain.setup",
-                side_effect=RuntimeError("setup failed after distributed initialization"),
-            ),
+            patch("megatron.bridge.training.pretrain.setup", side_effect=original_error),
         ):
-            mock_dist.is_initialized.side_effect = [False, True]
+            mock_dist.is_initialized.side_effect = [False, True, True]
+            mock_dist.get_rank.return_value = 7
+            async_queue.close.side_effect = lambda *, abort: assert_failure_was_logged()
+            mock_destroy_global_state.side_effect = assert_failure_was_logged
+            mock_dist.distributed_c10d._abort_process_group.side_effect = assert_failure_was_logged
 
-            with pytest.raises(RuntimeError, match="setup failed after distributed initialization"):
+            with (
+                caplog.at_level(logging.ERROR, logger="megatron.bridge.training.pretrain"),
+                pytest.raises(RuntimeError) as exc_info,
+            ):
                 _pretrain(state, MagicMock())
 
+        assert exc_info.value is original_error
         mock_destroy_global_state.assert_called_once_with()
         mock_dist.barrier.assert_not_called()
         mock_dist.distributed_c10d._abort_process_group.assert_called_once_with()
         mock_dist.destroy_process_group.assert_not_called()
+        failure_record = next(record for record in caplog.records if record.getMessage().startswith("Pretrain failed"))
+        failure_message = failure_record.getMessage()
+        assert "rank=7" in failure_message
+        assert "RuntimeError: setup failed after distributed initialization" in failure_message
+        assert "aborting framework-owned distributed resources" in failure_message
+        assert "peer ranks may be blocked in collectives" in failure_message
+        assert failure_record.exc_info is not None
+        assert failure_record.exc_info[1] is original_error
+        assert "Traceback (most recent call last)" in caplog.text
+        assert "RuntimeError: setup failed after distributed initialization" in caplog.text
+
+    def test_cleanup_failure_does_not_replace_original_failure(self, caplog):
+        """Test cleanup errors are logged while the original pretrain failure propagates."""
+        state = MagicMock()
+        original_error = RuntimeError("original setup failure")
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch(
+                "megatron.bridge.training.pretrain.destroy_global_state",
+                side_effect=RuntimeError("cleanup failure"),
+            ),
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch("megatron.bridge.training.pretrain.setup", side_effect=original_error),
+        ):
+            mock_dist.is_initialized.side_effect = [False, True, True]
+            mock_dist.get_rank.return_value = 2
+
+            with (
+                caplog.at_level(logging.ERROR, logger="megatron.bridge.training.pretrain"),
+                pytest.raises(RuntimeError) as exc_info,
+            ):
+                _pretrain(state, MagicMock())
+
+        assert exc_info.value is original_error
+        messages = [record.getMessage() for record in caplog.records]
+        assert messages[0].startswith("Pretrain failed on rank=2 with RuntimeError: original setup failure")
+        assert "Failed to destroy Megatron global state after pretrain failure" in messages
 
     def test_framework_owned_async_worker_is_aborted_before_process_groups(self):
         """Test failed setup aborts its async checkpoint worker before distributed cleanup."""
@@ -120,7 +173,7 @@ class TestPretrainProcessGroupOwnership:
             patch("megatron.bridge.training.pretrain.get_dataset_provider"),
             patch("megatron.bridge.training.pretrain.setup", side_effect=setup_then_fail),
         ):
-            mock_dist.is_initialized.side_effect = [False, True]
+            mock_dist.is_initialized.side_effect = [False, True, True]
             mock_dist.distributed_c10d._abort_process_group.side_effect = lambda: cleanup_order.append(
                 ("process_group", "abort")
             )
@@ -159,6 +212,7 @@ class TestPretrainProcessGroupOwnership:
             patch("megatron.bridge.training.pretrain.destroy_global_state") as mock_destroy_global_state,
             patch("megatron.bridge.training.pretrain.get_dataset_provider"),
             patch("megatron.bridge.training.pretrain.setup", side_effect=RuntimeError("setup failed")),
+            patch("megatron.bridge.training.pretrain.logger.exception") as mock_logger_exception,
         ):
             mock_dist.is_initialized.return_value = False
 
@@ -172,5 +226,6 @@ class TestPretrainProcessGroupOwnership:
 
         mock_dist.PrefixStore.assert_called_once_with("1", store)
         mock_destroy_global_state.assert_not_called()
+        mock_logger_exception.assert_not_called()
         mock_dist.barrier.assert_not_called()
         mock_dist.destroy_process_group.assert_not_called()

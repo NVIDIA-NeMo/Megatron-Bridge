@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
@@ -196,9 +197,19 @@ def _pretrain(
             )
 
         _finish_train(state, checkpoint_manager)
-    except BaseException:
+    except BaseException as error:
         if inprocess_call_wrapper is None:
-            _cleanup_after_pretrain_failure(state, should_destroy_process_group)
+            logger.exception(
+                "Pretrain failed on rank=%s with %s: %s. Bridge is aborting framework-owned distributed resources "
+                "because peer ranks may be blocked in collectives.",
+                _safe_distributed_rank(),
+                type(error).__name__,
+                error,
+            )
+            try:
+                _cleanup_after_pretrain_failure(state, should_destroy_process_group)
+            except BaseException:
+                logger.exception("Unexpected failure while cleaning up after pretrain failure")
         raise
 
     _maybe_destroy_process_group(should_destroy_process_group)
@@ -220,6 +231,16 @@ def _abort_async_checkpoint_worker(state: GlobalState) -> None:
                 filesystem_async._results_queue._manager.shutdown()
             finally:
                 filesystem_async._results_queue = None
+
+
+def _safe_distributed_rank() -> str:
+    """Return a rank identifier without obscuring an active training failure."""
+    try:
+        if dist.is_initialized():
+            return str(dist.get_rank())
+    except Exception:
+        pass
+    return os.environ.get("RANK", "unknown")
 
 
 def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_group: bool) -> None:
