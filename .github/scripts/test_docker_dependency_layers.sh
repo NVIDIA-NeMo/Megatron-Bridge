@@ -108,6 +108,11 @@ git -C "$revision_worktree" switch -q --detach "$main_sha"
 git -C "$revision_worktree" merge -q --no-ff -s ours "$mirror_sha" -m merge
 merge_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" switch -q --detach "$main_sha"
+printf 'queue\n' >"$revision_worktree/queue"
+git -C "$revision_worktree" add queue
+git -C "$revision_worktree" commit -q -m queue
+queue_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" switch -q --detach "$main_sha"
 printf 'orphan\n' >"$revision_worktree/orphan"
 git -C "$revision_worktree" add orphan
 git -C "$revision_worktree" commit -q -m orphan
@@ -119,6 +124,9 @@ unapproved_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" push -q "$revision_repo" "$main_sha:refs/heads/main"
 git -C "$revision_worktree" push -q "$revision_repo" "$mirror_sha:refs/heads/pull-request/123"
 git -C "$revision_worktree" push -q "$revision_repo" "$merge_sha:refs/pull/123/merge"
+git -C "$revision_worktree" push -q \
+  "$revision_repo" \
+  "$queue_sha:refs/heads/gh-readonly-queue/main/pr-123-$main_sha"
 git -C "$revision_worktree" push -q "$revision_repo" "$orphan_sha:refs/pull/456/merge"
 git -C "$revision_worktree" push -q "$revision_repo" "$unapproved_sha:refs/heads/unapproved"
 
@@ -134,6 +142,11 @@ chmod +x "$temporary_dir/revision-validator"
 "$temporary_dir/revision-validator" "$revision_repo" "$ancestor_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$mirror_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$merge_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"
+if "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"x; then
+  echo "MCore revision validation accepted a malformed queue SHA" >&2
+  exit 1
+fi
 if "$temporary_dir/revision-validator" "$revision_repo" "$orphan_sha"; then
   echo "MCore revision validation accepted a PR merge without an approved mirror parent" >&2
   exit 1
