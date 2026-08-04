@@ -14,6 +14,7 @@
 
 """GLM VL collator implementations."""
 
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -40,6 +41,46 @@ GLM4V_ASSISTANT_START = "<|assistant|>\n"
 GLM4V_ASSISTANT_END = "<|endoftext|>"
 GLM4V_EMPTY_THINK = "<think></think>\n"
 GLM4V_NEXT_ROLE_MARKERS = ("<|system|>\n", "<|user|>\n", "<|observation|>\n")
+
+
+def _normalize_glm4v_assistant_content(example: dict[str, Any]) -> dict[str, Any]:
+    """Flatten text-only structured assistant content for GLM chat templates."""
+    conversation = example.get("conversation")
+    if not isinstance(conversation, list):
+        return example
+
+    normalized_conversation = []
+    changed = False
+    for turn in conversation:
+        if not isinstance(turn, Mapping) or turn.get("role") != "assistant":
+            normalized_conversation.append(turn)
+            continue
+
+        parts = turn.get("content")
+        if not isinstance(parts, list) or not parts:
+            normalized_conversation.append(turn)
+            continue
+
+        text_parts = []
+        for part in parts:
+            if isinstance(part, Mapping) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                text_parts.append(part["text"])
+            else:
+                break
+        else:
+            normalized_turn = dict(turn)
+            normalized_turn["content"] = "".join(text_parts)
+            normalized_conversation.append(normalized_turn)
+            changed = True
+            continue
+
+        normalized_conversation.append(turn)
+
+    if not changed:
+        return example
+    normalized_example = dict(example)
+    normalized_example["conversation"] = normalized_conversation
+    return normalized_example
 
 
 def _glm4v_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig:
@@ -107,6 +148,7 @@ def glm4v_collate_fn(
     """
     del visual_keys, min_pixels, max_pixels
 
+    examples = [_normalize_glm4v_assistant_content(example) for example in examples]
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = _glm4v_assistant_mask_boundary_config(processor)
 

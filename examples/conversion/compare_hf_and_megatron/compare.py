@@ -624,6 +624,29 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         return hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape
 
 
+def _load_hf_reference_logits(path, input_ids, tokenizer):
+    """Load rank-0 HF logits produced by a memory-bounded reference forward."""
+    if not _is_rank_0():
+        return None, None, None, None, None
+
+    reference = torch.load(path, map_location="cpu", weights_only=True)
+    reference_input_ids = reference.get("input_ids")
+    if reference_input_ids is None or not torch.equal(reference_input_ids.cpu(), input_ids.cpu()):
+        raise ValueError("HF reference logits were produced from different input token IDs")
+    hf_logits = reference["logits"].reshape(-1).to(device=input_ids.device, dtype=torch.float32)
+    hf_next_token = torch.argmax(hf_logits, dim=-1)
+    logits_shape = tuple(reference["logits"].shape)
+    hf_logits_stats = f"mean: {hf_logits.mean():.4f}, std: {hf_logits.std():.4f}"
+    top5_vals, top5_ids = torch.topk(hf_logits, min(5, hf_logits.numel()))
+    hf_top5_info = list(zip([tokenizer.decode([idx]) for idx in top5_ids], top5_vals.tolist()))
+    print_rank_0(f"Loaded memory-bounded HF reference logits from: {path}")
+    print_rank_0(f"HF output shape: {logits_shape}")
+    print_rank_0(f"HF logits stats - {hf_logits_stats}")
+    print_rank_0(f"HF next token: {hf_next_token.item()} ('{tokenizer.decode([hf_next_token.item()])}')")
+    print_rank_0(f"HF Top 5: {hf_top5_info}")
+    return hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape
+
+
 def _load_megatron_model(args):
     """Load Megatron model from checkpoint or convert from HF.
 
@@ -787,7 +810,9 @@ def compare_models_one_step(args) -> None:
     megatron_model, bridge = _load_megatron_model(args)
 
     # Optionally perform HF round-trip export and use exported HF model for comparison
-    if getattr(args, "roundtrip_hf", False):
+    if args.hf_logits_path:
+        hf_model = None
+    elif getattr(args, "roundtrip_hf", False):
         hf_model = _export_and_load_roundtrip_hf_model(args, is_vl_model, megatron_model, bridge)
     else:
         # Load HF model directly from the hub/path
@@ -815,14 +840,19 @@ def compare_models_one_step(args) -> None:
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
 
     # Run HF model forward pass
-    hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model,
-        input_ids,
-        pixel_values,
-        image_grid_thw,
-        tokenizer,
-        token_type_ids=token_type_ids,
-    )
+    if args.hf_logits_path:
+        hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _load_hf_reference_logits(
+            args.hf_logits_path, input_ids, tokenizer
+        )
+    else:
+        hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
+            hf_model,
+            input_ids,
+            pixel_values,
+            image_grid_thw,
+            tokenizer,
+            token_type_ids=token_type_ids,
+        )
 
     del hf_model
     gc.collect()
@@ -987,6 +1017,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path or URL to the image for vision-language generation (optional).",
     )
     parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")
+    parser.add_argument(
+        "--hf-logits-path",
+        default=None,
+        help="Optional logits artifact from a memory-bounded HF reference forward.",
+    )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")

@@ -1127,13 +1127,30 @@ def _validate_inference(
     except ValueError:
         command_tokens = []
     allowed_launcher_tasks = {
-        "inference": {"text-generation", "vlm-generation"},
+        "inference": {"text-generation", "legacy-full-prefix-generation", "vlm-generation"},
         "sft_export_inference": {"hf-inference"},
     }.get(item_name, set())
-    uses_inference_launcher = any(_is_inference_launcher(command, task=task) for task in allowed_launcher_tasks)
+    task_values = _argument_values(command, "--task")
+    uses_inference_script = (
+        bool(command_tokens) and command_tokens[0].removeprefix("./") == "scripts/inference/infer.sh"
+    )
+    uses_inference_launcher = (
+        uses_inference_script and len(task_values) == 1 and task_values[0] in allowed_launcher_tasks
+    )
     if uses_inference_launcher:
         _validate_synchronous_inference_launcher(command, path=resolved_command_path, errors=errors)
-    if not uses_inference_launcher and command_tokens[:2] != ["uv", "run"]:
+        if task_values == ["legacy-full-prefix-generation"] and "--legacy-full-prefix" not in command_tokens:
+            errors.append(
+                f"{_pointer(*resolved_command_path)}: legacy-full-prefix-generation requires --legacy-full-prefix"
+            )
+    elif uses_inference_script and len(task_values) != 1:
+        errors.append(f"{_pointer(*resolved_command_path)}: infer.sh must specify one supported --task")
+        for resource_flag in ("--nodes", "--gpus-per-node"):
+            if len(_argument_values(command, resource_flag)) != 1:
+                errors.append(
+                    f"{_pointer(*resolved_command_path)}: infer.sh must specify {resource_flag} exactly once"
+                )
+    elif command_tokens[:2] != ["uv", "run"]:
         errors.append(
             f"{_pointer(*resolved_command_path)}: inference must use ./scripts/inference/infer.sh "
             "or a local uv run helper"

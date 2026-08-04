@@ -86,6 +86,7 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
         in_batch_packing_pad_to_multiple_of=8,
         task_encoder=QwenVLEnergonTaskEncoderConfig(
             hf_processor_path="Qwen/model",
+            hf_processor_revision="0123456789abcdef",
             min_pixels=123,
             max_pixels=456,
             max_num_images=4,
@@ -98,20 +99,32 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
     encoder = object()
     encoder_cls = MagicMock(return_value=encoder)
     safe_repo = MagicMock(return_value=False)
+    load_tokenizer = MagicMock(return_value=tokenizer)
+    load_processor = MagicMock(return_value=processor)
     monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", safe_repo)
     monkeypatch.setattr(
         "megatron.bridge.data.builders.energon.AutoTokenizer.from_pretrained",
-        lambda *_, **__: tokenizer,
+        load_tokenizer,
     )
     monkeypatch.setattr(
         "megatron.bridge.data.builders.energon.Qwen3VLProcessor.from_pretrained",
-        lambda *_, **__: processor,
+        load_processor,
     )
     monkeypatch.setattr("megatron.bridge.models.qwen_vl.data.energon.QwenVLTaskEncoder", encoder_cls)
 
     assert build_energon_task_encoder(config) is encoder
 
     safe_repo.assert_called_once_with(trust_remote_code=True, hf_path="Qwen/model")
+    load_tokenizer.assert_called_once_with(
+        "Qwen/model",
+        revision="0123456789abcdef",
+        trust_remote_code=False,
+    )
+    load_processor.assert_called_once_with(
+        "Qwen/model",
+        revision="0123456789abcdef",
+        trust_remote_code=False,
+    )
     encoder_cls.assert_called_once_with(
         tokenizer=tokenizer,
         image_processor=processor,
@@ -131,6 +144,18 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
     )
 
 
+def test_qwen_config_rejects_empty_processor_revision():
+    config = _qwen_config(
+        task_encoder=QwenVLEnergonTaskEncoderConfig(
+            hf_processor_path="Qwen/model",
+            hf_processor_revision=" ",
+        )
+    )
+
+    with pytest.raises(ValueError, match="hf_processor_revision"):
+        config.validate()
+
+
 def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.MonkeyPatch):
     config = EnergonDatasetConfig(
         path="/data/shards",
@@ -138,6 +163,7 @@ def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.Monkey
         micro_batch_size=1,
         task_encoder=HFEnergonTaskEncoderConfig(
             hf_processor_path="org/model",
+            hf_processor_revision="0123456789abcdef",
             visual_keys=("pixel_values", "image_sizes"),
             min_pixels=100,
             max_pixels=200,
@@ -149,18 +175,36 @@ def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.Monkey
     encoder = object()
     encoder_cls = MagicMock(return_value=encoder)
     monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", lambda **_: False)
-    monkeypatch.setattr(
-        "megatron.bridge.data.builders.energon.AutoProcessor.from_pretrained",
-        lambda *_, **__: processor,
-    )
+    load_processor = MagicMock(return_value=processor)
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.AutoProcessor.from_pretrained", load_processor)
     monkeypatch.setattr("megatron.bridge.data.energon.hf_task_encoder.HFTaskEncoder", encoder_cls)
 
     assert build_energon_task_encoder(config) is encoder
+    load_processor.assert_called_once_with(
+        "org/model",
+        revision="0123456789abcdef",
+        trust_remote_code=False,
+    )
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True
     assert encoder_cls.call_args.kwargs["in_batch_packing_pad_to_multiple_of"] == 4
     assert encoder_cls.call_args.kwargs["visual_keys"] == ("pixel_values", "image_sizes")
     assert encoder_cls.call_args.kwargs["min_pixels"] == 100
     assert encoder_cls.call_args.kwargs["max_pixels"] == 200
+
+
+def test_generic_hf_config_rejects_empty_processor_revision():
+    config = EnergonDatasetConfig(
+        path="/data/shards",
+        seq_length=2048,
+        micro_batch_size=1,
+        task_encoder=HFEnergonTaskEncoderConfig(
+            hf_processor_path="org/model",
+            hf_processor_revision=" ",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="hf_processor_revision"):
+        config.validate()
 
 
 def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatch):
@@ -233,6 +277,7 @@ def test_builder_honors_requested_splits_and_reuses_runtime_encoder(monkeypatch:
         DatasetBuildContext(train_samples=10, valid_samples=5, test_samples=3)
     )
 
+    assert train is datamodule.train_dataloader.return_value
     assert list(train) == ["train"]
     assert list(validation) == ["validation"]
     assert test is None

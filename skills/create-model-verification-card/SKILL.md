@@ -273,7 +273,9 @@ model-verification workload:
   training item;
 - use `scripts/inference/infer.sh --nodes ... --gpus-per-node ... --task ...`
   for Megatron inference and manual model comparison; select
-  `text-generation`, `vlm-generation`, or `model-comparison` explicitly;
+  `text-generation`, `legacy-full-prefix-generation`, `vlm-generation`, or
+  `model-comparison` explicitly. The legacy full-prefix task is a slow,
+  non-optimized compatibility path and requires `--legacy-full-prefix`;
 - invoke public shell launchers directly from the card. Do not create Slurm
   jobs by calling their Python setup modules, and do not wrap the launchers in
   `uv run`, `python`, `srun`, or `sbatch`; the shell entry point owns its Python
@@ -619,14 +621,16 @@ result. Private executor configuration stays outside the card.
   generation. Choose a prompt whose tokenized length is divisible by TP so the
   helper does not append padding before selecting the compared next-token
   position.
-- **Megatron inference:** Disable sampling, run one deterministic greedy
-  generation through `scripts/inference/infer.sh` with the explicit
-  `text-generation` or `vlm-generation` task and a maximum new-token bound.
-  Allow natural end-of-sequence stopping, and record the actual generated-token
-  count plus the literal completion including whitespace. A second replay may
-  help diagnose nondeterminism, but it is not required verification evidence.
-  Specify positive node and GPU counts and run synchronously; do not use
-  `--detach` or a dry-run flag in a verified command.
+- **Megatron inference:** Launch through `scripts/inference/infer.sh` with the
+  explicit `text-generation`, `legacy-full-prefix-generation`, or
+  `vlm-generation` task. Use the slow, non-optimized legacy task only when
+  cached inference is unsupported, and pass `--legacy-full-prefix`. Disable
+  sampling and run one deterministic greedy generation with a maximum
+  new-token bound. Allow natural end-of-sequence stopping, and record the
+  actual generated-token count plus the literal completion including
+  whitespace. A second replay may help diagnose nondeterminism, but it is not
+  required verification evidence. Specify positive node and GPU counts and run
+  synchronously; do not use `--detach` or a dry-run flag in a verified command.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a

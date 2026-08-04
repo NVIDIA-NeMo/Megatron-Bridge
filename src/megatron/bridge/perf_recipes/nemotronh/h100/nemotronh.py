@@ -13,6 +13,8 @@
 # limitations under the License.
 """H100 performance recipes for NemotronH and Nemotron 3."""
 
+import torch
+
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
@@ -25,8 +27,9 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
-# Placeholder until the public Nemotron 3.5 Nano repository is released.
-_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+# Public Nemotron 3.5 Lightning checkpoint used by the legacy Nano recipe API.
+_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 
 
 def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
@@ -173,7 +176,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 
 
 def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Nano pretrain: 16× H100, BF16."""
+    """Nemotron 3.5 Nano benchmark pretrain: 16× H100, BF16."""
     cfg = nemotron_3_nano_pretrain_16gpu_h100_bf16_config()
     # Keep the benchmark workload aligned with the GB200 BF16 recipe. The
     # hardware recipes may tune execution-only knobs such as microbatch size,
@@ -185,7 +188,27 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+
+    # This mock-data, force-balanced benchmark uses lower-precision Adam moments
+    # to make the measured selective-recompute and activation-offload stack fit.
+    # It is not convergence-equivalent to recipes with FP32 optimizer states.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["expert_fc1"]
+    cfg.model.activation_offload_fraction = 1.0
+    cfg.model.delay_offload_until_cuda_graph = True
+
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_permute_fusion_into_hybridep = True
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -194,11 +217,12 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 10,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 10,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
@@ -214,7 +238,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,

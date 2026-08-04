@@ -1661,7 +1661,7 @@ def cleanup_old_non_persistent_checkpoint(
     save_dir = Path(save_dir)
 
     iter_prefix = "iter_"
-    iter_ckpts = save_dir.rglob(f"{iter_prefix}*")
+    iter_ckpts = save_dir.glob(f"{iter_prefix}*")
     if max_iteration is not None:
         iter_ckpts = (
             ckpt_path for ckpt_path in iter_ckpts if int(ckpt_path.name[len(iter_prefix) :]) <= max_iteration
@@ -3570,16 +3570,17 @@ def _load_base_checkpoint(
     # Try to load non-persistent checkpoint first
     non_persistent_global_dir = ""
     non_persistent_iteration = -1
-    if ckpt_cfg.non_persistent_ckpt_type == "global":
-        for candidate_dir in _get_global_non_persistent_checkpoint_dirs(load_dir, ckpt_cfg):
-            candidate_iteration = _get_non_persistent_iteration(candidate_dir, "global", checkpointing_context)
-            if candidate_iteration > non_persistent_iteration:
-                non_persistent_global_dir = candidate_dir
-                non_persistent_iteration = candidate_iteration
-    else:
-        non_persistent_iteration = _get_non_persistent_iteration(
-            non_persistent_global_dir, ckpt_cfg.non_persistent_ckpt_type, checkpointing_context
-        )
+    if ignore_ckpt_step or ckpt_cfg.ckpt_step is None:
+        if ckpt_cfg.non_persistent_ckpt_type == "global":
+            for candidate_dir in _get_global_non_persistent_checkpoint_dirs(load_dir, ckpt_cfg):
+                candidate_iteration = _get_non_persistent_iteration(candidate_dir, "global", checkpointing_context)
+                if candidate_iteration > non_persistent_iteration:
+                    non_persistent_global_dir = candidate_dir
+                    non_persistent_iteration = candidate_iteration
+        else:
+            non_persistent_iteration = _get_non_persistent_iteration(
+                non_persistent_global_dir, ckpt_cfg.non_persistent_ckpt_type, checkpointing_context
+            )
 
     tracker_filename = "because load directory is not defined"
     if load_dir is not None:

@@ -170,16 +170,22 @@ def test_gpu_backend_validates_parallelism_against_world_size():
     module = _load_setup_conversion_module()
     args = _parse(module, "--device", "gpu", "--gpus-per-node", "4", "--tp", "3")
 
-    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node must equal TP\*PP\*EP"):
+    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node must be divisible by TP\*PP"):
         module._validate_args(args)
 
 
-def test_gpu_backend_rejects_replicated_data_parallel_conversion():
+def test_gpu_backend_allows_replicated_data_parallel_conversion():
     module = _load_setup_conversion_module()
     args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "2", "--ep", "2")
 
-    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node must equal TP\*PP\*EP"):
-        module._validate_args(args)
+    module._validate_args(args)
+
+
+def test_gpu_backend_allows_tensor_parallelism_without_expert_parallelism():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "4")
+
+    module._validate_args(args)
 
 
 def test_roundtrip_accepts_exact_multinode_product_topology():
