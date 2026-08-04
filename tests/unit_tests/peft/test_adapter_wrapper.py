@@ -176,15 +176,40 @@ class TestAdapterWrapper:
         assert bias is not None
         assert not torch.equal(layernorm_output, x)
 
-    def test_base_linear_forward_invalid_return(self, simple_adapter):
-        """Test base_linear_forward with invalid return type."""
+    def test_base_linear_forward_tensor_return(self, simple_adapter):
+        """Test base_linear_forward with a bare tensor return (plain nn.Linear path)."""
 
-        class InvalidLinear(nn.Module):
+        class TensorLinear(nn.Module):
             """Mock linear module that returns a tensor instead of a tuple."""
+
+            def __init__(self):
+                super().__init__()
+                self.weight = nn.Parameter(torch.randn(10, 10))
+                self.bias = None
 
             def forward(self, x):
                 """Return a tensor instead of a tuple."""
-                return x
+                return torch.matmul(x, self.weight.t())
+
+        wrapper = ConcreteAdapterWrapper(TensorLinear(), simple_adapter)
+        x = torch.randn(5, 10)
+
+        linear_output, bias, layernorm_output = wrapper.base_linear_forward(x)
+
+        assert isinstance(linear_output, torch.Tensor)
+        assert bias is None
+        assert torch.equal(layernorm_output, x)
+        assert not wrapper._base_returns_tuple
+
+    def test_base_linear_forward_invalid_return(self, simple_adapter):
+        """Test base_linear_forward rejects a return that is neither a tensor nor a tuple."""
+
+        class InvalidLinear(nn.Module):
+            """Mock linear module that returns a non-tensor, non-tuple value."""
+
+            def forward(self, x):
+                """Return an int instead of a tensor or tuple."""
+                return 0
 
         wrapper = ConcreteAdapterWrapper(InvalidLinear(), simple_adapter)
         x = torch.randn(5, 10)

@@ -101,6 +101,7 @@ class AdapterWrapper(nn.Module):
         self.to_wrap = to_wrap
         self.adapter = adapter
         self._adapter_enabled = True
+        self._base_returns_tuple = True
 
     def enable_adapter_layers(self) -> None:
         """Enable the adapter layers, allowing them to contribute to the forward pass output."""
@@ -140,12 +141,23 @@ class AdapterWrapper(nn.Module):
             4. both: (out, bias, ln_out)
         """
         linear_output = self.to_wrap(x, *args, **kwargs)
-        assert isinstance(linear_output, tuple), (
-            f"{self.to_wrap} should return a tuple but instead returns {linear_output}"
-        )
 
         bias = None
         layernorm_output = x
+
+        # Plain nn.Linear (and similar modules) return a bare tensor rather than the
+        # Megatron-style tuple. Handle that case without asserting, so the wrapper stays
+        # a drop-in for nn.Linear in simple (non-parallel) models. Record the return
+        # shape so ``forward`` implementations can mirror it (tensor vs. tuple).
+        if isinstance(linear_output, torch.Tensor):
+            self._base_returns_tuple = False
+            bias = getattr(self.to_wrap, "bias", None)
+            return linear_output, bias, layernorm_output
+
+        assert isinstance(linear_output, tuple), (
+            f"{self.to_wrap} should return a tensor or a tuple but instead returns {type(linear_output).__name__}"
+        )
+        self._base_returns_tuple = True
 
         if len(linear_output) == 2:
             linear_output, bias = linear_output
@@ -213,10 +225,16 @@ class AdapterWrapper(nn.Module):
             adapter_sharded_state_dict_kwargs["mamba_dim_info"] = _compute_mamba_dim_info(self.to_wrap)
 
         sharded_state_dict = {}
-        sharded_state_dict.update(self.to_wrap.sharded_state_dict(prefix, sharded_offsets, metadata))
-        sharded_state_dict.update(
-            self.adapter.sharded_state_dict(
-                f"{prefix}adapter.", sharded_offsets, metadata, **adapter_sharded_state_dict_kwargs
+        # The wrapped module may be a plain nn.Linear (simple, non-parallel path) which
+        # does not implement distributed sharding; fall back gracefully in that case.
+        if hasattr(self.to_wrap, "sharded_state_dict"):
+            sharded_state_dict.update(self.to_wrap.sharded_state_dict(prefix, sharded_offsets, metadata))
+        # Likewise, a delta-only LinearAdapter has no sharded layout; only parallel adapters
+        # carry distributed-sharding information.
+        if hasattr(self.adapter, "sharded_state_dict"):
+            sharded_state_dict.update(
+                self.adapter.sharded_state_dict(
+                    f"{prefix}adapter.", sharded_offsets, metadata, **adapter_sharded_state_dict_kwargs
+                )
             )
-        )
         return sharded_state_dict
