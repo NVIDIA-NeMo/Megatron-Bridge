@@ -71,11 +71,32 @@ def test_verified_inference_accepts_canonical_bash_launcher():
         errors=errors,
         command_override=(
             "./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 "
-            "--task vlm-generation --prompt hello --max_new_tokens 1"
+            "--task legacy-full-prefix-generation --legacy-full-prefix --prompt hello --max_new_tokens 1"
         ),
     )
 
     assert errors == []
+
+
+def test_verified_inference_legacy_task_requires_full_prefix_flag():
+    module = _load_validator()
+    errors = []
+    item = {
+        "expected_result": 'The exact 1-token result produced completion "ok".',
+    }
+
+    module._validate_inference(
+        item,
+        item_name="inference",
+        status="verified",
+        errors=errors,
+        command_override=(
+            "./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 "
+            "--task legacy-full-prefix-generation --prompt hello --max_new_tokens 1"
+        ),
+    )
+
+    assert "/items/inference/command: legacy-full-prefix-generation requires --legacy-full-prefix" in errors
 
 
 def test_verified_inference_bash_launcher_requires_task_and_resources():

@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
 INFERENCE_TASKS = {
     "text-generation": Path("scripts/inference/text_generation.py"),
+    "legacy-full-prefix-generation": Path("examples/conversion/hf_to_megatron_generate_text.py"),
     "vlm-generation": Path("scripts/inference/vlm_generation.py"),
     "model-comparison": Path("examples/conversion/compare_hf_and_megatron/compare.py"),
 }
@@ -52,8 +53,11 @@ Example:
       --prompt "Megatron Bridge inference is" --max_new_tokens 32
 
 Use --task vlm-generation for multimodal generation or --task model-comparison
-for a one-step Hugging Face/Megatron comparison. Arguments not owned by this
-launcher are forwarded unchanged to the selected repository entry point.
+for a one-step Hugging Face/Megatron comparison. The
+legacy-full-prefix-generation task is a slow, non-optimized compatibility path
+for models that do not yet support cached inference and requires
+--legacy-full-prefix. Arguments not owned by this launcher are forwarded
+unchanged to the selected repository entry point.
 """,
     )
     execution = parser.add_argument_group("Execution")
@@ -174,6 +178,15 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
 
 
+def _validate_task_args(task_name: str, inference_args: list[str]) -> None:
+    """Validate arguments owned by a selected inference task."""
+    uses_legacy_full_prefix = "--legacy-full-prefix" in inference_args
+    if task_name == "legacy-full-prefix-generation" and not uses_legacy_full_prefix:
+        raise ValueError("--task legacy-full-prefix-generation requires --legacy-full-prefix.")
+    if task_name != "legacy-full-prefix-generation" and uses_legacy_full_prefix:
+        raise ValueError("--legacy-full-prefix requires --task legacy-full-prefix-generation.")
+
+
 def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
     """Build the srun-native NeMo-Run Slurm executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
@@ -238,6 +251,7 @@ def main(argv: list[str] | None = None) -> None:
     """Build and submit one Bridge inference experiment."""
     args, inference_args = parse_args(argv)
     _validate_args(args)
+    _validate_task_args(args.task, inference_args)
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
     executor = _build_executor(args, env_names, mounts)

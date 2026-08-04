@@ -27,8 +27,9 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
-# Placeholder until the public Nemotron 3.5 Nano repository is released.
-_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+# Public Nemotron 3.5 Lightning checkpoint used by the legacy Nano recipe API.
+_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 
 
 def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
@@ -187,7 +188,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
 
     # This mock-data, force-balanced benchmark uses lower-precision Adam moments
     # to make the measured selective-recompute and activation-offload stack fit.
@@ -235,7 +238,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,

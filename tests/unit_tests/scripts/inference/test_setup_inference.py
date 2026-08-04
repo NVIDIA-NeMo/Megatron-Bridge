@@ -124,6 +124,10 @@ def test_parser_forwards_model_checkpoint_prompt_and_engine_args():
     ("task_name", "expected_path"),
     [
         ("text-generation", "/opt/Megatron-Bridge/scripts/inference/text_generation.py"),
+        (
+            "legacy-full-prefix-generation",
+            "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py",
+        ),
         ("vlm-generation", "/opt/Megatron-Bridge/scripts/inference/vlm_generation.py"),
         (
             "model-comparison",
@@ -184,6 +188,20 @@ def test_resource_validation_rejects_invalid_values(options, message):
 
     with pytest.raises(ValueError, match=message):
         module._validate_args(args)
+
+
+@pytest.mark.parametrize(
+    ("task_name", "inference_args", "message"),
+    [
+        ("legacy-full-prefix-generation", [], "requires --legacy-full-prefix"),
+        ("text-generation", ["--legacy-full-prefix"], "requires --task legacy-full-prefix-generation"),
+    ],
+)
+def test_task_validation_rejects_inconsistent_legacy_full_prefix_usage(task_name, inference_args, message):
+    module = _load_setup_inference_module()
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_task_args(task_name, inference_args)
 
 
 def test_parse_env_deduplicates_names_and_rejects_values(monkeypatch):
@@ -305,6 +323,20 @@ def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
         "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
     }
     assert scripts[0].args == ["--prompt", "'benign; echo should-not-run'"]
+
+
+def test_build_task_preserves_legacy_full_prefix_argument():
+    module = _load_setup_inference_module()
+    scripts = []
+    module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
+
+    module._build_task(
+        "legacy-full-prefix-generation",
+        ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"],
+    )
+
+    assert scripts[0].path == "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py"
+    assert scripts[0].args == ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"]
 
 
 @pytest.mark.parametrize(

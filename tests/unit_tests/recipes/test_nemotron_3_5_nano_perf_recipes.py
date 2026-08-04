@@ -39,7 +39,8 @@ from megatron.bridge.training.config import ConfigContainer
 
 pytestmark = pytest.mark.unit
 
-_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 
 _H100_RECIPES = (
     nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config,
@@ -162,7 +163,9 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.hf_model_id == _NEMOTRON_3_5_NANO_MODEL_ID
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_NANO_MODEL_ID
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
 
 
 @pytest.mark.parametrize(
