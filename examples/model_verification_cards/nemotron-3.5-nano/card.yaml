@@ -1,4 +1,4 @@
-# Agent-readable model verification card for Nemotron 3.5 Nano.
+# Agent-readable model verification card for Nemotron 3.5 Lightning.
 # status: unverified | verified | unsupported | not_applicable
 
 title: nemotron_3_5_nano
@@ -11,10 +11,11 @@ summary: >
   while adopting the corresponding hardware performance recipe's execution
   stack. The H100 performance leaf uses BF16 Adam moments in a benchmark-only
   workload and is not convergence-comparable with FP32 optimizer-state runs.
-  Nemotron 3.5 Nano support verification covers conversion, inference, and
-  training on H100 and GB200. The
-  model.hf_id/--hf-model and model.hf_revision/--hf-revision values are
-  non-functional placeholders pending publication.
+  Nemotron 3.5 Lightning support verification covers conversion, inference,
+  and training on H100 and GB200. The legacy Nano recipe and verification-card
+  names remain stable compatibility identifiers. The evidence used the 26.08
+  release-candidate software stack; the environment records its corresponding
+  public 26.08 base container.
 verification_index:
   model_level:
     verified:
@@ -35,12 +36,12 @@ verification_index:
   fsdp:
     GB200: verified
 model:
-  hf_id: nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-  hf_revision: PUBLIC_HF_REVISION_PENDING
+  hf_id: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+  hf_revision: b3caaabed0263651a17dc1f2d4ce97e794f76c44  # pragma: allowlist secret
   architecture: NemotronHForCausalLM
   min_transformers_version: "5.8.1"
 verification_environment:
-  base_container: nvcr.io/nvidian/nemo:26.08.rc2
+  base_container: nvcr.io/nvidia/nemo:26.08
   bridge_commit: 619a2df1da9517b4408ea475b428bf2aba618c8f  # pragma: allowlist secret
 
 items:
@@ -50,8 +51,8 @@ items:
     bridge_commit: 7edd7c7f68bcdd2b30cbaff426ece2ee0da9deb5  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-      --hf-revision PUBLIC_HF_REVISION_PENDING
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
       --megatron-path work/model-verification/nemotron-3.5-nano/cpu-megatron
       --torch-dtype bfloat16
     last_verified: 2026-07-23
@@ -67,8 +68,8 @@ items:
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --tp 1 --pp 1 --ep 8 --etp 1
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-      --hf-revision PUBLIC_HF_REVISION_PENDING
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
       --megatron-path work/model-verification/nemotron-3.5-nano/imported-megatron
       --torch-dtype bfloat16
     last_verified: 2026-07-23
@@ -84,8 +85,8 @@ items:
     bridge_commit: 7edd7c7f68bcdd2b30cbaff426ece2ee0da9deb5  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-      --hf-revision PUBLIC_HF_REVISION_PENDING
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
       --megatron-path work/model-verification/nemotron-3.5-nano/cpu-megatron/iter_0000000
       --hf-path work/model-verification/nemotron-3.5-nano/cpu-hf-export
       --torch-dtype bfloat16
@@ -101,8 +102,8 @@ items:
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --tp 1 --pp 1 --ep 8 --etp 1
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-      --hf-revision PUBLIC_HF_REVISION_PENDING
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
       --megatron-path work/model-verification/nemotron-3.5-nano/imported-megatron/iter_0000000
       --hf-path work/model-verification/nemotron-3.5-nano/hf-export
       --torch-dtype bfloat16 --distributed-save
@@ -118,8 +119,8 @@ items:
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/compare_hf_and_megatron/compare.py
-      --hf_model_path nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-      --hf-revision PUBLIC_HF_REVISION_PENDING
+      --hf_model_path nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
       --megatron_model_path work/model-verification/nemotron-3.5-nano/imported-megatron/iter_0000000
       --tp 1 --pp 1 --ep 8 --etp 1
       --prompt "The capital of France is the city of"
@@ -136,8 +137,8 @@ items:
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/hf_to_megatron_generate_text.py
-      --hf_model_path nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-      --hf-revision PUBLIC_HF_REVISION_PENDING
+      --hf_model_path nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+      --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
       --megatron_model_path work/model-verification/nemotron-3.5-nano/imported-megatron/iter_0000000
       --tp 1 --pp 1 --ep 8 --etp 1
       --prompt "The capital of France is" --max_new_tokens 2
@@ -327,17 +328,17 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-nano-h100/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-nano-h100/sft-checkpoints
-      last_verified: 2026-07-30
+      last_verified: 2026-08-03
       metrics:
-        initial_loss: 0.4407026
-        final_loss: 0.2756689
-        last_10_steps_step_time_ms_avg: 9856.900
-        last_10_steps_model_tflops_per_gpu_avg: 79.470
+        initial_loss: 0.4406566
+        final_loss: 0.2757806
+        last_10_steps_step_time_ms_avg: 9887.800
+        last_10_steps_model_tflops_per_gpu_avg: 79.240
       expected_result: >
         Packed OpenMathInstruct-2 full SFT completes 100 finite-loss steps with
-        active MTP gradients, LM loss 0.4407026 -> 0.2756689, finite MTP-1
-        loss 0.7634735 -> 0.4076096, and no skipped or NaN iterations. Steps
-        91-100 average 9,856.900 ms / 79.470 TFLOP/s/GPU, and the complete
+        active MTP gradients, LM loss 0.4406566 -> 0.2757806, finite MTP-1
+        loss 0.7371141 -> 0.4133309, and no skipped or NaN iterations. Steps
+        91-100 average 9,887.800 ms / 79.240 TFLOP/s/GPU, and the complete
         reloadable full-model checkpoint is written at step 100.
 
     GB200:
@@ -354,21 +355,21 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-nano-gb200/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/sft-checkpoints
-      last_verified: 2026-07-30
+      last_verified: 2026-08-04
       metrics:
         initial_loss: 0.4407797
-        final_loss: 0.2760494
-        last_10_steps_step_time_ms_avg: 6697.760
-        last_10_steps_model_tflops_per_gpu_avg: 260.770
-        peak_allocated_memory_gib: 101.640
-        peak_reserved_memory_gib: 104.100
+        final_loss: 0.2762039
+        last_10_steps_step_time_ms_avg: 6795.830
+        last_10_steps_model_tflops_per_gpu_avg: 256.990
+        peak_allocated_memory_gib: 101.510
+        peak_reserved_memory_gib: 103.960
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
         packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss
         optimizer steps with active MTP gradients. LM loss is 0.4407797 ->
-        0.2760494, MTP-1 loss is 0.7641921 -> 0.4087451, and MTP-2 loss is
-        0.8651200 -> 0.4649736. Steps 91-100 average 6,697.760 ms / 260.770
-        TFLOP/s/GPU with 101.640 GiB peak allocated and 104.100 GiB peak
+        0.2762039, MTP-1 loss is 0.7373838 -> 0.4146959, and MTP-2 loss is
+        0.8092746 -> 0.4744196. Steps 91-100 average 6,795.830 ms / 256.990
+        TFLOP/s/GPU with 101.510 GiB peak allocated and 103.960 GiB peak
         reserved memory. No iteration is skipped or NaN, and the complete
         12-file reloadable full-model checkpoint is written at step 100.
 
@@ -381,8 +382,8 @@ items:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 2 --gpus-per-node 8 --tp 2 --pp 1 --ep 8 --etp 1
-          --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-          --hf-revision PUBLIC_HF_REVISION_PENDING
+          --hf-model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+          --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
           --megatron-path work/model-verification/nemotron-3.5-nano-h100/sft-checkpoints/iter_0000100
           --hf-path work/model-verification/nemotron-3.5-nano-h100/sft-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
@@ -392,7 +393,7 @@ items:
           --hf-model work/model-verification/nemotron-3.5-nano-h100/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-07-30
+      last_verified: 2026-08-03
       expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\"."
 
     GB200:
@@ -404,8 +405,8 @@ items:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 2 --gpus-per-node 4 --tp 1 --pp 1 --ep 8 --etp 1
-          --hf-model nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16
-          --hf-revision PUBLIC_HF_REVISION_PENDING
+          --hf-model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+          --hf-revision b3caaabed0263651a17dc1f2d4ce97e794f76c44
           --megatron-path work/model-verification/nemotron-3.5-nano-gb200/sft-checkpoints/iter_0000100
           --hf-path work/model-verification/nemotron-3.5-nano-gb200/sft-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
@@ -415,7 +416,7 @@ items:
           --hf-model work/model-verification/nemotron-3.5-nano-gb200/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-07-30
+      last_verified: 2026-08-04
       expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\"."
 
   sft_long_context:
@@ -449,17 +450,17 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-h100/long-sft-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-30
+      last_verified: 2026-08-03
       metrics:
         initial_loss: 0.4268321
-        final_loss: 0.2649768
-        last_10_steps_step_time_ms_avg: 40995.130
-        last_10_steps_model_tflops_per_gpu_avg: 188.280
+        final_loss: 0.2650192
+        last_10_steps_step_time_ms_avg: 40863.010
+        last_10_steps_model_tflops_per_gpu_avg: 188.950
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268321 -> 0.2649768 and MTP-1 loss 0.7375677 ->
-        0.4385137. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 40,995.130 ms / 188.280
+        steps with LM loss 0.4268321 -> 0.2650192 and MTP-1 loss 0.7322379 ->
+        0.4439273. All 100 steps have finite LM/MTP losses and no skipped or
+        NaN iterations. Steps 91-100 average 40,863.010 ms / 188.950
         TFLOP/s/GPU. Complete step-50 and step-100 checkpoints each contain 20
         files, distributed metadata, saved run configuration and training
         state, with latest marker 100.
@@ -495,19 +496,20 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/long-sft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-30
+      last_verified: 2026-08-04
       metrics:
         initial_loss: 0.4268995
-        final_loss: 0.2649511
-        last_10_steps_step_time_ms_avg: 100358.390
-        last_10_steps_model_tflops_per_gpu_avg: 153.810
+        final_loss: 0.2649925
+        last_10_steps_step_time_ms_avg: 129692.530
+        last_10_steps_model_tflops_per_gpu_avg: 119.030
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268995 -> 0.2649511 and MTP-1 loss 0.7376469 ->
-        0.4384451. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. The complete step-100 checkpoint has distributed
-        metadata, 12 files, a latest marker of 100, and all four metrics
-        recorded.
+        steps with LM loss 0.4268995 -> 0.2649925 and MTP-1 loss 0.7322624 ->
+        0.4439029. All 100 steps have finite LM/MTP losses and no skipped or
+        NaN iterations. Steps 91-100 average 129,692.530 ms / 119.030
+        TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata,
+        saved run configuration and training state, 12 files, and a latest
+        marker of 100.
 
   peft:
     H100:
@@ -534,16 +536,16 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-h100/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-30
+      last_verified: 2026-08-03
       metrics:
-        initial_loss: 0.4406879
-        final_loss: 0.2856177
-        last_10_steps_step_time_ms_avg: 16927.070
-        last_10_steps_model_tflops_per_gpu_avg: 92.650
+        initial_loss: 0.4406696
+        final_loss: 0.2854756
+        last_10_steps_step_time_ms_avg: 16900.360
+        last_10_steps_model_tflops_per_gpu_avg: 92.890
       expected_result: >
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
-        steps with adapters on the MTP layers, LM loss 0.4406879 -> 0.2856177,
-        finite MTP-1 loss 0.7634883 -> 0.4294895, and no skipped or NaN
+        steps with adapters on the MTP layers, LM loss 0.4406696 -> 0.2854756,
+        finite MTP-1 loss 0.7370828 -> 0.4362708, and no skipped or NaN
         iterations. The complete adapter checkpoint is written at step 100 and
         reloads over the pinned base checkpoint at step 100.
 
@@ -572,19 +574,19 @@ items:
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-30
+      last_verified: 2026-08-04
       metrics:
-        initial_loss: 0.4405894
-        final_loss: 0.2855471
-        last_10_steps_step_time_ms_avg: 19163.540
-        last_10_steps_model_tflops_per_gpu_avg: 82.080
+        initial_loss: 0.4406088
+        final_loss: 0.2855029
+        last_10_steps_step_time_ms_avg: 19230.400
+        last_10_steps_model_tflops_per_gpu_avg: 81.780
       expected_result: >
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
         steps with 48 rank-local adapter attachment records covering MTP
-        attention, expert, and shared-expert layers, finite MTP losses, no
-        skipped or NaN iterations, and all four metrics recorded. The complete
-        adapter checkpoint is written at step 100 and reloads over the pinned
-        base checkpoint at step 100.
+        attention, expert, and shared-expert layers, LM loss 0.4406088 ->
+        0.2855029, finite MTP-1 loss 0.7371238 -> 0.4362065, and no skipped or
+        NaN iterations. The complete adapter checkpoint is written at step 100
+        and reloads over the pinned base checkpoint at step 100.
 
   checkpoint_resume:
     H100:
