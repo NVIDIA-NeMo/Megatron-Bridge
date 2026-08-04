@@ -357,8 +357,8 @@ class TestCompareMaskHandling:
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
 
-    def test_hf_loader_retries_unset_transformers_tp_plan_through_cpu(self):
-        """Retry the Transformers allocator bug without weakening other TypeErrors."""
+    def test_hf_loader_uses_one_device_without_hf_tensor_parallelism(self):
+        """Load the HF reference on one device without a Transformers TP plan."""
         args = compare.build_parser().parse_args(
             [
                 "--hf_model_path",
@@ -368,27 +368,24 @@ class TestCompareMaskHandling:
             ]
         )
         loaded_model = MagicMock()
-        tp_plan_error = TypeError("object of type 'NoneType' has no len()")
-
         model_class = MagicMock()
         model_class.__name__ = "MockModel"
-        model_class.from_pretrained.side_effect = [tp_plan_error, loaded_model]
+        model_class.from_pretrained.return_value = loaded_model
         loaded_model.to.return_value = loaded_model
         loaded_model.eval.return_value = loaded_model
 
         with (
             patch.object(compare, "_is_rank_0", return_value=True),
             patch.object(compare, "get_model_class", return_value=model_class),
-            patch.object(compare, "_is_transformers_none_tp_plan_error", return_value=True),
             patch.object(compare, "is_safe_repo", return_value=True),
             patch.object(compare, "print_rank_0"),
-            patch.object(compare.gc, "collect"),
-            patch.object(compare.torch.cuda, "empty_cache"),
         ):
             result = compare._load_hf_model(args, is_vl_model=False)
 
         assert result is loaded_model
-        assert model_class.from_pretrained.call_count == 2
-        assert model_class.from_pretrained.call_args_list[0].kwargs["device_map"] == "cuda"
-        assert "device_map" not in model_class.from_pretrained.call_args_list[1].kwargs
+        model_class.from_pretrained.assert_called_once()
+        load_kwargs = model_class.from_pretrained.call_args.kwargs
+        assert "device_map" not in load_kwargs
+        assert "tp_plan" not in load_kwargs
+        assert "tp_size" not in load_kwargs
         loaded_model.to.assert_called_once_with("cuda")

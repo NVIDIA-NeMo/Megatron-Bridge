@@ -483,24 +483,8 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         return input_ids, None, None, None
 
 
-def _is_transformers_none_tp_plan_error(error: TypeError) -> bool:
-    """Return whether Transformers failed allocator warmup on an unset TP plan."""
-    if str(error) != "object of type 'NoneType' has no len()":
-        return False
-
-    traceback = error.__traceback__
-    while traceback is not None:
-        frame = traceback.tb_frame
-        if frame.f_code.co_name == "get_total_byte_count" and frame.f_globals.get("__name__") == (
-            "transformers.modeling_utils"
-        ):
-            return True
-        traceback = traceback.tb_next
-    return False
-
-
 def _load_hf_model(args, is_vl_model: bool):
-    """Load HuggingFace model on rank 0.
+    """Load an unsharded HuggingFace model on rank 0.
 
     Args:
         args: Command line arguments.
@@ -522,24 +506,7 @@ def _load_hf_model(args, is_vl_model: bool):
         ),
         **_hf_revision_kwargs(args.hf_revision),
     }
-    try:
-        hf_model = model_class.from_pretrained(
-            args.hf_model_path,
-            device_map=args.hf_device,
-            **load_kwargs,
-        )
-    except TypeError as error:
-        if not _is_transformers_none_tp_plan_error(error):
-            raise
-
-        print_rank_0(
-            "HuggingFace model has an unset tensor-parallel plan; retrying through CPU before moving it to CUDA."
-        )
-        gc.collect()
-        torch.cuda.empty_cache()
-        hf_model = model_class.from_pretrained(args.hf_model_path, **load_kwargs).to(args.hf_device)
-
-    hf_model = hf_model.eval()
+    hf_model = model_class.from_pretrained(args.hf_model_path, **load_kwargs).to(args.hf_device).eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
 
     # Register debug hooks if enabled
@@ -584,9 +551,11 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     if _is_rank_0():
         print_rank_0("Loading exported HF model for comparison...")
         model_class = get_model_class(args.model_class, is_vl_model)
-        hf_model = model_class.from_pretrained(
-            save_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
-        ).eval()
+        hf_model = (
+            model_class.from_pretrained(save_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
+            .to(args.hf_device)
+            .eval()
+        )
         if args.enable_debug_hooks:
             print_rank_0("Registering debug hooks for exported HF model...")
             debugger.register_hooks(hf_model, file_prefix="hf_debug_")
