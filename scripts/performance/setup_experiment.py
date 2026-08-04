@@ -36,7 +36,6 @@ try:
         _kubeflow_numa_binding_script,
         kubeflow_executor,
         slurm_executor,
-        xcalibur_executor,
     )
     from utils.utils import configure_slurm_gpu_tuning, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
@@ -46,7 +45,6 @@ except (ImportError, ModuleNotFoundError):
         _kubeflow_numa_binding_script,
         kubeflow_executor,
         slurm_executor,
-        xcalibur_executor,
     )
     from .utils.utils import configure_slurm_gpu_tuning, select_config_variant_interactive
 
@@ -714,6 +712,10 @@ def main(
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
     elif xcalibur_namespace is not None:
+        try:
+            from utils.executors import xcalibur_executor
+        except ImportError:
+            from .utils.executors import xcalibur_executor
         executor = xcalibur_executor(
             namespace=xcalibur_namespace,
             image=container_image,
