@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for Nemotron 3.5 Nano performance recipe exports."""
+"""Unit tests for Nemotron 3.5 Lightning performance recipe exports."""
 
 import importlib
 from collections.abc import Callable
@@ -22,12 +22,12 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.nemotronh import (
-    nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config,
-    nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config,
-    nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config,
-    nemotron_3_5_nano_pretrain_8gpu_gb200_nvfp4_config,
-    nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config,
-    nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
+    nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
@@ -39,19 +39,19 @@ from megatron.bridge.training.config import ConfigContainer
 
 pytestmark = pytest.mark.unit
 
-_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
+_NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 
 _H100_RECIPES = (
-    nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config,
-    nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config,
+    nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config,
 )
 _GB200_RECIPES = (
-    nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config,
-    nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config,
-    nemotron_3_5_nano_pretrain_8gpu_gb200_nvfp4_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
 )
-_GB200_FSDP_RECIPES = (nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config,)
+_GB200_FSDP_RECIPES = (nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,)
 _NEMOTRON_3_RECIPES = (
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
@@ -61,23 +61,23 @@ _NEMOTRON_3_RECIPES = (
 )
 _NEMOTRON_3_5_BASE_RECIPE_PAIRS = (
     (
-        nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config,
+        nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config,
         nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     ),
     (
-        nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config,
+        nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config,
         nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
     ),
     (
-        nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config,
+        nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
         nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     ),
     (
-        nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config,
+        nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
         nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
     ),
     (
-        nemotron_3_5_nano_pretrain_8gpu_gb200_nvfp4_config,
+        nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
         nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
     ),
 )
@@ -101,27 +101,27 @@ _NEMOTRON_NANO_PERF_FACTORIES = (
     ("megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh", "nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config"),
     (
         "megatron.bridge.perf_recipes.nemotronh.h100.nemotronh",
-        "nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config",
+        "nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config",
     ),
     (
         "megatron.bridge.perf_recipes.nemotronh.h100.nemotronh",
-        "nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config",
+        "nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config",
     ),
     (
         "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
-        "nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config",
     ),
     (
         "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
-        "nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config",
     ),
     (
         "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
-        "nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config",
     ),
     (
         "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
-        "nemotron_3_5_nano_pretrain_8gpu_gb200_nvfp4_config",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config",
     ),
 )
 
@@ -162,10 +162,10 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.mtp_loss_scaling_factor == 0.3
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.hf_model_id == _NEMOTRON_3_5_NANO_MODEL_ID
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
-    assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_NANO_MODEL_ID
-    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    assert cfg.model.hf_model_id == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
 
 
 @pytest.mark.parametrize(
@@ -181,7 +181,7 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
-    if recipe_factory is not nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config:
+    if recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
         assert cfg.env_vars == base_cfg.env_vars
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
     assert cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
@@ -190,11 +190,13 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
 
 @pytest.mark.parametrize("recipe_factory", _H100_RECIPES, ids=lambda recipe: recipe.__name__)
 def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]) -> None:
-    """H100 Nemotron 3.5 variants retain the existing Nano performance topology."""
+    """H100 Nemotron 3.5 Lightning variants retain the established performance topology."""
     cfg = recipe_factory()
 
     assert cfg.model.expert_model_parallel_size == 8
-    expected_global_batch_size = 512 if recipe_factory is nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config else 1024
+    expected_global_batch_size = (
+        512 if recipe_factory is nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config else 1024
+    )
     assert cfg.train.global_batch_size == expected_global_batch_size
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.context_parallel_size == 1
@@ -207,7 +209,7 @@ def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]
 
 def test_h100_bf16_perf_recipe_uses_measured_benchmark_tuning() -> None:
     """The H100 BF16 benchmark preserves the measured memory and HybridEP tuning."""
-    cfg = nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config()
+    cfg = nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config()
 
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.optimizer.main_params_dtype == torch.float32
@@ -233,7 +235,7 @@ def test_h100_bf16_perf_recipe_uses_measured_benchmark_tuning() -> None:
 
 def test_h100_fp8_perf_recipe_retains_fp32_optimizer_state() -> None:
     """The unrelated H100 FP8 benchmark retains its existing optimizer and dispatcher policy."""
-    cfg = nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config()
+    cfg = nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config()
 
     assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.exp_avg_dtype == torch.float32
@@ -244,8 +246,8 @@ def test_h100_fp8_perf_recipe_retains_fp32_optimizer_state() -> None:
 
 def test_bf16_perf_recipes_share_training_workload() -> None:
     """H100 and GB200 BF16 recipes otherwise share the same model workload."""
-    h100_cfg = nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config()
-    gb200_cfg = nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config()
+    h100_cfg = nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config()
+    gb200_cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config()
 
     gb200_cfg.train.micro_batch_size = h100_cfg.train.micro_batch_size
     gb200_cfg.model.recompute_granularity = h100_cfg.model.recompute_granularity
@@ -271,7 +273,7 @@ def test_bf16_perf_recipes_share_training_workload() -> None:
 
 @pytest.mark.parametrize("recipe_factory", _GB200_RECIPES, ids=lambda recipe: recipe.__name__)
 def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]) -> None:
-    """GB200 Nemotron 3.5 variants retain the existing Nano performance topology."""
+    """GB200 Nemotron 3.5 Lightning variants retain the established performance topology."""
     cfg = recipe_factory()
 
     assert cfg.model.expert_model_parallel_size == 8
@@ -287,7 +289,7 @@ def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
 
 def test_gb200_fsdp_perf_recipe_defaults() -> None:
     """The GB200 FSDP variant retains its measured 8-GPU performance settings."""
-    cfg = nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config()
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config()
 
     assert cfg.train.global_batch_size == 384
     assert cfg.train.micro_batch_size == 3

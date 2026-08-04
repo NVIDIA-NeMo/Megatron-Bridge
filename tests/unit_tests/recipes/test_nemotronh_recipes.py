@@ -31,7 +31,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
-_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
+_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 _NEMOTRONH_RECIPE_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in getattr(_nemotronh_module, "__all__", [])
@@ -39,11 +39,11 @@ _NEMOTRONH_RECIPE_FUNCS = [
 ]
 
 
-def test_nemotron_3_5_nano_library_recipe_names_are_hardware_agnostic():
+def test_nemotron_3_5_lightning_library_recipe_names_are_hardware_agnostic():
     """Library names describe behavior and do not collide with performance recipes."""
     perf_module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
-    library_names = {name for name in _nemotronh_module.__all__ if name.startswith("nemotron_3_5_nano_")}
-    perf_names = {name for name in dir(perf_module) if name.startswith("nemotron_3_5_nano_")}
+    library_names = {name for name in _nemotronh_module.__all__ if name.startswith("nemotron_3_5_lightning_")}
+    perf_names = {name for name in dir(perf_module) if name.startswith("nemotron_3_5_lightning_")}
 
     assert all(re.search(r"(?:\d+gpu|h100|b200|b300|gb200|gb300)", name) is None for name in library_names)
     assert library_names.isdisjoint(perf_names)
@@ -160,12 +160,12 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     assert cfg.model.vocab_size is None
 
 
-def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
+def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_policy():
     """The H100 convergence recipe keeps safety checks while using the measured fast path."""
-    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_pretrain_config
+    from megatron.bridge.recipes.nemotronh import nemotron_3_5_lightning_pretrain_config
     from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
-    cfg = nemotron_3_5_nano_pretrain_config()
+    cfg = nemotron_3_5_lightning_pretrain_config()
 
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
@@ -202,19 +202,19 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
 
 
-def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
+def test_nemotron_3_5_lightning_8k_convergence_recipe_uses_perf_execution_policy():
     """The 8K convergence recipe keeps safety checks while using the measured fast path."""
-    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_pretrain_8k_config
+    from megatron.bridge.recipes.nemotronh import nemotron_3_5_lightning_pretrain_8k_config
     from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
-    cfg = nemotron_3_5_nano_pretrain_8k_config()
+    cfg = nemotron_3_5_lightning_pretrain_8k_config()
 
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
@@ -246,22 +246,22 @@ def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
 
 
-def test_nemotron_3_5_nano_h100_and_gb200_differ_only_in_execution_policy():
+def test_nemotron_3_5_lightning_h100_and_gb200_differ_only_in_execution_policy():
     """H100 and GB200 must share one training contract."""
     from megatron.bridge.recipes.nemotronh import (
-        nemotron_3_5_nano_pretrain_8k_config,
-        nemotron_3_5_nano_pretrain_config,
+        nemotron_3_5_lightning_pretrain_8k_config,
+        nemotron_3_5_lightning_pretrain_config,
     )
 
-    h100 = nemotron_3_5_nano_pretrain_config()
-    gb200 = nemotron_3_5_nano_pretrain_8k_config()
+    h100 = nemotron_3_5_lightning_pretrain_config()
+    gb200 = nemotron_3_5_lightning_pretrain_8k_config()
 
     # Normalize the explicit GB200 execution/performance overrides. Any other
     # difference, including a convergence-setting drift, must fail this test.
@@ -282,16 +282,16 @@ def test_nemotron_3_5_nano_h100_and_gb200_differ_only_in_execution_policy():
     assert gb200 == h100
 
 
-def test_nemotron_3_5_nano_8k_fsdp_recipe_preserves_convergence_contract():
+def test_nemotron_3_5_lightning_8k_fsdp_recipe_preserves_convergence_contract():
     """The BF16 FSDP recipe changes only FSDP-required execution settings."""
     from megatron.bridge.recipes.nemotronh import (
-        nemotron_3_5_nano_pretrain_8k_config,
-        nemotron_3_5_nano_pretrain_8k_fsdp_config,
+        nemotron_3_5_lightning_pretrain_8k_config,
+        nemotron_3_5_lightning_pretrain_8k_fsdp_config,
     )
     from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
-    reference = nemotron_3_5_nano_pretrain_8k_config()
-    cfg = nemotron_3_5_nano_pretrain_8k_fsdp_config()
+    reference = nemotron_3_5_lightning_pretrain_8k_config()
+    cfg = nemotron_3_5_lightning_pretrain_8k_fsdp_config()
 
     assert cfg.model.seq_length == reference.model.seq_length == 8192
     assert cfg.dataset.seq_length == reference.dataset.seq_length == 8192
@@ -320,9 +320,9 @@ def test_nemotron_3_5_nano_8k_fsdp_recipe_preserves_convergence_contract():
     assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
 
 
-def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
+def test_nemotron_3_5_lightning_openmath_sft_tp1_recipe_uses_tuned_defaults():
     """The TP1 packed SFT recipe owns the measured topology and run contract."""
-    cfg = _nemotronh_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config()
+    cfg = _nemotronh_module.nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config()
 
     assert cfg.model.seq_length == 4096
     assert cfg.model.tensor_model_parallel_size == 1
@@ -335,8 +335,8 @@ def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
     assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_NANO_MODEL_REVISION
-    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.hf_dataset.dataset_name == "openmathinstruct2"
@@ -363,15 +363,15 @@ def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.env_vars["USE_MNNVL"] == 1
 
 
-def test_nemotron_3_5_nano_h100_and_gb200_sft_differ_only_in_execution_policy():
+def test_nemotron_3_5_lightning_h100_and_gb200_sft_differ_only_in_execution_policy():
     """H100 and GB200 packed SFT must share one training contract."""
     from megatron.bridge.recipes.nemotronh import (
-        nemotron_3_5_nano_sft_openmathinstruct2_packed_config,
-        nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config,
+        nemotron_3_5_lightning_sft_openmathinstruct2_packed_config,
+        nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config,
     )
 
-    h100 = nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
-    gb200 = nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config()
+    h100 = nemotron_3_5_lightning_sft_openmathinstruct2_packed_config()
+    gb200 = nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config()
 
     # Remove the explicit GB200 execution/performance model overrides. Any
     # other difference, including a convergence-setting drift, must fail.

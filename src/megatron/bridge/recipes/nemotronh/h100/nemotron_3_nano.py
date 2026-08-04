@@ -32,9 +32,9 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
-# Public Nemotron 3.5 Lightning checkpoint used by the legacy Nano recipe API.
-_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
+# Public Nemotron 3.5 Lightning checkpoint used by the Lightning recipe API.
+_NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 _OPENMATHINSTRUCT2_REVISION = "469216e3f46f4dacf476b382e192485ea51a143e"  # pragma: allowlist secret
 
 
@@ -253,8 +253,8 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
-    """Return the Nemotron 3.5 Nano BF16 pretraining config."""
+def nemotron_3_5_lightning_pretrain_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Lightning BF16 pretraining config."""
     cfg = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
     cfg.train.global_batch_size = 512
     # Split the 8K sequence across two ranks so each MTP head materializes only
@@ -269,10 +269,10 @@ def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
-    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     return cfg
 
 
@@ -408,24 +408,24 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_sft_config() -> ConfigContainer:
-    """Return a full SFT config for Nemotron 3.5 Nano."""
+def nemotron_3_5_lightning_sft_config() -> ConfigContainer:
+    """Return a full SFT config for Nemotron 3.5 Lightning."""
     cfg = nemotron_3_nano_sft_8gpu_h100_bf16_config()
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
-    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     return cfg
 
 
-def nemotron_3_5_nano_sft_openmathinstruct2_packed_config() -> ConfigContainer:
+def nemotron_3_5_lightning_sft_openmathinstruct2_packed_config() -> ConfigContainer:
     """Return the verified 4K packed OpenMathInstruct-2 SFT config."""
-    cfg = nemotron_3_5_nano_sft_config()
+    cfg = nemotron_3_5_lightning_sft_config()
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 2
@@ -444,7 +444,7 @@ def nemotron_3_5_nano_sft_openmathinstruct2_packed_config() -> ConfigContainer:
     )
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _OPENMATHINSTRUCT2_REVISION}
     if cfg.dataset.offline_packing_specs is not None:
-        cfg.dataset.offline_packing_specs.tokenizer_model_name = _NEMOTRON_3_5_NANO_MODEL_ID
+        cfg.dataset.offline_packing_specs.tokenizer_model_name = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
 
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 128
@@ -644,26 +644,26 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora")
     return cfg
 
 
-def nemotron_3_5_nano_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Return a PEFT config for Nemotron 3.5 Nano."""
+def nemotron_3_5_lightning_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Nemotron 3.5 Lightning."""
     cfg = nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme)
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
-    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     return cfg
 
 
 __all__ = [
-    "nemotron_3_5_nano_peft_config",
-    "nemotron_3_5_nano_pretrain_config",
-    "nemotron_3_5_nano_sft_config",
-    "nemotron_3_5_nano_sft_openmathinstruct2_packed_config",
+    "nemotron_3_5_lightning_peft_config",
+    "nemotron_3_5_lightning_pretrain_config",
+    "nemotron_3_5_lightning_sft_config",
+    "nemotron_3_5_lightning_sft_openmathinstruct2_packed_config",
     "nemotron_3_nano_peft_8gpu_h100_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_h100_bf16_config",
     "nemotron_3_nano_sft_8gpu_h100_bf16_config",

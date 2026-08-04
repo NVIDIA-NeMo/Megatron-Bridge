@@ -30,9 +30,9 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
-# Public Nemotron 3.5 Lightning checkpoint used by the legacy Nano recipe API.
-_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-_NEMOTRON_3_5_NANO_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
+# Public Nemotron 3.5 Lightning checkpoint used by the Lightning recipe API.
+_NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 
 
 def nemotronh_56b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
@@ -368,18 +368,18 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Nano pretrain: 8× GB200, BF16."""
+def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, BF16."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
-    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -399,18 +399,18 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3.5 Nano pretrain: 8× GB200, MXFP8."""
+def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config()
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
-    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -430,9 +430,9 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config() -> ConfigContainer:
-    """Nemotron 3.5 Nano pretrain: 8× GB200, MXFP8, Megatron FSDP."""
-    cfg = nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config()
+def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8, Megatron FSDP."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config()
 
     # FSDP reduces the model-state footprint enough to use the larger measured
     # microbatch. Megatron FSDP registers module hooks that Transformer Engine
@@ -475,18 +475,18 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config() -> ConfigContainer
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3.5 Nano pretrain: 8× GB200, NVFP4."""
+def nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, NVFP4."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config()
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.model.hf_model_revision = _NEMOTRON_3_5_NANO_MODEL_REVISION
-    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_NANO_MODEL_REVISION}
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
