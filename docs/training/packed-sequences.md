@@ -118,6 +118,46 @@ The durable constraints for packed sequences in Bridge are:
   dispatch and trims the padding after combine
 - CUDA-graph-friendly packed metadata requires additional padding constraints
 
+## Blend Multiple Packed Parquet Sources
+
+Use `packed_train_data_blend` to sample multiple independently packed
+Parquet sources with explicit weights. Each source may be a single file, a
+directory, or a glob; files resolved within one source are treated as shards
+of that source.
+
+```python
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.packing import PackedSequenceSpecs
+
+cfg.dataset = GPTSFTDatasetConfig(
+    seq_length=4096,
+    max_train_samples=1_000_000,
+    enable_offline_packing=True,
+    offline_packing_specs=PackedSequenceSpecs(
+        packed_sequence_size=4096,
+        packed_train_data_blend=(
+            [
+                "/data/code/shard-*.idx.parquet",
+                "/data/math/",
+                "/data/chat/training.idx.parquet",
+            ],
+            [0.50, 0.30, 0.20],
+        ),
+    ),
+    do_validation=False,
+    do_test=False,
+)
+```
+
+The weights are normalized, so they do not need to sum to one. Set
+`max_train_samples` to control the blend length and permit deterministic
+over- or under-sampling. If it is unset, the blend length is the sum of the
+source lengths. `packed_train_data_path` and `packed_train_data_blend` are
+mutually exclusive. Weighted blending supports packed Parquet sources only;
+the deprecated NumPy packed format is not supported. A standalone blend must
+disable validation and test; set `dataset_root` as well when those splits
+should be built from local files.
+
 Model-family support is not universal. Some families and recipe paths explicitly
 opt out of packed sequences or related packing modes.
 
