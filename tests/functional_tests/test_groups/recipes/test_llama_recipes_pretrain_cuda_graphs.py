@@ -77,10 +77,11 @@ class TestLlamaCudaGraphRecipes:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("config_func,recipe_name,config_overrides", LLAMA_PRETRAIN_RECIPES)
-    def test_llama_pretrain_recipes(self, config_func, recipe_name, config_overrides):
+    def test_llama_pretrain_recipes(self, config_func, recipe_name, config_overrides, tmp_path):
         """Functional test for LLaMA recipes with appropriate parallelism configurations."""
         run_pretrain_recipe_perf_test(
             config_func,
             recipe_name,
             config_overrides=config_overrides,
+            tmp_path=tmp_path,
         )

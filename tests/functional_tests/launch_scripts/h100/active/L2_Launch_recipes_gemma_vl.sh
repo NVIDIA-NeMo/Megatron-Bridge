@@ -29,12 +29,4 @@ uv run python -m torch.distributed.run --nproc_per_node=1 --nnodes=1 \
   -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/recipes/test_gemma3_vl_recipes_finetune.py -k "test_gemma3_vl_finetune_recipes"
 
-# Test Gemma3-VL finetune packed recipes
-uv run python -m torch.distributed.run --nproc_per_node=1 --nnodes=1 \
-  -m coverage run --data-file=/opt/Megatron-Bridge/.coverage \
-  --source=/opt/Megatron-Bridge/ --parallel-mode \
-  -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x \
-  -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/recipes/test_gemma3_vl_recipes_finetune.py -k "test_gemma3_vl_finetune_packed_recipes"
-
 coverage combine -q

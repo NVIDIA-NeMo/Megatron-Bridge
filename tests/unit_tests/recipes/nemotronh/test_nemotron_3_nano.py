@@ -42,6 +42,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
 
 @pytest.mark.unit
@@ -105,9 +106,16 @@ class TestNemotron3NanoPretrain:
         assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
         assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
-        assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
+        assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16")
         assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.tokenizer.hf_tokenizer_kwargs == {"revision": recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION}
+        assert config.train.global_batch_size == 512
+        assert config.model.context_parallel_size == 2
+        assert config.model.cp_comm_type == "p2p"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn"]
+        assert cuda_graph_module_names(config.model) == ["mamba"]
 
     def test_pretrain_recipes_do_not_expose_mtp_flag(self):
         """Nemotron 3 and 3.5 pretraining use distinct parameterless factories."""
@@ -286,6 +294,11 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_loss_scaling_factor == (0.3 if mtp_num_layers else 0.1)
         assert config.model.hf_model_id == tokenizer_model
         assert config.tokenizer.tokenizer_model == tokenizer_model
+        if mtp_num_layers:
+            assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION
+            assert config.tokenizer.hf_tokenizer_kwargs == {
+                "revision": recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION
+            }
 
     @pytest.mark.parametrize(
         ("recipe_factory", "base_factory_name", "recipe_kwargs", "base_args"),
@@ -327,7 +340,9 @@ class TestNemotron3NanoSft:
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.tokenizer.hf_tokenizer_kwargs == {"revision": recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION}
 
     def test_finetuning_recipes_do_not_expose_model_id(self):
         """Model selection is fixed by separate Nemotron 3 and 3.5 factories."""
@@ -353,6 +368,8 @@ class TestNemotron3NanoSft:
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.model.hf_model_revision == recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION
+        assert config.tokenizer.hf_tokenizer_kwargs == {"revision": recipe_module._NEMOTRON_3_5_NANO_MODEL_REVISION}
         assert config.model.tensor_model_parallel_size == 2
         assert config.model.sequence_parallel is True
         assert config.model.expert_tensor_parallel_size == 1

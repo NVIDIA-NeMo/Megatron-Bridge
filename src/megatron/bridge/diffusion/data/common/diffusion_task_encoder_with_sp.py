@@ -22,8 +22,9 @@ from megatron.energon.task_encoder.base import stateless
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 
 from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
+from megatron.bridge.data.packing.algorithms import first_fit_decreasing
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
-from megatron.bridge.diffusion.data.common.sequence_packing_utils import first_fit_decreasing
+from megatron.bridge.diffusion.data.common.sequence_packing_utils import packing_length
 
 
 @stateless
@@ -82,7 +83,9 @@ class DiffusionTaskEncoderWithSequencePacking(DefaultTaskEncoder, ABC):  # noqa:
         """
         Selects sequences to pack for mixed image-video training.
         """
-        results = first_fit_decreasing(samples, self.seq_length)
+        # Pack the live sample objects, keying capacity on each sample's (padded) query
+        # sequence length via the shared bin-packing algorithm used by LLM SFT packing.
+        results = first_fit_decreasing(samples, self.seq_length, item_lengths=[packing_length(s) for s in samples])
         random.shuffle(results)
         return results
 

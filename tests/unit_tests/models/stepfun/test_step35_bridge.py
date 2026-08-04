@@ -742,7 +742,7 @@ class TestStackedExpertGatedMLPMapping:
     def test_grouped_export_accumulates_gate_and_up_separately(self, mock_ep_size):
         mock_ep_size.return_value = 1
         model_config = SimpleNamespace(num_moe_experts=2)
-        mapping = SimpleNamespace(is_grouped_export=True)
+        mapping = SimpleNamespace(is_grouped_export=True, ep_size=1)
         buffers = {}
 
         task0 = SimpleNamespace(

@@ -55,7 +55,7 @@ class ModelConfig(_MegatronModelConfig):
             if not isinstance(config_cls, type) or not is_dataclass(config_cls):
                 raise ValueError(f"Cannot deserialize: target '{target}' did not resolve to a dataclass type")
 
-            valid_fields = {f.name for f in dataclass_fields(config_cls)}
+            valid_fields = {f.name for f in dataclass_fields(config_cls) if f.init}
             filtered_data = {k: v for k, v in subdata.items() if k in valid_fields and not k.startswith("_")}
 
             subconfigs = {}

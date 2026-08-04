@@ -94,6 +94,8 @@ from megatron.bridge.models.hybrid import (
 )
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
+    KimiK3Bridge,
+    KimiK3ModelProvider,
 )
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
@@ -170,6 +172,8 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLBridge,
     Qwen25VLModel,
     Qwen25VLModelProvider,
+    Qwen35TokenClassificationBridge,
+    Qwen35TokenClassificationModelProvider,
     Qwen35VLBridge,
     Qwen35VLModelProvider,
     Qwen35VLMoEBridge,
@@ -177,6 +181,7 @@ from megatron.bridge.models.qwen_vl import (
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLBridge,
+    Qwen3VLForTokenClassification,
     Qwen3VLModel,
     Qwen3VLModelProvider,
     Qwen3VLMoEBridge,
@@ -235,6 +240,8 @@ __all__ = [
     "HybridModelConfig",
     "HybridModelProvider",
     "KimiK2Bridge",
+    "KimiK3Bridge",
+    "KimiK3ModelProvider",
     "KimiK25VLModel",
     "KimiK25VLBridge",
     "KimiK25VLModelProvider",
@@ -269,11 +276,14 @@ __all__ = [
     "Qwen25VLBridge",
     "Qwen25VLModelProvider",
     "Qwen3VLModel",
+    "Qwen3VLForTokenClassification",
     "Qwen3VLModelProvider",
     "Qwen3VLMoEModelProvider",
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
     "Qwen35VLBridge",
+    "Qwen35TokenClassificationBridge",
+    "Qwen35TokenClassificationModelProvider",
     "Qwen35VLModelProvider",
     "Qwen35VLMoEBridge",
     "Qwen35VLMoEModelProvider",

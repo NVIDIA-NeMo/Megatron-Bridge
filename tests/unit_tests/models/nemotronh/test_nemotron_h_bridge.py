@@ -368,14 +368,14 @@ class TestNemotronHBridge:
     @pytest.mark.parametrize("num_nextn_predict_layers", [None, 0])
     def test_provider_bridge_disables_mtp_naturally(
         self,
-        nemotron_nano_v2_config_dict,
+        active_nemotronh_config_dict,
         num_nextn_predict_layers,
     ):
         """HF configs without enabled MTP produce a normal non-MTP provider."""
         from types import SimpleNamespace
 
         config_dict = {
-            **nemotron_nano_v2_config_dict,
+            **active_nemotronh_config_dict,
             "n_routed_experts": 0,
             "mtp_hybrid_override_pattern": "*E",
             "keep_mtp_spec_in_bf16": True,
@@ -393,14 +393,14 @@ class TestNemotronHBridge:
         assert result.mtp_use_repeated_layer is False
         assert result.keep_mtp_spec_in_bf16 is False
 
-    def test_provider_bridge_rejects_incomplete_mtp_config(self, nemotron_nano_v2_config_dict):
+    def test_provider_bridge_rejects_incomplete_mtp_config(self, active_nemotronh_config_dict):
         """An enabled HF MTP config must describe its hybrid block."""
         from types import SimpleNamespace
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = SimpleNamespace(
             **{
-                **nemotron_nano_v2_config_dict,
+                **active_nemotronh_config_dict,
                 "n_routed_experts": 0,
                 "num_nextn_predict_layers": 1,
             }
@@ -981,7 +981,20 @@ class TestMTPFlatteningQKVMapping:
         assert result.hf_param["k"] == "mtp.layers.7.mixer.k_proj.weight"
         assert result.hf_param["v"] == "mtp.layers.7.mixer.v_proj.weight"
 
-    def test_resolve_insufficient_captures_raises(self):
+    def test_resolve_hf_reverse_lookup(self):
+        m = _MTPFlatteningQKVMapping(
+            megatron_param="mtp.layers.*.mtp_model_layer.layers.*.weight",
+            q="mtp.layers.*.q.weight",
+            k="mtp.layers.*.k.weight",
+            v="mtp.layers.*.v.weight",
+            mtp_layers_per_block=2,
+        )
+        result = m.resolve(("3",))
+        assert isinstance(result, QKVMapping)
+        assert result.megatron_param == "mtp.layers.1.mtp_model_layer.layers.1.weight"
+        assert result.hf_param["q"] == "mtp.layers.3.q.weight"
+
+    def test_resolve_without_captures_raises(self):
         m = _MTPFlatteningQKVMapping(
             megatron_param="mtp.layers.*.mtp_model_layer.layers.*.weight",
             q="mtp.layers.*.q.weight",
@@ -990,7 +1003,7 @@ class TestMTPFlatteningQKVMapping:
             mtp_layers_per_block=2,
         )
         with pytest.raises(ValueError, match="Expected \\(outer, inner\\) captures"):
-            m.resolve(("0",))
+            m.resolve(())
 
     def test_hf_to_megatron_raises(self):
         m = _MTPFlatteningQKVMapping(

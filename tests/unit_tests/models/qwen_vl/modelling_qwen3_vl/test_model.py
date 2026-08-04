@@ -23,6 +23,7 @@ import datetime
 import os
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -410,6 +411,53 @@ class TestQwen3VLModel:
 
         weight_no_decoder = model_no_decoder.shared_embedding_or_output_weight()
         assert weight_no_decoder is None
+
+    @pytest.mark.parametrize(
+        ("vocab_size", "should_pad_vocab", "expected_vocab_size"),
+        [
+            (151669, True, 152064),
+            (248077, True, 248320),
+            (151936, False, 151936),
+        ],
+    )
+    def test_language_model_honors_vocab_padding_policy(
+        self,
+        hf_config,
+        monkeypatch,
+        vocab_size,
+        should_pad_vocab,
+        expected_vocab_size,
+    ):
+        """Apply tokenizer-derived padding before constructing the Qwen language model."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        language_transformer_config.vocab_size = vocab_size
+        language_transformer_config.should_pad_vocab = should_pad_vocab
+        language_transformer_config.make_vocab_size_divisible_by = 128
+        language_transformer_config.tensor_model_parallel_size = 4
+
+        language_model = Mock()
+        language_model.config.cuda_graph_impl = "none"
+        language_model.share_embeddings_and_output_weights = False
+        language_model_constructor = Mock(return_value=language_model)
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.Qwen3VLGPTModel",
+            language_model_constructor,
+        )
+
+        Qwen3VLModel(
+            vision_transformer_config=self.get_vision_transformer_config(hf_config),
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            pre_process=False,
+            post_process=True,
+            add_encoder=False,
+            add_decoder=True,
+            pg_collection=pg_collection,
+        )
+
+        assert language_model_constructor.call_args.kwargs["vocab_size"] == expected_vocab_size
 
     @pytest.mark.timeout(50)
     def test_set_input_tensor(self, hf_config):
@@ -1016,8 +1064,8 @@ class TestQwen3VLModel:
         assert out.dim() >= 2
 
     @pytest.mark.timeout(50)
-    def test_cuda_graph_helper_not_exposed_when_llm_cuda_graph_disabled(self, hf_config):
-        """CUDA graph helper fields stay on language_model when cuda_graph_impl is none."""
+    def test_cuda_graph_helper_aliases_do_not_register_root_modules_when_disabled(self, hf_config):
+        """CUDA graph helper aliases keep checkpoint keys under language_model when disabled."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
@@ -1039,8 +1087,10 @@ class TestQwen3VLModel:
             pg_collection=pg_collection,
         )
 
-        assert "decoder" not in model.__dict__
-        assert not hasattr(model, "rotary_pos_emb")
+        assert model.decoder is model.language_model.decoder
+        assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules
         assert getattr(model.language_model.config, "cuda_graph_impl", None) == "none"
 
     @pytest.mark.timeout(50)
@@ -1070,7 +1120,8 @@ class TestQwen3VLModel:
 
         assert getattr(language_transformer_config, "cuda_graph_impl", None) == "transformer_engine"
         assert model.language_model.config.variable_seq_lengths is False
-        assert hasattr(model, "decoder")
         assert model.decoder is model.language_model.decoder
         assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
         assert model.position_embedding_type == model.language_model.position_embedding_type
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules
