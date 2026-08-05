@@ -11,7 +11,8 @@ Use the model-specific examples for commands and supported parallelism:
 - [EXAONE 4.5 VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/exaone/exaone45)
 - [K-EXAONE MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/exaone/exaone_moe)
 
-All checkpoint imports use the shared `scripts/conversion/convert.sh import`
-entry point. K-EXAONE 2.0 also has a checked-in
+The EXAONE 4.0 and EXAONE 4.5 examples use the shared
+`scripts/conversion/convert.sh import` entry point. The K-EXAONE examples use
+their model-specific distributed round-trip workflows. K-EXAONE 2.0 also has a checked-in
 [model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/k-exaone-2/card.yaml)
 that records the current verification status of individual workflows.
