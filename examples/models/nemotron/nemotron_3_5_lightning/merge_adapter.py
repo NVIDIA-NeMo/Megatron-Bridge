@@ -104,7 +104,6 @@ def _merge_training_only_mtp_weights(
     hf_revision: str,
     adapter_path: Path,
     output: Path,
-    dtype: torch.dtype,
     device: torch.device,
 ) -> tuple[int, int]:
     """Append the MTP weights omitted by the HF inference model.
@@ -174,17 +173,15 @@ def _merge_training_only_mtp_weights(
 
         with torch.no_grad():
             for base_key in mtp_base_keys:
-                base_tensor = (
-                    base_readers[base_weight_map[base_key]].get_tensor(base_key).to(device=device, dtype=dtype)
-                )
+                base_tensor = base_readers[base_weight_map[base_key]].get_tensor(base_key).to(device=device)
                 module_name = base_key.removesuffix(".weight")
                 lora_a_key = f"{adapter_prefix}{module_name}{lora_a_suffix}"
                 lora_b_key = f"{adapter_prefix}{module_name}{lora_b_suffix}"
                 if lora_a_key in adapter_keys or lora_b_key in adapter_keys:
                     if lora_a_key not in adapter_keys or lora_b_key not in adapter_keys:
                         raise RuntimeError(f"Incomplete MTP LoRA pair for {base_key}.")
-                    calculation_dtype = dtype
-                    if device.type == "cpu" and dtype in (torch.bfloat16, torch.float16):
+                    calculation_dtype = base_tensor.dtype
+                    if device.type == "cpu" and base_tensor.dtype in (torch.bfloat16, torch.float16):
                         calculation_dtype = torch.float32
                     weight_a = adapter_reader.get_tensor(lora_a_key).to(
                         device=device,
@@ -195,7 +192,7 @@ def _merge_training_only_mtp_weights(
                         dtype=calculation_dtype,
                     )
                     delta = (weight_b @ weight_a) * scaling
-                    merged_tensor = base_tensor + delta.to(dtype=dtype)
+                    merged_tensor = base_tensor + delta.to(dtype=base_tensor.dtype)
                     expected_lora_keys.update((lora_a_key, lora_b_key))
                     merged_count += 1
                 else:
@@ -295,7 +292,6 @@ def main() -> None:
         hf_revision=args.hf_revision,
         adapter_path=args.adapter_path,
         output=args.output,
-        dtype=DTYPES[args.dtype],
         device=merge_device,
     )
     LOGGER.info("Merged %d training-only MTP tensors with LoRA.", merged_mtp_count)

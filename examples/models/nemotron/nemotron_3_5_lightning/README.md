@@ -114,9 +114,10 @@ pretraining.
 
 ## Full SFT
 
-The SFT examples use the pinned OpenMathInstruct-2 revision and offline packed
-sequences. `PRETRAINED_CHECKPOINT` must point to the imported `iter_0000000`
-directory.
+The SFT examples use a pinned OpenMathInstruct-2 revision and cache packed
+sequences as Parquet. The first run needs dataset access to prepare the cache;
+later offline runs require that complete cache to be mounted.
+`PRETRAINED_CHECKPOINT` must point to the imported `iter_0000000` directory.
 
 ```bash
 # 16 H100 ranks: TP2, EP8
@@ -185,19 +186,49 @@ HF_MERGED_PATH=/workspace/models/nemotron-3.5-lightning-lora-merged \
   ./examples/models/nemotron/nemotron_3_5_lightning/adapter.sh merge
 ```
 
-The merge utility checks that the adapter changes the base logits, that merged
-and unmerged PEFT logits agree within the declared tolerance, and that their
-top-five tokens are identical before saving.
+The merge utility checks that the adapter changes the base logits and that the
+BF16-fused model preserves PEFT's top-1 token and greedy continuation while
+meeting cosine-similarity and relative-L2 thresholds. Transformers does not
+instantiate Lightning's training-only MTP modules during inference, so the
+utility separately applies every MTP LoRA pair and carries the remaining MTP
+tensors unchanged into the standalone checkpoint. The result therefore keeps
+all 6,513 base-model tensors and can be used for either inference or subsequent
+training.
 
 ## Manual 26.06.01 verification
 
-The following are correctness runs, not performance benchmarks. Exact SFT,
-LoRA, and adapter-export results will be recorded here after running these
-customer scripts on the 0.5.1 branch.
+These are two-step correctness runs, not performance benchmarks. They used
+the pinned public BF16 checkpoint and the unmodified 26.06.01 runtime with this
+branch mounted over the bundled Bridge source.
 
-The already-completed base-checkpoint validation used eight H100s for
-TP1/PP1/EP8 import and export. All 6,513 tensors and 32,913,266,240 parameters
-round-tripped exactly (`max_abs_diff=0.0`), and both the imported Megatron
-checkpoint and exported HF checkpoint generated `The capital of France is
-Paris.`. The canonical 16-H100 pretraining recipe completed two finite-loss
-steps with no skipped or NaN iterations.
+| Workflow | Hardware and configuration | Iteration 1: LM / MTP-1 / MTP-2 | Iteration 2: LM / MTP-1 / MTP-2 | Result |
+|---|---|---|---|---|
+| Pretrain | 2 nodes, 16 H100 80 GB; 8K, TP1/CP2/EP8 | 12.13518 / 12.19819 / 12.17519 | 12.13271 / 12.19786 / 12.17710 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
+| Full SFT | 2 nodes, 16 H100 80 GB; packed OpenMath 4K, TP2/EP8 | 0.4134090 / 0.6536090 / 0.7314808 | 0.4127115 / 0.6384317 / 0.7196919 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
+| LoRA | 1 node, 8 H100 80 GB; packed SQuAD, TP1/EP8, DeepEP | 0.2351837 / 2.486913 / 2.843087 | 0.1531711 / 2.473096 / 2.837737 | Passed; reloadable adapter checkpoint, skipped 0, NaN 0 |
+| Full SFT | 2 nodes, 8 GB200; packed OpenMath 4K, TP1/EP8, HybridEP | Pending scheduler allocation | Pending scheduler allocation | Registered for different-hardware validation |
+| LoRA | 2 nodes, 8 GB200; packed SQuAD, TP1/EP8, HybridEP | Pending scheduler allocation | Pending scheduler allocation | Registered for different-hardware validation |
+
+Import/export on eight H100s round-tripped all 6,513 tensors and
+32,913,266,240 parameters exactly (`max_abs_diff=0.0`). The imported Megatron
+checkpoint and the exported HF checkpoint both generated `The capital of
+France is Paris.`. Exporting the full-SFT checkpoint also produced a complete
+6,513-tensor HF artifact and the same continuation.
+
+The H100 LoRA checkpoint exported to a standard PEFT package containing 12,532
+adapter tensors, including 524 MTP tensors (262 A/B pairs). Adapter loading and
+standalone merge were exercised in the same container. For the BF16 merge,
+PEFT and fused models had cosine similarity
+0.998045444 and relative L2 error 0.06499264, retained the same top-1 token,
+and generated the same four-token continuation, ` Paris.  `. The final merged
+artifact contains all 6,513 tensors, including all 270 MTP tensors. A
+key-by-key safetensors-header audit found the same names, shapes, and native
+dtypes as the base checkpoint, and distributed inference from the artifact
+generated `The capital of France is Paris.`. The GB200
+Megatron-versus-PEFT adapter verification will replace the pending entries
+after its registered job completes.
+
+When operating offline, set `HF_MODEL` to a mounted local snapshot for import,
+export, inference, verification, and merge. A Hub ID alone cannot resolve
+weight shards unless the snapshot is stored in the standard Hugging Face cache
+layout.

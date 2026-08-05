@@ -135,6 +135,30 @@ def _compare_top_k(
     return match
 
 
+def _load_megatron_export(model: torch.nn.Module, state_dict: dict[str, torch.Tensor]) -> list[str]:
+    """Load an exported state while accounting for training-only MTP tensors.
+
+    Some Hugging Face inference classes intentionally do not instantiate the
+    training-only ``mtp`` module even though the native checkpoint contains
+    those tensors. All model-consumed keys must still match exactly, and only
+    an ``mtp.``-prefixed unexpected key is permitted.
+
+    Returns:
+        The sorted training-only MTP keys omitted by the HF inference model.
+    """
+    incompatible_keys = model.load_state_dict(state_dict, strict=False)
+    missing_keys = sorted(incompatible_keys.missing_keys)
+    unexpected_keys = sorted(incompatible_keys.unexpected_keys)
+    training_only_mtp_keys = [key for key in unexpected_keys if key.startswith("mtp.")]
+    unsupported_unexpected_keys = [key for key in unexpected_keys if not key.startswith("mtp.")]
+    if missing_keys or unsupported_unexpected_keys:
+        raise RuntimeError(
+            "Megatron export does not match the HF inference model: "
+            f"missing={missing_keys[:10]}, unexpected={unsupported_unexpected_keys[:10]}"
+        )
+    return training_only_mtp_keys
+
+
 # ---------------------------------------------------------------------------
 # Build Megatron model with LoRA from checkpoint
 # ---------------------------------------------------------------------------
@@ -375,7 +399,12 @@ def main() -> None:
         )
         if getattr(mg_hf.config, "tie_word_embeddings", False) and "lm_head.weight" not in mg_merged_sd:
             mg_merged_sd["lm_head.weight"] = mg_merged_sd["model.embed_tokens.weight"]
-        mg_hf.load_state_dict(mg_merged_sd, strict=True)
+        training_only_mtp_keys = _load_megatron_export(mg_hf, mg_merged_sd)
+        if training_only_mtp_keys:
+            print(
+                f"  HF inference model omits {len(training_only_mtp_keys)} "
+                "training-only MTP tensors; all inference tensors loaded exactly."
+            )
         mg_hf = mg_hf.to(device)
         mg_logits = _forward_logits(mg_hf, tokenizer, args.prompt, device)
         _print_top_k("Megatron merged", mg_logits, tokenizer, k)
