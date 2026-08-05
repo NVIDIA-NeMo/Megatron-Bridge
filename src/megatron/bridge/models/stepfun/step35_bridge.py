@@ -238,22 +238,22 @@ class Step35Bridge(MegatronModelBridge):
 
         first_mtp_layer = self.hf_config.num_hidden_layers
         num_mtp_layers = getattr(self.hf_config, "num_nextn_predict_layers", 0)
-        aliases = [
+        mtp_output_names = [
             f"model.layers.{first_mtp_layer + offset}.transformer.shared_head.output.weight"
             for offset in range(num_mtp_layers)
         ]
-        missing_aliases = [
-            alias for alias in aliases if alias in hf_state_dict and alias not in converted_weights_dict
+        missing_output_names = [
+            name for name in mtp_output_names if name in hf_state_dict and name not in converted_weights_dict
         ]
-        if not missing_aliases:
+        if not missing_output_names:
             return converted_weights_dict
 
         # Safetensors forbids shared storage. Keep distinct CPU storage for
         # each entry without adding several gigabytes of peak CUDA memory.
         output_weight = converted_weights_dict["lm_head.weight"].detach().cpu()
         converted_weights_dict["lm_head.weight"] = output_weight
-        for alias in missing_aliases:
-            converted_weights_dict[alias] = output_weight.clone()
+        for name in missing_output_names:
+            converted_weights_dict[name] = output_weight.clone()
         return converted_weights_dict
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
