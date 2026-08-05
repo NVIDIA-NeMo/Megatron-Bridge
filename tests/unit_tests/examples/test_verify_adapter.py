@@ -71,26 +71,27 @@ def test_load_converted_megatron_export_uses_transformers_mapping(verify_adapter
 
     expected_config = object()
 
-    def from_pretrained(model_path, **kwargs):
-        assert model_path is None
-        assert kwargs["config"] is expected_config
-        assert kwargs["state_dict"] is state_dict
-        assert kwargs["torch_dtype"] == torch.float32
-        assert kwargs["trust_remote_code"] is True
-        assert kwargs["output_loading_info"] is True
-        return expected_model, {
-            "missing_keys": [],
-            "unexpected_keys": ["mtp.layers.0.weight"],
-            "mismatched_keys": [],
-            "error_msgs": [],
-        }
+    class ModelClass:
+        @staticmethod
+        def from_pretrained(model_path, **kwargs):
+            assert model_path is None
+            assert kwargs["config"] is expected_config
+            assert kwargs["state_dict"] is state_dict
+            assert kwargs["torch_dtype"] == torch.float32
+            assert kwargs["output_loading_info"] is True
+            return expected_model, {
+                "missing_keys": [],
+                "unexpected_keys": ["mtp.layers.0.weight"],
+                "mismatched_keys": [],
+                "error_msgs": [],
+            }
 
     monkeypatch.setattr(
         verify_adapter_module.AutoConfig,
         "from_pretrained",
         lambda model_path, **kwargs: expected_config,
     )
-    monkeypatch.setattr(verify_adapter_module.AutoModelForCausalLM, "from_pretrained", from_pretrained)
+    monkeypatch.setattr(verify_adapter_module, "_resolve_causal_lm_class", lambda *args, **kwargs: ModelClass)
 
     model, omitted_keys = verify_adapter_module._load_converted_megatron_export(
         "native-checkpoint",
@@ -155,12 +156,7 @@ def test_load_converted_megatron_export_packs_experts(verify_adapter_module, mon
 
     monkeypatch.setattr(verify_adapter_module.AutoConfig, "from_pretrained", lambda *args, **kwargs: config)
 
-    def load_toy_model(model_path, **kwargs):
-        assert model_path is None
-        kwargs.pop("trust_remote_code")
-        return ToyModel.from_pretrained(model_path, **kwargs)
-
-    monkeypatch.setattr(verify_adapter_module.AutoModelForCausalLM, "from_pretrained", load_toy_model)
+    monkeypatch.setattr(verify_adapter_module, "_resolve_causal_lm_class", lambda *args, **kwargs: ToyModel)
 
     model, omitted_keys = verify_adapter_module._load_converted_megatron_export(
         "native-checkpoint",
@@ -173,6 +169,30 @@ def test_load_converted_megatron_export_packs_experts(verify_adapter_module, mon
     assert torch.equal(model.model.experts.up_proj[1], state_dict["backbone.experts.1.up_proj.weight"])
     assert torch.equal(model.model.experts.down_proj[0], state_dict["backbone.experts.0.down_proj.weight"])
     assert torch.equal(model.model.experts.down_proj[1], state_dict["backbone.experts.1.down_proj.weight"])
+
+
+def test_resolve_causal_lm_class_uses_remote_auto_map(verify_adapter_module, monkeypatch) -> None:
+    """Trusted custom checkpoints resolve their concrete class from the original path."""
+
+    class CustomConfig:
+        auto_map = {"AutoModelForCausalLM": "modeling_custom.CustomForCausalLM"}
+
+    expected_class = object()
+
+    def get_class(class_reference, model_path):
+        assert class_reference == "modeling_custom.CustomForCausalLM"
+        assert model_path == "custom-checkpoint"
+        return expected_class
+
+    monkeypatch.setattr(verify_adapter_module, "get_class_from_dynamic_module", get_class)
+
+    model_class = verify_adapter_module._resolve_causal_lm_class(
+        CustomConfig(),
+        "custom-checkpoint",
+        trust_remote_code=True,
+    )
+
+    assert model_class is expected_class
 
 
 @pytest.mark.parametrize("failure_key", ["mismatched_keys", "error_msgs"])
@@ -194,11 +214,13 @@ def test_load_converted_megatron_export_rejects_transformers_failures(
         "from_pretrained",
         lambda *args, **kwargs: object(),
     )
-    monkeypatch.setattr(
-        verify_adapter_module.AutoModelForCausalLM,
-        "from_pretrained",
-        lambda *args, **kwargs: (torch.nn.Linear(2, 2), loading_info),
-    )
+
+    class ModelClass:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return torch.nn.Linear(2, 2), loading_info
+
+    monkeypatch.setattr(verify_adapter_module, "_resolve_causal_lm_class", lambda *args, **kwargs: ModelClass)
 
     with pytest.raises(RuntimeError, match="could not convert"):
         verify_adapter_module._load_converted_megatron_export(

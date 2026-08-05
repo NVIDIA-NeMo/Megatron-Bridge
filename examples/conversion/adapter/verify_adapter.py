@@ -57,9 +57,11 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 
 def parse_args() -> argparse.Namespace:
@@ -172,12 +174,12 @@ def _load_converted_megatron_export(
 ) -> tuple[torch.nn.Module, list[str]]:
     """Load native HF keys through the model's Transformers conversion mapping."""
     config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=trust_remote_code)
-    model, loading_info = AutoModelForCausalLM.from_pretrained(
+    model_class = _resolve_causal_lm_class(config, hf_model_path, trust_remote_code=trust_remote_code)
+    model, loading_info = model_class.from_pretrained(
         None,
         config=config,
         state_dict=state_dict,
         torch_dtype=torch.float32,
-        trust_remote_code=trust_remote_code,
         output_loading_info=True,
     )
     missing_keys = sorted(loading_info.get("missing_keys", []))
@@ -191,6 +193,14 @@ def _load_converted_megatron_export(
         )
     training_only_mtp_keys = _validate_megatron_export_keys(missing_keys, unexpected_keys)
     return model, training_only_mtp_keys
+
+
+def _resolve_causal_lm_class(config: Any, hf_model_path: str, *, trust_remote_code: bool) -> type[torch.nn.Module]:
+    """Resolve a concrete model class before loading an in-memory state dict."""
+    auto_map = getattr(config, "auto_map", None) or {}
+    if trust_remote_code and "AutoModelForCausalLM" in auto_map:
+        return get_class_from_dynamic_module(auto_map["AutoModelForCausalLM"], hf_model_path)
+    return AutoModelForCausalLM._model_mapping[type(config)]
 
 
 # ---------------------------------------------------------------------------
