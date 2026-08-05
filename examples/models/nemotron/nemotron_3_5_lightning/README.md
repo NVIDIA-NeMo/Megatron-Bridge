@@ -206,6 +206,18 @@ branch mounted over the bundled Bridge source.
 | Pretrain | 2 nodes, 16 H100 80 GB; 8K, TP1/CP2/EP8 | 12.13518 / 12.19819 / 12.17519 | 12.13271 / 12.19786 / 12.17710 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
 | Full SFT | 2 nodes, 16 H100 80 GB; packed OpenMath 4K, TP2/EP8 | 0.4134090 / 0.6536090 / 0.7314808 | 0.4127115 / 0.6384317 / 0.7196919 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
 | LoRA | 1 node, 8 H100 80 GB; packed SQuAD, TP1/EP8, DeepEP | 0.2351837 / 2.486913 / 2.843087 | 0.1531711 / 2.473096 / 2.837737 | Passed; reloadable adapter checkpoint, skipped 0, NaN 0 |
+| Full SFT | 2 nodes, 8 GB200; packed OpenMath 4K, TP1/EP8, `alltoall` fallback | 0.4482034 / 0.6759753 / 0.7569838 | 0.3785085 / 0.5998533 / 0.6831521 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
+| LoRA | 2 nodes, 8 GB200; packed SQuAD, TP1/EP8, `alltoall` fallback | 0.2281463 / 2.485532 / 2.841834 | 0.1542726 / 2.476500 / 2.838086 | Passed; reloadable adapter checkpoint, skipped 0, NaN 0 |
+
+The GB200 recipe still selects HybridEP. The GB200 validation rows use plain
+`alltoall` only as a correctness fallback: HybridEP was installed and selected,
+but the 26.06.01 build first rejected its default 128-token chunk because the
+4,080-token per-rank capacity is not divisible by 128. With a 16-token chunk,
+two separate same-NVLink-block runs completed iteration 1 and then timed out in
+HybridEP's all-gather during iteration 2. DeepEP is the H100 backend used above,
+not a supported substitute for HybridEP on GB200 NVL72. The fallback results
+therefore validate the model, data, checkpoint, and non-HybridEP recipe path;
+they do not establish HybridEP stability in this container.
 
 Import/export on eight H100s round-tripped all 6,513 tensors and
 32,913,266,240 parameters exactly (`max_abs_diff=0.0`). The imported Megatron
@@ -223,6 +235,18 @@ artifact contains all 6,513 tensors, including all 270 MTP tensors. A
 key-by-key safetensors-header audit found the same names, shapes, and native
 dtypes as the base checkpoint, and distributed inference from the artifact
 generated `The capital of France is Paris.`.
+
+The GB200 LoRA checkpoint also completed the full adapter lifecycle. PEFT and
+Megatron adapter logits retained the same top-1 token, with cosine similarity
+0.999420285 and relative L2 error 0.03422275; the first four top-5 tokens were
+identical and a near-tied fifth token differed. The standalone BF16 merge
+retained the same top-5 tokens and greedy continuation as PEFT, with cosine
+similarity 0.998933911 and relative L2 error 0.04592380. The merge applied all
+262 MTP LoRA pairs and carried the other eight MTP tensors unchanged. A
+6,513-tensor header audit preserved every name, shape, and dtype, and the
+merged checkpoint generated `The capital of France is Paris.  ` under
+distributed inference. Full-SFT export and inference generated
+`The capital of France is Paris.`.
 
 When operating offline, set `HF_MODEL` to a mounted local snapshot for import,
 export, inference, verification, and merge. A Hub ID alone cannot resolve
