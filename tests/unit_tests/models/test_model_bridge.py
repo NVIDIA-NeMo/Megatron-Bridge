@@ -325,6 +325,8 @@ def test_grouped_export_uses_mapping_local_ep_size(monkeypatch):
 
 def test_grouped_export_retries_stack_on_cpu_after_cuda_oom(monkeypatch, caplog):
     class FakeCudaTensor:
+        is_cuda = True
+
         def __init__(self, value):
             self.value = value
 

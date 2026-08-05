@@ -1098,6 +1098,8 @@ class MegatronModelBridge(
             try:
                 merged = torch.stack(grouped_tensors, dim=0)
             except torch.OutOfMemoryError:
+                if not any(getattr(tensor, "is_cuda", False) for tensor in grouped_tensors):
+                    raise
                 logger.warning(
                     "Grouped expert export ran out of CUDA memory while stacking %d experts; retrying on CPU.",
                     num_experts,

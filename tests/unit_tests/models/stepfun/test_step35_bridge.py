@@ -678,9 +678,9 @@ class TestStep35BridgeMappingRegistry:
 def test_mtp_output_entries_are_materialized_from_megatron_shared_head():
     bridge = Step35Bridge()
     bridge.hf_config = SimpleNamespace(num_hidden_layers=45, num_nextn_predict_layers=3)
-    output_weight = torch.randn(8, 4)
+    output_weight = torch.ones(8, 4)
     expected_aliases = {f"model.layers.{layer}.transformer.shared_head.output.weight" for layer in range(45, 48)}
-    hf_state_dict = {name: torch.randn_like(output_weight) for name in expected_aliases}
+    hf_state_dict = {name: torch.zeros_like(output_weight) for name in expected_aliases}
 
     converted = bridge.maybe_modify_converted_hf_weight(
         SimpleNamespace(),
