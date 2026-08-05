@@ -220,7 +220,14 @@ class Step35Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Restore the HF MTP output aliases from the shared output layer."""
+        """Materialize HF MTP output entries from Megatron's shared output layer.
+
+        The published checkpoint serializes a separate output tensor for each
+        MTP layer, although its HF inference implementation ignores those
+        layers. Megatron-Core instead defines MTP with a shared output layer.
+        Export the Megatron representation faithfully by materializing one
+        independent CPU tensor per HF entry from that shared output weight.
+        """
         converted_weights_dict = super().maybe_modify_converted_hf_weight(
             task,
             converted_weights_dict,
@@ -241,9 +248,8 @@ class Step35Bridge(MegatronModelBridge):
         if not missing_aliases:
             return converted_weights_dict
 
-        # The source checkpoint serializes the shared MTP outputs as separate
-        # tensors in the same safetensors shard. Keep distinct CPU storage for
-        # each alias without adding several gigabytes of peak CUDA memory.
+        # Safetensors forbids shared storage. Keep distinct CPU storage for
+        # each entry without adding several gigabytes of peak CUDA memory.
         output_weight = converted_weights_dict["lm_head.weight"].detach().cpu()
         converted_weights_dict["lm_head.weight"] = output_weight
         for alias in missing_aliases:
