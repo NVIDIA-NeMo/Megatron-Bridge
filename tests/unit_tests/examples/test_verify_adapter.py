@@ -52,6 +52,49 @@ def test_load_megatron_export_accepts_only_training_mtp(verify_adapter_module) -
     assert omitted_keys == ["mtp.layers.0.weight"]
 
 
+def test_load_megatron_export_aligns_transformers_v5_dynamic_namespace(verify_adapter_module) -> None:
+    """Native backbone tensors load into the Transformers v5 model namespace."""
+
+    class DynamicWeightConversionModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = torch.nn.Linear(2, 2)
+
+    model = DynamicWeightConversionModel()
+    expected_weight = torch.full_like(model.model.weight, 3.0)
+    expected_bias = torch.full_like(model.model.bias, 4.0)
+    state_dict = {
+        "backbone.weight": expected_weight,
+        "backbone.bias": expected_bias,
+        "mtp.layers.0.weight": torch.ones(2, 2),
+    }
+
+    omitted_keys = verify_adapter_module._load_megatron_export(model, state_dict)
+
+    assert omitted_keys == ["mtp.layers.0.weight"]
+    assert torch.equal(model.model.weight, expected_weight)
+    assert torch.equal(model.model.bias, expected_bias)
+
+
+def test_load_megatron_export_rejects_dynamic_namespace_collision(verify_adapter_module) -> None:
+    """Dynamic namespace alignment must not silently overwrite a tensor."""
+
+    class DynamicWeightConversionModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = torch.nn.Linear(2, 2)
+
+    model = DynamicWeightConversionModel()
+    state_dict = {
+        "model.weight": torch.ones_like(model.model.weight),
+        "backbone.weight": torch.zeros_like(model.model.weight),
+        "model.bias": torch.ones_like(model.model.bias),
+    }
+
+    with pytest.raises(RuntimeError, match="duplicate tensors"):
+        verify_adapter_module._load_megatron_export(model, state_dict)
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected_error"),
     [

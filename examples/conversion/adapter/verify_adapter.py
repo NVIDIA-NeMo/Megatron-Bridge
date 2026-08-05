@@ -140,13 +140,29 @@ def _load_megatron_export(model: torch.nn.Module, state_dict: dict[str, torch.Te
 
     Some Hugging Face inference classes intentionally do not instantiate the
     training-only ``mtp`` module even though the native checkpoint contains
-    those tensors. All model-consumed keys must still match exactly, and only
-    an ``mtp.``-prefixed unexpected key is permitted.
+    those tensors. Transformers v5 may also expose dynamically converted
+    ``backbone.`` checkpoint tensors under the ``model.`` module namespace.
+    All model-consumed keys must still match exactly, and only an
+    ``mtp.``-prefixed unexpected key is permitted.
 
     Returns:
         The sorted training-only MTP keys omitted by the HF inference model.
     """
-    incompatible_keys = model.load_state_dict(state_dict, strict=False)
+    model_keys = set(model.state_dict())
+    aligned_state_dict: dict[str, torch.Tensor] = {}
+    for source_name, tensor in state_dict.items():
+        target_name = source_name
+        if source_name.startswith("backbone."):
+            dynamic_name = f"model.{source_name.removeprefix('backbone.')}"
+            if dynamic_name in model_keys:
+                target_name = dynamic_name
+        if target_name in aligned_state_dict:
+            raise RuntimeError(
+                f"Megatron export contains duplicate tensors after Hugging Face namespace alignment: {target_name}"
+            )
+        aligned_state_dict[target_name] = tensor
+
+    incompatible_keys = model.load_state_dict(aligned_state_dict, strict=False)
     missing_keys = sorted(incompatible_keys.missing_keys)
     unexpected_keys = sorted(incompatible_keys.unexpected_keys)
     training_only_mtp_keys = [key for key in unexpected_keys if key.startswith("mtp.")]
