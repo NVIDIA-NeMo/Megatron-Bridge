@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 
 import torch
+import torch.nn.functional as functional
 from peft import PeftModel
 from peft_compat import apply_peft_weight_converter_compatibility
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -46,8 +47,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", choices=DTYPES, default="bfloat16")
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--prompt", default="The capital of France is")
-    parser.add_argument("--atol", type=float, default=2e-2)
-    parser.add_argument("--rtol", type=float, default=2e-2)
+    parser.add_argument("--max-new-tokens", type=int, default=4)
+    parser.add_argument("--min-cosine-similarity", type=float, default=0.995)
+    parser.add_argument("--max-relative-l2", type=float, default=0.1)
     return parser.parse_args()
 
 
@@ -58,6 +60,21 @@ def _last_token_logits(model: torch.nn.Module, tokenizer: AutoTokenizer, prompt:
     model.eval()
     with torch.no_grad():
         return model(**inputs).logits[0, -1].float().cpu()
+
+
+def _greedy_continuation(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    prompt: str,
+    max_new_tokens: int,
+) -> torch.Tensor:
+    """Return greedily generated continuation token IDs on CPU."""
+    input_device = next(model.parameters()).device
+    inputs = tokenizer(prompt, return_tensors="pt").to(input_device)
+    model.eval()
+    with torch.no_grad():
+        generated = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+    return generated[0, inputs["input_ids"].shape[1] :].cpu()
 
 
 def main() -> None:
@@ -77,21 +94,58 @@ def main() -> None:
 
     peft_model = PeftModel.from_pretrained(base_model, args.adapter_path)
     peft_logits = _last_token_logits(peft_model, tokenizer, args.prompt)
+    peft_continuation = _greedy_continuation(
+        peft_model,
+        tokenizer,
+        args.prompt,
+        args.max_new_tokens,
+    )
     adapter_effect = (peft_logits - base_logits).abs().max().item()
     if adapter_effect == 0.0:
         raise RuntimeError("The adapter has no observable effect on the verification prompt.")
 
     merged_model = peft_model.merge_and_unload(safe_merge=True)
     merged_logits = _last_token_logits(merged_model, tokenizer, args.prompt)
-    torch.testing.assert_close(merged_logits, peft_logits, atol=args.atol, rtol=args.rtol)
-    if torch.topk(merged_logits, 5).indices.tolist() != torch.topk(peft_logits, 5).indices.tolist():
-        raise RuntimeError("Merged and unmerged PEFT models have different top-5 tokens.")
+    merged_continuation = _greedy_continuation(
+        merged_model,
+        tokenizer,
+        args.prompt,
+        args.max_new_tokens,
+    )
+    difference = merged_logits - peft_logits
+    merge_difference = difference.abs().max().item()
+    relative_l2 = (torch.linalg.vector_norm(difference) / torch.linalg.vector_norm(peft_logits)).item()
+    cosine_similarity = functional.cosine_similarity(merged_logits, peft_logits, dim=0).item()
+    merged_effect = (merged_logits - base_logits).abs().max().item()
+    peft_top_5 = torch.topk(peft_logits, 5).indices.tolist()
+    merged_top_5 = torch.topk(merged_logits, 5).indices.tolist()
+
+    LOGGER.info("Adapter effect max logit difference: %.6e", adapter_effect)
+    LOGGER.info("Merged effect max logit difference: %.6e", merged_effect)
+    LOGGER.info("Merge max logit difference: %.6e", merge_difference)
+    LOGGER.info("Merge relative L2 error: %.6e", relative_l2)
+    LOGGER.info("Merge cosine similarity: %.9f", cosine_similarity)
+    LOGGER.info("PEFT top-5 token IDs: %s", peft_top_5)
+    LOGGER.info("Merged top-5 token IDs: %s", merged_top_5)
+    LOGGER.info("PEFT continuation: %s", tokenizer.decode(peft_continuation))
+    LOGGER.info("Merged continuation: %s", tokenizer.decode(merged_continuation))
+
+    if merged_effect == 0.0:
+        raise RuntimeError("The merged checkpoint has no observable effect on the verification prompt.")
+    if peft_top_5[0] != merged_top_5[0]:
+        raise RuntimeError("Merged and unmerged PEFT models have different top-1 tokens.")
+    if not torch.equal(merged_continuation, peft_continuation):
+        raise RuntimeError("Merged and unmerged PEFT models have different greedy continuations.")
+    if cosine_similarity < args.min_cosine_similarity:
+        raise RuntimeError(
+            f"Merge cosine similarity {cosine_similarity:.9f} is below {args.min_cosine_similarity:.9f}."
+        )
+    if relative_l2 > args.max_relative_l2:
+        raise RuntimeError(f"Merge relative L2 error {relative_l2:.6e} exceeds {args.max_relative_l2:.6e}.")
 
     args.output.mkdir(parents=True, exist_ok=True)
     merged_model.save_pretrained(args.output, safe_serialization=True)
     tokenizer.save_pretrained(args.output)
-    LOGGER.info("Adapter effect max logit difference: %.6e", adapter_effect)
-    LOGGER.info("Merge max logit difference: %.6e", (merged_logits - peft_logits).abs().max().item())
     LOGGER.info("Merged model saved to %s", args.output)
 
 
