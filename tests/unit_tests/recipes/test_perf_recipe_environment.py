@@ -72,6 +72,15 @@ def _function(path: Path, function_name: str) -> ast.FunctionDef:
 def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
     """Read the literal env mapping written in a flat recipe builder."""
     function = _function(path, function_name)
+    local_constants = {
+        node.targets[0].id: node.value.value
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, (str, int, float, bool))
+    }
     assignments = [
         node
         for node in function.body
@@ -93,7 +102,12 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
             assert isinstance(value, ast.Name) and value.id == "COMMON_PERF_ENV_VARS"
             common_expansions += 1
             continue
-        result[ast.literal_eval(key)] = ast.literal_eval(value)
+        if isinstance(value, ast.Name):
+            assert value.id in local_constants
+            env_value = local_constants[value.id]
+        else:
+            env_value = ast.literal_eval(value)
+        result[ast.literal_eval(key)] = env_value
     assert common_expansions == 1
     return result
 
@@ -110,11 +124,11 @@ def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
-def test_benchmark_common_preserves_legacy_manual_gc_and_model_shape_defaults():
+def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults():
     cfg = SimpleNamespace(
         train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
         tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
-        checkpoint=SimpleNamespace(save="checkpoint"),
+        checkpoint=SimpleNamespace(save="checkpoint", load="checkpoint"),
         logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
         ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True, grad_reduce_in_fp32=True),
         rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
@@ -135,6 +149,8 @@ def test_benchmark_common_preserves_legacy_manual_gc_and_model_shape_defaults():
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
+    assert cfg.checkpoint.save is None
+    assert cfg.checkpoint.load is None
 
 
 def test_every_flat_recipe_builder_declares_its_environment_inline():
@@ -206,7 +222,7 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
             {
                 "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-                "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+                "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
                 "NVLINK_DOMAIN_SIZE": 8,
                 "USE_MNNVL": 0,
             },

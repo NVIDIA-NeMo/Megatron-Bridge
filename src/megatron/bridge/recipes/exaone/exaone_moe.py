@@ -17,6 +17,15 @@
 from __future__ import annotations
 
 from megatron.bridge.recipes.exaone.h100.exaone_moe import (
+    exaone_moe_2_0_750b_a37_peft_128gpu_h100_bf16_config as exaone_moe_2_0_750b_a37_peft_config,
+)
+from megatron.bridge.recipes.exaone.h100.exaone_moe import (
+    exaone_moe_2_0_750b_a37_pretrain_512gpu_h100_bf16_config as exaone_moe_2_0_750b_a37_pretrain_config,
+)
+from megatron.bridge.recipes.exaone.h100.exaone_moe import (
+    exaone_moe_2_0_750b_a37_sft_512gpu_h100_bf16_config as exaone_moe_2_0_750b_a37_sft_config,
+)
+from megatron.bridge.recipes.exaone.h100.exaone_moe import (
     exaone_moe_236b_a23b_peft_16gpu_h100_bf16_config as exaone_moe_236b_a23b_peft_config,
 )
 from megatron.bridge.recipes.exaone.h100.exaone_moe import (
@@ -27,8 +36,19 @@ from megatron.bridge.recipes.exaone.h100.exaone_moe import (
 )
 
 
+exaone_moe_peft_config = exaone_moe_2_0_750b_a37_peft_config
+exaone_moe_pretrain_config = exaone_moe_2_0_750b_a37_pretrain_config
+exaone_moe_sft_config = exaone_moe_2_0_750b_a37_sft_config
+
+
 __all__ = [
+    "exaone_moe_2_0_750b_a37_peft_config",
+    "exaone_moe_2_0_750b_a37_pretrain_config",
+    "exaone_moe_2_0_750b_a37_sft_config",
     "exaone_moe_236b_a23b_peft_config",
     "exaone_moe_236b_a23b_pretrain_config",
     "exaone_moe_236b_a23b_sft_config",
+    "exaone_moe_peft_config",
+    "exaone_moe_pretrain_config",
+    "exaone_moe_sft_config",
 ]

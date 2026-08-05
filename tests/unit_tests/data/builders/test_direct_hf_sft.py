@@ -364,6 +364,44 @@ def test_processor_loading_disables_untrusted_remote_code(monkeypatch):
     assert seen["call"] == ("org/processor", False)
 
 
+def test_processor_loading_forwards_declarative_kwargs(monkeypatch):
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, **kwargs):
+            seen["call"] = (path, kwargs)
+            return _Tokenizer()
+
+    monkeypatch.setattr(builder_module, "AutoProcessor", _AutoProcessor)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        hf_processor_path="org/processor",
+        hf_processor_kwargs={"revision": "0123456789abcdef"},
+    )
+
+    processor = load_direct_hf_sft_processor(config, tokenizer=None)
+
+    assert isinstance(processor, _Tokenizer)
+    assert seen["call"] == (
+        "org/processor",
+        {"trust_remote_code": False, "revision": "0123456789abcdef"},
+    )
+
+
+def test_processor_kwargs_cannot_override_trust_policy():
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        hf_processor_path="org/processor",
+        hf_processor_kwargs={"trust_remote_code": True},
+    )
+
+    with pytest.raises(ValueError, match="must not override trust_remote_code"):
+        config.validate()
+
+
 def test_processor_loading_falls_back_to_tokenizer(monkeypatch):
     class _AutoProcessor:
         @staticmethod

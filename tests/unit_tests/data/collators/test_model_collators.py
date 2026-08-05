@@ -241,6 +241,31 @@ def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
     assert proc.processor_kwargs[-1]["max_pixels"] == qwen_vl_collate.QWEN_VL_MAX_PIXELS
 
 
+def test_qwen2_5_collate_fn_pads_mm_token_type_ids_with_sequence(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _TokenTypeProcessor(_DummyProcessor):
+        def __call__(self, *args, **kwargs):
+            batch = super().__call__(*args, **kwargs)
+            batch["mm_token_type_ids"] = torch.tensor([[0, 1, 0]])
+            return batch
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    batch = collate.qwen2_5_collate_fn(
+        examples,
+        _TokenTypeProcessor(),
+        sequence_length=8,
+        pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].shape == batch["mm_token_type_ids"].shape == (1, 4)
+    assert batch["mm_token_type_ids"].tolist() == [[0, 1, 0, 0]]
+
+
 def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
     """qwen2_audio_collate_fn should store Qwen2AudioInputs under 'audio_inputs', not 'visual_inputs'."""
 
@@ -924,6 +949,48 @@ def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch)
     assert batch["visual_inputs"].mm_token_type_ids.tolist() == [[0, 1, 0, 0, 0, 2, 2, 0]]
     assert processor.padding_values == [False, False]
     assert processor.tokenizer.padding_side == "left"
+
+
+def test_glm4v_collate_flattens_structured_assistant_content(monkeypatch):
+    class _GlmProcessor:
+        class _Tokenizer:
+            padding_side = "left"
+            pad_token_id = 0
+
+        def __init__(self):
+            self.tokenizer = self._Tokenizer()
+            self.conversations = None
+
+        def apply_chat_template(self, conversations, **kwargs):
+            self.conversations = conversations
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "attention_mask": torch.ones((1, 3), dtype=torch.long),
+                "mm_token_type_ids": torch.zeros((1, 3), dtype=torch.long),
+            }
+
+    monkeypatch.setattr(
+        glm_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
+    )
+    monkeypatch.setattr(glm_vl_collate, "_glm4v_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(
+        glm_vl_collate,
+        "_build_glm4v_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: torch.ones_like(input_ids, dtype=torch.float32),
+    )
+    assistant_content = [{"type": "text", "text": "A picture."}]
+    example = {
+        "conversation": [
+            {"role": "user", "content": "Describe."},
+            {"role": "assistant", "content": assistant_content},
+        ]
+    }
+    processor = _GlmProcessor()
+
+    glm_vl_collate.glm4v_collate_fn([example], processor)
+
+    assert processor.conversations[0][-1]["content"] == "A picture."
+    assert example["conversation"][-1]["content"] == assistant_content
 
 
 @pytest.mark.parametrize(

@@ -123,6 +123,7 @@ def setup_model_and_tokenizer(
         inference_max_seq_length=inference_max_seq_length,
         inference_max_batch_size=inference_max_batch_size,
     )
+    inference_wrapped_model.processor = processor
 
     return inference_wrapped_model, processor
 
@@ -198,7 +199,14 @@ def generate(
             either as a string or as an InferenceRequest object.
     """
 
+    if sampling_params is not None and (
+        sampling_params.termination_id is not None or sampling_params.stop_words is not None
+    ):
+        raise ValueError("MCore legacy static generation does not support termination_id or stop_words.")
+
     if isinstance(wrapped_model, QwenVLInferenceWrapper):
+        if processor is None:
+            processor = getattr(wrapped_model, "processor", None)
         text_generation_controller = QwenVLTextGenerationController(
             inference_wrapped_model=wrapped_model,
             tokenizer=tokenizer,
