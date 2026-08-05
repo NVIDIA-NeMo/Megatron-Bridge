@@ -165,8 +165,9 @@ TP=1 EP=8 \
   ./examples/models/nemotron/nemotron_3_5_lightning/adapter.sh export
 ```
 
-Verify that PEFT loads the adapter, that it changes the base-model logits, and
-that its top tokens match Megatron's in-memory merged export:
+Verify that PEFT loads the adapter, changes the base-model logits, and agrees
+with Megatron's in-memory merged export on top-1 plus cosine-similarity and
+relative-L2 thresholds. Top-k tokens are also shown as a diagnostic:
 
 ```bash
 LORA_CHECKPOINT=/workspace/results/nemotron-3.5-lightning-lora-h100/iter_0000100 \

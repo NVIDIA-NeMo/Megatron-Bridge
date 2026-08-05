@@ -80,9 +80,9 @@ Loads the exported adapter with the `peft` library and runs verification
 checks:
 
 - The PEFT model logits must differ from the base model (adapter has effect).
-- When `--lora-checkpoint` is provided, the top-k predicted tokens
-  from the PEFT model must match those from the Megatron model with merged
-  weights.
+- When `--lora-checkpoint` is provided, PEFT and Megatron logits must preserve
+  the same top-1 token and meet cosine-similarity and relative-L2 thresholds.
+  Their top-k tokens are displayed as diagnostics.
 
 Supports CPU-only, single-GPU, and multi-GPU (TP/PP) modes.
 
@@ -122,7 +122,9 @@ uv run python -m torch.distributed.run --nproc_per_node=4 \
 | `--hf-adapter-path` | Exported HF PEFT adapter directory |
 | `--lora-checkpoint` | *(optional)* Megatron checkpoint iter directory for cross-check |
 | `--prompt` | Prompt for the forward pass (default: `"The capital of France is"`) |
-| `--top-k` | Number of top tokens to compare (default: `5`) |
+| `--top-k` | Number of top tokens to display for diagnostics (default: `5`) |
+| `--min-cosine-similarity` | Minimum cosine similarity for Megatron cross-check logits (default: `0.995`) |
+| `--max-relative-l2` | Maximum relative L2 error for Megatron cross-check logits (default: `0.1`) |
 | `--tp` | Tensor parallel size (default: `1`) |
 | `--pp` | Pipeline parallel size (default: `1`) |
 | `--ep` | Expert parallel size (default: `1`) |
