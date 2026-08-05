@@ -16,12 +16,40 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
+from megatron.core.utils import make_sharded_tensor_for_checkpoint
 
 from megatron.bridge.peft.utils import ParallelLinearAdapter
 
 
 if TYPE_CHECKING:
     from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+
+
+def _plain_module_sharded_state_dict(
+    module: nn.Module,
+    prefix: str,
+    sharded_offsets: Tuple[Tuple[int, int, int], ...] = (),
+) -> "ShardedStateDict":
+    """Build a sharded state dict for a module that has no ``sharded_state_dict``.
+
+    Used as a fallback for plain ``nn.Linear`` / delta-only ``LinearAdapter`` leaves on
+    the simple (non-parallel) path: each parameter is wrapped as a replicated
+    :class:`ShardedTensor` so distributed checkpointing preserves the trained weights
+    instead of silently dropping them.
+
+    Args:
+        module: The plain module whose parameters to shard.
+        prefix: Key prefix applied to every parameter.
+        sharded_offsets: Offsets prepended to each sharded tensor.
+
+    Returns:
+        A sharded state dict mapping ``f"{prefix}{param_name}"`` to ShardedTensor.
+    """
+    sharded_state_dict: Dict[str, Any] = {}
+    for name, param in module.state_dict(prefix="", keep_vars=True).items():
+        key = f"{prefix}{name}"
+        sharded_state_dict[key] = make_sharded_tensor_for_checkpoint(param, key, prepend_offsets=sharded_offsets)
+    return sharded_state_dict
 
 
 def _compute_mamba_dim_info(wrapped_module: nn.Module) -> Dict[str, int]:
@@ -225,16 +253,24 @@ class AdapterWrapper(nn.Module):
             adapter_sharded_state_dict_kwargs["mamba_dim_info"] = _compute_mamba_dim_info(self.to_wrap)
 
         sharded_state_dict = {}
-        # The wrapped module may be a plain nn.Linear (simple, non-parallel path) which
-        # does not implement distributed sharding; fall back gracefully in that case.
+        # The wrapped module may be a plain nn.Linear (simple, non-parallel path) that
+        # does not implement distributed sharding. Fall back to wrapping each parameter
+        # as a replicated ShardedTensor so the trained weights are preserved.
         if hasattr(self.to_wrap, "sharded_state_dict"):
             sharded_state_dict.update(self.to_wrap.sharded_state_dict(prefix, sharded_offsets, metadata))
+        else:
+            sharded_state_dict.update(_plain_module_sharded_state_dict(self.to_wrap, prefix, sharded_offsets))
         # Likewise, a delta-only LinearAdapter has no sharded layout; only parallel adapters
-        # carry distributed-sharding information.
+        # carry distributed-sharding information. Fall back to replicated ShardedTensors for
+        # the plain-adapter case so the trained LoRA matrices are not dropped.
         if hasattr(self.adapter, "sharded_state_dict"):
             sharded_state_dict.update(
                 self.adapter.sharded_state_dict(
                     f"{prefix}adapter.", sharded_offsets, metadata, **adapter_sharded_state_dict_kwargs
                 )
+            )
+        else:
+            sharded_state_dict.update(
+                _plain_module_sharded_state_dict(self.adapter, f"{prefix}adapter.", sharded_offsets)
             )
         return sharded_state_dict
