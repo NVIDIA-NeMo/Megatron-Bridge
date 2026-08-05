@@ -302,3 +302,39 @@ def test_glm52_platform_recipes_are_exported() -> None:
         assert getattr(h100, recipe_name) is getattr(glm5, recipe_name)
         assert getattr(recipes, recipe_name) is getattr(glm5, recipe_name)
         assert recipe_name in h100.__all__
+
+
+class _FakeModelCfgNullTok:
+    """Minimal model config for the NullTokenizer mock-data pretrain recipe."""
+
+    vocab_size = 151552
+
+
+class _FakeBridgeNullTok:
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        return _FakeBridgeNullTok()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        return _FakeModelCfgNullTok()
+
+
+def test_glm52_753b_pretrain_512gpu_builds_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 512-GPU mock-data pretrain recipe builds a valid ConfigContainer."""
+    monkeypatch.setattr(glm5, "AutoBridge", _FakeBridgeNullTok)
+
+    cfg = glm5.glm52_753b_pretrain_512gpu_h100_bf16_config()
+
+    assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    assert cfg.tokenizer.vocab_size == 151552
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 16
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.mtp_loss_scaling_factor == 0.1
+    assert cfg.model.pipeline_model_parallel_layout == "Et*4|(t*5|)*14t*4mL"
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_scope is None
+    assert cfg.env_vars.get("PYTORCH_CUDA_ALLOC_CONF") == "expandable_segments:True"
