@@ -65,5 +65,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         dataset.source.dataset_name=${DATASET_NAME} \
         dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
-        model.pipeline_model_parallel_size=$PP
+        model.pipeline_model_parallel_size=$PP \
+        model.expert_model_parallel_size=4 \
+        dist.distributed_timeout_minutes=12
 done
