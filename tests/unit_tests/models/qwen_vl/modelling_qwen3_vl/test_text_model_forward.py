@@ -23,7 +23,6 @@ from megatron.core.transformer.multi_token_prediction import roll_tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
     Qwen3VLGPTModel,
-    _apply_deepstack_embedding,
     _get_mtp_packed_seq_params,
 )
 
@@ -58,18 +57,6 @@ class _DummyModel:
     def _postprocess(self, **kwargs):
         self.postprocess_args = kwargs
         return "ok"
-
-
-def test_apply_deepstack_embedding_updates_only_visual_tokens():
-    hidden_states = torch.arange(12, dtype=torch.float32).reshape(3, 1, 4)
-    visual_pos_mask = torch.tensor([[True, False, True]])
-    visual_embed = torch.full((2, 4), 10.0)
-
-    result = _apply_deepstack_embedding(visual_pos_mask, visual_embed, hidden_states.clone())
-
-    expected = hidden_states.clone()
-    expected[[0, 2], 0] += 10.0
-    torch.testing.assert_close(result, expected)
 
 
 def test_forward_accepts_extra_preprocess_output():

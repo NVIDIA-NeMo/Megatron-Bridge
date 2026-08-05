@@ -3,9 +3,11 @@
 
 title: qwen3_6_35b_a3b
 summary: >
-  Performance scope: pretrain_performance.GB200 uses the tuned fixed-shape
-  recipe shared by Qwen3.5/Qwen3.6-VL; functional timing and throughput remain
-  sanity checks. This card verifies conversion, inference, and training.
+  Performance scope: pretrain_performance.H100 and
+  pretrain_performance.GB200 use tuned fixed-shape recipes shared by
+  Qwen3.5/Qwen3.6-VL. The H100 recipe is tuned but remains unverified pending
+  its canonical 50-step run; functional timing and throughput remain sanity
+  checks. This card verifies conversion, inference, and training.
 verification_index:
   model_level:
     verified:
@@ -22,6 +24,7 @@ verification_index:
       verified: [sft, peft]
       unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
   performance:
+    H100: unverified
     GB200: verified
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
@@ -534,6 +537,31 @@ items:
         the tracker selecting iteration 20.
 
   pretrain_performance:
+    H100:
+      status: unverified
+      precision: bf16
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config
+        --max_steps 50
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The canonical recipe incorporates the settings selected by an
+        eight-step 16x H100 fixed-shape mock-data tuning screen at
+        TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512. That screen completed all eight
+        steps with finite loss and gradient norms, zero skipped or NaN
+        iterations, loss from 12.80585 to 7.026046, and steps 5-8 averaging
+        16,298.100 ms and 185.150 model TFLOP/s/GPU with a 188.1 peak. Those
+        four steady-state samples are not a final-10 verification window, so
+        this leaf remains unverified until the command above completes 50
+        steps from a clean commit and records its final 10 steps.
+
     GB200:
       status: verified
       precision: fp8_mx
