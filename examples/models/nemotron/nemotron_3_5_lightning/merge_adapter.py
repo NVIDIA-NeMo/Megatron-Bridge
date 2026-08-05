@@ -17,13 +17,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+from contextlib import ExitStack
 from pathlib import Path
 
 import torch
 import torch.nn.functional as functional
 from peft import PeftModel
 from peft_compat import apply_peft_weight_converter_compatibility
+from safetensors import safe_open
+from safetensors.torch import save_file
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -75,6 +79,142 @@ def _greedy_continuation(
     with torch.no_grad():
         generated = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
     return generated[0, inputs["input_ids"].shape[1] :].cpu()
+
+
+def _resolve_hf_path(model_name_or_path: str, revision: str) -> Path:
+    """Resolve a local directory or pinned Hub model to its snapshot path."""
+    local_path = Path(model_name_or_path)
+    if local_path.is_dir():
+        return local_path
+
+    from huggingface_hub import snapshot_download
+
+    return Path(
+        snapshot_download(
+            repo_id=model_name_or_path,
+            revision=revision,
+            allow_patterns=["*.safetensors", "model.safetensors.index.json"],
+        )
+    )
+
+
+def _merge_training_only_mtp_weights(
+    *,
+    hf_model: str,
+    hf_revision: str,
+    adapter_path: Path,
+    output: Path,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> tuple[int, int]:
+    """Append the MTP weights omitted by the HF inference model.
+
+    Transformers does not instantiate Nemotron H's training-only MTP modules,
+    so ``merge_and_unload`` cannot include them. This function carries every
+    MTP tensor from the base checkpoint and applies each corresponding LoRA
+    pair before adding a dedicated shard to the merged checkpoint.
+
+    Returns:
+        The number of merged MTP tensors and the number carried unchanged.
+    """
+    base_path = _resolve_hf_path(hf_model, hf_revision)
+    base_index_path = base_path / "model.safetensors.index.json"
+    output_index_path = output / "model.safetensors.index.json"
+    adapter_weights_path = adapter_path / "adapter_model.safetensors"
+    adapter_config_path = adapter_path / "adapter_config.json"
+    for required_path in (
+        base_index_path,
+        output_index_path,
+        adapter_weights_path,
+        adapter_config_path,
+    ):
+        if not required_path.is_file():
+            raise FileNotFoundError(f"Required merge input does not exist: {required_path}")
+
+    base_index = json.loads(base_index_path.read_text())
+    output_index = json.loads(output_index_path.read_text())
+    adapter_config = json.loads(adapter_config_path.read_text())
+    if adapter_config.get("use_dora") or adapter_config.get("use_rslora"):
+        raise ValueError("Training-only MTP merge currently supports standard LoRA only.")
+    if adapter_config.get("rank_pattern") or adapter_config.get("alpha_pattern"):
+        raise ValueError("Training-only MTP merge does not support per-module rank or alpha patterns.")
+    scaling = float(adapter_config["lora_alpha"]) / int(adapter_config["r"])
+
+    base_weight_map: dict[str, str] = base_index["weight_map"]
+    output_weight_map: dict[str, str] = output_index["weight_map"]
+    mtp_base_keys = sorted(key for key in base_weight_map if key.startswith("mtp."))
+    if not mtp_base_keys:
+        raise RuntimeError("The base checkpoint has no MTP tensors to preserve.")
+    duplicate_keys = set(mtp_base_keys).intersection(output_weight_map)
+    if duplicate_keys:
+        raise RuntimeError(f"The HF merge unexpectedly emitted MTP tensors: {sorted(duplicate_keys)[:5]}")
+
+    adapter_prefix = "base_model.model."
+    lora_a_suffix = ".lora_A.weight"
+    lora_b_suffix = ".lora_B.weight"
+    mtp_shard_name = "model-mtp.safetensors"
+    mtp_shard_path = output / mtp_shard_name
+    if mtp_shard_path.exists():
+        raise FileExistsError(f"Refusing to overwrite an existing MTP shard: {mtp_shard_path}")
+
+    merged_state: dict[str, torch.Tensor] = {}
+    merged_count = 0
+    unchanged_count = 0
+    with ExitStack() as stack:
+        base_readers = {
+            filename: stack.enter_context(safe_open(base_path / filename, framework="pt", device="cpu"))
+            for filename in set(base_weight_map.values())
+        }
+        adapter_reader = stack.enter_context(safe_open(adapter_weights_path, framework="pt", device="cpu"))
+        adapter_keys = set(adapter_reader.keys())
+        mtp_lora_a_keys = {
+            key for key in adapter_keys if key.startswith(f"{adapter_prefix}mtp.") and key.endswith(lora_a_suffix)
+        }
+        expected_lora_keys: set[str] = set()
+
+        with torch.no_grad():
+            for base_key in mtp_base_keys:
+                base_tensor = (
+                    base_readers[base_weight_map[base_key]].get_tensor(base_key).to(device=device, dtype=dtype)
+                )
+                module_name = base_key.removesuffix(".weight")
+                lora_a_key = f"{adapter_prefix}{module_name}{lora_a_suffix}"
+                lora_b_key = f"{adapter_prefix}{module_name}{lora_b_suffix}"
+                if lora_a_key in adapter_keys or lora_b_key in adapter_keys:
+                    if lora_a_key not in adapter_keys or lora_b_key not in adapter_keys:
+                        raise RuntimeError(f"Incomplete MTP LoRA pair for {base_key}.")
+                    calculation_dtype = dtype
+                    if device.type == "cpu" and dtype in (torch.bfloat16, torch.float16):
+                        calculation_dtype = torch.float32
+                    weight_a = adapter_reader.get_tensor(lora_a_key).to(
+                        device=device,
+                        dtype=calculation_dtype,
+                    )
+                    weight_b = adapter_reader.get_tensor(lora_b_key).to(
+                        device=device,
+                        dtype=calculation_dtype,
+                    )
+                    delta = (weight_b @ weight_a) * scaling
+                    merged_tensor = base_tensor + delta.to(dtype=dtype)
+                    expected_lora_keys.update((lora_a_key, lora_b_key))
+                    merged_count += 1
+                else:
+                    merged_tensor = base_tensor
+                    unchanged_count += 1
+                merged_state[base_key] = merged_tensor.cpu().contiguous()
+
+        unconsumed_lora_a = mtp_lora_a_keys.difference(expected_lora_keys)
+        if unconsumed_lora_a:
+            raise RuntimeError(f"MTP LoRA weights do not map to base tensors: {sorted(unconsumed_lora_a)[:5]}")
+
+    save_file(merged_state, mtp_shard_path, metadata={"format": "pt"})
+    mtp_size = sum(tensor.numel() * tensor.element_size() for tensor in merged_state.values())
+    output_weight_map.update(dict.fromkeys(mtp_base_keys, mtp_shard_name))
+    output_index.setdefault("metadata", {})["total_size"] = int(
+        output_index.get("metadata", {}).get("total_size", 0)
+    ) + int(mtp_size)
+    output_index_path.write_text(json.dumps(output_index, indent=2, sort_keys=True) + "\n")
+    return merged_count, unchanged_count
 
 
 def main() -> None:
@@ -146,6 +286,20 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     merged_model.save_pretrained(args.output, safe_serialization=True)
     tokenizer.save_pretrained(args.output)
+    merge_device = next(merged_model.parameters()).device
+    del base_model, peft_model, merged_model
+    if merge_device.type == "cuda":
+        torch.cuda.empty_cache()
+    merged_mtp_count, unchanged_mtp_count = _merge_training_only_mtp_weights(
+        hf_model=args.hf_model,
+        hf_revision=args.hf_revision,
+        adapter_path=args.adapter_path,
+        output=args.output,
+        dtype=DTYPES[args.dtype],
+        device=merge_device,
+    )
+    LOGGER.info("Merged %d training-only MTP tensors with LoRA.", merged_mtp_count)
+    LOGGER.info("Carried %d non-LoRA MTP tensors unchanged.", unchanged_mtp_count)
     LOGGER.info("Merged model saved to %s", args.output)
 
 
