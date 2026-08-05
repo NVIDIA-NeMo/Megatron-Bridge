@@ -13,8 +13,6 @@
 # limitations under the License.
 """H100 performance recipes for Qwen3.5-VL."""
 
-import torch
-
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import (
     CommOverlapConfig,
@@ -27,92 +25,23 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     qwen35_vl_122b_a10b_pretrain_mock_config,
     qwen35_vl_397b_a17b_pretrain_mock_config,
 )
-from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
+    _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config as _library_pretrain_config,
+)
 
 
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 16× H100, BF16, PP=2 EP=8."""
-    cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
+    cfg = _library_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _qwen35_vl_common(cfg)
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.num_layers_in_first_pipeline_stage = 17
-    cfg.model.num_layers_in_last_pipeline_stage = 23
-    cfg.model.expert_model_parallel_size = 8
-    cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=False,
-        overlap_grad_reduce=False,
-        overlap_param_gather=False,
-        overlap_param_gather_with_optimizer_step=False,
-        overlap_moe_expert_parallel_comm=False,
-        delay_wgrad_compute=False,
-    )
-
     _benchmark_common(cfg)
-
-    # Measured 16-H100 execution policy. Keep these settings after
-    # _benchmark_common because that helper owns generic benchmark defaults.
-    cfg.model.apply_rope_fusion = False
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_hybridep_num_sms = None
-    cfg.model.moe_flex_dispatcher_num_sms = 16
-    cfg.model.moe_hybridep_num_sms_preprocessing = 16
-    cfg.model.moe_permute_fusion = True
-    cfg.model.moe_permute_fusion_into_hybridep = True
-    cfg.model.overlap_dispatch_backward_with_experts_wgrad = True
-    cfg.model.batch_p2p_sync = False
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
-    cfg.model.vision_cuda_graph_impl = "transformer_engine"
-    cfg.model.vision_cuda_graph_scope = ["attn", "mlp"]
-    cfg.model.max_vision_cuda_graph_seq_length = 784
-    cfg.model.use_te_rng_tracker = True
-    cfg.rng.te_rng_tracker = True
-
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-    cfg.optimizer.overlap_param_gather = False
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology and chunking for two 8-GPU NVLink domains.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-    }
+    # Restore the library-owned execution policy after generic benchmark
+    # defaults adjust CUDA graph and HybridEP settings.
+    _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
     return cfg
 
 
