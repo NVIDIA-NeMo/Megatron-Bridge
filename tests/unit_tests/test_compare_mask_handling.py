@@ -77,6 +77,7 @@ try:
         from compare import (  # noqa: E402
             SingleBatchIterator,
             _broadcast_hf_results,
+            _load_hf_reference_logits,
             _maybe_gather_tensor_parallel_logits,
             _run_hf_inference,
             _run_megatron_forward,
@@ -313,6 +314,26 @@ class TestCompareMaskHandling:
         assert hf_logits.dtype == torch.float32
         assert hf_next_token.shape == (1,)
         assert broadcast_shapes == [(1,), (1,), (163840,)]
+
+    def test_memory_bounded_hf_reference_logits_validate_input_ids(self, tmp_path):
+        """Test that saved HF logits are accepted only for the exact tokenized input."""
+        path = tmp_path / "hf_logits.pt"
+        input_ids = torch.tensor([[1, 2, 3]])
+        logits = torch.tensor([[0.1, 0.7, 0.2]])
+        torch.save({"input_ids": input_ids, "logits": logits}, path)
+        tokenizer = MagicMock()
+        tokenizer.decode.return_value = "token"
+
+        with patch.object(compare, "_is_rank_0", return_value=True), patch.object(compare, "print_rank_0"):
+            loaded, next_token, *_ = _load_hf_reference_logits(path, input_ids, tokenizer)
+
+        assert torch.equal(loaded, logits.reshape(-1))
+        assert next_token.item() == 1
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            pytest.raises(ValueError, match="different input token IDs"),
+        ):
+            _load_hf_reference_logits(path, torch.tensor([[9]]), tokenizer)
 
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
     def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):

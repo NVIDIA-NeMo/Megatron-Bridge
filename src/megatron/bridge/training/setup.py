@@ -19,6 +19,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
 
 import numpy as np
@@ -757,6 +758,7 @@ def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
 
     if cfg.logger.save_config_filepath is not None:
         try:
+            Path(cfg.logger.save_config_filepath).parent.mkdir(parents=True, exist_ok=True)
             cfg.to_yaml(cfg.logger.save_config_filepath)
         except Exception as e:
             print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")

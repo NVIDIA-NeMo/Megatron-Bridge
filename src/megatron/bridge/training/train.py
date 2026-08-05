@@ -1527,6 +1527,7 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
     if global_state._comet_logger:
         global_state._comet_logger.end()
 
+    _delete_cuda_graphs(None)
     destroy_global_state()
 
 
@@ -1636,7 +1637,7 @@ def _handle_mxfp8_param_buffer_copy(
                     optim_instance._copy_main_params_to_param_buffer()
 
 
-def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
+def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
     """
     Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
     process-destory (torch.dist.destroy_process_group()) at the end of the training loop.

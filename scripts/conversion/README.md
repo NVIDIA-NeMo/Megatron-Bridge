@@ -42,9 +42,11 @@ The GPU backend uses NeMo Run's torchrun launcher for local execution and
 srun-native tasks for Slurm. Users should not wrap the command in `torchrun`,
 `srun`, or `sbatch`.
 
-The requested topology must satisfy
-`nodes * gpus-per-node == TP * PP * EP`; conversion does not create redundant
-data-parallel replicas. `ETP * EP * PP` must also divide the total GPU count.
+The requested topology must satisfy `nodes * gpus-per-node % (TP * PP) == 0` and
+`nodes * gpus-per-node % (ETP * EP * PP) == 0`. Expert parallelism is an
+alternative slicing of the same ranks rather than an extra multiplicand, so it
+is not part of the first product. Ranks left over after either split form
+data-parallel replicas.
 
 ```bash
 export HF_TOKEN="$(<${HOME}/HF_TOKEN)"

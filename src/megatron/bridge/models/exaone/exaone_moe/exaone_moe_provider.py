@@ -22,6 +22,13 @@ from typing import TYPE_CHECKING
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec, get_gpt_decoder_layer_specs
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.transformer_layer import (
+    TransformerLayer,
+    TransformerLayerSubmodules,
+    get_transformer_layer_offset,
+)
+from megatron.core.utils import get_pg_rank
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -50,9 +57,100 @@ class _MTPDenseLayerSpecsList(list):
         return super().__getitem__(idx)
 
 
-def _build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSpec":
+def _layer_specific_config(
+    config: "GPTModelProvider",
+    *,
+    layer_idx: int,
+    is_mtp_layer: bool,
+) -> "GPTModelProvider":
+    """Return a shallow config copy with EXAONE's per-layer settings applied."""
+    layer_config = copy(config)
+
+    if is_mtp_layer:
+        sliding_windows = getattr(config, "mtp_sliding_windows", None) or []
+        layer_types = getattr(config, "mtp_layer_types", None) or []
+        swiglu_limits = []
+    else:
+        sliding_windows = getattr(config, "sliding_windows", None) or []
+        layer_types = getattr(config, "layer_types", None) or []
+        swiglu_limits = getattr(config, "swiglu_limits", None) or []
+
+    if 0 <= layer_idx < len(sliding_windows):
+        sliding_window = int(sliding_windows[layer_idx])
+        layer_config.window_size = (sliding_window - 1, 0) if sliding_window > 0 else None
+        # ``window_size`` already describes this exact layer, so no additional
+        # global skip pattern should be applied by MCore.
+        layer_config.window_attn_skip_freq = None
+    elif 0 <= layer_idx < len(layer_types) and layer_types[layer_idx] == "full_attention":
+        layer_config.window_size = None
+        layer_config.window_attn_skip_freq = None
+
+    if 0 <= layer_idx < len(swiglu_limits):
+        swiglu_limit = float(swiglu_limits[layer_idx])
+        layer_config.activation_func_clamp_value = swiglu_limit if swiglu_limit > 0.0 else None
+
+    if is_mtp_layer and 0 <= layer_idx < len(layer_types):
+        # MCore numbers each MTP decoder layer from one, independently of the
+        # main decoder. Give its attention module an MTP-specific RoPE pattern
+        # with the length required by TransformerConfig validation.
+        no_rope = int(layer_types[layer_idx] != "sliding_attention")
+        layer_config.no_rope_freq = [no_rope] * config.num_layers
+
+    return layer_config
+
+
+class ExaoneMoeDecoderLayer(TransformerLayer):
+    """Transformer layer that applies EXAONE's per-layer window and SwiGLU settings."""
+
+    def __init__(
+        self,
+        config: "GPTModelProvider",
+        submodules: TransformerLayerSubmodules,
+        layer_number: int = 1,
+        hidden_dropout: float | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
+        vp_stage: int | None = None,
+        is_mtp_layer: bool = False,
+        add_layer_offset: bool = True,
+        pp_layer_offset: int | None = None,
+        name: str | None = None,
+    ) -> None:
+        if is_mtp_layer:
+            layer_idx = layer_number - 1
+        elif add_layer_offset:
+            if pg_collection is None:
+                pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+            layer_idx = (
+                layer_number + get_transformer_layer_offset(config, vp_stage, get_pg_rank(pg_collection.pp)) - 1
+            )
+        else:
+            layer_idx = layer_number - 1
+
+        layer_config = _layer_specific_config(
+            config,
+            layer_idx=layer_idx,
+            is_mtp_layer=is_mtp_layer,
+        )
+        super().__init__(
+            config=layer_config,
+            submodules=submodules,
+            layer_number=layer_number,
+            hidden_dropout=hidden_dropout,
+            pg_collection=pg_collection,
+            vp_stage=vp_stage,
+            is_mtp_layer=is_mtp_layer,
+            add_layer_offset=add_layer_offset,
+            pp_layer_offset=pp_layer_offset,
+            name=name,
+        )
+
+
+def build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSpec":
     """Build EXAONE MoE decoder specs while keeping MTP sub-layers dense."""
     block_submodules = get_gpt_decoder_block_spec(cfg, use_transformer_engine=HAVE_TE, **kwargs)
+
+    for layer_spec in block_submodules.layer_specs:
+        layer_spec.module = ExaoneMoeDecoderLayer
 
     if getattr(cfg, "mtp_num_layers", None):
         dense_cfg = copy(cfg)
@@ -60,6 +158,7 @@ def _build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSp
         dense_cfg.num_moe_experts = None
         dense_cfg.moe_grouped_gemm = False
         dense_mtp_spec = get_gpt_decoder_layer_specs(dense_cfg, use_transformer_engine=HAVE_TE)[-1]
+        dense_mtp_spec.module = ExaoneMoeDecoderLayer
         block_submodules.layer_specs = _MTPDenseLayerSpecsList(block_submodules.layer_specs, dense_mtp_spec)
 
     return block_submodules
@@ -69,7 +168,7 @@ def _build_exaone_moe_layer_spec(cfg: "GPTModelProvider", **kwargs) -> "ModuleSp
 class ExaoneMoeModelProvider(GPTModelProvider):
     """Model provider for EXAONE MoE models."""
 
-    transformer_layer_spec: "ModuleSpec" | Callable[["GPTModelProvider"], "ModuleSpec"] = _build_exaone_moe_layer_spec
+    transformer_layer_spec: "ModuleSpec" | Callable[["GPTModelProvider"], "ModuleSpec"] = build_exaone_moe_layer_spec
 
     # Model
     normalization: str = "RMSNorm"
@@ -85,6 +184,11 @@ class ExaoneMoeModelProvider(GPTModelProvider):
     mtp_num_layers: int | None = None
     mtp_loss_scaling_factor: float | None = None
     kv_channels: int | None = 128
+    layer_types: list[str] | None = None
+    sliding_windows: list[int] | None = None
+    mtp_layer_types: list[str] | None = None
+    mtp_sliding_windows: list[int] | None = None
+    swiglu_limits: list[float] | None = None
 
     # Regularization
     attention_dropout: float = 0.0

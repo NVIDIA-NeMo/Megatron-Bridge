@@ -24,7 +24,7 @@ overrides = [
     { name = "tokenizers", specifier = ">=0.22.0,<0.23" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=e7c550c5f80636cf841a8204b1d6f85a5f3f28b7" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=cfda38340769c432c12db3c0df574f8e6ce46c8c" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -35,7 +35,7 @@ version = "1.0.0+b7643bd"
 
 [[manifest.dependency-metadata]]
 name = "transformer-engine"
-version = "2.18.0+e7c550c5"
+version = "2.18.0+cfda3834"
 requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.25.0", "onnx", "onnxscript", "packaging", "pydantic", "torch>=2.1"]
 provides-extras = ["core-cu13", "pytorch"]
 
@@ -4574,8 +4574,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.18.0+e7c550c5"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=e7c550c5f80636cf841a8204b1d6f85a5f3f28b7#e7c550c5f80636cf841a8204b1d6f85a5f3f28b7" }
+version = "2.18.0+cfda3834"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=cfda38340769c432c12db3c0df574f8e6ce46c8c#cfda38340769c432c12db3c0df574f8e6ce46c8c" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },

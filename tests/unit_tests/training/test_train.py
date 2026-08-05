@@ -25,6 +25,7 @@ from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,
     _dummy_train_step,
+    _finish_train,
     _handle_mxfp8_param_buffer_copy,
     _maybe_register_fsdp_buffers,
     _should_skip_and_handle_iteration,
@@ -45,6 +46,32 @@ pytestmark = pytest.mark.unit
 
 class TestCudaGraphCleanup:
     """Unit tests for CUDA graph state cleanup."""
+
+    def test_finish_train_deletes_recaptured_validation_graph_before_global_teardown(self):
+        """Final cleanup must delete CUDA graphs captured by post-training validation."""
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+
+        validation_graph = Mock()
+        state = Mock()
+        state.wandb_logger = None
+        state._comet_logger = None
+        checkpoint_manager = Mock()
+
+        def assert_graph_deleted():
+            assert FullCudaGraphWrapper.cuda_graph["validation"] is None
+            assert FullCudaGraphWrapper.result["validation"] is None
+            assert FullCudaGraphWrapper.curr_iteration["validation"] == 0
+
+        with (
+            patch.object(FullCudaGraphWrapper, "cuda_graph", {"training": None, "validation": validation_graph}),
+            patch.object(FullCudaGraphWrapper, "result", {"training": None, "validation": object()}),
+            patch.object(FullCudaGraphWrapper, "curr_iteration", {"training": 0, "validation": 1}),
+            patch("megatron.bridge.training.train.safe_shutdown_nvrx_straggler_manager"),
+            patch("megatron.bridge.training.train.fault_tolerance"),
+            patch("megatron.bridge.training.train.destroy_global_state", side_effect=assert_graph_deleted),
+            patch("megatron.bridge.training.train.gc.collect"),
+        ):
+            _finish_train(state, checkpoint_manager)
 
     @patch("megatron.bridge.training.train.gc.collect")
     def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect):

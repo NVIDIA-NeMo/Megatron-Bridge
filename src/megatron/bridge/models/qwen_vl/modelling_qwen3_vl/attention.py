@@ -298,7 +298,7 @@ class Qwen3VLSelfAttention(SelfAttention):
             core_attn_out = core_attn_out.reshape(core_attn_out.size(0), 1, -1)
         nvtx_range_pop(suffix="core_attention")
 
-        # Output gate (for Gated Attention in hybrid architectures like Qwen3.5)
+        # Output gate (for Gated Attention in hybrid architectures like Qwen3.5/3.6).
         if gate is not None:
             core_attn_out = self._apply_output_gate(core_attn_out, gate)
 
