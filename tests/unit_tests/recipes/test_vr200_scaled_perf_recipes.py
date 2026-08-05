@@ -1,4 +1,4 @@
-"""Tests for scaled VR200 FP8-MX performance recipes."""
+"""Tests for scaled VR200 performance recipes."""
 
 from collections.abc import Callable
 
@@ -6,8 +6,11 @@ import pytest
 
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_vr200_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
     deepseek_v3_pretrain_512gpu_vr200_fp8mx_config,
+    deepseek_v3_pretrain_512gpu_vr200_nvfp4_config,
     deepseek_v3_pretrain_1024gpu_vr200_fp8mx_config,
+    deepseek_v3_pretrain_1024gpu_vr200_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.gpt_oss import (
     gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config,
@@ -17,9 +20,13 @@ from megatron.bridge.perf_recipes.gpt_oss import (
 )
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config,
     nemotron_3_super_pretrain_128gpu_vr200_fp8mx_config,
+    nemotron_3_super_pretrain_128gpu_vr200_nvfp4_config,
     nemotron_3_super_pretrain_256gpu_vr200_fp8mx_config,
+    nemotron_3_super_pretrain_256gpu_vr200_nvfp4_config,
     nemotron_3_super_pretrain_512gpu_vr200_fp8mx_config,
+    nemotron_3_super_pretrain_512gpu_vr200_nvfp4_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -82,6 +89,36 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
             deepseek_v3_pretrain_256gpu_vr200_fp8mx_config,
             256,
             deepseek_v3_pretrain_1024gpu_vr200_fp8mx_config,
+            1024,
+        ),
+        (
+            nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config,
+            64,
+            nemotron_3_super_pretrain_128gpu_vr200_nvfp4_config,
+            128,
+        ),
+        (
+            nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config,
+            64,
+            nemotron_3_super_pretrain_256gpu_vr200_nvfp4_config,
+            256,
+        ),
+        (
+            nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config,
+            64,
+            nemotron_3_super_pretrain_512gpu_vr200_nvfp4_config,
+            512,
+        ),
+        (
+            deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
+            256,
+            deepseek_v3_pretrain_512gpu_vr200_nvfp4_config,
+            512,
+        ),
+        (
+            deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
+            256,
+            deepseek_v3_pretrain_1024gpu_vr200_nvfp4_config,
             1024,
         ),
     ],

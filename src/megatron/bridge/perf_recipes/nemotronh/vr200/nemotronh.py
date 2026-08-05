@@ -275,3 +275,24 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
+
+
+def nemotron_3_super_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 128× VR200, NVFP4, GBS scaled from the 64-GPU recipe."""
+    cfg = nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config()
+    cfg.train.global_batch_size = 1024
+    return cfg
+
+
+def nemotron_3_super_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 256× VR200, NVFP4, GBS scaled from the 64-GPU recipe."""
+    cfg = nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config()
+    cfg.train.global_batch_size = 2048
+    return cfg
+
+
+def nemotron_3_super_pretrain_512gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 512× VR200, NVFP4, GBS scaled from the 64-GPU recipe."""
+    cfg = nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config()
+    cfg.train.global_batch_size = 4096
+    return cfg

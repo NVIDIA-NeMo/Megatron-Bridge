@@ -422,3 +422,17 @@ def deepseek_v3_pretrain_1024gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
+
+
+def deepseek_v3_pretrain_512gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 512× VR200, NVFP4, GBS scaled from the 256-GPU recipe."""
+    cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
+    cfg.train.global_batch_size = 8192
+    return cfg
+
+
+def deepseek_v3_pretrain_1024gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 1024× VR200, NVFP4, GBS scaled from the 256-GPU recipe."""
+    cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
+    cfg.train.global_batch_size = 16384
+    return cfg
