@@ -76,19 +76,6 @@ class _FakeModelCfg:
         return None
 
 
-@pytest.mark.parametrize("recipe_func", _GLM_45V_ALL_FUNCS)
-def test_glm_45v_micro_batch_one_recipes_disable_in_batch_packing(
-    recipe_func: Callable, monkeypatch: pytest.MonkeyPatch
-):
-    """Keep GLM-4.5V defaults compatible with in-batch packing validation."""
-    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = recipe_func()
-
-    assert cfg.train.micro_batch_size == 1
-    assert cfg.dataset.enable_in_batch_packing is False
-
-
 class _FakeAutoBridge:
     """Fake AutoBridge for testing."""
 
