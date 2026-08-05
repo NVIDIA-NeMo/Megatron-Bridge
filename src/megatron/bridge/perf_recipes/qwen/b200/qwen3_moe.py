@@ -307,10 +307,26 @@ def qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    # Partial (TE-scoped) CUDA graph, not full-iteration: B200's 180 GB cannot hold the
+    # full-iteration graph for this model — it OOMs at every workable config (TP1/EP8 and
+    # TP2/EP8, mbs4 and mbs2, even with defragmentation). Full-iteration is a B300/GB200
+    # feature (279/186 GB); B200 ships the partial-CG design.
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+
+    # Overlap the exposed HybridEP expert-parallel all-to-all with expert wgrad. Under
+    # partial CG the MoE a2a (~29% of kernel time here) is otherwise fully exposed; the
+    # B300 recipe gets this for free from the full-iteration helper. num_sms sizes the
+    # overlap stream (swept: 64 is the optimum; the curve turns up past 64).
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    cfg.model.moe_hybridep_num_sms = 64
 
     _benchmark_common(cfg)
-    _enable_hybridep_full_iteration_mxfp8(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -318,8 +334,8 @@ def qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
@@ -327,10 +343,10 @@ def qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
-        # Transformer Engine overlap settings for this model.
-        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        # cuDNN LayerNorm — marginal on B200 (TE TMA LN is already fast) but part of the tuned config.
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
