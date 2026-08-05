@@ -234,9 +234,17 @@ and generated the same four-token continuation, ` Paris.  `. The final merged
 artifact contains all 6,513 tensors, including all 270 MTP tensors. A
 key-by-key safetensors-header audit found the same names, shapes, and native
 dtypes as the base checkpoint, and distributed inference from the artifact
-generated `The capital of France is Paris.`. The GB200
-Megatron-versus-PEFT adapter verification will replace the pending entries
-after its registered job completes.
+generated `The capital of France is Paris.`.
+
+The GB200 alltoall fallback also exported the full-SFT checkpoint and
+generated `The capital of France is Paris.` from it. It exported a standard
+PEFT adapter, and Megatron-versus-PEFT verification matched the top-five token
+ordering exactly, with maximum logit difference `0.04393148` and mean logit
+difference `0.006825285`. Standalone adapter merge retained the same greedy
+continuation, with cosine similarity `0.999699891` and relative L2 error
+`0.02379323`. Its safetensors-header audit matched all 6,513 tensors, including
+all 270 MTP tensors, by name, shape, and native dtype; distributed inference
+from the merged artifact generated `The capital of France is Paris.`.
 
 When operating offline, set `HF_MODEL` to a mounted local snapshot for import,
 export, inference, verification, and merge. A Hub ID alone cannot resolve
