@@ -24,7 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -102,6 +101,23 @@ from megatron.bridge.training.utils.train_utils import (
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+
+
+try:
+    # `FullyShardedDataParallel` is a factory function rather than a class on newer
+    # megatron-core, so it cannot be passed to isinstance().
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+        FullyShardedDataParallelV1,
+        FullyShardedDataParallelV2,
+    )
+
+    megatron_FSDP = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
+except ImportError:
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+        FullyShardedDataParallel as FullyShardedDataParallelV1,
+    )
+
+    megatron_FSDP = (FullyShardedDataParallelV1,)
 
 
 # For Paged Stashing support
