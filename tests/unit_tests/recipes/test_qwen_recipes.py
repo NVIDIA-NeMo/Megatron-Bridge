@@ -706,6 +706,32 @@ def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(
     assert cfg.model.cuda_graph_scope == []
 
 
+def test_qwen3_30b_a3b_h100_fp8ds_inherits_fp8cs_layout_with_delayed_scaling(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """fp8ds is fp8cs + delayed scaling; topology, env_vars, and CUDA graph settings must match."""
+    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
+        qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config,
+    )
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    fp8cs = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
+    fp8ds = qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config()
+
+    # Precision must differ (delayed vs current scaling).
+    assert fp8ds.mixed_precision != fp8cs.mixed_precision
+
+    # Topology, CUDA graph settings, and env_vars are inherited unchanged.
+    assert fp8ds.model.tensor_model_parallel_size == fp8cs.model.tensor_model_parallel_size
+    assert fp8ds.model.expert_model_parallel_size == fp8cs.model.expert_model_parallel_size
+    assert fp8ds.model.cuda_graph_impl == fp8cs.model.cuda_graph_impl
+    assert fp8ds.model.cuda_graph_scope == fp8cs.model.cuda_graph_scope
+    assert fp8ds.env_vars == fp8cs.env_vars
+
+
 def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B LoRA has correct default parallelism."""
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
