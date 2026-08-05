@@ -19,14 +19,20 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 """
 
 from dataclasses import replace
+from functools import partial
 from typing import Any, Callable, Literal, Optional
 
 import torch
 from megatron.core import tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.inference.contexts import BaseInferenceContext
+from megatron.core.models.common.model_chunk_schedule_plan import (
+    TransformerLayerSchedulePlan,
+    TransformerModelChunkSchedulePlan,
+)
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.pipeline_parallel.utils import ScheduleNode
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
@@ -52,6 +58,59 @@ def _get_mtp_packed_seq_params(packed_seq_params: PackedSeqParams | None) -> Pac
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_kv=cu_seqlens_kv,
     )
+
+
+def _apply_deepstack_embedding(
+    visual_pos_mask: torch.Tensor,
+    visual_embed: torch.Tensor,
+    hidden_states: torch.Tensor,
+) -> torch.Tensor:
+    """Inject one deepstack feature after its corresponding language layer."""
+    hidden_states = hidden_states.transpose(0, 1).contiguous()
+    updated_visual_states = hidden_states[visual_pos_mask, :].clone() + visual_embed
+    hidden_states[visual_pos_mask, :] = updated_visual_states
+    return hidden_states.transpose(0, 1).contiguous()
+
+
+class _Qwen3VLTransformerLayerSchedulePlan(TransformerLayerSchedulePlan):
+    """Add Qwen3-VL deepstack injection to the fine-grained layer schedule."""
+
+    def __init__(self, layer, event, chunk_state, comp_stream, comm_stream, extra_args=None):
+        extra_args = extra_args or {}
+        visual_pos_mask = extra_args.get("visual_pos_mask")
+        deepstack_visual_embed = extra_args.get("deepstack_visual_embed")
+        super().__init__(layer, event, chunk_state, comp_stream, comm_stream, extra_args)
+
+        if visual_pos_mask is not None and deepstack_visual_embed is not None:
+            self.mtp_post_process = ScheduleNode(
+                partial(_apply_deepstack_embedding, visual_pos_mask, deepstack_visual_embed),
+                comp_stream,
+                event,
+                name="deepstack",
+            )
+
+
+class _Qwen3VLModelChunkSchedulePlan(TransformerModelChunkSchedulePlan):
+    """Fine-grained schedule plan that preserves Qwen3-VL deepstack semantics."""
+
+    LAYER_SCHEDULE_PLAN_CLASS = _Qwen3VLTransformerLayerSchedulePlan
+
+    def _extra_args_for_layer(self, module, layer_idx, num_layers):
+        extra_args = super()._extra_args_for_layer(module, layer_idx, num_layers)
+        if module is not self.state.model.decoder:
+            return extra_args
+
+        block_kwargs = self.state.extra_block_kwargs or {}
+        visual_pos_mask = block_kwargs.get("visual_pos_masks")
+        deepstack_visual_embeds = block_kwargs.get("deepstack_visual_embeds")
+        if visual_pos_mask is None or not deepstack_visual_embeds:
+            return extra_args
+
+        layer_number = module.layers[layer_idx].layer_number - 1
+        if 0 <= layer_number < len(deepstack_visual_embeds):
+            extra_args["visual_pos_mask"] = visual_pos_mask
+            extra_args["deepstack_visual_embed"] = deepstack_visual_embeds[layer_number]
+        return extra_args
 
 
 class Qwen3VLGPTModel(GPTModel):
@@ -265,3 +324,49 @@ class Qwen3VLGPTModel(GPTModel):
             del self.__dict__["embedding"]
 
         return result
+
+    def build_schedule_plan(
+        self,
+        input_ids: Tensor,
+        position_ids: Tensor,
+        attention_mask: Tensor,
+        decoder_input: Tensor = None,
+        labels: Tensor = None,
+        inference_context: BaseInferenceContext = None,
+        packed_seq_params: PackedSeqParams = None,
+        extra_block_kwargs: dict = None,
+        runtime_gather_output: Optional[bool] = None,
+        *,
+        inference_params: Optional[BaseInferenceContext] = None,
+        loss_mask: Optional[Tensor] = None,
+        visual_pos_masks: Optional[torch.Tensor] = None,
+        deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
+        output_processor: Callable[..., Tensor] | None = None,
+        output_processor_context: Any | None = None,
+    ) -> _Qwen3VLModelChunkSchedulePlan:
+        """Build a fine-grained language schedule while preserving deepstack inputs."""
+        del inference_context, inference_params
+        if self.config.fine_grained_activation_offloading:
+            self.preprocess_for_fine_grained_offloading()
+        if self.config.moe_paged_stash:
+            self.preprocess_for_paged_stash()
+
+        schedule_block_kwargs = dict(extra_block_kwargs or {})
+        schedule_block_kwargs.update(
+            visual_pos_masks=visual_pos_masks,
+            deepstack_visual_embeds=deepstack_visual_embeds,
+        )
+        return _Qwen3VLModelChunkSchedulePlan(
+            self,
+            input_ids,
+            position_ids,
+            attention_mask,
+            decoder_input,
+            labels,
+            packed_seq_params,
+            schedule_block_kwargs,
+            runtime_gather_output,
+            loss_mask,
+            output_processor=output_processor,
+            output_processor_context=output_processor_context,
+        )

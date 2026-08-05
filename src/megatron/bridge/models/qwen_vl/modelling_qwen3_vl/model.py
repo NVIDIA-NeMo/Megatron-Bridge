@@ -21,9 +21,10 @@ from megatron.core.extensions.transformer_engine import (
     TENorm,
     TERowParallelLinear,
 )
+from megatron.core.models.common.utils import weak_method
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.pipeline_parallel.utils import is_pp_last_stage
+from megatron.core.pipeline_parallel.utils import ScheduleNode, get_comp_stream, is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -56,6 +57,134 @@ from megatron.bridge.training.utils.packed_seq_utils import (
     get_packed_seq_q_cu_seqlens,
 )
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+
+_MISSING_SCHEDULE_METHOD = object()
+
+
+class _Qwen3VLSchedulePreProcessNode(ScheduleNode):
+    """Run Qwen-VL preprocessing inside the fine-grained pipeline schedule."""
+
+    def __init__(self, vl_model, chunk_state, event, stream, forward_args):
+        super().__init__(weak_method(self.forward_impl), stream, event, name="qwen3_vl_pre_process")
+        # TransformerModelChunkSchedulePlan.release_state() clears these exact
+        # attributes after backward. Keep the standard names so multimodal
+        # activations do not outlive their microbatch plan.
+        self.model = vl_model
+        self.model_chunk_state = chunk_state
+        self.forward_args = dict(forward_args)
+        self.received_decoder_input = None
+
+    def forward(self, inputs=()):
+        """Attach the received pipeline tensor without detaching it."""
+        if self.model.pre_process:
+            return self._forward()
+
+        decoder_input = self.model_chunk_state.decoder_input
+        if decoder_input is None:
+            decoder_input = self.model.language_model.decoder.input_tensor
+        if isinstance(decoder_input, list):
+            assert len(decoder_input) == 1
+            decoder_input = decoder_input[0]
+        if decoder_input is None:
+            raise RuntimeError("Qwen-VL schedule plan is missing its received pipeline activation")
+        self.received_decoder_input = decoder_input
+        return self._forward()
+
+    def forward_impl(self):
+        """Prepare vision, MRoPE, embedding, and language-model inputs at runtime."""
+        decoder_input = self.received_decoder_input
+        self.received_decoder_input = None
+        forward_args = self.forward_args
+        self.forward_args = None
+        if forward_args is None:
+            raise RuntimeError("Qwen-VL schedule preprocessing node was reused")
+        language_model = self.model.language_model
+        if decoder_input is not None:
+            language_model.set_input_tensor(decoder_input)
+
+        def capture_language_inputs(*args, **kwargs):
+            assert not args
+            return kwargs
+
+        previous_method = language_model.__dict__.get("build_schedule_plan", _MISSING_SCHEDULE_METHOD)
+        language_model.__dict__["build_schedule_plan"] = capture_language_inputs
+        try:
+            prepared = self.model.forward(
+                return_schedule_plan=True,
+                **forward_args,
+            )
+        finally:
+            if previous_method is _MISSING_SCHEDULE_METHOD:
+                del language_model.__dict__["build_schedule_plan"]
+            else:
+                language_model.__dict__["build_schedule_plan"] = previous_method
+
+        if isinstance(prepared, tuple):
+            prepared, sliced_loss_mask = prepared
+            prepared["loss_mask"] = sliced_loss_mask
+        assert isinstance(prepared, dict)
+        if prepared.get("deepstack_visual_embeds"):
+            raise RuntimeError("Scheduled Qwen-VL preprocessing currently requires empty deepstack_visual_indexes.")
+
+        prepared_decoder_input = prepared.get("decoder_input")
+        if prepared_decoder_input is None and not language_model.pre_process:
+            prepared_decoder_input = decoder_input
+
+        preproc_output = language_model._preprocess(
+            input_ids=prepared.get("input_ids"),
+            position_ids=prepared.get("position_ids"),
+            decoder_input=prepared_decoder_input,
+            inference_context=prepared.get("inference_context"),
+            packed_seq_params=prepared.get("packed_seq_params"),
+        )
+        (
+            decoder_input,
+            rotary_pos_emb,
+            rotary_pos_cos,
+            rotary_pos_sin,
+            sequence_len_offset,
+        ) = preproc_output[:5]
+        padding_mask = preproc_output[5] if len(preproc_output) > 5 else None
+
+        schedule_block_kwargs = dict(prepared.get("extra_block_kwargs") or {})
+        schedule_block_kwargs.update(
+            visual_pos_masks=prepared.get("visual_pos_masks"),
+            deepstack_visual_embeds=prepared.get("deepstack_visual_embeds"),
+        )
+        state = self.model_chunk_state
+        state.input_ids = prepared.get("input_ids")
+        state.position_ids = prepared.get("position_ids")
+        state.attention_mask = prepared.get("attention_mask")
+        state.decoder_input = decoder_input
+        state.labels = prepared.get("labels")
+        state.loss_mask = prepared.get("loss_mask")
+        state.packed_seq_params = prepared.get("packed_seq_params")
+        state.padding_mask = padding_mask
+        state.extra_block_kwargs = schedule_block_kwargs
+        state.runtime_gather_output = prepared.get("runtime_gather_output")
+        state.output_processor = prepared.get("output_processor")
+        state.output_processor_context = prepared.get("output_processor_context")
+        state.rotary_pos_emb = rotary_pos_emb
+        state.rotary_pos_cos = rotary_pos_cos
+        state.rotary_pos_sin = rotary_pos_sin
+        state.sequence_len_offset = sequence_len_offset
+        return decoder_input
+
+    def _release_state(self):
+        """Drop multimodal microbatch state immediately after preprocessing backward."""
+        state = self.model_chunk_state
+        if state is not None:
+            # The plan object can remain attached to pipeline outputs until the
+            # outer iteration finishes. Its generic release path only clears
+            # ``state.model``, so release every now-dead activation reference
+            # here after autograd has consumed the preprocessing output.
+            for name in tuple(vars(state)):
+                if name != "model":
+                    setattr(state, name, None)
+        self.forward_args = None
+        self.received_decoder_input = None
+        super()._release_state()
 
 
 def _is_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
@@ -522,6 +651,7 @@ class Qwen3VLModel(MegatronModule):
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
         mm_token_type_ids: torch.Tensor = None,
+        return_schedule_plan: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -911,7 +1041,10 @@ class Qwen3VLModel(MegatronModule):
                     full_sequence_length=full_sequence_length,
                 )
 
-        output = self.language_model(
+        language_model_forward = (
+            self.language_model.build_schedule_plan if return_schedule_plan else self.language_model
+        )
+        output = language_model_forward(
             input_ids=lm_input_ids,
             position_ids=position_ids,  # None in encoder
             attention_mask=attention_mask,  # None in encoder
@@ -933,3 +1066,41 @@ class Qwen3VLModel(MegatronModule):
         if return_sliced_loss_mask:
             return output, loss_mask
         return output
+
+    def build_schedule_plan(self, *args, **kwargs):
+        """Build the language plan and schedule multimodal preprocessing with it."""
+        if args:
+            raise TypeError("Qwen3VLModel.build_schedule_plan requires keyword arguments")
+
+        received_decoder_input = None
+        if not self.pre_process:
+            received_decoder_input = self.language_model.decoder.input_tensor
+            if isinstance(received_decoder_input, list):
+                assert len(received_decoder_input) == 1
+                received_decoder_input = received_decoder_input[0]
+
+        plan = self.language_model.build_schedule_plan(
+            input_ids=kwargs.get("input_ids"),
+            position_ids=kwargs.get("position_ids"),
+            attention_mask=kwargs.get("attention_mask"),
+            decoder_input=received_decoder_input,
+            labels=kwargs.get("labels"),
+            inference_context=kwargs.get("inference_context"),
+            packed_seq_params=kwargs.get("packed_seq_params"),
+            extra_block_kwargs=kwargs.get("extra_block_kwargs"),
+            runtime_gather_output=kwargs.get("runtime_gather_output"),
+            inference_params=kwargs.get("inference_params"),
+            loss_mask=kwargs.get("loss_mask"),
+            visual_pos_masks=None,
+            deepstack_visual_embeds=None,
+            output_processor=kwargs.get("output_processor"),
+            output_processor_context=kwargs.get("output_processor_context"),
+        )
+        plan.pre_process = _Qwen3VLSchedulePreProcessNode(
+            self,
+            plan.state,
+            plan.event,
+            get_comp_stream,
+            kwargs,
+        )
+        return plan

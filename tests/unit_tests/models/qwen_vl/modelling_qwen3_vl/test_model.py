@@ -40,6 +40,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
     Qwen3VLModel,
     _get_cp_local_vision_embed_indices,
     _is_packed_input_pre_sharded,
+    _Qwen3VLSchedulePreProcessNode,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig
@@ -57,6 +58,32 @@ def _make_packed_seq_params(cu_seqlens: list[int]) -> PackedSeqParams:
         max_seqlen_q=max_seqlen,
         max_seqlen_kv=max_seqlen,
     )
+
+
+def test_schedule_preprocess_release_drops_multimodal_state():
+    model = object()
+    state = SimpleNamespace(
+        model=model,
+        decoder_input=torch.ones(1),
+        rotary_pos_emb=torch.ones(1),
+        labels=torch.ones(1),
+        extra_block_kwargs={"visual_pos_masks": torch.ones(1)},
+    )
+    node = _Qwen3VLSchedulePreProcessNode.__new__(_Qwen3VLSchedulePreProcessNode)
+    node.model_chunk_state = state
+    node.forward_args = {"pixel_values": torch.ones(1)}
+    node.received_decoder_input = torch.ones(1)
+    node.forward_func = lambda: None
+    node.backward_func = lambda: None
+
+    node._release_state()
+
+    assert state.model is model
+    assert all(value is None for name, value in vars(state).items() if name != "model")
+    assert node.forward_args is None
+    assert node.received_decoder_input is None
+    assert not hasattr(node, "forward_func")
+    assert not hasattr(node, "backward_func")
 
 
 def test_is_packed_input_pre_sharded_uses_global_physical_length():
