@@ -689,10 +689,10 @@ def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
     assert perf_base is legacy_base
 
 
-def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(
+def test_qwen3_30b_a3b_h100_fp8cs_perf_recipe_uses_te_partial_cuda_graph(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Test that changing the generic default does not alter the H100 FP8 recipe."""
+    """fp8cs H100 recipe uses TE partial CUDA graph (attn + moe_router + moe_preprocess)."""
     from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
         qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
     )
@@ -702,8 +702,8 @@ def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(
 
     cfg = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
 
-    assert cfg.model.cuda_graph_impl == "none"
-    assert cfg.model.cuda_graph_scope == []
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
 
 
 def test_qwen3_30b_a3b_h100_fp8ds_inherits_fp8cs_layout_with_delayed_scaling(
