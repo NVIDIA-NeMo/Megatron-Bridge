@@ -14,8 +14,6 @@
 
 import argparse
 import logging
-import os
-import socket
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Literal, Optional, Union
@@ -128,16 +126,9 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     Yields:
         None.
     """
-    if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
-        init_method = None
-    else:
-        # Find an available port dynamically
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", 0))
-            addr, port = s.getsockname()
-        init_method = f"tcp://{addr}:{port}"
-
-    dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
+    # This context is single-process, so keep rendezvous in-process and avoid TCP port collisions.
+    store = dist.HashStore()
+    dist.init_process_group(backend=backend, store=store, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
 
     # Initialize RNG tracker for model initialization

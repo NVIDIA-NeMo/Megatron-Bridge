@@ -183,17 +183,9 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_gloo(self, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_gloo(self, mock_parallel_state, mock_dist):
         """Test temporary distributed context with gloo backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
-
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
+        mock_store = mock_dist.HashStore.return_value
 
         with (
             patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
@@ -202,9 +194,8 @@ class TestTemporaryDistributedContext:
         ):
             pass
 
-        mock_dist.init_process_group.assert_called_once_with(
-            backend="gloo", init_method="tcp://localhost:12345", world_size=1, rank=0
-        )
+        mock_dist.HashStore.assert_called_once_with()
+        mock_dist.init_process_group.assert_called_once_with(backend="gloo", store=mock_store, world_size=1, rank=0)
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once()
@@ -212,37 +203,31 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_with_env_vars(self, mock_os, mock_parallel_state, mock_dist):
-        """Test temporary distributed context when env vars are already set."""
-        mock_os.environ = {"MASTER_ADDR": "localhost", "MASTER_PORT": "12345"}
+    def test_temporary_distributed_context_ignores_env_rendezvous(self, mock_parallel_state, mock_dist):
+        """Test temporary distributed context does not use the process rendezvous."""
+        mock_store = mock_dist.HashStore.return_value
 
-        with temporary_distributed_context(backend="gloo"):
+        with (
+            patch.dict(os.environ, {"MASTER_ADDR": "localhost", "MASTER_PORT": "12345"}),
+            temporary_distributed_context(backend="gloo"),
+        ):
             pass
 
-        mock_dist.init_process_group.assert_called_once_with(backend="gloo", init_method=None, world_size=1, rank=0)
+        mock_dist.HashStore.assert_called_once_with()
+        mock_dist.init_process_group.assert_called_once_with(backend="gloo", store=mock_store, world_size=1, rank=0)
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
     @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
-    def test_temporary_distributed_context_nccl(self, mock_seed, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_nccl(self, mock_seed, mock_parallel_state, mock_dist):
         """Test temporary distributed context with nccl backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
-
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
+        mock_store = mock_dist.HashStore.return_value
 
         with temporary_distributed_context(backend="nccl"):
             pass
 
-        mock_dist.init_process_group.assert_called_once_with(
-            backend="nccl", init_method="tcp://localhost:12345", world_size=1, rank=0
-        )
+        mock_dist.HashStore.assert_called_once_with()
+        mock_dist.init_process_group.assert_called_once_with(backend="nccl", store=mock_store, world_size=1, rank=0)
         mock_seed.assert_called_once_with(0)
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
