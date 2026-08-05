@@ -600,6 +600,7 @@ def save_checkpoint_fixtures():
 class TestSaveCheckpoint:
     """Test checkpoint saving functionality."""
 
+    @pytest.mark.parametrize("save_rng", [True, False])
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("builtins.open", new_callable=mock_open)
@@ -647,6 +648,7 @@ class TestSaveCheckpoint:
         mock_is_last_rank,
         mock_wandb,
         save_checkpoint_fixtures,
+        save_rng,
     ):
         """Test saving a global checkpoint."""
         # Setup mocks
@@ -678,6 +680,7 @@ class TestSaveCheckpoint:
         # Add wandb logger to state
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.save_rng = save_rng
 
         # Call save_checkpoint
         save_checkpoint(
@@ -694,6 +697,10 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        if save_rng:
+            mock_get_rng.assert_called_once()
+        else:
+            mock_get_rng.assert_not_called()
 
         # Verify that the tracker file was written with the correct iteration
         tracker_calls = [
