@@ -300,6 +300,141 @@ class TestDataLoaders:
         assert test_dataloader is None
 
     @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader")
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_normalizes_single_valid_set(
+        self, mock_build_datasets, mock_build_loader, mock_dp_rank, mock_dp_size, mock_broadcast
+    ):
+        """A single validation dataset with multiple_validation_sets is normalized to a 1-element list."""
+        cfg = create_simple_test_config()
+        cfg.validation.multiple_validation_sets = True
+        train_state = TrainState()
+
+        fake_train_ds = mock.MagicMock()
+        fake_train_ds.__len__.return_value = cfg.train.global_batch_size
+        fake_train_ds.collate_fn = None
+        single_valid_ds = mock.MagicMock()
+        single_valid_ds.collate_fn = None
+        mock_build_datasets.return_value = (fake_train_ds, single_valid_ds, None)
+        mock_build_loader.side_effect = lambda dataset, *args, **kwargs: object() if dataset is not None else None
+
+        _, valid_dataloader, _ = build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=object(),
+        )
+
+        assert isinstance(valid_dataloader, list)
+        assert len(valid_dataloader) == 1
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader")
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_multi_val_per_set_offsets(
+        self, mock_build_datasets, mock_build_loader, mock_dp_rank, mock_dp_size, mock_broadcast
+    ):
+        """Each validation set's loader resumes from its own consumed_valid_samples_per_set offset."""
+        cfg = create_simple_test_config()
+        cfg.validation.multiple_validation_sets = True
+        train_state = TrainState()
+        train_state.consumed_valid_samples_per_set = [100, 200]  # restored per-set offsets
+
+        fake_train_ds = mock.MagicMock()
+        fake_train_ds.__len__.return_value = cfg.train.global_batch_size
+        fake_train_ds.collate_fn = None
+        valid_a = mock.MagicMock()
+        valid_a.collate_fn = None
+        valid_b = mock.MagicMock()
+        valid_b.collate_fn = None
+        mock_build_datasets.return_value = (fake_train_ds, [valid_a, valid_b], None)
+        mock_build_loader.side_effect = lambda dataset, *args, **kwargs: object() if dataset is not None else None
+
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=object(),
+        )
+
+        offsets = {id(c.args[0]): c.args[1] for c in mock_build_loader.call_args_list}
+        assert offsets[id(valid_a)] == 100
+        assert offsets[id(valid_b)] == 200
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader")
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_multi_val_sizes_counter_fresh(
+        self, mock_build_datasets, mock_build_loader, mock_dp_rank, mock_dp_size, mock_broadcast
+    ):
+        """A fresh run sizes the per-set counter to the number of sets and builds each from 0."""
+        cfg = create_simple_test_config()
+        cfg.validation.multiple_validation_sets = True
+        train_state = TrainState()  # consumed_valid_samples_per_set defaults to []
+
+        fake_train_ds = mock.MagicMock()
+        fake_train_ds.__len__.return_value = cfg.train.global_batch_size
+        fake_train_ds.collate_fn = None
+        valid_a = mock.MagicMock()
+        valid_a.collate_fn = None
+        valid_b = mock.MagicMock()
+        valid_b.collate_fn = None
+        mock_build_datasets.return_value = (fake_train_ds, [valid_a, valid_b], None)
+        mock_build_loader.side_effect = lambda dataset, *args, **kwargs: object() if dataset is not None else None
+
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=object(),
+        )
+
+        assert train_state.consumed_valid_samples_per_set == [0, 0]
+        offsets = {id(c.args[0]): c.args[1] for c in mock_build_loader.call_args_list}
+        assert offsets[id(valid_a)] == 0
+        assert offsets[id(valid_b)] == 0
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader")
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_multi_val_resets_on_set_count_change(
+        self, mock_build_datasets, mock_build_loader, mock_dp_rank, mock_dp_size, mock_broadcast, capsys
+    ):
+        """A changed validation-set count resets the per-set counter to zeros and warns."""
+        cfg = create_simple_test_config()
+        cfg.validation.multiple_validation_sets = True
+        train_state = TrainState()
+        train_state.consumed_valid_samples_per_set = [100]  # checkpoint had one set; now there are two
+
+        fake_train_ds = mock.MagicMock()
+        fake_train_ds.__len__.return_value = cfg.train.global_batch_size
+        fake_train_ds.collate_fn = None
+        valid_a = mock.MagicMock()
+        valid_a.collate_fn = None
+        valid_b = mock.MagicMock()
+        valid_b.collate_fn = None
+        mock_build_datasets.return_value = (fake_train_ds, [valid_a, valid_b], None)
+        mock_build_loader.side_effect = lambda dataset, *args, **kwargs: object() if dataset is not None else None
+
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=object(),
+        )
+
+        assert train_state.consumed_valid_samples_per_set == [0, 0]
+        assert "number of validation sets changed" in capsys.readouterr().out
+
+    @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size")
     @mock.patch("torch.distributed.get_rank")
     @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader", return_value=object())
@@ -479,6 +614,17 @@ class TestSampleBasedDataLoaders:
         assert train_samples == expected_train_samples
         assert valid_samples == expected_valid_samples
         assert test_samples == expected_test_samples
+
+    def test_get_train_valid_test_num_samples_eval_at_step_zero(self):
+        """eval_at_step_zero reserves one extra evaluation's worth of validation samples."""
+        cfg = create_simple_test_config()
+        cfg.validation.eval_at_step_zero = True
+
+        _, valid_samples, _ = get_train_valid_test_num_samples(cfg)
+
+        interval_eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
+        expected_valid_samples = (interval_eval_iters + cfg.validation.eval_iters) * cfg.train.global_batch_size
+        assert valid_samples == expected_valid_samples
 
     @mock.patch("torch.distributed.get_world_size")
     @mock.patch("torch.distributed.get_rank")

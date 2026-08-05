@@ -526,6 +526,72 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_validation_config_eval_at_step_zero_default(self):
+        """eval_at_step_zero is a bridge addition defaulting to False and is settable."""
+        assert ValidationConfig().eval_at_step_zero is False
+        assert ValidationConfig(eval_at_step_zero=True).eval_at_step_zero is True
+        # Inherited from Megatron-LM's ValidationConfig.
+        assert ValidationConfig().multiple_validation_sets is False
+        assert ValidationConfig().validation_set_names is None
+
+    def test_full_validation_rejected(self):
+        """full_validation is inherited from MCore but unimplemented; setting it must fail loud."""
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container.validation.full_validation = True
+
+        try:
+            with pytest.raises(ValueError, match="full_validation is not supported"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_validation_set_names_require_multiple_validation_sets(self):
+        """validation_set_names without multiple_validation_sets fails config validation."""
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container.validation.validation_set_names = ["alpha", "beta"]
+
+        try:
+            with pytest.raises(ValueError, match="validation_set_names requires multiple_validation_sets"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_multiple_validation_sets_rejects_megatron_mimo(self):
+        """multiple_validation_sets is rejected for MegatronMIMO models, whose data path bypasses it."""
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container.validation.multiple_validation_sets = True
+
+        try:
+            with patch.object(type(container), "model", property(lambda self: MagicMock(spec=MegatronMIMOProvider))):
+                with pytest.raises(ValueError, match="MegatronMIMO"):
+                    container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("pipeline_model_parallel_size", [1, 2])
+    def test_multiple_validation_sets_allows_pipeline_parallel(self, monkeypatch, pipeline_model_parallel_size):
+        """multiple_validation_sets validates with any PP size.
+
+        Per-set evaluation runs an identical number of fully-flushed evaluate()
+        calls on every rank, so it stays collective-balanced under PP > 1; no
+        config guard rejects it.
+        """
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=pipeline_model_parallel_size,
+            context_parallel_size=1,
+            pipeline_dtype=torch.bfloat16,
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8, model_config=gpt_model_cfg)
+        container.validation.multiple_validation_sets = True
+
+        try:
+            container.validate()  # Should pass without error for any PP size
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize(
         "world_size, expect_assertion_error",
         [

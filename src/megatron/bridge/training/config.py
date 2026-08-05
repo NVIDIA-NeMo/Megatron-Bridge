@@ -37,10 +37,11 @@ from megatron.training.config import DistributedInitConfig as MTrainDistributedI
 from megatron.training.config import LoggerConfig as MTrainLoggerConfig
 from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
-from megatron.training.config import RNGConfig, ValidationConfig
+from megatron.training.config import RNGConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.config import ValidationConfig as MTrainValidationConfig
 
 from megatron.bridge.data.base import (
     DataloaderConfig,
@@ -489,6 +490,17 @@ class TrainingConfig(MTrainTrainingConfig):
             assert self.global_batch_size is not None, "global_batch_size must be set when using train_samples"
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
+
+
+@dataclass(kw_only=True)
+class ValidationConfig(MTrainValidationConfig):
+    """Bridge validation config, extending Megatron-Core's with extra options."""
+
+    eval_at_step_zero: bool = False
+    """If set, run one validation pass before the training loop starts when
+    training begins at step 0 (fresh runs, or checkpoints loaded with
+    ``finetune``/``release``). Establishes a baseline validation loss for the
+    initial / loaded checkpoint. Not re-run on mid-run checkpoint resume."""
 
 
 @dataclass(kw_only=True)
@@ -1144,6 +1156,21 @@ class ConfigContainer(Container):
             )
         if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
             raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
+
+        if self.validation.full_validation:
+            raise ValueError(
+                "full_validation is not supported by Megatron Bridge; use eval_iters to bound evaluation."
+            )
+        if self.validation.validation_set_names is not None and not self.validation.multiple_validation_sets:
+            raise ValueError("validation_set_names requires multiple_validation_sets to be set.")
+        if self.validation.multiple_validation_sets:
+            from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+            if isinstance(self.model, MegatronMIMOProvider):
+                raise ValueError(
+                    "multiple_validation_sets is not supported for MegatronMIMO models: the MIMO data "
+                    "path builds per-rank validation loaders and bypasses per-set bookkeeping."
+                )
 
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)

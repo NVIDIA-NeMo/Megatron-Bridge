@@ -16,7 +16,7 @@ import json
 import os
 import time
 import types
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import torch
@@ -49,6 +49,7 @@ class TrainState(Stateful):
     consumed_train_samples: int = 0
     skipped_train_samples: int = 0
     consumed_valid_samples: int = 0
+    consumed_valid_samples_per_set: list[int] = field(default_factory=list)
     floating_point_operations_so_far: int = 0
     do_train: bool = False
     do_valid: bool = False
@@ -68,6 +69,7 @@ class TrainState(Stateful):
             "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int64),
             "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int64),
             "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int64),
+            "consumed_valid_samples_per_set": torch.tensor(self.consumed_valid_samples_per_set, dtype=torch.int64),
             "floating_point_operations_so_far": torch.tensor(
                 self.floating_point_operations_so_far, dtype=torch.float64
             ),
@@ -86,6 +88,9 @@ class TrainState(Stateful):
         self.consumed_train_samples = state_dict["consumed_train_samples"].item()
         self.skipped_train_samples = state_dict["skipped_train_samples"].item()
         self.consumed_valid_samples = state_dict["consumed_valid_samples"].item()
+        # Absent in checkpoints written before per-set validation bookkeeping existed.
+        consumed_per_set = state_dict.get("consumed_valid_samples_per_set")
+        self.consumed_valid_samples_per_set = consumed_per_set.tolist() if consumed_per_set is not None else []
         self.floating_point_operations_so_far = state_dict["floating_point_operations_so_far"].item()
         self.do_train = state_dict["do_train"].item()
         self.do_valid = state_dict["do_valid"].item()
