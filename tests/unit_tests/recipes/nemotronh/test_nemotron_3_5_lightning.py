@@ -101,7 +101,7 @@ class TestNemotron35LightningRecipes:
         assert cfg.model.recompute_modules == ["moe", "layernorm", "core_attn"]
         assert cuda_graph_module_names(cfg.model) == ["mamba"]
         assert cfg.checkpoint.async_save is False
-        assert cfg.ddp.average_in_collective is True
+        assert cfg.ddp.average_in_collective is False
 
     def test_sft_and_peft_contract(self):
         sft_cfg = nemotron_3_5_lightning_sft_config()

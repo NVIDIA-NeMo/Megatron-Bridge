@@ -114,7 +114,8 @@ def nemotron_3_5_lightning_pretrain_config() -> ConfigContainer:
     cfg.ddp.check_for_large_grads = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.ddp.average_in_collective = True
+    # MCore 0.18 requires summed collectives when per-token loss is enabled.
+    cfg.ddp.average_in_collective = False
     cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     cfg.model.init_method_std = 0.0173
