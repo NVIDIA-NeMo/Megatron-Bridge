@@ -21,6 +21,14 @@ from pathlib import Path
 
 import pytest
 import torch
+from torch import nn
+from transformers import PretrainedConfig, PreTrainedModel
+from transformers.conversion_mapping import (
+    MergeModulelist,
+    WeightConverter,
+    WeightRenaming,
+    register_checkpoint_conversion_mapping,
+)
 
 
 _SCRIPT_PATH = Path(__file__).parents[3] / "examples" / "conversion" / "adapter" / "verify_adapter.py"
@@ -52,47 +60,152 @@ def test_load_megatron_export_accepts_only_training_mtp(verify_adapter_module) -
     assert omitted_keys == ["mtp.layers.0.weight"]
 
 
-def test_load_megatron_export_aligns_transformers_v5_dynamic_namespace(verify_adapter_module) -> None:
-    """Native backbone tensors load into the Transformers v5 model namespace."""
-
-    class DynamicWeightConversionModel(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.model = torch.nn.Linear(2, 2)
-
-    model = DynamicWeightConversionModel()
-    expected_weight = torch.full_like(model.model.weight, 3.0)
-    expected_bias = torch.full_like(model.model.bias, 4.0)
+def test_load_converted_megatron_export_uses_transformers_mapping(verify_adapter_module, monkeypatch) -> None:
+    """Native checkpoint tensors go through Transformers dynamic conversions."""
+    expected_model = torch.nn.Linear(2, 2)
     state_dict = {
-        "backbone.weight": expected_weight,
-        "backbone.bias": expected_bias,
+        "backbone.weight": torch.ones(2, 2),
+        "backbone.experts.0.weight": torch.ones(2, 2),
         "mtp.layers.0.weight": torch.ones(2, 2),
     }
 
-    omitted_keys = verify_adapter_module._load_megatron_export(model, state_dict)
+    expected_config = object()
 
+    def from_pretrained(model_path, **kwargs):
+        assert model_path is None
+        assert kwargs["config"] is expected_config
+        assert kwargs["state_dict"] is state_dict
+        assert kwargs["torch_dtype"] == torch.float32
+        assert kwargs["trust_remote_code"] is True
+        assert kwargs["output_loading_info"] is True
+        return expected_model, {
+            "missing_keys": [],
+            "unexpected_keys": ["mtp.layers.0.weight"],
+            "mismatched_keys": [],
+            "error_msgs": [],
+        }
+
+    monkeypatch.setattr(
+        verify_adapter_module.AutoConfig,
+        "from_pretrained",
+        lambda model_path, **kwargs: expected_config,
+    )
+    monkeypatch.setattr(verify_adapter_module.AutoModelForCausalLM, "from_pretrained", from_pretrained)
+
+    model, omitted_keys = verify_adapter_module._load_converted_megatron_export(
+        "native-checkpoint",
+        state_dict,
+        trust_remote_code=True,
+    )
+
+    assert model is expected_model
     assert omitted_keys == ["mtp.layers.0.weight"]
-    assert torch.equal(model.model.weight, expected_weight)
-    assert torch.equal(model.model.bias, expected_bias)
 
 
-def test_load_megatron_export_rejects_dynamic_namespace_collision(verify_adapter_module) -> None:
-    """Dynamic namespace alignment must not silently overwrite a tensor."""
+def test_load_converted_megatron_export_packs_experts(verify_adapter_module, monkeypatch) -> None:
+    """Transformers stacks native per-expert tensors into fused model parameters."""
 
-    class DynamicWeightConversionModel(torch.nn.Module):
+    class ToyConfig(PretrainedConfig):
+        model_type = "adapter_verifier_packed_experts_test"
+
+    class ToyExperts(nn.Module):
         def __init__(self) -> None:
             super().__init__()
-            self.model = torch.nn.Linear(2, 2)
+            self.up_proj = nn.Parameter(torch.empty(2, 2, 3))
+            self.down_proj = nn.Parameter(torch.empty(2, 3, 2))
 
-    model = DynamicWeightConversionModel()
+    class ToyBody(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.experts = ToyExperts()
+
+    class ToyModel(PreTrainedModel):
+        config_class = ToyConfig
+
+        def __init__(self, config: ToyConfig) -> None:
+            super().__init__(config)
+            self.model = ToyBody()
+            self.post_init()
+
+    register_checkpoint_conversion_mapping(
+        ToyConfig.model_type,
+        [
+            WeightRenaming("backbone.", "model."),
+            WeightConverter(
+                "experts.*.up_proj.weight",
+                "experts.up_proj",
+                [MergeModulelist(dim=0)],
+            ),
+            WeightConverter(
+                "experts.*.down_proj.weight",
+                "experts.down_proj",
+                [MergeModulelist(dim=0)],
+            ),
+        ],
+        overwrite=True,
+    )
+    config = ToyConfig(experts_implementation="eager")
     state_dict = {
-        "model.weight": torch.ones_like(model.model.weight),
-        "backbone.weight": torch.zeros_like(model.model.weight),
-        "model.bias": torch.ones_like(model.model.bias),
+        "backbone.experts.0.up_proj.weight": torch.full((2, 3), 1.0),
+        "backbone.experts.1.up_proj.weight": torch.full((2, 3), 2.0),
+        "backbone.experts.0.down_proj.weight": torch.full((3, 2), 3.0),
+        "backbone.experts.1.down_proj.weight": torch.full((3, 2), 4.0),
+        "mtp.layers.0.weight": torch.ones(1),
     }
 
-    with pytest.raises(RuntimeError, match="duplicate tensors"):
-        verify_adapter_module._load_megatron_export(model, state_dict)
+    monkeypatch.setattr(verify_adapter_module.AutoConfig, "from_pretrained", lambda *args, **kwargs: config)
+
+    def load_toy_model(model_path, **kwargs):
+        assert model_path is None
+        kwargs.pop("trust_remote_code")
+        return ToyModel.from_pretrained(model_path, **kwargs)
+
+    monkeypatch.setattr(verify_adapter_module.AutoModelForCausalLM, "from_pretrained", load_toy_model)
+
+    model, omitted_keys = verify_adapter_module._load_converted_megatron_export(
+        "native-checkpoint",
+        state_dict,
+        trust_remote_code=False,
+    )
+
+    assert omitted_keys == ["mtp.layers.0.weight"]
+    assert torch.equal(model.model.experts.up_proj[0], state_dict["backbone.experts.0.up_proj.weight"])
+    assert torch.equal(model.model.experts.up_proj[1], state_dict["backbone.experts.1.up_proj.weight"])
+    assert torch.equal(model.model.experts.down_proj[0], state_dict["backbone.experts.0.down_proj.weight"])
+    assert torch.equal(model.model.experts.down_proj[1], state_dict["backbone.experts.1.down_proj.weight"])
+
+
+@pytest.mark.parametrize("failure_key", ["mismatched_keys", "error_msgs"])
+def test_load_converted_megatron_export_rejects_transformers_failures(
+    verify_adapter_module,
+    monkeypatch,
+    failure_key: str,
+) -> None:
+    """Transformers shape mismatches and conversion errors remain hard failures."""
+    loading_info = {
+        "missing_keys": [],
+        "unexpected_keys": [],
+        "mismatched_keys": [],
+        "error_msgs": [],
+    }
+    loading_info[failure_key] = ["conversion failed"]
+    monkeypatch.setattr(
+        verify_adapter_module.AutoConfig,
+        "from_pretrained",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        verify_adapter_module.AutoModelForCausalLM,
+        "from_pretrained",
+        lambda *args, **kwargs: (torch.nn.Linear(2, 2), loading_info),
+    )
+
+    with pytest.raises(RuntimeError, match="could not convert"):
+        verify_adapter_module._load_converted_megatron_export(
+            "native-checkpoint",
+            {},
+            trust_remote_code=False,
+        )
 
 
 @pytest.mark.parametrize(

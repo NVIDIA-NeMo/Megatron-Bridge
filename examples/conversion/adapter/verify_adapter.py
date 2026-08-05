@@ -59,7 +59,7 @@ import sys
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
 def parse_args() -> argparse.Namespace:
@@ -140,31 +140,20 @@ def _load_megatron_export(model: torch.nn.Module, state_dict: dict[str, torch.Te
 
     Some Hugging Face inference classes intentionally do not instantiate the
     training-only ``mtp`` module even though the native checkpoint contains
-    those tensors. Transformers v5 may also expose dynamically converted
-    ``backbone.`` checkpoint tensors under the ``model.`` module namespace.
-    All model-consumed keys must still match exactly, and only an
-    ``mtp.``-prefixed unexpected key is permitted.
+    those tensors. All model-consumed keys must still match exactly, and only
+    an ``mtp.``-prefixed unexpected key is permitted.
 
     Returns:
         The sorted training-only MTP keys omitted by the HF inference model.
     """
-    model_keys = set(model.state_dict())
-    aligned_state_dict: dict[str, torch.Tensor] = {}
-    for source_name, tensor in state_dict.items():
-        target_name = source_name
-        if source_name.startswith("backbone."):
-            dynamic_name = f"model.{source_name.removeprefix('backbone.')}"
-            if dynamic_name in model_keys:
-                target_name = dynamic_name
-        if target_name in aligned_state_dict:
-            raise RuntimeError(
-                f"Megatron export contains duplicate tensors after Hugging Face namespace alignment: {target_name}"
-            )
-        aligned_state_dict[target_name] = tensor
-
-    incompatible_keys = model.load_state_dict(aligned_state_dict, strict=False)
+    incompatible_keys = model.load_state_dict(state_dict, strict=False)
     missing_keys = sorted(incompatible_keys.missing_keys)
     unexpected_keys = sorted(incompatible_keys.unexpected_keys)
+    return _validate_megatron_export_keys(missing_keys, unexpected_keys)
+
+
+def _validate_megatron_export_keys(missing_keys: list[str], unexpected_keys: list[str]) -> list[str]:
+    """Require complete HF inference weights while permitting training-only MTP tensors."""
     training_only_mtp_keys = [key for key in unexpected_keys if key.startswith("mtp.")]
     unsupported_unexpected_keys = [key for key in unexpected_keys if not key.startswith("mtp.")]
     if missing_keys or unsupported_unexpected_keys:
@@ -173,6 +162,35 @@ def _load_megatron_export(model: torch.nn.Module, state_dict: dict[str, torch.Te
             f"missing={missing_keys[:10]}, unexpected={unsupported_unexpected_keys[:10]}"
         )
     return training_only_mtp_keys
+
+
+def _load_converted_megatron_export(
+    hf_model_path: str,
+    state_dict: dict[str, torch.Tensor],
+    *,
+    trust_remote_code: bool,
+) -> tuple[torch.nn.Module, list[str]]:
+    """Load native HF keys through the model's Transformers conversion mapping."""
+    config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=trust_remote_code)
+    model, loading_info = AutoModelForCausalLM.from_pretrained(
+        None,
+        config=config,
+        state_dict=state_dict,
+        torch_dtype=torch.float32,
+        trust_remote_code=trust_remote_code,
+        output_loading_info=True,
+    )
+    missing_keys = sorted(loading_info.get("missing_keys", []))
+    unexpected_keys = sorted(loading_info.get("unexpected_keys", []))
+    mismatched_keys = loading_info.get("mismatched_keys", [])
+    error_messages = loading_info.get("error_msgs", [])
+    if mismatched_keys or error_messages:
+        raise RuntimeError(
+            "Transformers could not convert the Megatron export: "
+            f"mismatched={mismatched_keys[:10]}, errors={error_messages[:10]}"
+        )
+    training_only_mtp_keys = _validate_megatron_export_keys(missing_keys, unexpected_keys)
+    return model, training_only_mtp_keys
 
 
 # ---------------------------------------------------------------------------
@@ -408,14 +426,11 @@ def main() -> None:
 
         print(f"\n[Step 4] Top-{k} logit verification ...")
 
-        mg_hf = AutoModelForCausalLM.from_pretrained(
+        mg_hf, training_only_mtp_keys = _load_converted_megatron_export(
             args.hf_model_path,
-            torch_dtype=torch.float32,
+            mg_merged_sd,
             trust_remote_code=args.trust_remote_code,
         )
-        if getattr(mg_hf.config, "tie_word_embeddings", False) and "lm_head.weight" not in mg_merged_sd:
-            mg_merged_sd["lm_head.weight"] = mg_merged_sd["model.embed_tokens.weight"]
-        training_only_mtp_keys = _load_megatron_export(mg_hf, mg_merged_sd)
         if training_only_mtp_keys:
             print(
                 f"  HF inference model omits {len(training_only_mtp_keys)} "
