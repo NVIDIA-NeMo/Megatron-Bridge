@@ -32,6 +32,8 @@ from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
     nemotron_3_ultra_pretrain_64gpu_gb200_fp8mx_config,
     nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_config,
     nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_ub_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp2_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp2_ub_config,

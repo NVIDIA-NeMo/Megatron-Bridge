@@ -6,6 +6,8 @@ from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
     nemotron_3_ultra_pretrain_64gpu_gb200_fp8mx_config,
     nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_config,
     nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_ub_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp2_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp2_ub_config,
@@ -161,6 +163,121 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
 
     fresh_cfg = nemotron_3_ultra_pretrain_64gpu_gb200_fp8mx_config()
     assert "sentinel" not in fresh_cfg.env_vars
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("recipe_factory", "pipeline_parallel_size", "use_megatron_fsdp", "checkpoint_format"),
+    [
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 1, True, "fsdp_dtensor"),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config, 4, False, "torch_dist"),
+    ],
+)
+def test_gb200_ultra_bf16_verification_recipes_are_convergence_safe(
+    recipe_factory,
+    pipeline_parallel_size: int,
+    use_megatron_fsdp: bool,
+    checkpoint_format: str,
+) -> None:
+    cfg = recipe_factory()
+
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.fp8 is None
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_router_padding_for_quantization is False
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.min_offloaded_tensor_size == 350_000_000
+    assert cfg.model.offload_modules == ["fused_group_mlp"]
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 1
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules == ["moe_act"]
+
+    assert cfg.ddp.use_megatron_fsdp is use_megatron_fsdp
+    assert cfg.dist.use_megatron_fsdp is use_megatron_fsdp
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.checkpoint.ckpt_format == checkpoint_format
+    assert cfg.logger.log_throughput is True
+
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+
+
+@pytest.mark.unit
+def test_gb200_ultra_bf16_fsdp_verification_uses_fp32_optimizer_state() -> None:
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config()
+
+    assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+    assert cfg.ddp.num_distributed_optimizer_instances == 4
+    assert cfg.ddp.outer_dp_sharding_strategy == "optim"
+    assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_main_params_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.float32
+    assert cfg.model.gradient_accumulation_fusion is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("recipe_factory", "pipeline_parallel_size"),
+    [
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 1),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config, 4),
+    ],
+)
+def test_gb200_ultra_bf16_verification_recipes_validate_for_256_gpus(
+    monkeypatch: pytest.MonkeyPatch,
+    recipe_factory,
+    pipeline_parallel_size: int,
+) -> None:
+    monkeypatch.setattr(training_config, "get_world_size_safe", lambda: 256)
+    monkeypatch.setattr(training_config, "validate_flex_dispatcher_backend", lambda _model: None)
+    cfg = recipe_factory()
+
+    training_config.runtime_config_update(cfg)
+
+    assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
+    data_parallel_size = 256 // (
+        cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
+    )
+    assert 256 == (
+        data_parallel_size
+        * cfg.model.tensor_model_parallel_size
+        * cfg.model.pipeline_model_parallel_size
+        * cfg.model.context_parallel_size
+    )
+    expert_data_parallel_size = 256 // (
+        cfg.model.pipeline_model_parallel_size
+        * cfg.model.expert_tensor_parallel_size
+        * cfg.model.expert_model_parallel_size
+    )
+    assert expert_data_parallel_size % cfg.ddp.num_distributed_optimizer_instances == 0
 
 
 @pytest.mark.unit

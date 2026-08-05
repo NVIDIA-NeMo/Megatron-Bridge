@@ -134,8 +134,24 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.ddp.num_buckets = 48
 
 
+def _apply_nemotron_3_ultra_verification_safety(cfg: ConfigContainer) -> None:
+    """Restore convergence-sensitive settings for Ultra verification runs.
+
+    The flat performance defaults deliberately disable numerical checks and
+    force balanced expert routing. Verification runs keep the same kernels and
+    communication topology, but must exercise natural routing and fail fast on
+    non-finite loss or gradients.
+    """
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.check_for_large_grads = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
+
+
 def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> None:
-    """Apply Megatron-FSDP (HSDP) settings for Nemotron 3 Ultra on GB300.
+    """Apply Megatron-FSDP (HSDP) settings for Ultra on 64-GPU NVLink domains.
 
     Shards params/grads/optimizer
     within each NVLink domain and replicate (optimizer-sharded) across domains, with

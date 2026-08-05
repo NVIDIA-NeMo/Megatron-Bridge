@@ -227,6 +227,17 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_tp2_cp2_config() -> ConfigCo
     # main-layer activation relief without the cost of all-layer replay.
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.context_parallel_size = 2
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 8,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_BUFFSIZE": 262144,
+        "NCCL_NVLS_ENABLE": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
     return cfg
 
 
@@ -269,6 +280,17 @@ def nemotron_3_ultra_pretrain_512gpu_h100_bf16_fsdp_tp4_cp2_config() -> ConfigCo
     # 8K-token activation work across two ranks. The expert mesh remains EP64
     # with EDP8, and TP4 stays within one H100 NVLink domain.
     cfg.model.context_parallel_size = 2
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 8,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_BUFFSIZE": 262144,
+        "NCCL_NVLS_ENABLE": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
     return cfg
 
 
