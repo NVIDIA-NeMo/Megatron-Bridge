@@ -6,6 +6,8 @@ Megatron Bridge is Python-first: configure models, data, and training via typed 
 
 `scripts/translate_mlm_to_bridge.py` translates bidirectionally between Megatron-LM `pretrain_gpt.py` CLI arguments and Megatron Bridge `run_recipe.py` Hydra overrides. It is useful for running loss-correlation experiments between the two frameworks and for migrating existing MLM configs.
 
+This script translates configuration only. It does not convert checkpoint weights and does not emit the serialized `run_config.yaml` stored in a Bridge-native checkpoint. Do not rename its output to `run_config.yaml` or place it in an MLM checkpoint: the generated overrides or Python recipe are inputs for a new Bridge run, not checkpoint metadata.
+
 ### MLM → Bridge (default direction)
 
 ```bash
@@ -87,11 +89,68 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
 | `--rotary-base N` | `model.rotary_base=N` | |
 | `--num-experts N` | `model.num_moe_experts=N` | |
 | `--moe-router-topk K` | `model.moe_router_topk=K` | |
+| `--hybrid-layer-pattern P` | `model.hybrid_layer_pattern=P` | Selects `HybridModelProvider` in generated recipes |
+| `--hybrid-override-pattern P` | `model.hybrid_layer_pattern=P` | Migrates the deprecated MLM field |
+| `--mamba-state-dim N` | `model.mamba_state_dim=N` | |
+| `--mamba-head-dim N` | `model.mamba_head_dim=N` | |
+| `--mamba-num-groups N` | `model.mamba_num_groups=N` | |
+| `--mamba-num-heads N` | `model.mamba_num_heads=N` | |
+| `--mtp-hybrid-override-pattern P` | `model.mtp_hybrid_override_pattern=P` | Legacy separate MTP pattern |
+| `--mtp-use-repeated-layer` | `model.mtp_use_repeated_layer=true` | One physical MTP layer reused across prediction depths |
+| `--sft-tokenizer-prompt-format P` | `tokenizer.tokenizer_prompt_format=P` | Bridge exposes the MCore SFT compatibility alias at load time |
 | `--mock-data` | `dataset.mock=true` | Use synthetic data (no files needed) |
 
 Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are silently skipped with a comment. `--mock-data` translates to `dataset.mock=true`. Unknown flags are listed in a separate section so you can handle them manually.
 
+Megatron-LM `--spec` values are intentionally not copied into generated configuration as arbitrary import targets. A recognized Mamba or Hybrid spec helps the translator select `HybridModelProvider`, but review and select the Bridge stack specification in trusted Python code.
+
 > **Activation function CLI overrides**: `model.activation_func` can now be set via Hydra CLI string override (e.g. `model.activation_func=silu`, `model.activation_func=gelu`). The string is resolved to the callable in `TransformerConfig.finalize()`. This makes `--swiglu` → `model.gated_linear_unit=true model.activation_func=silu` round-trippable from the CLI.
+
+## Exporting a legacy Megatron-LM checkpoint
+
+The conversion launcher supports export from Bridge-native checkpoints that contain a serialized `run_config.yaml`. A flat Megatron-LM distributed checkpoint instead stores an `argparse.Namespace` in common checkpoint state. Adding translator output to that directory does not turn it into a Bridge-native checkpoint.
+
+For a supported model family, use this legacy workflow:
+
+1. Pin compatible Megatron Bridge and Megatron-Core revisions, then inspect the saved MLM arguments with `load_model_config()`.
+2. Identify whether the checkpoint uses the `gpt` or `hybrid` legacy model path. Use the saved layer pattern and `args.spec`; do not infer the model type from the directory name.
+3. Resolve an exact Hugging Face revision for the same architecture to an immutable local snapshot containing its config, tokenizer, and required custom-code artifacts. Create `AutoBridge` from that local config. This supplies the registered config and parameter mappings; it does not load reference weights. Set `trust_remote_code=True` only after auditing code in the snapshot.
+4. Compare every weight-bearing field in the HF-derived provider with the saved MLM metadata. Architecture, vocabulary, expert, attention, Mamba, and physical/repeated-MTP layout must agree. Parallel degrees may be overridden for resharding when the target topology is valid.
+5. In an initialized distributed job, call `build_and_load_model()` with the configuration and MLM arguments returned by `load_model_config()`, plus `model_type="gpt"` or `model_type="hybrid"`.
+6. Call `AutoBridge.save_hf_pretrained()` collectively on all ranks, reusing that same immutable local snapshot as the source for tokenizer and custom-code artifacts. Do not switch back to a mutable Hub branch or tag during export.
+7. Verify the emitted HF config, shard index and shard headers, expected tensor keys, strict `from_pretrained()` loading, and at least one forward pass. Run numerical parity when a source-model baseline is available.
+
+The essential API flow is:
+
+```python
+from transformers import AutoConfig
+
+from megatron.bridge import AutoBridge
+from megatron.bridge.training.model_load_save import build_and_load_model, load_model_config
+
+model_config, mlm_args = load_model_config(mlm_checkpoint)
+# Resolve hf_reference@hf_revision to this read-only local snapshot first.
+trust_remote_code = False
+hf_config = AutoConfig.from_pretrained(
+    hf_reference_snapshot,
+    trust_remote_code=trust_remote_code,
+)
+bridge = AutoBridge.from_hf_config(hf_config)
+bridge.trust_remote_code = trust_remote_code
+
+# Validate model_config and mlm_args against bridge.to_megatron_provider()
+# before constructing or loading the model.
+model = build_and_load_model(
+    mlm_checkpoint,
+    model_config,
+    model_type="hybrid",  # or "gpt"
+    megatron_args=mlm_args,
+    skip_temp_dist_context=True,
+)
+bridge.save_hf_pretrained(model, hf_output, source_path=hf_reference_snapshot)
+```
+
+This is an advanced compatibility path rather than a promise that every historical MLM layout is convertible. Conversion still requires a registered Bridge for the HF architecture and compatible checkpoint keys. If configuration validation or strict weight mapping fails, stop and classify the mismatch instead of patching model or generation code to force the export.
 
 ## Quick start
 
