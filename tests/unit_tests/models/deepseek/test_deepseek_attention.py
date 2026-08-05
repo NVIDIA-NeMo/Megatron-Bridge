@@ -14,12 +14,20 @@
 
 """Unit tests for the DeepSeek MLA attention spec helpers."""
 
+import inspect
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 
-from megatron.bridge.models.deepseek.attention import MLASelfAttentionWithoutQueryNorm
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.deepseek.attention import (
+    MLASelfAttentionWithoutQueryNorm,
+    get_deepseek_decoder_block_spec,
+)
+from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
+from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
 
 
 def _mla_submodules():
@@ -74,3 +82,41 @@ class TestMLASelfAttentionWithoutQueryNorm:
         resolved = _resolve(q_lora_rank)
         assert resolved["q_layernorm"].__name__ == "IdentityOp"
         assert resolved["kv_layernorm"].__name__ == "IdentityOp"
+
+
+class TestDeepSeekBridgesUseTheSpecHelper:
+    """The bridges behind the affected models must route through the corrected spec builder.
+
+    `deepseek-ai/DeepSeek-V2-Lite` goes through DeepSeekV2Bridge and
+    `kakaocorp/kanana-2-30b-a3b-thinking` through DeepSeekV3Bridge, and both ship
+    `q_lora_rank: null`.
+    """
+
+    @pytest.mark.parametrize("bridge_cls", [DeepSeekV2Bridge, DeepSeekV3Bridge])
+    def test_provider_bridge_installs_the_spec_helper(self, bridge_cls, monkeypatch):
+        """Both bridges must build their decoder block through get_deepseek_decoder_block_spec."""
+        provider = SimpleNamespace()
+        monkeypatch.setattr(
+            MegatronModelBridge,
+            "provider_bridge",
+            lambda self, hf_pretrained: provider,
+        )
+        hf_pretrained = Mock()
+        hf_pretrained.config = SimpleNamespace(
+            first_k_dense_replace=1,
+            num_hidden_layers=4,
+            moe_intermediate_size=128,
+            n_shared_experts=1,
+            q_lora_rank=None,
+        )
+
+        bridge_cls().provider_bridge(hf_pretrained)
+
+        assert provider.qk_layernorm is True, "the KV norm still has to be requested"
+        assert provider.transformer_layer_spec.func is get_deepseek_decoder_block_spec
+
+    def test_spec_helper_is_a_drop_in_for_the_mcore_builder(self):
+        """The helper must keep the signature the provider calls it with."""
+        parameters = inspect.signature(get_deepseek_decoder_block_spec).parameters
+        assert "config" in parameters
+        assert parameters["use_transformer_engine"].kind is inspect.Parameter.KEYWORD_ONLY
