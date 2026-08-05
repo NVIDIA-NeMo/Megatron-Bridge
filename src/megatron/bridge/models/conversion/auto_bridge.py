@@ -1215,6 +1215,7 @@ class AutoBridge(Generic[MegatronModelT]):
             ignored_source_key_prefixes = (
                 _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
             ) or None
+            source_key_replacements = bridge.hf_export_source_key_replacements(self.hf_pretrained) or None
             source.save_generator(
                 generator,
                 path,
@@ -1222,6 +1223,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 distributed_save=distributed_save,
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
+                source_key_replacements=source_key_replacements,
             )
         else:
             # Config-only path: shard and write safetensors directly

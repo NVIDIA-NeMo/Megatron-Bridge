@@ -1011,6 +1011,22 @@ class MegatronModelBridge(
             hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
         return hf_weights
 
+    def hf_export_source_key_replacements(self, hf_pretrained: HFPreTrained) -> Mapping[str, Iterable[str]]:
+        """Describe exported keys that intentionally replace source-checkpoint keys.
+
+        Streaming HF export normally preserves the source checkpoint's strict tensor-key
+        inventory and shard placement. Model families that export a different physical
+        representation can override this hook to replace multiple source keys with one
+        exported key while retaining the source shard assignment.
+
+        Args:
+            hf_pretrained: Hugging Face model wrapper containing the source state.
+
+        Returns:
+            Mapping from each exported key to the source keys it replaces.
+        """
+        return {}
+
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,

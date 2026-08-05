@@ -152,6 +152,28 @@ class GPTOSSBridge(MegatronModelBridge):
             )
         return {k: hf_state_dict[v] for k, v in hf_param.items()}
 
+    def hf_export_source_key_replacements(self, hf_pretrained: PreTrainedCausalLM) -> Mapping[str, Tuple[str, str]]:
+        """Replace source MXFP4 block/scale pairs with dequantized export tensors."""
+        source = getattr(getattr(hf_pretrained, "state", None), "source", None)
+        if source is None or not hasattr(source, "get_all_keys"):
+            return {}
+
+        source_keys = set(source.get_all_keys())
+        replacements = {}
+        quantized_expert_suffixes = (
+            ".mlp.experts.gate_up_proj_blocks",
+            ".mlp.experts.down_proj_blocks",
+        )
+        for blocks_key in source_keys:
+            if not blocks_key.endswith(quantized_expert_suffixes):
+                continue
+            output_key = blocks_key.removesuffix("_blocks")
+            scales_key = f"{output_key}_scales"
+            if scales_key in source_keys:
+                replacements[output_key] = (blocks_key, scales_key)
+
+        return replacements
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
         Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.

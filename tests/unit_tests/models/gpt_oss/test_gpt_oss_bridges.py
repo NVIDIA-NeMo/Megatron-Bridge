@@ -67,3 +67,27 @@ class TestGptOssBridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_export_replaces_mxfp4_expert_keys(self, mock_pretrained):
+        source = Mock()
+        source.get_all_keys.return_value = [
+            "model.layers.0.mlp.experts.gate_up_proj_blocks",
+            "model.layers.0.mlp.experts.gate_up_proj_scales",
+            "model.layers.0.mlp.experts.down_proj_blocks",
+            "model.layers.0.mlp.experts.down_proj_scales",
+            "model.layers.0.mlp.experts.gate_up_proj_bias",
+        ]
+        mock_pretrained.state = Mock(source=source)
+
+        replacements = GPTOSSBridge().hf_export_source_key_replacements(mock_pretrained)
+
+        assert replacements == {
+            "model.layers.0.mlp.experts.gate_up_proj": (
+                "model.layers.0.mlp.experts.gate_up_proj_blocks",
+                "model.layers.0.mlp.experts.gate_up_proj_scales",
+            ),
+            "model.layers.0.mlp.experts.down_proj": (
+                "model.layers.0.mlp.experts.down_proj_blocks",
+                "model.layers.0.mlp.experts.down_proj_scales",
+            ),
+        }

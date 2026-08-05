@@ -162,6 +162,69 @@ def test_save_generator_recomputes_index_total_size(tmp_path, monkeypatch, distr
     assert index_data["metadata"] == {"format": "pt", "total_size": expected_total_size}
 
 
+@pytest.mark.parametrize("distributed_save", [False, True])
+def test_save_generator_replaces_quantized_source_keys(tmp_path, monkeypatch, distributed_save: bool) -> None:
+    shard_filename = "model-00001-of-00001.safetensors"
+    blocks_key = "model.layers.0.mlp.experts.gate_up_proj_blocks"
+    scales_key = "model.layers.0.mlp.experts.gate_up_proj_scales"
+    output_key = "model.layers.0.mlp.experts.gate_up_proj"
+    bias_key = "model.layers.0.mlp.experts.gate_up_proj_bias"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            blocks_key: shard_filename,
+            scales_key: shard_filename,
+            bias_key: shard_filename,
+        },
+    )
+    source = SafeTensorsStateSource(tmp_path)
+    output_path = tmp_path / "output"
+    if distributed_save:
+        _mock_single_rank_distributed(monkeypatch)
+
+    tensors = {
+        output_key: torch.ones((2, 2)),
+        bias_key: torch.zeros(2),
+    }
+    source.save_generator(
+        iter(tensors.items()),
+        output_path,
+        distributed_save=distributed_save,
+        source_key_replacements={output_key: (blocks_key, scales_key)},
+    )
+
+    with safe_open(output_path / shard_filename, framework="pt", device="cpu") as shard:
+        assert set(shard.keys()) == set(tensors)
+        for key, tensor in tensors.items():
+            torch.testing.assert_close(shard.get_tensor(key), tensor)
+
+    index_data = json.loads((output_path / "model.safetensors.index.json").read_text(encoding="utf-8"))
+    assert index_data["weight_map"] == {
+        output_key: shard_filename,
+        bias_key: shard_filename,
+    }
+
+
+def test_save_generator_rejects_source_key_replacement_across_shards(tmp_path) -> None:
+    blocks_key = "model.weight_blocks"
+    scales_key = "model.weight_scales"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            blocks_key: "model-00001-of-00002.safetensors",
+            scales_key: "model-00002-of-00002.safetensors",
+        },
+    )
+    source = SafeTensorsStateSource(tmp_path)
+
+    with pytest.raises(ValueError, match="span multiple shards"):
+        source.save_generator(
+            iter([("model.weight", torch.ones(1))]),
+            tmp_path / "output",
+            source_key_replacements={"model.weight": (blocks_key, scales_key)},
+        )
+
+
 def test_save_generator_writes_shard_as_soon_as_its_remaining_keys_arrive(tmp_path, monkeypatch) -> None:
     class _SubsetForbiddenSet(set[str]):
         def issubset(self, _other: Iterable[object]) -> bool:

@@ -348,7 +348,20 @@ class TestAutoBridge:
 
         assert source.save_generator_kwargs["ignored_source_key_prefixes"] is None
 
-    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers):
+    def test_save_hf_weights_passes_source_key_replacements(self, tmp_path):
+        source = _make_fake_source(present=set())
+        replacements = {"model.weight": ("model.weight_blocks", "model.weight_scales")}
+
+        self._run_save_hf_weights(
+            source,
+            tmp_path,
+            mtp_num_layers=1,
+            source_key_replacements=replacements,
+        )
+
+        assert source.save_generator_kwargs["source_key_replacements"] == replacements
+
+    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers, source_key_replacements=None):
         """Drive ``save_hf_weights`` with a stubbed bridge/model so the only
         behavior under test is the MTP prefix-resolution wiring.
 
@@ -366,6 +379,7 @@ class TestAutoBridge:
 
         fake_model_bridge = Mock()
         fake_model_bridge.stream_weights_megatron_to_hf.return_value = iter([])
+        fake_model_bridge.hf_export_source_key_replacements.return_value = source_key_replacements or {}
 
         with (
             # ``state`` is a read-only property on PreTrainedBase, so patch it
