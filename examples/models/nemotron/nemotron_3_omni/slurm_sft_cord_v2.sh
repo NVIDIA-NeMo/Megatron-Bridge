@@ -17,12 +17,11 @@
 # Nemotron-3 Nano Omni - Full SFT on CORD-V2 (image+text)
 #
 # Recipe: nemotron_omni_cord_v2_sft_config (HF dataset backend, no shards needed)
-# Default parallelism: TP=2, EP=8, CP=1, MBS=2, GBS=16, packed sequences,
-#                      selective recompute
+# Default parallelism: TP=2, EP=8, CP=1, MBS=1, GBS=16, selective recompute
 # Default layout:      2 nodes / 16 GPUs
 #
-# Override TP/EP/CP/PACKED_SEQ via environment, e.g.:
-#   TP=4 EP=4 CP=1 PACKED_SEQ=false sbatch slurm_sft_cord_v2.sh
+# Override TP/EP/CP via environment, e.g.:
+#   TP=4 EP=4 CP=1 sbatch slurm_sft_cord_v2.sh
 #
 # Usage:
 #   sbatch slurm_sft_cord_v2.sh
@@ -53,16 +52,17 @@ PRETRAINED_CHECKPOINT=${WORKSPACE}/models/${MODEL_NAME}
 RECIPE=nemotron_omni_cord_v2_sft_config
 DATASET_NAME=cord_v2
 
-# Parallelism / batching (override via env: TP=4 EP=4 CP=1 PACKED_SEQ=false sbatch ...)
+# Parallelism / batching (override via env: TP=4 EP=4 CP=1 sbatch ...)
 TP=${TP:-2}
 EP=${EP:-8}
 CP=${CP:-1}
-PACKED_SEQ=${PACKED_SEQ:-true}
 
 SEQ_LENGTH=4096
 TRAIN_ITERS=4000
 GLOBAL_BATCH_SIZE=16
-MICRO_BATCH_SIZE=2
+# The legacy LLaVA path expands image placeholders during model merge, so one
+# non-packed CORD row per microbatch stays within SEQ_LENGTH.
+MICRO_BATCH_SIZE=1
 EVAL_INTERVAL=50
 EVAL_ITERS=10
 SAVE_INTERVAL=500
@@ -105,7 +105,7 @@ echo "Nodes: ${SLURM_JOB_NUM_NODES:-N/A}"
 echo "GPUs per node: ${SLURM_GPUS_PER_NODE:-N/A}"
 echo "Recipe: $RECIPE"
 echo "Checkpoint: $PRETRAINED_CHECKPOINT"
-echo "Parallelism: TP=$TP EP=$EP CP=$CP (packed=$PACKED_SEQ)"
+echo "Parallelism: TP=$TP EP=$EP CP=$CP (packed=false)"
 echo "======================================"
 
 OUTPUT_DIR=${WORKSPACE}/results/${RECIPE}_sft
@@ -125,16 +125,24 @@ CLI_OVERRIDES="\
     model.sequence_parallel=True \
     model.recompute_granularity=selective \
     model.recompute_modules=[core_attn,mlp,layernorm,moe_act,moe] \
+    model.recompute_vision=True \
+    model.vision_recompute_granularity=full \
+    model.vision_recompute_method=uniform \
+    model.vision_recompute_num_layers=1 \
+    model.radio_force_eval_mode=False \
     model.freeze_language_model=False \
     model.freeze_vision_model=False \
     model.freeze_vision_projection=False \
     model.freeze_sound_encoder=False \
     model.freeze_sound_projection=False \
+    optimizer.optimizer_cpu_offload=True \
+    optimizer.optimizer_offload_fraction=0.5 \
+    optimizer.overlap_cpu_optimizer_d2h_h2d=True \
     train.train_iters=$TRAIN_ITERS \
     train.global_batch_size=$GLOBAL_BATCH_SIZE \
     train.micro_batch_size=$MICRO_BATCH_SIZE \
     dataset.trust_remote_code=True \
-    dataset.enable_in_batch_packing=$PACKED_SEQ \
+    dataset.enable_in_batch_packing=False \
     validation.eval_interval=$EVAL_INTERVAL \
     validation.eval_iters=$EVAL_ITERS \
     logger.log_interval=$LOG_INTERVAL \
