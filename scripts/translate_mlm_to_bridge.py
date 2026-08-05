@@ -129,6 +129,15 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "cross-entropy-loss-fusion":         ("model.cross_entropy_loss_fusion",      "flag"),
     "cross-entropy-fusion-impl":         ("model.cross_entropy_fusion_impl",      None),
 
+    # Hybrid / Mamba
+    "hybrid-layer-pattern":              ("model.hybrid_layer_pattern",           None),
+    "hybrid-override-pattern":           (None,                                   "hybrid_override_pattern"),
+    "mamba-state-dim":                   ("model.mamba_state_dim",                None),
+    "mamba-head-dim":                    ("model.mamba_head_dim",                 None),
+    "mamba-num-groups":                  ("model.mamba_num_groups",               None),
+    "mamba-num-heads":                   ("model.mamba_num_heads",                None),
+    "spec":                              (None,                                   "spec"),
+
     # ── MLA (Multi-Latent Attention) ────────────────────────────────────
     "multi-latent-attention":            ("model.multi_latent_attention",         "flag"),
     "q-lora-rank":                       ("model.q_lora_rank",                   None),
@@ -164,6 +173,8 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     # ── MTP ─────────────────────────────────────────────────────────────
     "mtp-num-layers":                    ("model.mtp_num_layers",                None),
     "mtp-loss-scaling-factor":           ("model.mtp_loss_scaling_factor",       None),
+    "mtp-use-repeated-layer":            ("model.mtp_use_repeated_layer",         "flag"),
+    "mtp-hybrid-override-pattern":       ("model.mtp_hybrid_override_pattern",    None),
 
     # ── Parallelism ─────────────────────────────────────────────────────
     "tensor-model-parallel-size":        ("model.tensor_model_parallel_size",    None),
@@ -237,6 +248,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "tokenizer-model":                   ("tokenizer.tokenizer_model",          None),
     "vocab-file":                        ("tokenizer.vocab_file",               None),
     "merge-file":                        ("tokenizer.merge_file",               None),
+    "sft-tokenizer-prompt-format":       (None,                                 "sft_prompt_format"),
 
     # ── Validation ──────────────────────────────────────────────────────
     "eval-iters":                        ("validation.eval_iters",              None),
@@ -451,6 +463,7 @@ class TranslationResult:
         self.env_vars: dict[str, str | int | float | bool] = {}
         self.uses_mla = False
         self.uses_moe = False
+        self.uses_hybrid = False
         self.raw_args: dict[str, Any] = {}
 
     def add_override(self, path: str, value: Any):
@@ -466,11 +479,27 @@ def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool
     result.raw_args = args
     result.env_vars = env_vars or {}
 
-    # Detect MLA / MoE usage
+    # Detect MLA / MoE / Hybrid usage
     result.uses_mla = "multi-latent-attention" in args
     result.uses_moe = "num-experts" in args
+    hybrid_spec = args.get("spec")
+    if isinstance(hybrid_spec, str):
+        hybrid_spec_parts = [hybrid_spec]
+    elif isinstance(hybrid_spec, (list, tuple)):
+        hybrid_spec_parts = [str(part) for part in hybrid_spec]
+    else:
+        hybrid_spec_parts = []
+    result.uses_hybrid = any(
+        name in args and args[name] is not None
+        for name in ("hybrid-layer-pattern", "hybrid-override-pattern", "mtp-hybrid-override-pattern")
+    ) or any(
+        module.startswith(("megatron.core.models.hybrid.", "megatron.core.models.mamba."))
+        for module in hybrid_spec_parts
+    )
 
-    if result.uses_mla:
+    if result.uses_hybrid:
+        result.add_note("Hybrid model detected: use HybridModelProvider and review the translated stack specification")
+    elif result.uses_mla:
         result.add_note("MLA detected: use MLAModelProvider instead of GPTModelProvider in recipe")
     if result.uses_moe:
         result.add_note(
@@ -524,6 +553,19 @@ def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool
                 result.add_override(bridge_path, vpp)
             else:
                 result.unknown.append((arg_name, arg_val))
+        elif transform == "hybrid_override_pattern":
+            result.add_override("model.hybrid_layer_pattern", arg_val)
+            result.add_note("hybrid-override-pattern is deprecated; translated to model.hybrid_layer_pattern")
+        elif transform == "spec":
+            result.skipped.append((arg_name, arg_val))
+            result.add_note(
+                "MLM --spec is not copied as an import target; verify the HybridModelProvider stack spec in trusted code"
+            )
+        elif transform == "sft_prompt_format":
+            if args.get("tokenizer-type") == "SFTTokenizer":
+                result.add_override("tokenizer.tokenizer_prompt_format", arg_val)
+            else:
+                result.skipped.append((arg_name, arg_val))
         elif transform == "skip" or bridge_path is None:
             result.skipped.append((arg_name, arg_val))
         elif transform == "flag":
@@ -643,8 +685,16 @@ def emit_overrides(result: TranslationResult) -> str:
 def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") -> str:
     """Generate a standalone Bridge recipe Python file."""
     uses_mla = result.uses_mla
-    provider_cls = "MLAModelProvider" if uses_mla else "GPTModelProvider"
-    provider_import_path = "megatron.bridge.models.mla_provider" if uses_mla else "megatron.bridge.models.gpt_provider"
+    uses_hybrid = result.uses_hybrid
+    if uses_hybrid:
+        provider_cls = "HybridModelProvider"
+        provider_import_path = "megatron.bridge.models.hybrid"
+    elif uses_mla:
+        provider_cls = "MLAModelProvider"
+        provider_import_path = "megatron.bridge.models.mla_provider"
+    else:
+        provider_cls = "GPTModelProvider"
+        provider_import_path = "megatron.bridge.models.gpt_provider"
 
     # Separate model vs other overrides
     model_fields: dict[str, Any] = {}
@@ -973,6 +1023,10 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     lines.append(f"            tokenizer_type={repr(tok_type)},")
     if tok_model:
         lines.append(f"            tokenizer_model={repr(tok_model)},")
+    for k, v in tokenizer_fields.items():
+        if k in {"tokenizer_type", "tokenizer_model"}:
+            continue
+        lines.append(f"            {k}={_fmt_val(v)},")
     lines.append("        ),")
 
     # Checkpoint
@@ -1531,6 +1585,16 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
     elif seq_len is not None:
         result.add_arg("max-position-embeddings", seq_len)
         result.add_note("max-position-embeddings not set; defaulting to seq-length for MLM assert")
+
+    # --- Special: shared Bridge prompt field → SFT-only MLM flag --------
+    prompt_format_key = "tokenizer.tokenizer_prompt_format"
+    if prompt_format_key in overrides:
+        prompt_format = overrides[prompt_format_key]
+        consumed.add(prompt_format_key)
+        if overrides.get("tokenizer.tokenizer_type") == "SFTTokenizer" and prompt_format is not None:
+            result.add_arg("sft-tokenizer-prompt-format", prompt_format)
+        else:
+            result.skipped.append((prompt_format_key, prompt_format))
 
     # --- Main loop -------------------------------------------------------
     for bridge_key, val in overrides.items():

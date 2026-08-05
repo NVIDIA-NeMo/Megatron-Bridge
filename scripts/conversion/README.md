@@ -13,6 +13,12 @@ Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
 `./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
+### Export checkpoint metadata requirement
+
+`convert.sh export` requires a Bridge-native checkpoint with a serialized `run_config.yaml`. Flat Megatron-LM checkpoints that store CLI arguments in distributed common state are supported by lower-level loading APIs, but not by this launcher. Output from `scripts/translate_mlm_to_bridge.py` is Hydra overrides or Python recipe source; placing that output in an MLM checkpoint as `run_config.yaml` is not a supported conversion step.
+
+For a legacy MLM checkpoint, first confirm that its architecture has a registered Bridge, then follow the metadata-validation and `load_model_config()` / `build_and_load_model()` workflow in the [Megatron-LM to Megatron Bridge guide](../../docs/megatron-lm-to-megatron-bridge.md#exporting-a-legacy-megatron-lm-checkpoint).
+
 ## Local CPU conversion
 
 Local execution uses the current Megatron Bridge environment and waits for the
