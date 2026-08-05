@@ -262,6 +262,16 @@ def nemotron_3_ultra_pretrain_512gpu_h100_bf16_fsdp_tp8_config() -> ConfigContai
     return cfg
 
 
+def nemotron_3_ultra_pretrain_512gpu_h100_bf16_fsdp_tp4_cp2_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 512× H100, TP4/CP2/PP1 BF16 FSDP."""
+    cfg = nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config()
+    # Keep the canonical TP4 efficiency and DP64 workload while CP2 splits the
+    # 8K-token activation work across two ranks. The expert mesh remains EP64
+    # with EDP8, and TP4 stays within one H100 NVLink domain.
+    cfg.model.context_parallel_size = 2
+    return cfg
+
+
 def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, BF16, recompute MoE+layernorm."""
     cfg = nemotron_3_nano_pretrain_config()
