@@ -675,6 +675,27 @@ class TestStep35BridgeMappingRegistry:
         assert "mtp.layers.0.final_layernorm.weight" in params
 
 
+def test_mtp_output_entries_are_materialized_from_megatron_shared_head():
+    bridge = Step35Bridge()
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=45, num_nextn_predict_layers=3)
+    output_weight = torch.ones(8, 4)
+    expected_output_names = {f"model.layers.{layer}.transformer.shared_head.output.weight" for layer in range(45, 48)}
+    hf_state_dict = {name: torch.zeros_like(output_weight) for name in expected_output_names}
+
+    converted = bridge.maybe_modify_converted_hf_weight(
+        SimpleNamespace(),
+        {"lm_head.weight": output_weight},
+        hf_state_dict,
+    )
+
+    assert converted.keys() == {"lm_head.weight", *expected_output_names}
+    for name in expected_output_names:
+        torch.testing.assert_close(converted[name], output_weight)
+        assert not torch.equal(converted[name], hf_state_dict[name])
+    all_output_names = {"lm_head.weight", *expected_output_names}
+    assert len({converted[name].data_ptr() for name in all_output_names}) == len(all_output_names)
+
+
 # ---------------------------------------------------------------------------
 # StackedExpertAutoMapping / StackedExpertGatedMLPMapping
 # ---------------------------------------------------------------------------
