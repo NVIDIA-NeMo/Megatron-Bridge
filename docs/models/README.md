@@ -17,10 +17,13 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 |----------------|---------------------|
 | **Bailing** | [Ling 2.0](bailing/ling-2.md) |
 | **DeepSeek** | [DeepSeek V2 (deprecated)](deepseek/deepseek-v2.md), [DeepSeek V3](deepseek/deepseek-v3.md), [DeepSeek V4](deepseek/deepseek-v4.md) |
+| **ERNIE** | [ERNIE 4.5 and ERNIE 4.5 VL](ernie/ernie45.md) |
+| **EXAONE** | [EXAONE 4, EXAONE 4.5 VL, and K-EXAONE](exaone/exaone.md) |
 | **Falcon** | [Falcon H1](falcon/falcon-h1.md) |
 | **Gemma** | [Gemma (deprecated)](gemma/gemma.md), [Gemma 2 (deprecated)](gemma/gemma2.md), [Gemma 3](gemma/gemma3.md), [Gemma 3 VL](gemma/gemma3-vl.md), [Gemma 4 VL](gemma/gemma4-vl.md) |
 | **GLM** | [GLM-4.5](glm/glm45.md), [GLM-4.5V](glm/glm-45v.md), [GLM-4.7 / GLM-4.7-Flash](glm/glm47.md), [GLM-5 / GLM-5.1 / GLM-5.2](glm/glm5.md) |
 | **GPT-OSS** | [GPT OSS](gpt_oss/gpt-oss.md) |
+| **HY V3** | [HY V3](hy_v3/hy-v3.md) |
 | **Kimi** | [Kimi K2](kimi/kimi-k2.md), [Kimi-K2.5-VL](kimi/kimi-k25-vl.md), [Kimi K3](kimi/kimi-k3.md) |
 | **Llama** | [Llama 2 (deprecated)](llama/llama2.md), [Llama 3](llama/llama3.md) |
 | **MiniMax** | [MiniMax-M2 / M2.5 / M2.7](minimax/minimax-m2.md), [MiniMax-M3](minimax/minimax-m3.md) |
@@ -65,12 +68,13 @@ Each model documentation page typically includes:
 
 ### Decoder-Only and Hybrid Backbones
 
-- Bailing, DeepSeek, Falcon, Gemma, GLM, GPT-OSS, Kimi, Llama, MiniMax, Mistral, Moonlight, Nemotron, OLMoE, Qwen, Sarvam, StepFun, and Xiaomi-MiMo
+- Bailing, DeepSeek, ERNIE, EXAONE, Falcon, Gemma, GLM, GPT-OSS, HY V3, Kimi, Llama, MiniMax, Mistral, Moonlight, Nemotron, OLMoE, Qwen, Sarvam, StepFun, and Xiaomi-MiMo
 - MoE and hybrid variants including Bailing, DeepSeek, GLM, GPT-OSS, MiniMax, Nemotron-3, OLMoE, Qwen3-MoE, Qwen3-Next, and Sarvam
 
 ### Multimodal Variants
 
 - Gemma 3 VL and Gemma 4 VL
+- ERNIE 4.5 VL and EXAONE 4.5 VL
 - GLM-4.5V
 - Kimi-K2.5-VL
 - Ministral 3
