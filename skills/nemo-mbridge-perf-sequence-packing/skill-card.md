@@ -1,5 +1,5 @@
 ## Description: <br>
-Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT for LLMs from in-batch packing for VLMs, and applying the right CP constraints. <br>
+Validate and use packed sequences and long-context training in Megatron-Bridge, including equal-token offline pack-length sizing for LLM SFT and PEFT, the distinction from VLM in-batch packing, and CP constraints. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling sequence packing or long-context training in Megatron-Bridge, including configuring offline packed SFT for LLMs, in-batch packing for VLMs, and context parallelism constraints. <br>
+Developers and engineers configuring sequence packing and long-context training in Megatron-Bridge for LLM supervised fine-tuning, PEFT, and VLM workflows with correct parallelism constraints. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,60 +25,56 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Packed Sequences Documentation](docs/training/packed-sequences.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron-Bridge Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
+**Output Type(s):** [Configuration instructions, Code, Analysis] <br>
 **Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- Claude Code (`claude-code`) <br>
-- Codex (`codex`) <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 internal skill task in the NVSkills-Eval external profile. <br>
+Evaluated against 1 task (1 positive) in isolated k8s-sandbox pods; dataset digest sha256:57d3c088. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks whether skill-assisted execution avoids unsafe behavior such as secret leakage, destructive commands, or unauthorized access. <br>
-- Correctness: Checks whether the agent follows the expected workflow and produces the correct final output. <br>
-- Discoverability: Checks whether the agent loads the skill when relevant and avoids using it when irrelevant. <br>
-- Effectiveness: Checks whether the agent performs measurably better with the skill than without it. <br>
-- Efficiency: Checks whether the agent uses fewer tokens and avoids redundant work. <br>
+- Security: Whether the skill is safe to use without unsafe operations, secret leakage, or unauthorized access. <br>
+- Correctness: Whether the skill produces correct answers against reference answers. <br>
+- Discoverability: Whether the right skill is loaded and activated when needed. <br>
+- Effectiveness: Whether the skill helps the agent complete the user's goal and expected workflow. <br>
+- Efficiency: Whether the skill avoids wasted tool or skill usage through good routing and productive tool use. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- `skill_execution`: Verifies that the agent loaded the expected skill and workflow. <br>
-- `skill_efficiency`: Checks routing quality, decoy avoidance, and redundant tool usage. <br>
-- `accuracy`: Grades final-answer correctness against the reference answer. <br>
-- `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
-- `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
-- `token_efficiency`: Compares token usage with and without the skill. <br>
+- `skill_execution`: Whether the expected skill was found and executed. <br>
+- `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Whether the user's goal was achieved. <br>
+- `behavior_check`: Whether the expected workflow behavior was followed. <br>
 
 
 
 ## Evaluation Results: <br>
-| Dimension | Num | `claude-code` | `codex` |
-|---|---:|---:|---:|
-| Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+42%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+69%) |
-| Effectiveness | 1 | 95% (+95%) | 94% (+48%) |
-| Efficiency | 1 | 94% (+67%) | 96% (+77%) |
-
-## Testing Completed: <br>
-**[x] Agent Red-Teaming** <br>
-**[ ] Network Security** <br>
-**[ ] Product Security** <br>
+| Measure | Claude Code (Baseline → Skill) | Codex (Baseline → Skill) |
+|---|---:|---:|
+| Overall | 35% → 91% (+56 pts) | 67% → 98% (+31 pts) |
+| Security | 100% → 100% (±0 pts) | 100% → 100% (±0 pts) |
+| Correctness | 0% → 100% (+100 pts) | 100% → 100% (±0 pts) |
+| Discoverability | 50% → 100% (+50 pts) | 50% → 94% (+44 pts) |
+| Effectiveness | 0% → 75% (+75 pts) | 74% → 95% (+21 pts) |
+| Efficiency | 25% → 79% (+54 pts) | 10% → 100% (+90 pts) |
 
 ## Skill Version(s): <br>
-1.0.0+b7643bd (source: pyproject.toml) <br>
+2f0c6a87 (source: git SHA, committed 2026-08-03) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
