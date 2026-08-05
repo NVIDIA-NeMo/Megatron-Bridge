@@ -52,9 +52,9 @@ requested adapter scheme.
 ### Benchmark recipe
 
 The training launcher can run exact exported recipes from `src/megatron/bridge/perf_recipes`, including text
-pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining. The total allocation must match the GPU count
-encoded by the recipe name; the user selects the node shape, and the Slurm partition must provide the requested
-hardware:
+pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining. The GPU count encoded by the recipe name is its
+canonical tuned allocation. The user selects the node shape and may weak-scale to a different compatible world size;
+the Slurm partition must provide the requested hardware:
 
 `benchmark` is the unified runner's user-facing term. The existing `perf_recipes` package and `scripts/performance/`
 compatibility paths retain their legacy names.
@@ -74,6 +74,11 @@ precision, dispatcher, CUDA-graph settings, and process environment. Trailing `K
 configuration. Benchmark recipes retain their selected dataset type, so `--dataset` is not supported on this path.
 Recipe environment defaults are installed before the launcher enters the training stack; values explicitly set by the
 shell or Slurm environment retain precedence.
+
+When the requested world size differs from the canonical count, the runner preserves the recipe's samples per GPU by
+scaling `train.global_batch_size` proportionally. The scaled batch size must be an integer, and the requested world size
+must be divisible by the resolved TP × PP × CP topology. Pass `--global_batch_size` or a trailing
+`train.global_batch_size=...` override to choose an explicit batch size instead of automatic weak scaling.
 
 The launcher does not infer offline mode, cluster-specific CPU/NUMA binding, Slurm segment sizing, or NCCL fabric
 settings from the recipe name. Supply those deployment settings explicitly through the target cluster's launcher
@@ -309,9 +314,10 @@ uv run python scripts/training/run_recipe.py \
     --dry-run logger.save_config_filepath=/tmp/config.yaml
 ```
 
-For a benchmark dry run, use the complete flat recipe name and omit `--dataset`. The rank-local dry run discovers the
-recipe and validates the final config against the total GPU count encoded in that name without
-requiring a live allocation; the submission dry run additionally validates `--nodes` and `--gpus-per-node`.
+For a benchmark dry run, use the complete flat recipe name and omit `--dataset`. Without a distributed world-size
+environment, the rank-local dry run validates the canonical allocation encoded in the recipe name. If `WORLD_SIZE` or
+`SLURM_NTASKS` is set, it validates and weak-scales against that requested size instead. The submission dry run validates
+the launcher arguments while leaving topology validation to the rank-local resolved config.
 
 ## Rank-local entry point
 

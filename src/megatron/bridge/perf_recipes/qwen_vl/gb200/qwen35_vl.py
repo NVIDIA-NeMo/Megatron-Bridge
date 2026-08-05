@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""GB200 performance recipes for Qwen3.5-VL."""
+"""GB200 performance recipes shared by Qwen3.5/Qwen3.6-VL."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import (
@@ -25,10 +25,11 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     qwen35_vl_122b_a10b_pretrain_mock_config,
     qwen35_vl_397b_a17b_pretrain_mock_config,
 )
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× GB200, BF16, EP=8."""
+    """Qwen3.5/Qwen3.6-VL 35B-A3B pretrain: 8× GB200, BF16, EP=8."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _qwen35_vl_common(cfg)
@@ -40,14 +41,14 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 4
+    # MBS4 exhausts 184-GiB GB200 HBM before the second optimizer step in
+    # NeMo 26.06. MBS3 retains most of its compute intensity with headroom for
+    # the optimizer step; GBS480 gives 20 microbatches at dense DP8.
+    cfg.train.global_batch_size = 480
+    cfg.train.micro_batch_size = 3
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=True,
@@ -76,12 +77,14 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× GB200, FP8 current-scaling."""
+    """Qwen3.5/Qwen3.6-VL 35B-A3B pretrain: 8× GB200, FP8 current-scaling."""
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -103,15 +106,20 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× GB200, MXFP8 (no attn CUDA graph)."""
+    """Qwen3.5/Qwen3.6-VL 35B-A3B pretrain: 8× GB200, MXFP8."""
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    # This fixed-shape synthetic MXFP8 path has been measured successfully with
+    # Transformer Engine graphs for the Qwen35-VL router and preprocessing scopes.
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["moe_router", "moe_preprocess"])
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -131,6 +139,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 

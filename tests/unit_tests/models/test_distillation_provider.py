@@ -247,9 +247,7 @@ class TestDistillationProvider:
         assert converted._is_distillation_provider
         assert converted.pre_wrap_hooks[0] is existing_hook
         assert len(converted.pre_wrap_hooks) == 2
-        assert serialized["_target_"] == (
-            "megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig"
-        )
+        assert serialized["_target_"] == ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig")
         assert serialized["_builder_"] == converted.builder
         assert "teacher" not in serialized
         assert "kd_config" not in serialized

@@ -181,13 +181,20 @@ def _cord_v2_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> d
     }
 
 
-def _medpix_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
+def _medpix_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    image = {"type": "image", "image": example["image_id"]}
+    resize = {name: kwargs.get(name) for name in ("resized_height", "resized_width")}
+    if any(value is not None for value in resize.values()):
+        if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in resize.values()):
+            raise ValueError("medpix resized_height and resized_width must both be positive integers.")
+        image.update(resize)
+
     return {
         "conversation": [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": example["image_id"]},
+                    image,
                     {"type": "text", "text": example["question"]},
                 ],
             },

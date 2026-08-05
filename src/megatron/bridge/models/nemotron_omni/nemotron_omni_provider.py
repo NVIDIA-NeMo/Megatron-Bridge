@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import warnings
 from abc import ABC
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -156,6 +157,8 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     # accepts a different 4D tensor contract and is not an Omni configuration.
     dynamic_resolution: Literal[True] = True
 
+    # This is the single source of truth for sound checkpoint capability:
+    # disabling it omits both the encoder and its dependent projector.
     has_sound: bool = False
     sound_model_type: str = "parakeet"
     sound_hidden_size: int = 1024
@@ -276,6 +279,20 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         )
         return BridgeSoundEncoder(config)
 
+    def _build_sound_modules(self, language_cfg, language_spec, *, add_encoder: bool):
+        """Build optional sound modules on the encoder pipeline stage."""
+        if not (self.has_sound and add_encoder):
+            return None, None
+
+        sound_model = self._build_sound_encoder()
+        sound_projection = MultimodalProjector(
+            config=self._build_sound_projection_config(language_cfg),
+            submodules=copy.deepcopy(get_language_mlp_submodules(language_spec)),
+            projector_type="mlp",
+            input_size=self.sound_hidden_size,
+        )
+        return sound_model, sound_projection
+
     def _provide_llava(self, pre_process=None, post_process=None, vp_stage=None):
         """Assemble the legacy LLaVA collapse/expand implementation.
 
@@ -300,22 +317,12 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         add_encoder_flag = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
         add_decoder_flag = True
 
-        # Build sound components (only on PP first stage, only when sound present)
-        sound_model = None
-        sound_projection = None
         sound_token_index = self.sound_context_token_id
-
-        if self.has_sound and add_encoder_flag:
-            sound_model = self._build_sound_encoder()
-
-            sound_proj_cfg = self._build_sound_projection_config(language_cfg)
-            sound_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
-            sound_projection = MultimodalProjector(
-                config=sound_proj_cfg,
-                submodules=sound_proj_spec,
-                projector_type="mlp",
-                input_size=self.sound_hidden_size,
-            )
+        sound_model, sound_projection = self._build_sound_modules(
+            language_cfg,
+            language_spec,
+            add_encoder=add_encoder_flag,
+        )
 
         llava_model = LLaVAModel(
             language_transformer_config=language_cfg,
@@ -416,16 +423,11 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
 
         add_encoder = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
 
-        sound_model = None
-        sound_projection = None
-        if self.has_sound and add_encoder:
-            sound_model = self._build_sound_encoder()
-            sound_projection = MultimodalProjector(
-                config=self._build_sound_projection_config(language_cfg),
-                submodules=copy.deepcopy(get_language_mlp_submodules(language_spec)),
-                projector_type="mlp",
-                input_size=self.sound_hidden_size,
-            )
+        sound_model, sound_projection = self._build_sound_modules(
+            language_cfg,
+            language_spec,
+            add_encoder=add_encoder,
+        )
 
         model = NemotronOmniModel(
             language_transformer_config=language_cfg,
@@ -483,7 +485,11 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
 
 @dataclass
 class NemotronOmniLlavaModelProvider(NemotronOmniModelProvider):
-    """Explicit fallback provider for the historical collapse/expand path."""
+    """Deprecated fallback provider for the historical collapse/expand path.
+
+    Use :class:`NemotronOmniModelProvider`, which constructs the canonical
+    processor-expanded model with collator-owned packing.
+    """
 
     # Preserve the existing LLaVA provider default for compatibility.
     radio_interpolate_only_cpe: bool = True
@@ -496,5 +502,11 @@ class NemotronOmniLlavaModelProvider(NemotronOmniModelProvider):
         )
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        warnings.warn(
+            "NemotronOmniLlavaModelProvider is deprecated; use NemotronOmniModelProvider with the canonical "
+            "processor-expanded sequence contract.",
+            FutureWarning,
+            stacklevel=2,
+        )
         self.validate_model_contract()
         return self._provide_llava(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

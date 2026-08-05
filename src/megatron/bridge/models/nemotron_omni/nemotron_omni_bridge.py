@@ -33,17 +33,21 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
 """
 
 import copy
+import warnings
+from collections.abc import Iterable
 from dataclasses import fields
 
+import torch
 from megatron.core.activations import squared_relu
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
@@ -82,6 +86,13 @@ def _copy_mapping_with_prefixes(mapping, *, megatron_prefix: str, hf_prefix: str
 class NemotronOmniBridge(NemotronVLBridge):
     """Bridge for the canonical expanded-sequence Nemotron-3 Omni model."""
 
+    _HF_PASSTHROUGH_KEYS = (
+        "sound_encoder.encoder.feature_extractor.featurizer.fb",
+        "sound_encoder.encoder.feature_extractor.featurizer.window",
+        "vision_model.radio_model.input_conditioner.norm_mean",
+        "vision_model.radio_model.input_conditioner.norm_std",
+    )
+
     CONFIG_MAPPING = NemotronVLBridge.CONFIG_MAPPING + [
         # HF public Omni config uses layer_norm_epsilon instead of rms_norm_eps.
         ("layer_norm_epsilon", "layernorm_epsilon"),
@@ -117,9 +128,8 @@ class NemotronOmniBridge(NemotronVLBridge):
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
         Always returns an Omni provider (MoE language model + RADIO ViT
-        vision + optional Parakeet sound encoder). When ``sound_config`` is
-        absent on the HF config, ``has_sound=False`` and the sound branch
-        is skipped at construction time.
+        vision + optional Parakeet sound encoder). The presence of
+        ``sound_config`` is the Hugging Face checkpoint's sound capability.
         """
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
@@ -132,10 +142,9 @@ class NemotronOmniBridge(NemotronVLBridge):
         if hasattr(hf_config, "projector_hidden_size"):
             provider_kwargs["vision_proj_ffn_hidden_size"] = hf_config.projector_hidden_size
 
-        has_sound = hasattr(hf_config, "sound_config") and hf_config.sound_config is not None
-        if has_sound:
-            sc = hf_config.sound_config
-            provider_kwargs["has_sound"] = True
+        sc = getattr(hf_config, "sound_config", None)
+        provider_kwargs["has_sound"] = sc is not None
+        if sc is not None:
             provider_kwargs["sound_model_type"] = getattr(sc, "model_type", "parakeet")
             provider_kwargs["sound_hidden_size"] = sc.hidden_size
             provider_kwargs["sound_projection_hidden_size"] = sc.projection_hidden_size
@@ -172,6 +181,20 @@ class NemotronOmniBridge(NemotronVLBridge):
         provider = NemotronOmniModelProvider(**provider_kwargs)
         provider.mtp_hybrid_override_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Export sound capability consistently with model construction."""
+        hf_config = super().megatron_to_hf_config(provider)
+        if provider.has_sound:
+            hf_config["sound_config"] = provider.sound_config
+            hf_config["sound_context_token_id"] = provider.sound_context_token_id
+        else:
+            # Config synthesis fills missing keys from the reference HF config.
+            # Keep an explicit None so an image-text checkpoint stays sound-free.
+            hf_config["sound_config"] = None
+            hf_config["sound_context_token_id"] = None
+        return hf_config
 
     # ------------------------------------------------------------------
     # Parameter mapping
@@ -217,8 +240,8 @@ class NemotronOmniBridge(NemotronVLBridge):
         # (conformer layers, subsampling convs, subsampling linear).
         # Feature extractor buffers (``feature_extractor.featurizer.fb``,
         # ``.window``) live outside the encoder and are intentionally
-        # unmapped -- they're skipped on import and regenerated from config
-        # on export.
+        # unmapped. They are preserved directly from the source checkpoint
+        # during export.
         mapping_list.append(
             ReplicatedMapping(
                 megatron_param="llava_model.sound_model.encoder.**",
@@ -262,11 +285,56 @@ class NemotronOmniBridge(NemotronVLBridge):
 
         return MegatronMappingRegistry(*mappings)
 
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model: NemotronOmniModel | list[NemotronOmniModel],
+        hf_pretrained: PreTrainedCausalLM,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+    ) -> Iterable[HFWeightTuple]:
+        """Export model weights and preserve immutable source-only buffers."""
+        yield from super().stream_weights_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+        )
+
+        state = getattr(hf_pretrained, "state", None)
+        source = getattr(state, "source", None)
+        if source is None:
+            source_path = getattr(hf_pretrained, "name_or_path", None)
+            if not source_path:
+                return
+            source = SafeTensorsStateSource(source_path)
+            state = StateDict(source)
+        source_keys = set(source.get_all_keys())
+        for name in self._HF_PASSTHROUGH_KEYS:
+            if name in source_keys:
+                yield from HFWeightTuple(name, state[name]).iter_finalized(cpu=cpu)
+
 
 class NemotronOmniLlavaBridge(NemotronOmniBridge):
-    """Explicit fallback bridge for the historical collapse/expand model."""
+    """Deprecated fallback bridge for the historical collapse/expand model.
+
+    Use :class:`NemotronOmniBridge`, which is the canonical AutoBridge
+    registration and consumes processor-expanded media-token sequences.
+    """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniLlavaModelProvider:
+        warnings.warn(
+            "NemotronOmniLlavaBridge is deprecated; use NemotronOmniBridge with the canonical "
+            "processor-expanded sequence contract.",
+            FutureWarning,
+            stacklevel=2,
+        )
         provider = super().provider_bridge(hf_pretrained)
         provider_kwargs = {
             field.name: getattr(provider, field.name)
