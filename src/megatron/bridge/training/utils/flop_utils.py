@@ -985,23 +985,26 @@ def num_floating_point_operations(
                 indexer_projection_term = indexer_projection_multiplier * num_indexer_layers * indexer_projection_size
 
                 # Equation 1 computes H_i dense q_i.k_i dot products and a weighted head
-                # reduction. When trained, both score operands need gradients (3x forward).
+                # reduction. Top-k selection needs every causal score, so the forward is
+                # always dense. The backward only covers score entries the KL loss touches:
+                # every causal pair for the dense loss, but only the selected top-k pairs for
+                # the sparse loss (no gradient flows through the discrete top-k selection;
+                # MCore's indexer_backward_wrapper consumes the selected payload only).
                 # ReLU, normalization, and top-k comparisons are not floating-point matmuls and
                 # are intentionally outside this model-FLOPs numerator.
-                index_score_size = dense_causal_context * idx_n_heads * (idx_head_dim + 1)
-                index_score_multiplier = 6 if trains_indexer else 2
-                index_score_term = index_score_multiplier * num_indexer_layers * index_score_size
+                use_sparse_indexer_loss = getattr(cfg.model, "dsa_indexer_use_sparse_loss", False)
+                index_score_unit = idx_n_heads * (idx_head_dim + 1)
+                index_score_term = 2 * num_indexer_layers * dense_causal_context * index_score_unit
+                if trains_indexer:
+                    score_grad_context = sparse_causal_context if use_sparse_indexer_loss else dense_causal_context
+                    index_score_term += 4 * num_indexer_layers * score_grad_context * index_score_unit
 
                 # GLM recipes enable MCore's sparse indexer KL loss. Its attention target uses
                 # detached main-model Q/K, hence forward-only QK work. Dense-loss configurations
                 # use the full causal context instead of the selected context.
                 indexer_teacher_term = 0
                 if trains_indexer:
-                    teacher_context = (
-                        sparse_causal_context
-                        if getattr(cfg.model, "dsa_indexer_use_sparse_loss", False)
-                        else dense_causal_context
-                    )
+                    teacher_context = sparse_causal_context if use_sparse_indexer_loss else dense_causal_context
                     indexer_teacher_term = (
                         2 * num_indexer_layers * teacher_context * cfg.model.num_attention_heads * absorbed_qk_dim
                     )
