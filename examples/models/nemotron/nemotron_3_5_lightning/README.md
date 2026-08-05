@@ -206,8 +206,18 @@ branch mounted over the bundled Bridge source.
 | Pretrain | 2 nodes, 16 H100 80 GB; 8K, TP1/CP2/EP8 | 12.13518 / 12.19819 / 12.17519 | 12.13271 / 12.19786 / 12.17710 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
 | Full SFT | 2 nodes, 16 H100 80 GB; packed OpenMath 4K, TP2/EP8 | 0.4134090 / 0.6536090 / 0.7314808 | 0.4127115 / 0.6384317 / 0.7196919 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
 | LoRA | 1 node, 8 H100 80 GB; packed SQuAD, TP1/EP8, DeepEP | 0.2351837 / 2.486913 / 2.843087 | 0.1531711 / 2.473096 / 2.837737 | Passed; reloadable adapter checkpoint, skipped 0, NaN 0 |
-| Full SFT | 2 nodes, 8 GB200; packed OpenMath 4K, TP1/EP8, HybridEP | Pending scheduler allocation | Pending scheduler allocation | Registered for different-hardware validation |
-| LoRA | 2 nodes, 8 GB200; packed SQuAD, TP1/EP8, HybridEP | Pending scheduler allocation | Pending scheduler allocation | Registered for different-hardware validation |
+| Full SFT | 2 nodes, 8 GB200; packed OpenMath 4K, TP1/EP8, alltoall fallback | 0.4483567 / 0.6713040 / 0.7485023 | 0.3784375 / 0.5923766 / 0.6628284 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
+| LoRA | 2 nodes, 8 GB200; packed SQuAD, TP1/EP8, alltoall fallback | 0.2283933 / 2.352676 / 2.654225 | 0.1560999 / 2.329906 / 2.666572 | Passed; reloadable adapter checkpoint, skipped 0, NaN 0 |
+
+The GB200 entries are compatibility evidence for the model and recipes, not a
+dispatcher recommendation. The committed GB200 profiles remain on HybridEP,
+which is the intended backend for GB200 NVL72. In the exact 26.06.01 runtime,
+HybridEP was installed and selected, but the default 128-token chunk rejected
+the 4,080-token capacity at JIT time. A divisible 16-token chunk completed one
+finite optimizer step and then consistently timed out in the second-step
+allgather, including with MNNVL enabled. DeepEP is not the supported substitute
+for GB200 in this stack, so plain alltoall was used only to isolate dispatcher
+behavior from model, checkpoint, data, and recipe correctness.
 
 Import/export on eight H100s round-tripped all 6,513 tensors and
 32,913,266,240 parameters exactly (`max_abs_diff=0.0`). The imported Megatron
