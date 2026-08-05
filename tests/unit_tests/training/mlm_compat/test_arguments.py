@@ -103,7 +103,7 @@ class TestTokenizerConfigFromArgs:
 
         assert fn_cfg == default_cfg
 
-    def test_maps_legacy_sft_prompt_format(self):
+    def test_maps_mlm_sft_prompt_format(self):
         """Test the MLM SFT field is mapped to Bridge's canonical tokenizer field."""
         cfg = _tokenizer_config_from_args(
             argparse.Namespace(

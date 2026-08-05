@@ -567,7 +567,7 @@ class TestTranslateSequenceParallelNote:
 
 
 class TestTranslateHybrid:
-    """Tests for legacy Hybrid/Mamba and repeated-MTP configuration."""
+    """Tests for MLM Hybrid/Mamba and repeated-MTP configuration."""
 
     def test_maps_hybrid_mamba_and_repeated_mtp_fields(self):
         """Weight-bearing Hybrid fields translate without becoming unknown args."""

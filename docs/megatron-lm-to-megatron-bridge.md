@@ -95,7 +95,7 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
 | `--mamba-head-dim N` | `model.mamba_head_dim=N` | |
 | `--mamba-num-groups N` | `model.mamba_num_groups=N` | |
 | `--mamba-num-heads N` | `model.mamba_num_heads=N` | |
-| `--mtp-hybrid-override-pattern P` | `model.mtp_hybrid_override_pattern=P` | Legacy separate MTP pattern |
+| `--mtp-hybrid-override-pattern P` | `model.mtp_hybrid_override_pattern=P` | Separate MLM MTP pattern |
 | `--mtp-use-repeated-layer` | `model.mtp_use_repeated_layer=true` | One physical MTP layer reused across prediction depths |
 | `--sft-tokenizer-prompt-format P` | `tokenizer.tokenizer_prompt_format=P` | Bridge exposes the MCore SFT compatibility alias at load time |
 | `--mock-data` | `dataset.mock=true` | Use synthetic data (no files needed) |
@@ -106,14 +106,14 @@ Megatron-LM `--spec` values are intentionally not copied into generated configur
 
 > **Activation function CLI overrides**: `model.activation_func` can now be set via Hydra CLI string override (e.g. `model.activation_func=silu`, `model.activation_func=gelu`). The string is resolved to the callable in `TransformerConfig.finalize()`. This makes `--swiglu` → `model.gated_linear_unit=true model.activation_func=silu` round-trippable from the CLI.
 
-## Exporting a legacy Megatron-LM checkpoint
+## Converting an existing Megatron-LM checkpoint to Hugging Face
 
 The conversion launcher supports export from Bridge-native checkpoints that contain a serialized `run_config.yaml`. A flat Megatron-LM distributed checkpoint instead stores an `argparse.Namespace` in common checkpoint state. Adding translator output to that directory does not turn it into a Bridge-native checkpoint.
 
-For a supported model family, use this legacy workflow:
+Training with Megatron-LM and then exporting with Megatron Bridge is not recommended; however, if you already have a Megatron-LM checkpoint, here is how you can convert it to Hugging Face format. For a supported model family:
 
 1. Pin compatible Megatron Bridge and Megatron-Core revisions, then inspect the saved MLM arguments with `load_model_config()`.
-2. Identify whether the checkpoint uses the `gpt` or `hybrid` legacy model path. Use the saved layer pattern and `args.spec`; do not infer the model type from the directory name.
+2. Identify whether the checkpoint uses the `gpt` or `hybrid` MLM model path. Use the saved layer pattern and `args.spec`; do not infer the model type from the directory name.
 3. Resolve an exact Hugging Face revision for the same architecture to an immutable local snapshot containing its config, tokenizer, and required custom-code artifacts. Create `AutoBridge` from that local config. This supplies the registered config and parameter mappings; it does not load reference weights. Set `trust_remote_code=True` only after auditing code in the snapshot.
 4. Compare every weight-bearing field in the HF-derived provider with the saved MLM metadata. Architecture, vocabulary, expert, attention, Mamba, and physical/repeated-MTP layout must agree. Parallel degrees may be overridden for resharding when the target topology is valid.
 5. In an initialized distributed job, call `build_and_load_model()` with the configuration and MLM arguments returned by `load_model_config()`, plus `model_type="gpt"` or `model_type="hybrid"`.
@@ -150,7 +150,7 @@ model = build_and_load_model(
 bridge.save_hf_pretrained(model, hf_output, source_path=hf_reference_snapshot)
 ```
 
-This is an advanced compatibility path rather than a promise that every historical MLM layout is convertible. Conversion still requires a registered Bridge for the HF architecture and compatible checkpoint keys. If configuration validation or strict weight mapping fails, stop and classify the mismatch instead of patching model or generation code to force the export.
+This is an advanced compatibility path rather than a promise that every MLM layout is convertible. Conversion still requires a registered Bridge for the HF architecture and compatible checkpoint keys. If configuration validation or strict weight mapping fails, stop and classify the mismatch instead of patching model or generation code to force the export.
 
 ## Quick start
 
