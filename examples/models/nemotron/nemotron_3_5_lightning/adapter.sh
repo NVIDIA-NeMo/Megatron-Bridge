@@ -53,7 +53,7 @@ case "$1" in
     verify)
         require_path LORA_CHECKPOINT
         require_path HF_ADAPTER_PATH
-        run_bridge_distributed examples/conversion/adapter/verify_adapter.py \
+        run_bridge_distributed "${EXAMPLE_DIR}/verify_adapter.py" \
             --hf-model-path "${HF_MODEL}" \
             --hf-adapter-path "${HF_ADAPTER_PATH}" \
             --lora-checkpoint "${LORA_CHECKPOINT}" \

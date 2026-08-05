@@ -22,6 +22,7 @@ from pathlib import Path
 
 import torch
 from peft import PeftModel
+from peft_compat import apply_peft_weight_converter_compatibility
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -63,6 +64,7 @@ def main() -> None:
     """Load, verify, merge, and save the adapter."""
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    apply_peft_weight_converter_compatibility()
 
     tokenizer = AutoTokenizer.from_pretrained(args.hf_model, revision=args.hf_revision)
     base_model = AutoModelForCausalLM.from_pretrained(
