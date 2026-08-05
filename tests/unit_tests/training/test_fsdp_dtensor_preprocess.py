@@ -153,10 +153,10 @@ def load_harness():
     """Drive load_fsdp_dtensor_checkpoint far enough to reach the validation step."""
     metadata = {"model": {"present.weight": object()}}
 
-    def run(*, strict_load=False, strict_model_load="raise_unexpected", finetune=False, validator=MagicMock()):
+    def run(*, strict_load=False, strictness="assume_ok_unexpected", finetune=False, validator=MagicMock()):
         ckpt_cfg = SimpleNamespace(
             strict_fsdp_dtensor_load=strict_load,
-            strict_fsdp_dtensor_model_load=strict_model_load,
+            dist_ckpt_strictness=strictness,
             finetune=finetune,
         )
         reader = MagicMock()
@@ -194,12 +194,15 @@ class TestLoadValidatesModelKeys:
         assert args[2] == "/ckpt/iter_0000010"
 
     def test_strictness_forwarded(self, load_harness):
-        _, validator = load_harness.run(strict_model_load="log_unexpected")
+        _, validator = load_harness.run(strictness="log_unexpected")
         assert validator.call_args.kwargs["strict"] == "log_unexpected"
 
-    def test_defaults_to_raising(self, load_harness):
+    def test_reuses_dist_ckpt_strictness(self, load_harness):
+        """The existing checkpoint strictness knob drives this check too, rather than a
+        format-specific flag. megatron-core escalates its assume_ok_unexpected default to a
+        raise for fsdp_dtensor, since a partial load never raises on its own."""
         _, validator = load_harness.run()
-        assert validator.call_args.kwargs["strict"] == "raise_unexpected"
+        assert validator.call_args.kwargs["strict"] == "assume_ok_unexpected"
 
     def test_skipped_when_finetuning(self, load_harness):
         """A finetune loads only part of the model on purpose."""
@@ -222,26 +225,12 @@ class TestLoadValidatesModelKeys:
         assert ckpt_type == CheckpointType.FSDP_DTENSOR
 
 
-class TestStrictFsdpDtensorModelLoadConfig:
-    def test_default_raises_on_mismatch(self):
-        assert CheckpointConfig().strict_fsdp_dtensor_model_load == "raise_unexpected"
+class TestFsdpDtensorLoadConfig:
+    def test_strictness_knob_is_inherited_not_redeclared(self):
+        """No bespoke config field: the check rides on the existing megatron-core knob."""
+        assert CheckpointConfig().dist_ckpt_strictness == "assume_ok_unexpected"
+        assert "strict_fsdp_dtensor_model_load" not in CheckpointConfig().__dataclass_fields__
 
     def test_partial_load_remains_the_default(self):
         """The new check is what makes a partial load safe, so partial stays the default."""
         assert CheckpointConfig().strict_fsdp_dtensor_load is False
-
-    @pytest.mark.parametrize(
-        "value",
-        [
-            "assume_ok_unexpected",
-            "log_unexpected",
-            "log_all",
-            "raise_unexpected",
-            "raise_all",
-            "return_unexpected",
-            "return_all",
-            "ignore_all",
-        ],
-    )
-    def test_accepts_every_strict_handling_value(self, value):
-        assert CheckpointConfig(strict_fsdp_dtensor_model_load=value).strict_fsdp_dtensor_model_load == value

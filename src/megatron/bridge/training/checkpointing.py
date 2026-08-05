@@ -3774,7 +3774,7 @@ def load_fsdp_dtensor_checkpoint(
                 state_dict_metadata,
                 state_dict,
                 checkpoint_name,
-                strict=getattr(ckpt_cfg, "strict_fsdp_dtensor_model_load", "raise_unexpected"),
+                strict=ckpt_cfg.dist_ckpt_strictness,
             )
 
     planner = torch.distributed.checkpoint.default_planner.DefaultLoadPlanner(allow_partial_load=allow_partial_load)
