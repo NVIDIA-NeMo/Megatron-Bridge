@@ -21,7 +21,7 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 """
 
 from dataclasses import dataclass, field
-from typing import ClassVar, List, Optional
+from typing import List, Optional
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -56,8 +56,6 @@ class Qwen3VLModelProvider(GPTModelProvider):
     Note: num_query_groups in parent class corresponds to num_key_value_heads in HF config.
     Default value of 8 is used for GQA (Grouped Query Attention).
     """
-
-    supports_energon_native_sequence_packing: ClassVar[bool] = True
 
     # Fields from Qwen3VLTransformerConfig
     language_max_sequence_length: int = 2048
