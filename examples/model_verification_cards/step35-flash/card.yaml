@@ -1,0 +1,228 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: step35_flash
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. This card intentionally limits its current verification scope to
+  model-level conversion, parity, and checkpoint-backed inference for the
+  pinned Step-3.5-Flash checkpoint. Training verification is deferred and no
+  training-support result is claimed by this card.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: stepfun-ai/Step-3.5-Flash
+  hf_revision: ab446a3de5e171ea341227e24bb1f090e1b771f7  # pragma: allowlist secret
+  architecture: Step3p5ForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: bcd2d134c59d096f9f9231fd03d7d5ddede3665e  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      CPU import must exit successfully, create iter_0000000, reload the
+      checkpoint, and preserve every lossless tensor from the pinned Hugging
+      Face revision with matching keys, shapes, dtypes, and values.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron-path work/model-verification/step35-flash/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --distributed-timeout-minutes 110 --trust-remote-code --low-memory-save
+    last_verified: null
+    expected_result: >
+      Distributed import must exit successfully at TP1/PP1/EP8/ETP1, create
+      iter_0000000, reload the checkpoint, and preserve every lossless tensor
+      from the pinned Hugging Face revision with matching keys, shapes, dtypes,
+      and values.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      CPU export must reload the CPU-imported checkpoint, write a complete
+      indexed Hugging Face checkpoint, strictly reload it, and match all
+      lossless tensors against the pinned source revision.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron-path
+      work/model-verification/step35-flash/imported-megatron/iter_0000000
+      --hf-path work/model-verification/step35-flash/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --tp 1 --pp 1 --ep 8 --etp 1 --distributed-timeout-minutes 110
+      --distributed-save --save-every-n-ranks 1 --no-progress
+      --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Distributed export must reload the TP1/PP1/EP8/ETP1 checkpoint, write a
+      complete indexed Hugging Face checkpoint, strictly reload it, and match
+      all lossless tensors against the pinned source revision.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Hugging Face and Megatron must process identical pinned-revision input
+      IDs, predict the same next token, and reach cosine similarity of at least
+      0.99. Maximum and mean absolute logit differences are report-only
+      diagnostics.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task legacy-full-prefix-generation
+      --hf_model_path stepfun-ai/Step-3.5-Flash
+      --hf-revision ab446a3de5e171ea341227e24bb1f090e1b771f7
+      --megatron_model_path
+      work/model-verification/step35-flash/imported-megatron/iter_0000000
+      --tp 1 --pp 1 --ep 8 --etp 1
+      --prompt $'\u003c|im_start|\u003euser\nReply with exactly OK and nothing
+      else.\u003c|im_end|\u003e\n\u003c|im_start|\u003eassistant\n'
+      --max_new_tokens 32 --legacy-full-prefix --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Deterministic greedy inference must reload the persisted
+      TP1/PP1/EP8/ETP1 checkpoint, generate a byte-identical completion across
+      two runs, reach EOS naturally, and exit without the fused-GLU expert
+      concatenation warning or checkpoint-load memory retention reported in
+      the original failure.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        context_parallel_size: 8
+        moe_dispatcher: deepep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The public Step-3.5-Flash H100 recipe must complete a bounded 100-step
+        run with finite loss, no skipped or NaN iterations, all four metrics,
+        and a reloadable final checkpoint. Training is deferred by this card.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A pinned-data 100-step full-SFT run must finish with finite loss, no
+        skipped or NaN iterations, all four metrics, and a reloadable final
+        checkpoint. Training is deferred by this card.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        A verified SFT checkpoint must export to Hugging Face, strictly reload,
+        and produce deterministic checkpoint-backed inference. Training and
+        post-SFT export verification are deferred by this card.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A dedicated packed long-context SFT run must complete 100 steps with
+        finite loss, no skipped or NaN iterations, all four metrics, and a
+        reloadable checkpoint. Training is deferred by this card.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A Step-3.5-Flash PEFT recipe with an audited adapter target set must
+        complete 100 steps with finite loss, all four metrics, and a reloadable
+        adapter checkpoint. Training is deferred by this card.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A direct continuation must restore model, optimizer, scheduler,
+        data-order, and RNG state, match declared sentinel losses, and save a
+        reloadable checkpoint to a distinct output root. Training is deferred
+        by this card.
