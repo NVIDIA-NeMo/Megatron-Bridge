@@ -21,7 +21,7 @@
 
 ## Examples
 
-For conversion, inference, dependency notes, hardware requirements, and MCore patch requirements, see the [GLM-5 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/glm/glm5/README.md).
+For the pinned checkpoint revision, tested topology, commands, and expected results for verified GLM-5.2 workflows, see the [GLM-5.2 model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/glm5-2/card.yaml). For the GLM-5 conversion wrapper, dependency notes, and architecture constraints, see the [GLM-5 examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/glm/glm5/README.md).
 
 ## Related Implementation
 
