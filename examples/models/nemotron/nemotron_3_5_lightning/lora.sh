@@ -63,4 +63,3 @@ run_bridge_distributed scripts/training/run_recipe.py \
     logger.tensorboard_dir=null \
     "${hardware_overrides[@]}" \
     "$@"
-

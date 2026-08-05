@@ -44,4 +44,3 @@ if [[ -n "${MEGATRON_PATH}" ]]; then
 fi
 
 run_bridge_distributed "${args[@]}"
-

@@ -54,4 +54,3 @@ run_bridge_distributed scripts/training/run_recipe.py \
     logger.log_interval=1 \
     logger.tensorboard_dir=null \
     "$@"
-

@@ -201,4 +201,3 @@ round-tripped exactly (`max_abs_diff=0.0`), and both the imported Megatron
 checkpoint and exported HF checkpoint generated `The capital of France is
 Paris.`. The canonical 16-H100 pretraining recipe completed two finite-loss
 steps with no skipped or NaN iterations.
-
