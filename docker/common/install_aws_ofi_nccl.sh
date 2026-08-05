@@ -42,8 +42,6 @@ SRC_DIR="$(mktemp -d)"
 apt-get update
 apt-get install -y --no-install-recommends \
     git ca-certificates build-essential autoconf automake libtool libhwloc-dev
-apt-get clean
-rm -rf /var/lib/apt/lists/*
 
 git clone --depth 1 --branch "${AWS_OFI_NCCL_VER}" \
     https://github.com/aws/aws-ofi-nccl.git "${SRC_DIR}"
@@ -62,6 +60,12 @@ pushd "${SRC_DIR}"
 make -j"$(nproc)"
 make install
 popd
+
+# The installed plugin links to libhwloc15 at runtime but does not need the
+# development headers or libltdl development files after compilation.
+apt-get purge -y libhwloc-dev libltdl-dev
+apt-get clean
+rm -rf /var/lib/apt/lists/*
 
 # Revive the ldconfig entry the base image left behind so a bare `libnccl-net.so`
 # lookup can also resolve here; EKSEnvPlugin still pins the absolute path.
