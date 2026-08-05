@@ -174,7 +174,7 @@ class TestTokenizers:
         assert tokenizer.additional_args["num_special_tokens"] == num_special_tokens
 
     @patch("megatron.core.tokenizers.utils.build_tokenizer.MegatronTokenizer.from_pretrained")
-    def test_build_sft_tokenizer_uses_legacy_prompt_format_alias(self, mock_from_pretrained):
+    def test_build_sft_tokenizer_uses_mcore_prompt_format_alias(self, mock_from_pretrained):
         """Bridge's canonical prompt field is exposed under the name MCore reads."""
         mock_from_pretrained.return_value = sentinel.tokenizer
         config = TokenizerConfig(

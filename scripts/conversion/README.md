@@ -13,11 +13,11 @@ Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
 `./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
-### Export checkpoint metadata requirement
+### Megatron-LM checkpoint compatibility
 
 `convert.sh export` requires a Bridge-native checkpoint with a serialized `run_config.yaml`. Flat Megatron-LM checkpoints that store CLI arguments in distributed common state are supported by lower-level loading APIs, but not by this launcher. Output from `scripts/translate_mlm_to_bridge.py` is Hydra overrides or Python recipe source; placing that output in an MLM checkpoint as `run_config.yaml` is not a supported conversion step.
 
-For a legacy MLM checkpoint, first confirm that its architecture has a registered Bridge, then follow the metadata-validation and `load_model_config()` / `build_and_load_model()` workflow in the [Megatron-LM to Megatron Bridge guide](../../docs/megatron-lm-to-megatron-bridge.md#exporting-a-legacy-megatron-lm-checkpoint).
+Training with Megatron-LM and then exporting with Megatron Bridge is not recommended; however, if you already have a Megatron-LM checkpoint, here is how you can convert it to Hugging Face format. First confirm that its architecture has a registered Bridge, then follow the metadata-validation and `load_model_config()` / `build_and_load_model()` workflow in the [Megatron-LM to Megatron Bridge guide](../../docs/megatron-lm-to-megatron-bridge.md#converting-an-existing-megatron-lm-checkpoint-to-hugging-face).
 
 ## Local CPU conversion
 

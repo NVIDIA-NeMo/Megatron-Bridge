@@ -478,7 +478,7 @@ class TestHybridModelProvider:
         mock_args,
         mock_transformer_config,
     ):
-        """Test that legacy checkpoint args cannot import untrusted Hybrid specs."""
+        """Test that MLM checkpoint args cannot import untrusted Hybrid specs."""
         mock_config_func.return_value = mock_transformer_config
         mock_args.spec = ["attacker_pkg.hybrid_spec", "payload_spec"]
 
