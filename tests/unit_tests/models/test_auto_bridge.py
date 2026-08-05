@@ -1793,9 +1793,18 @@ class TestAutoBridge:
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt
-        AutoBridge.import_ckpt("meta-llama/Meta-Llama-3-8B", "./megatron_checkpoint")
+        with (
+            patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=False),
+            patch(
+                "megatron.bridge.training.model_load_save.temporary_distributed_context"
+            ) as mock_distributed_context,
+        ):
+            AutoBridge.import_ckpt("meta-llama/Meta-Llama-3-8B", "./megatron_checkpoint")
 
         # Assertions
+        mock_distributed_context.assert_called_once_with(backend="gloo")
+        mock_distributed_context.return_value.__enter__.assert_called_once_with()
+        mock_distributed_context.return_value.__exit__.assert_called_once()
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Meta-Llama-3-8B")
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
@@ -1821,13 +1830,17 @@ class TestAutoBridge:
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
 
         # Test import_ckpt with kwargs
-        AutoBridge.import_ckpt(
-            "./local_model",
-            "./megatron_checkpoint",
-            torch_dtype=torch.float16,
-            device_map="auto",
-            revision="0123456789abcdef",  # pragma: allowlist secret
-        )
+        with (
+            patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=False),
+            patch("megatron.bridge.training.model_load_save.temporary_distributed_context"),
+        ):
+            AutoBridge.import_ckpt(
+                "./local_model",
+                "./megatron_checkpoint",
+                torch_dtype=torch.float16,
+                device_map="auto",
+                revision="0123456789abcdef",  # pragma: allowlist secret
+            )
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with(
@@ -1859,12 +1872,16 @@ class TestAutoBridge:
         mock_bridge.save_megatron_model = Mock()
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
 
-        AutoBridge.import_ckpt(
-            "meta-llama/Meta-Llama-3-8B",
-            "./megatron_checkpoint",
-            low_memory_save=True,
-            torch_dtype=torch.bfloat16,
-        )
+        with (
+            patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=False),
+            patch("megatron.bridge.training.model_load_save.temporary_distributed_context"),
+        ):
+            AutoBridge.import_ckpt(
+                "meta-llama/Meta-Llama-3-8B",
+                "./megatron_checkpoint",
+                low_memory_save=True,
+                torch_dtype=torch.bfloat16,
+            )
 
         mock_from_hf_pretrained.assert_called_once_with(
             "meta-llama/Meta-Llama-3-8B",
@@ -1877,6 +1894,31 @@ class TestAutoBridge:
             hf_tokenizer_kwargs={},
             low_memory_save=True,
         )
+
+    @patch.object(AutoBridge, "save_megatron_model")
+    @patch.object(AutoBridge, "to_megatron_model")
+    @patch.object(AutoBridge, "from_hf_pretrained")
+    def test_import_ckpt_reuses_existing_distributed_context(
+        self, mock_from_hf_pretrained, mock_to_megatron_model, mock_save_megatron_model
+    ):
+        """Test import_ckpt does not replace a caller-managed process group."""
+        mock_bridge = Mock(spec=AutoBridge)
+        mock_from_hf_pretrained.return_value = mock_bridge
+        mock_bridge.to_megatron_model.return_value = [Mock()]
+        mock_bridge.save_megatron_model = Mock()
+        mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
+
+        with (
+            patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=True),
+            patch(
+                "megatron.bridge.training.model_load_save.temporary_distributed_context"
+            ) as mock_distributed_context,
+        ):
+            AutoBridge.import_ckpt("meta-llama/Meta-Llama-3-8B", "./megatron_checkpoint")
+
+        mock_distributed_context.assert_not_called()
+        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
+        mock_bridge.save_megatron_model.assert_called_once()
 
     def test_export_ckpt_basic(self):
         """Test basic export_ckpt functionality."""

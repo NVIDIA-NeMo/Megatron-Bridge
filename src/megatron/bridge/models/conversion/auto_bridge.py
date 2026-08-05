@@ -1450,27 +1450,31 @@ class AutoBridge(Generic[MegatronModelT]):
         # Load the HuggingFace model
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
 
-        # Convert to Megatron model
-        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+        from megatron.bridge.training.model_load_save import temporary_distributed_context
 
-        # Save as Megatron checkpoint
-        hf_tokenizer_kwargs = {}
-        if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
-            hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
-        if hf_tokenizer_kwargs is None:
+        model_context = nullcontext() if dist.is_initialized() else temporary_distributed_context(backend="gloo")
+        with model_context:
+            # Convert to Megatron model
+            megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+
+            # Save as Megatron checkpoint
             hf_tokenizer_kwargs = {}
-        if kwargs.get("revision") is not None:
-            hf_tokenizer_kwargs.setdefault("revision", kwargs["revision"])
-        # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
-        if kwargs.get("trust_remote_code"):
-            hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
-        bridge.save_megatron_model(
-            megatron_model,
-            megatron_path,
-            hf_tokenizer_path=hf_model_id,
-            hf_tokenizer_kwargs=hf_tokenizer_kwargs,
-            low_memory_save=low_memory_save,
-        )
+            if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
+                hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+            if hf_tokenizer_kwargs is None:
+                hf_tokenizer_kwargs = {}
+            if kwargs.get("revision") is not None:
+                hf_tokenizer_kwargs.setdefault("revision", kwargs["revision"])
+            # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
+            if kwargs.get("trust_remote_code"):
+                hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
+            bridge.save_megatron_model(
+                megatron_model,
+                megatron_path,
+                hf_tokenizer_path=hf_model_id,
+                hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+                low_memory_save=low_memory_save,
+            )
 
     def export_ckpt(
         self,
