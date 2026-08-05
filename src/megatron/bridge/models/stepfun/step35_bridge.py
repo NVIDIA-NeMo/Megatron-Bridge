@@ -14,7 +14,7 @@
 
 import logging
 from functools import partial
-from typing import Dict
+from typing import Dict, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import (
@@ -26,7 +26,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig as MC
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
@@ -213,6 +213,42 @@ class Step35Bridge(MegatronModelBridge):
         ("attention_output_gate", "attention_output_gate"),
         ("layer_types", "layer_types"),
     ]
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: Dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Restore the HF MTP output aliases from the shared output layer."""
+        converted_weights_dict = super().maybe_modify_converted_hf_weight(
+            task,
+            converted_weights_dict,
+            hf_state_dict,
+        )
+        if self.hf_config is None or "lm_head.weight" not in converted_weights_dict:
+            return converted_weights_dict
+
+        first_mtp_layer = self.hf_config.num_hidden_layers
+        num_mtp_layers = getattr(self.hf_config, "num_nextn_predict_layers", 0)
+        aliases = [
+            f"model.layers.{first_mtp_layer + offset}.transformer.shared_head.output.weight"
+            for offset in range(num_mtp_layers)
+        ]
+        missing_aliases = [
+            alias for alias in aliases if alias in hf_state_dict and alias not in converted_weights_dict
+        ]
+        if not missing_aliases:
+            return converted_weights_dict
+
+        # The source checkpoint serializes the shared MTP outputs as separate
+        # tensors in the same safetensors shard. Keep distinct CPU storage for
+        # each alias without adding several gigabytes of peak CUDA memory.
+        output_weight = converted_weights_dict["lm_head.weight"].detach().cpu()
+        converted_weights_dict["lm_head.weight"] = output_weight
+        for alias in missing_aliases:
+            converted_weights_dict[alias] = output_weight.clone()
+        return converted_weights_dict
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace Step3.5 config to GPTModelProvider.
