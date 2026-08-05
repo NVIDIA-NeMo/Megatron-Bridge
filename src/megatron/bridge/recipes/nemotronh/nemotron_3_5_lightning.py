@@ -31,9 +31,7 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 NEMOTRON_3_5_LIGHTNING_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-NEMOTRON_3_5_LIGHTNING_HF_MODEL_REVISION = (
-    "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
-)
+NEMOTRON_3_5_LIGHTNING_HF_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
 OPENMATHINSTRUCT2_REVISION = "469216e3f46f4dacf476b382e192485ea51a143e"  # pragma: allowlist secret
 
 
@@ -116,7 +114,7 @@ def nemotron_3_5_lightning_pretrain_config() -> ConfigContainer:
     cfg.ddp.check_for_large_grads = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.ddp.average_in_collective = False
+    cfg.ddp.average_in_collective = True
     cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     cfg.model.init_method_std = 0.0173
