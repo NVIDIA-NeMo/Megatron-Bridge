@@ -183,7 +183,8 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     """Return a PEFT (LoRA/DoRA) config for Gemma 4 VL 26B-A4B (MoE VLM).
 
     Default configuration: 4 GPUs
-    - TP=4, PP=1, EP=4 (PEFT needs less memory, drop PP)
+    - TP=2, PP=1, EP=4, ETP=1 (dense DP=2, expert DP=1)
+    - MBS=1, GBS=32
     - LR=2e-4 (PEFT)
     - Sequence length: 4096
 
@@ -207,7 +208,12 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 4  # override common EP=1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+
+    # Real CORD-v2 measurements fit with substantial activation-memory headroom
+    # at MBS=1, so recompute and LoRA sequence-parallel input re-gather are not needed.
+    cfg.train.micro_batch_size = 1
 
     # Optimizer — higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
