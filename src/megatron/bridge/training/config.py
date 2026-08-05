@@ -1205,8 +1205,6 @@ class ConfigContainer(Container):
             )
 
         if enable_energon_packing:
-            if not getattr(self.model, "supports_energon_native_sequence_packing", False):
-                raise ValueError("Energon native sequence packing currently supports only dense Qwen3-VL models.")
             if self.train.micro_batch_size != 1:
                 raise ValueError("Energon native sequence packing requires train.micro_batch_size=1.")
             if not self.model.calculate_per_token_loss:

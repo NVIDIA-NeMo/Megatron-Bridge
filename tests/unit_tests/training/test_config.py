@@ -1390,8 +1390,8 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_native_energon_packing_rejects_non_qwen_model(self, monkeypatch):
-        """Native Qwen-VL batches cannot be consumed by a text-only model."""
+    def test_native_energon_packing_does_not_require_model_capability_flag(self, monkeypatch):
+        """Native packing is selected and constrained by the dataset path, not a model allowlist."""
         model_cfg = create_test_gpt_config(calculate_per_token_loss=True)
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
         dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
@@ -1404,8 +1404,8 @@ class TestConfigContainerValidation:
         container.ddp.average_in_collective = False
 
         try:
-            with pytest.raises(ValueError, match="currently supports only dense Qwen3-VL models"):
-                container.validate()
+            container.validate()
+            assert model_cfg._enable_in_batch_packing is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
