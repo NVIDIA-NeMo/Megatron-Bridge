@@ -19,11 +19,11 @@ library and comparing logits against the Megatron checkpoint.
 
 Supports both CPU-only (single process) and multi-GPU (torchrun) modes.
 
-Verification criteria (configurable with ``--top-k``):
+Verification criteria:
   * PEFT model logits must differ from the base model (adapter has effect).
-  * When ``--lora-checkpoint`` is given, the top-k predicted tokens
-    from the PEFT model must match those from the Megatron model with merged
-    weights.
+  * When ``--lora-checkpoint`` is given, PEFT and Megatron-merged logits must
+    have the same top-1 token and satisfy configurable cosine-similarity and
+    relative-L2 thresholds. Top-k tokens remain visible as diagnostics.
 
 CPU mode (no GPU required)::
 
@@ -79,7 +79,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prompt", default="The capital of France is", help="Prompt for the forward pass.")
     parser.add_argument("--trust-remote-code", action="store_true")
-    parser.add_argument("--top-k", type=int, default=5, help="Number of top tokens to compare.")
+    parser.add_argument("--top-k", type=int, default=5, help="Number of top tokens to display.")
+    parser.add_argument("--min-cosine-similarity", type=float, default=0.995)
+    parser.add_argument("--max-relative-l2", type=float, default=0.1)
 
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
@@ -116,25 +118,33 @@ def _print_top_k(label: str, logits: torch.Tensor, tokenizer, k: int) -> None:
     print(f"  {label} top-{k}: {pairs}")
 
 
-def _compare_top_k(
+def _compare_logits(
     label: str,
     ref_logits: torch.Tensor,
     cand_logits: torch.Tensor,
     tokenizer,
     k: int,
+    *,
+    min_cosine_similarity: float,
+    max_relative_l2: float,
 ) -> bool:
-    """Return True if the top-k token IDs match between ref and cand."""
+    """Return True when logits preserve top-1 and meet numerical thresholds."""
     ref_ids, ref_tok, _ = _top_k_info(ref_logits, tokenizer, k)
     cand_ids, cand_tok, _ = _top_k_info(cand_logits, tokenizer, k)
-    match = ref_ids == cand_ids
     diff = (ref_logits - cand_logits).abs()
-    status = "PASS" if match else "FAIL"
+    relative_l2 = (torch.linalg.vector_norm(diff) / torch.linalg.vector_norm(ref_logits)).item()
+    cosine_similarity = torch.nn.functional.cosine_similarity(ref_logits, cand_logits, dim=0).item()
+    top_1_match = ref_ids[0] == cand_ids[0]
+    passed = top_1_match and cosine_similarity >= min_cosine_similarity and relative_l2 <= max_relative_l2
+    status = "PASS" if passed else "FAIL"
     print(f"\n  {label}")
     print(f"    top-{k} tokens ref : {ref_tok}")
     print(f"    top-{k} tokens cand: {cand_tok}")
     print(f"    max logit diff: {diff.max().item():.6e}  mean: {diff.mean().item():.6e}")
+    print(f"    relative L2: {relative_l2:.6e}  cosine similarity: {cosine_similarity:.9f}")
+    print(f"    top-1 match: {top_1_match}")
     print(f"    => {status}")
-    return match
+    return passed
 
 
 def _load_megatron_export(model: torch.nn.Module, state_dict: dict[str, torch.Tensor]) -> list[str]:
@@ -451,7 +461,15 @@ def main() -> None:
         _print_top_k("Megatron merged", mg_logits, tokenizer, k)
         del mg_hf
 
-        if not _compare_top_k("PEFT vs Megatron merged", peft_logits, mg_logits, tokenizer, k):
+        if not _compare_logits(
+            "PEFT vs Megatron merged",
+            peft_logits,
+            mg_logits,
+            tokenizer,
+            k,
+            min_cosine_similarity=args.min_cosine_similarity,
+            max_relative_l2=args.max_relative_l2,
+        ):
             all_pass = False
 
         # Result

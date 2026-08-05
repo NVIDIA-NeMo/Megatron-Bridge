@@ -60,6 +60,66 @@ def test_load_megatron_export_accepts_only_training_mtp(verify_adapter_module) -
     assert omitted_keys == ["mtp.layers.0.weight"]
 
 
+def test_compare_logits_accepts_close_top_k_reordering(verify_adapter_module) -> None:
+    """Near-tied diagnostic tokens may reorder when top-1 and logits remain close."""
+
+    class Tokenizer:
+        @staticmethod
+        def decode(token_ids):
+            return str(token_ids[0])
+
+    reference = torch.tensor([10.0, 8.0, 7.0, 6.0, 5.0, 4.9])
+    candidate = torch.tensor([9.9, 8.0, 7.0, 6.0, 4.9, 5.0])
+
+    assert verify_adapter_module._compare_logits(
+        "test",
+        reference,
+        candidate,
+        Tokenizer(),
+        5,
+        min_cosine_similarity=0.995,
+        max_relative_l2=0.1,
+    )
+
+
+def test_compare_logits_rejects_top_1_change(verify_adapter_module) -> None:
+    """Top-1 identity remains a hard verification requirement."""
+
+    class Tokenizer:
+        @staticmethod
+        def decode(token_ids):
+            return str(token_ids[0])
+
+    assert not verify_adapter_module._compare_logits(
+        "test",
+        torch.tensor([2.0, 1.9, 0.0]),
+        torch.tensor([1.9, 2.0, 0.0]),
+        Tokenizer(),
+        2,
+        min_cosine_similarity=0.9,
+        max_relative_l2=0.1,
+    )
+
+
+def test_compare_logits_rejects_large_numerical_drift(verify_adapter_module) -> None:
+    """A matching top-1 cannot mask poor vector-level agreement."""
+
+    class Tokenizer:
+        @staticmethod
+        def decode(token_ids):
+            return str(token_ids[0])
+
+    assert not verify_adapter_module._compare_logits(
+        "test",
+        torch.tensor([10.0, 1.0, 1.0]),
+        torch.tensor([10.0, -10.0, -10.0]),
+        Tokenizer(),
+        2,
+        min_cosine_similarity=0.995,
+        max_relative_l2=0.1,
+    )
+
+
 def test_load_converted_megatron_export_uses_transformers_mapping(verify_adapter_module, monkeypatch) -> None:
     """Native checkpoint tensors go through Transformers dynamic conversions."""
     expected_model = torch.nn.Linear(2, 2)
