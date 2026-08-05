@@ -5,14 +5,17 @@ title: gemma_4_26b_a4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact CPU and GPU
-  export, and deterministic multimodal inference are verified. Manual forward
-  comparison remains unverified because the recorded run compared a
-  tensor-parallel padding position rather than the prompt's next token. Full
-  SFT remains unverified because the default and selective-MLP configurations
-  exceed H100 memory, while full-layer recompute is too slow for the 10-step
-  verification window. Long-context SFT and PEFT are pending. The published
-  Bridge recipes do not currently provide VLM pretraining.
+  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import and exact CPU and GPU
+  export are verified. Deterministic multimodal inference remains unverified
+  because the recorded run stopped after 29 of the requested 32 tokens. Manual
+  forward comparison remains unverified because the recorded run compared a
+  tensor-parallel padding position rather than the prompt's next token.
+  Decoder-focused SFT is verified on one 8-GPU H100 node with TP4/PP1/EP8/ETP1,
+  a frozen vision encoder, and selective core-attention and MoE-activation
+  recompute. The real CORD-v2 run completed 10 optimizer steps with stable
+  memory and saved iter_0000010. LoRA PEFT is also verified on four H100 GPUs
+  with TP2/PP1/EP4/ETP1 and a complete adapter checkpoint. Long-context SFT is
+  pending. The published Bridge recipes do not currently provide VLM pretraining.
 verification_index:
   model_level:
     verified:
@@ -20,12 +23,13 @@ verification_index:
       - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
-      - inference
     unverified:
       - manual_forward_pass
+      - inference
   training:
     H100:
-      unverified: [sft, sft_export_inference, sft_long_context, peft]
+      verified: [sft, peft]
+      unverified: [sft_export_inference, sft_long_context]
       unsupported: [pretrain, checkpoint_resume]
 model:
   hf_id: google/gemma-4-26B-A4B-it
@@ -128,9 +132,8 @@ items:
       agreement and cosine similarity of at least 0.99.
 
   inference:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: c4250ac1382eccc8e2b58c2424b3db85415fbf6f  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/hf_to_megatron_generate_vlm.py
@@ -141,17 +144,18 @@ items:
       --prompt "What animal is on the candy?"
       --max_new_tokens 32
       --tp 2 --pp 1 --ep 4 --etp 1
-    last_verified: 2026-07-23
+    last_verified: null
     expected_result: >
-      One BF16 deterministic greedy run used an exact 32-token generation
-      limit and terminated on EOS after 29 generated tokens. The JSON-escaped
-      literal completion was "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
+      The 2026-07-23 BF16 deterministic greedy run stopped on EOS after 29 of
+      the requested 32 tokens, so it does not satisfy the exact-length gate.
+      Its JSON-escaped diagnostic completion was
+      "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
       animal on the candy is a
       turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u002f\u002fthought\n\u003cchannel|\u003eThe
       animal on the candy is a
       turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u003ceos\u003e".
-      The input was
-      p-blog/candy.JPG from huggingface/documentation-images at revision
+      Verification requires a fresh run that emits exactly 32 tokens. The
+      input was p-blog/candy.JPG from huggingface/documentation-images at revision
       44c3249461c5a5336585d1e31e0a4ce7fce06a5a, with SHA-256
       fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
 
@@ -174,9 +178,10 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
+      bridge_commit: 81e559ca4d579cf2d9ed5b8f3f48bef82e06451f  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe gemma4_vl_26b_sft_config --mode sft --dataset cord-v2
@@ -186,20 +191,29 @@ items:
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         --save_dir work/model-verification/gemma-4-26b-a4b-it/sft-checkpoints
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
-      last_verified: null
+        logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/sft-post-setup.yaml
+      last_verified: 2026-08-04
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.268018
+        final_loss: 0.06543536
+        last_10_steps_step_time_ms_avg: 18699.99
+        last_10_steps_model_tflops_per_gpu_avg: 26.47
+        peak_allocated_memory_gib: 70.624
+        peak_reserved_memory_gib: 71.021
       expected_result: >
-        On 2026-07-23 the default 8-GPU TP2/PP1/EP8/ETP1 run and a GBS4
-        selective-MLP recompute run both failed before the first completed
-        optimizer step. Each rank had about 77.84 to 78.70 GiB in use and
-        needed an additional 1 to 2 GiB. Full 30-layer recompute crossed that
-        memory peak, but one GBS4 optimizer step did not finish during more
-        than nine observed minutes. No valid 10-step metrics or iter_0000010
-        checkpoint were produced, so SFT remains unverified.
+        On 2026-08-04 the single-node TP4/PP1/EP8/ETP1 run loaded the immutable
+        BF16 checkpoint and real CORD-v2 revision, then completed exactly 10
+        optimizer steps at MBS1 and GBS32. The persisted post-setup config
+        confirmed a frozen vision encoder, trainable projection and language
+        model, expandable CUDA allocator segments, and selective core_attn plus
+        moe_act recompute with CUDA graphs and CPU offload disabled. Loss moved
+        from 1.268018 to 0.06543536, final grad norm was 1.561, and every step
+        reported zero skipped and zero NaN iterations. Across all eight ranks,
+        allocated memory returned to 56.493 GiB after each step, while
+        cumulative peak allocated and reserved memory remained at or below
+        70.624 and 71.021 GiB. The run saved a complete iter_0000010 torch_dist
+        checkpoint with eight rank shards, finalized metadata, training state,
+        and a latest-checkpoint tracker containing iteration 10.
 
   sft_export_inference:
     H100:
@@ -209,12 +223,11 @@ items:
       commands: null
       last_verified: null
       expected_result: >
-        This item is blocked because SFT produced no verified iter_0000010
-        checkpoint, so no export or post-SFT inference command is recorded.
-        Once that dependency passes, the checkpoint must export, strictly
-        reload as Gemma4ForConditionalGeneration, and complete one
-        deterministic greedy VLM generation with a recorded literal
-        completion.
+        SFT produced a verified iter_0000010 checkpoint, but export, strict
+        Hugging Face reload, and post-SFT inference have not been run. This
+        item requires the checkpoint to export, strictly reload as
+        Gemma4ForConditionalGeneration, and complete one deterministic greedy
+        VLM generation with a recorded literal completion.
 
   sft_long_context:
     H100:
@@ -237,9 +250,10 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
+      bridge_commit: df1b978e751753707100417cb4e89645a23537f8  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
         --recipe gemma4_vl_26b_peft_config --mode lora --dataset cord-v2
@@ -249,16 +263,30 @@ items:
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         --save_dir work/model-verification/gemma-4-26b-a4b-it/peft-checkpoints
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
-      last_verified: null
+        logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/peft-post-setup.yaml
+      last_verified: 2026-08-04
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.288328
+        final_loss: 0.1072377
+        last_10_steps_step_time_ms_avg: 14163.25
+        last_10_steps_model_tflops_per_gpu_avg: 65.01
+        peak_allocated_memory_gib: 44.252
+        peak_reserved_memory_gib: 45.637
       expected_result: >
-        The 4-GPU TP2/PP1/EP4 LoRA run must complete exactly 10 optimizer steps
-        with finite loss, no skipped or NaN iterations, all four required
-        metrics, and a reloadable final adapter checkpoint.
+        On 2026-08-04 the 4-GPU TP2/PP1/EP4/ETP1 LoRA run loaded the immutable
+        BF16 checkpoint and real CORD-v2 revision, then completed exactly 10
+        optimizer steps at MBS1 and GBS32. The persisted post-setup config
+        recorded rank-32 adapters with alpha 32 and zero dropout on linear_qkv,
+        linear_proj, linear_fc1, and linear_fc2. Runtime transformation froze
+        the base model and reported 22,272,000 trainable adapter parameters,
+        0.30% of the local model shard. Loss moved from 1.288328 to 0.1072377,
+        final grad norm was 22.994, and every step reported zero skipped and
+        zero NaN iterations. Across all four ranks, allocated memory returned
+        to 14.582 GiB after each step, while cumulative peak allocated and
+        reserved memory remained at or below 44.252 and 45.637 GiB. The run
+        saved a complete iter_0000010 adapter checkpoint with four rank shards,
+        finalized metadata, training state, and a latest-checkpoint tracker
+        containing iteration 10.
 
   checkpoint_resume:
     all:

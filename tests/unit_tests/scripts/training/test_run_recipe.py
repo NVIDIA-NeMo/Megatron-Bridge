@@ -218,6 +218,27 @@ def test_model_adapter_modes_select_peft_recipe_and_scheme(mode):
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "finetune"
 
 
+@pytest.mark.parametrize(
+    ("mode", "recipe_name", "peft_scheme"),
+    [
+        ("pretrain", "exaone_moe_pretrain_config", None),
+        ("sft", "exaone_moe_sft_config", None),
+        ("lora", "exaone_moe_peft_config", "lora"),
+        ("dora", "exaone_moe_peft_config", "dora"),
+    ],
+)
+def test_exaone_moe_short_model_name_selects_k_exaone_2_recipe(mode, recipe_name, peft_scheme):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+
+    module.main(["--model", "exaone_moe", "--mode", mode])
+
+    handles.recipe_runner.load_recipe.assert_called_once_with(
+        recipe_name,
+        peft_scheme=peft_scheme,
+    )
+
+
 def test_full_recipe_uses_library_recipe_and_default_llm_step():
     module, handles = _load_module()
     handles.recipe_runner.load_recipe.return_value = SimpleNamespace()

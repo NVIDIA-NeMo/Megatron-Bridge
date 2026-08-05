@@ -1661,7 +1661,7 @@ def cleanup_old_non_persistent_checkpoint(
     save_dir = Path(save_dir)
 
     iter_prefix = "iter_"
-    iter_ckpts = save_dir.rglob(f"{iter_prefix}*")
+    iter_ckpts = save_dir.glob(f"{iter_prefix}*")
     if max_iteration is not None:
         iter_ckpts = (
             ckpt_path for ckpt_path in iter_ckpts if int(ckpt_path.name[len(iter_prefix) :]) <= max_iteration

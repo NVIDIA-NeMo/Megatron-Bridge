@@ -458,6 +458,8 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
+    assert "exclusive" not in executor.kwargs
+    assert "mem" not in executor.kwargs
     assert executor.env_vars == {}
     assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH"}
     assert executor.additional_parameters == {"export": "PATH,HF_TOKEN"}

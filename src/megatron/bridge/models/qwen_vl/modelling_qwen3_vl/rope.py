@@ -464,7 +464,7 @@ def apply_rotary_pos_emb_absolute(
 
     In Qwen3-VL, the shape of freqs is (seq_length, bs, 1, 2 * dim) instead of [max_seqlen, 1, 1, 2 * dim]
     """
-    # Fused RoPE (TE kernels) is not supported for Qwen3-VL / Qwen3.5-VL because:
+    # Fused RoPE (TE kernels) is not supported for Qwen3-VL / Qwen3.5/3.6-VL because:
     # 1. This function uses per-token absolute freqs with shape (seq_len, bs, 1, 2*dim),
     #    which differs from the standard mcore format (max_seqlen, 1, 1, 2*dim).
     #    TE's fused_apply_rotary_pos_emb / fused_apply_rotary_pos_emb_thd expect the
@@ -475,7 +475,7 @@ def apply_rotary_pos_emb_absolute(
     #    (position_embedding_type='mrope'), so provide() resets the flag to False.
     #    This assert is a safety net in case the flag is forced on after provide().
     assert not config.apply_rope_fusion, (
-        "apply_rope_fusion is not supported for Qwen3-VL / Qwen3.5-VL models. "
+        "apply_rope_fusion is not supported for Qwen3-VL / Qwen3.5/3.6-VL models. "
         "This code path uses per-token absolute positional frequencies that are incompatible "
         "with TE's fused RoPE kernels. Setting apply_rope_fusion=True would not actually "
         "enable fusion (Qwen3VLSelfAttention bypasses the fused dispatch), but the flag "

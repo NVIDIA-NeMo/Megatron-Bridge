@@ -68,6 +68,20 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
+def _build_inference_context(
+    input_ids: torch.Tensor,
+    *,
+    legacy_full_prefix: bool,
+) -> StaticInferenceContext | None:
+    """Build a static inference context unless legacy full-prefix decoding is requested."""
+    if legacy_full_prefix:
+        return None
+    return StaticInferenceContext(
+        max_batch_size=input_ids.size(0),
+        max_sequence_length=input_ids.size(1),
+    )
+
+
 def text_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     """Forward step function for text generation.
     Required by the forward_backward_func function.
@@ -189,7 +203,9 @@ def main(args) -> None:
         model_provider.pipeline_dtype = torch.bfloat16
 
         # Read pipeline layout from checkpoint for PP > 1
-        if pp > 1:
+        if args.pipeline_model_parallel_layout is not None:
+            model_provider.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
+        elif pp > 1:
             from pathlib import Path
 
             import yaml
@@ -210,15 +226,19 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
+        mp_overrides = {
+            "tensor_model_parallel_size": tp,
+            "pipeline_model_parallel_size": pp,
+            "expert_model_parallel_size": ep,
+            "expert_tensor_parallel_size": etp,
+            "pipeline_dtype": torch.bfloat16,
+        }
+        if args.pipeline_model_parallel_layout is not None:
+            mp_overrides["pipeline_model_parallel_layout"] = args.pipeline_model_parallel_layout
+
         model = bridge.load_megatron_model(
             args.megatron_model_path,
-            mp_overrides={
-                "tensor_model_parallel_size": tp,
-                "pipeline_model_parallel_size": pp,
-                "expert_model_parallel_size": ep,
-                "expert_tensor_parallel_size": etp,
-                "pipeline_dtype": torch.bfloat16,
-            },
+            mp_overrides=mp_overrides,
             wrap_with_ddp=False,
         )
 
@@ -239,6 +259,8 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        if args.pipeline_model_parallel_layout is not None:
+            model_provider.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
@@ -284,9 +306,9 @@ def main(args) -> None:
             print_rank_0(f"Generation step {step}")
 
             fwd_bwd_function = get_forward_backward_func()
-            inference_context = StaticInferenceContext(
-                max_batch_size=input_ids.size(0),
-                max_sequence_length=input_ids.size(1),
+            inference_context = _build_inference_context(
+                input_ids,
+                legacy_full_prefix=args.legacy_full_prefix,
             )
             iterator = SingleBatchIterator(input_ids, position_ids, inference_context)
 
@@ -376,6 +398,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of new tokens to generate.",
     )
     parser.add_argument(
+        "--legacy-full-prefix",
+        action="store_true",
+        help=(
+            "Use non-cached autoregressive generation by disabling the MCore inference context and recomputing "
+            "the full accumulated prefix at every decoding step. This slower legacy path supports models such "
+            "as GLM-5 whose AbsorbedMLA attention does not yet support cached inference."
+        ),
+    )
+    parser.add_argument(
         "--apply-chat-template",
         action="store_true",
         help="Format the prompt as a user turn using the tokenizer's chat template.",
@@ -388,6 +419,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument(
+        "--pipeline-model-parallel-layout",
+        help="Optional pipeline layout used to keep model-specific layer groups within pipeline stages.",
+    )
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")

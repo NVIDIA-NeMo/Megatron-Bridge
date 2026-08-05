@@ -199,6 +199,11 @@ def generate(
             either as a string or as an InferenceRequest object.
     """
 
+    if sampling_params is not None and (
+        sampling_params.termination_id is not None or sampling_params.stop_words is not None
+    ):
+        raise ValueError("MCore legacy static generation does not support termination_id or stop_words.")
+
     if isinstance(wrapped_model, QwenVLInferenceWrapper):
         if processor is None:
             processor = getattr(wrapped_model, "processor", None)

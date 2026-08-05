@@ -456,6 +456,10 @@ jobs:
             KEY="${CACHE_NAMESPACE}-${PR_NUMBER}"
           elif [[ -n "$MCORE_REF" ]]; then
             KEY="${CACHE_NAMESPACE}-mcore-${MCORE_REF:0:12}-${MBRIDGE_SHA:0:12}"
+            # MCore-triggered runs share the baseline cache so the expensive
+            # dependency layers (DeepEP, uv sync ~92 min) are reused across
+            # triggers with different MCORE_REF. The image tag stays unique.
+            CACHE_KEY="$BASELINE_KEY"
           elif [[ "$REF" == "refs/heads/$BASE_REF" || "$EVENT_NAME" == "schedule" ]]; then
             KEY="$BASELINE_KEY"
           else
@@ -470,9 +474,14 @@ jobs:
             BASELINE_KEY="${BASELINE_KEY:0:83}-$(printf '%s' "$BASELINE_KEY" | sha256sum | cut -c1-16)"
           fi
 
+          if [[ -z "${CACHE_KEY:-}" ]]; then
+            CACHE_KEY="$KEY"
+          fi
+
           echo "key=$KEY" | tee -a "$GITHUB_OUTPUT"
           echo "baseline=$BASELINE_KEY" | tee -a "$GITHUB_OUTPUT"
-          echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
+          echo "cache_key=$CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+          echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${CACHE_KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
 
       - name: Select cache donor
         id: cache_from
@@ -480,7 +489,7 @@ jobs:
         env:
           BASELINE_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.baseline }}-buildcache
           LEGACY_CACHE: ${{ matrix.registry }}/megatron-bridge:main-buildcache
-          RUN_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache
+          RUN_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.cache_key }}-buildcache
         run: |
           DONOR_CACHE=$(.github/scripts/select_cache_donor.sh "$RUN_CACHE" "$BASELINE_CACHE" "$LEGACY_CACHE")
           echo "donor=$DONOR_CACHE" | tee -a "$GITHUB_OUTPUT"
