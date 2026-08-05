@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen3.5-VL recipes.
+"""Qwen3.5-VL recipes with shared Qwen3.6-VL 35B-A3B support.
 
 This module provides pretrain, SFT, and PEFT configurations for Qwen3.5-VL models:
 
 - **Dense**: 800M, 2B, 4B, 9B, 27B
 - **MoE**: 35B-A3B, 122B-A10B, 397B-A17B
+
+Qwen3.6 35B-A3B uses the same architecture and shares the 35B recipe.
 """
 
 from __future__ import annotations
@@ -30,7 +32,9 @@ from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 # =============================================================================
@@ -133,7 +137,13 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
-    """Return a pre-training config for Qwen3.5-VL 35B-A3B (MoE)."""
+    """Return the shared 8-GPU pre-training config for Qwen3.5/Qwen3.6-VL 35B-A3B.
+
+    The recipe freezes the language and vision towers and trains the vision
+    projection. Dataset-specific batch and execution topology overrides belong
+    in the launcher command so this shared recipe preserves its convergence
+    defaults.
+    """
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
@@ -787,15 +797,16 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Qwen3.5-VL MoE SFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
+# Qwen3.5/Qwen3.6-VL MoE SFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
 # =============================================================================
 
 
 def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE).
+    """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
 
     Default configuration: 16 GPUs
-    - TP=2, PP=1, EP=16
+    - TP=1, PP=2, EP=8
+    - MBS=1, GBS=32
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
     """
@@ -807,14 +818,14 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
 
     # Parallelism settings
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = None
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False
@@ -828,9 +839,10 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # TE and kernels
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_scope = []
     cfg.model.cuda_graph_warmup_steps = 3
     cfg.model.attention_backend = "auto"
+    cfg.model.bias_activation_fusion = True
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
@@ -847,17 +859,17 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -878,6 +890,8 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    # The VLM model-chunk layout produces empty optimizer groups with optimizer-step gather overlap.
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
 
     # Dataset config
     cfg.dataset.seq_length = 4096
@@ -893,18 +907,62 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
 
-    cfg.comm_overlap = None
-    cfg.mixed_precision = "bf16_mixed"
+    # MoE A2A overlap requires a schedule plan that includes Qwen-VL vision preprocessing.
+    # Keep it disabled until the VLM wrapper can preserve that multimodal path in the plan.
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_param_gather_with_optimizer_step=False,
+        overlap_moe_expert_parallel_comm=False,
+        delay_wgrad_compute=False,
+    )
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
 
 
+def qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the shared long-context SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B.
+
+    Default configuration: 32 GPUs
+    - TP=1, PP=4, CP=2, EP=8
+    - MBS=2, GBS=512 with deferred in-batch packing
+    - Sequence length: 8192
+    """
+    cfg = qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config()
+
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.seq_length = 8192
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 2
+
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.enable_in_batch_packing = True
+    cfg.dataset.defer_in_batch_packing_to_step = True
+    cfg.dataset.in_batch_packing_pad_to_multiple_of = 4
+
+    cfg.ddp.average_in_collective = False
+    return cfg
+
+
 def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
-    """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE) with Megatron FSDP.
+    """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE) with Megatron FSDP.
 
     Uses Megatron FSDP for memory-efficient training with AG/RS overlap.
     Requires fsdp_dtensor checkpoint format (convert offline with
@@ -1751,12 +1809,12 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Qwen3.5-VL MoE PEFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
+# Qwen3.5/Qwen3.6-VL MoE PEFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
 # =============================================================================
 
 
 def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a PEFT config for Qwen3.5-VL 35B-A3B (MoE).
+    """Return a PEFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
 
     Default configuration: 4 GPUs
     - TP=2, PP=1, EP=4
@@ -1812,17 +1870,17 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -1858,6 +1916,7 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
@@ -2107,6 +2166,7 @@ __all__ = [
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",
+    "qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config",
     "qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config",
     "qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config",  # pragma: allowlist secret
     "qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config",

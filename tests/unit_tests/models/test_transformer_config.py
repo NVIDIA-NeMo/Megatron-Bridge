@@ -15,6 +15,7 @@
 """Unit tests for megatron.bridge.models.transformer_config."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -24,6 +25,7 @@ from megatron.bridge.models.transformer_config import (
     HeterogeneousTransformerConfig,
     MLATransformerConfig,
     TransformerConfig,
+    _enable_safe_hybridep_dispatch,
     _resolve_string_fields,
 )
 
@@ -42,6 +44,31 @@ def _make_config(**kwargs) -> TransformerConfig:
     defaults = dict(num_layers=2, hidden_size=64, num_attention_heads=4)
     defaults.update(kwargs)
     return TransformerConfig(**defaults)
+
+
+class TestEnableSafeHybridepDispatch:
+    """Tests for cross-branch Megatron Core HybridEP padding compatibility."""
+
+    def test_enables_dev_padding_field(self):
+        cfg = SimpleNamespace(
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_hybridep_pad_variable_tokens=False,
+            cuda_graph_impl="none",
+        )
+
+        _enable_safe_hybridep_dispatch(cfg)
+
+        assert cfg.moe_hybridep_pad_variable_tokens is True
+
+    def test_cuda_graph_config_does_not_require_padding_field(self):
+        cfg = SimpleNamespace(
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            cuda_graph_impl="full_iteration",
+        )
+
+        _enable_safe_hybridep_dispatch(cfg)
 
 
 # ---------------------------------------------------------------------------

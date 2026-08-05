@@ -95,6 +95,7 @@ def build_mcore_thd_sequence_batch_from_rows(
     ignore_index: int = IGNORE_INDEX,
     pad_to_multiple_of: int = 1,
     sequence_tensor_pad_values: Mapping[str, int | float] | None = None,
+    emit_padding_mask: bool = False,
 ) -> dict[str, Any]:
     """Build an MCore THD batch directly from unpadded sequence rows.
 
@@ -107,6 +108,8 @@ def build_mcore_thd_sequence_batch_from_rows(
         pad_to_multiple_of: Per-sequence alignment multiple for CP/SP.
         sequence_tensor_pad_values: Additional sequence-aligned tensor keys and
             the value used for alignment padding.
+        emit_padding_mask: Whether to emit a boolean mask whose true values
+            identify physical alignment gaps.
 
     Returns:
         A single-row THD batch with current MCore packed-sequence metadata.
@@ -122,7 +125,7 @@ def build_mcore_thd_sequence_batch_from_rows(
         raise ValueError("sequence_length must be >= 1.")
 
     extra_pad_values = dict(sequence_tensor_pad_values or {})
-    reserved_keys = {token_key, "position_ids", "labels", "loss_mask", "attention_mask"}
+    reserved_keys = {token_key, "position_ids", "labels", "loss_mask", "attention_mask", "padding_mask"}
     if reserved_keys.intersection(extra_pad_values):
         raise ValueError("Additional sequence tensor keys must not replace standard sequence tensors.")
 
@@ -177,6 +180,10 @@ def build_mcore_thd_sequence_batch_from_rows(
         ),
         "attention_mask": None,
     }
+    if emit_padding_mask:
+        # MCore routes the physical THD stream; mask alignment gaps out of MoE
+        # z/aux losses and expert-bias token counts.
+        packed["padding_mask"] = torch.ones((1, total_length), dtype=torch.bool, device=first_tokens.device)
 
     output_pad_values: dict[str, int | float] = {"labels": ignore_index, "loss_mask": 0, **extra_pad_values}
     for key, pad_value in output_pad_values.items():
@@ -188,6 +195,8 @@ def build_mcore_thd_sequence_batch_from_rows(
     for row, length, padded_length in zip(normalized_rows, unpadded_lengths, padded_lengths):
         packed[token_key][0, offset : offset + length] = row[token_key]
         packed["position_ids"][0, offset : offset + length] = row["position_ids"]
+        if emit_padding_mask:
+            packed["padding_mask"][0, offset : offset + length] = False
         for key in output_pad_values:
             if key in packed:
                 packed[key][0, offset : offset + length] = row[key]
@@ -227,6 +236,7 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
     ignore_index: int = IGNORE_INDEX,
     pad_to_multiple_of: int = 1,
     sequence_tensor_pad_values: Mapping[str, int | float] | None = None,
+    emit_padding_mask: bool = False,
 ) -> None:
     """Pack a right-padded sequence batch into MCore THD layout.
 
@@ -245,6 +255,8 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
         pad_to_multiple_of: Optional per-sequence packed length multiple.
         sequence_tensor_pad_values: Additional sequence-aligned tensor keys and
             their alignment padding values.
+        emit_padding_mask: Whether to emit a boolean mask whose true values
+            identify physical alignment gaps.
 
     Raises:
         ValueError: If required tensors are missing or the batch contains no
@@ -304,6 +316,7 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
         ignore_index=ignore_index,
         pad_to_multiple_of=pad_to_multiple_of,
         sequence_tensor_pad_values=sequence_tensor_pad_values,
+        emit_padding_mask=emit_padding_mask,
     )
     _set_tokens(batch, token_key, packed.pop(token_key))
     for key in (
@@ -311,6 +324,7 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
         "loss_mask",
         "position_ids",
         "attention_mask",
+        "padding_mask",
         "cu_seqlens_q",
         "cu_seqlens_kv",
         "cu_seqlens_q_padded",
@@ -322,5 +336,5 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
     ):
         if key in packed:
             batch[key] = packed[key]
-        elif key in {"cu_seqlens_q_padded", "cu_seqlens_kv_padded"}:
+        elif key in {"padding_mask", "cu_seqlens_q_padded", "cu_seqlens_kv_padded"}:
             batch.pop(key, None)

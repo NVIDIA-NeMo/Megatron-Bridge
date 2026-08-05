@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 import torch
 from packaging.version import Version
+from safetensors import safe_open
 from transformers import AutoConfig, AutoTokenizer
 from transformers import __version__ as TRANSFORMERS_VERSION
 
@@ -44,6 +45,7 @@ HF_GLM5_TOY_MODEL_CONFIG = {
     "index_head_dim": 128,
     "index_n_heads": 8,
     "index_topk": 256,
+    "indexer_types": ["full", "full"],
     "indexer_rope_interleave": True,
     # ---- LoRA ranks ----
     "q_lora_rank": 256,
@@ -61,6 +63,7 @@ HF_GLM5_TOY_MODEL_CONFIG = {
     "scoring_func": "sigmoid",
     "topk_method": "noaux_tc",
     "mlp_layer_types": ["dense", "sparse"],
+    "layer_types": ["deepseek_sparse_attention", "deepseek_sparse_attention"],
     # ---- Position encoding ----
     "max_position_embeddings": 8192,
     "rope_interleave": True,
@@ -87,18 +90,31 @@ HF_GLM5_TOY_MODEL_CONFIG = {
     "transformers_version": "5.2.0.dev0",
 }
 
+HF_GLM52_INDEXSHARE_TOY_MODEL_CONFIG = {
+    **HF_GLM5_TOY_MODEL_CONFIG,
+    "num_hidden_layers": 4,
+    "index_topk_freq": 4,
+    "index_skip_topk_offset": 3,
+    "indexer_types": ["full", "full", "full", "shared"],
+    "mlp_layer_types": ["dense", "sparse", "sparse", "sparse"],
+    "layer_types": ["deepseek_sparse_attention"] * 4,
+    # Transformers does not instantiate the appended MTP layer. MTP indexer
+    # names are covered separately by the bridge mapping-registry unit test.
+    "num_nextn_predict_layers": 0,
+}
+
 pytestmark = pytest.mark.skipif(
     Version(TRANSFORMERS_VERSION) < Version("5.2.0"),
     reason=f"GLM5 conversion tests require transformers>=5.2.0, found {TRANSFORMERS_VERSION}",
 )
 
 
-def _create_glm5_toy_model(model_dir: Path) -> None:
+def _create_glm5_toy_model(model_dir: Path, model_config: dict[str, object]) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
 
     config = AutoConfig.from_pretrained("zai-org/GLM-5")
 
-    for key, value in HF_GLM5_TOY_MODEL_CONFIG.items():
+    for key, value in model_config.items():
         setattr(config, key, value)
 
     config.torch_dtype = torch.bfloat16
@@ -117,10 +133,23 @@ def _create_glm5_toy_model(model_dir: Path) -> None:
 
     model.save_pretrained(model_dir, safe_serialization=True)
 
-    config_to_save = HF_GLM5_TOY_MODEL_CONFIG.copy()
+    config_to_save = model_config.copy()
     config_path = model_dir / "config.json"
     with open(config_path, "w") as f:
         json.dump(config_to_save, f, indent=2)
+
+
+def _safetensor_keys(model_dir: Path) -> set[str]:
+    index_path = model_dir / "model.safetensors.index.json"
+    if index_path.exists():
+        with open(index_path) as f:
+            return set(json.load(f)["weight_map"])
+
+    keys: set[str] = set()
+    for checkpoint_path in model_dir.glob("*.safetensors"):
+        with safe_open(checkpoint_path, framework="pt", device="cpu") as checkpoint:
+            keys.update(checkpoint.keys())
+    return keys
 
 
 class TestGLM5Conversion:
@@ -135,7 +164,17 @@ class TestGLM5Conversion:
         temp_dir = tmp_path_factory.mktemp("glm5_toy_model")
         model_dir = temp_dir / "glm5_toy"
 
-        _create_glm5_toy_model(model_dir)
+        _create_glm5_toy_model(model_dir, HF_GLM5_TOY_MODEL_CONFIG)
+
+        return str(model_dir)
+
+    @pytest.fixture(scope="class")
+    def glm52_indexshare_toy_model_path(self, tmp_path_factory):
+        """Create a GLM-5.2-style toy model with one shared-indexer layer."""
+        temp_dir = tmp_path_factory.mktemp("glm52_indexshare_toy_model")
+        model_dir = temp_dir / "glm52_indexshare_toy"
+
+        _create_glm5_toy_model(model_dir, HF_GLM52_INDEXSHARE_TOY_MODEL_CONFIG)
 
         return str(model_dir)
 
@@ -191,8 +230,16 @@ class TestGLM5Conversion:
         assert hasattr(model.model, "layers")
         assert len(model.model.layers) == 2
 
-        second_layer = model.model.layers[1]
-        assert hasattr(second_layer, "mlp")
+        assert hasattr(model.model.layers[1], "mlp")
+
+    def test_glm52_indexshare_toy_model_creation(self, glm52_indexshare_toy_model_path):
+        """The HF fixture omits all five indexer tensors from its shared layer."""
+        model_path = Path(glm52_indexshare_toy_model_path)
+        indexer_keys = {key for key in _safetensor_keys(model_path) if ".self_attn.indexer." in key}
+        indexer_layer_ids = {int(key.split(".")[2]) for key in indexer_keys}
+
+        assert indexer_layer_ids == {0, 1, 2}
+        assert len(indexer_keys) == 15
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
@@ -274,6 +321,53 @@ class TestGLM5Conversion:
         assert saved_config["n_routed_experts"] == HF_GLM5_TOY_MODEL_CONFIG["n_routed_experts"]
         assert saved_config["num_experts_per_tok"] == HF_GLM5_TOY_MODEL_CONFIG["num_experts_per_tok"]
         assert saved_config["moe_intermediate_size"] == HF_GLM5_TOY_MODEL_CONFIG["moe_intermediate_size"]
+
+    @pytest.mark.run_only_on("GPU")
+    def test_glm52_indexshare_strict_roundtrip(self, glm52_indexshare_toy_model_path, tmp_path):
+        """Full layers round-trip exactly while shared layers omit indexer tensors."""
+        test_output_dir = tmp_path / "glm52_indexshare"
+        test_output_dir.mkdir(exist_ok=True)
+
+        repo_root = "/opt/Megatron-Bridge"
+        cmd = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "-m",
+            "coverage",
+            "run",
+            f"--data-file={repo_root}/.coverage",
+            f"--source={repo_root}/",
+            "--parallel-mode",
+            f"{repo_root}/examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            "--hf-model-id",
+            glm52_indexshare_toy_model_path,
+            "--output-dir",
+            str(test_output_dir),
+            "--ep",
+            "2",
+            "--strict",
+            "--atol",
+            "0",
+            "--rtol",
+            "0",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
+        if result.returncode != 0:
+            pytest.fail(
+                "GLM-5.2 IndexShare strict round-trip failed with return code "
+                f"{result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+            )
+
+        converted_model_dir = test_output_dir / Path(glm52_indexshare_toy_model_path).name
+        exported_indexer_keys = {key for key in _safetensor_keys(converted_model_dir) if ".self_attn.indexer." in key}
+        exported_indexer_layer_ids = {int(key.split(".")[2]) for key in exported_indexer_keys}
+
+        assert exported_indexer_layer_ids == {0, 1, 2}
+        assert len(exported_indexer_keys) == 15
 
     @pytest.mark.run_only_on("GPU")
     def test_glm5_autoconfig_roundtrip(self, glm5_toy_model_path, tmp_path):

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import warnings
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any, TypeVar, Union
@@ -98,11 +99,11 @@ def inference_num_image_tiles(
 ) -> torch.Tensor:
     """Build image-placeholder replacement counts for pipeline inference.
 
-    The first pipeline stage can derive these counts from vision encoder
-    outputs, but the last stage needs the same row-major metadata to expand
-    input positions. Dynamic images contribute their post-pixel-shuffle token
-    count per compact placeholder. Temporal tubelets contribute one tile each;
-    ``LLaVAModel.img_seq_len`` supplies their fixed embedding width.
+    Dynamic images contribute their post-pixel-shuffle feature count per tile.
+    Temporal tubelets contribute one logical count each; canonical inference
+    applies the fixed tubelet width through
+    :func:`inference_expanded_image_token_counts`. The deprecated LLaVA path
+    instead applies that width inside the model.
 
     Args:
         imgs_sizes: Per-image or per-frame ``(height, width)`` metadata.
@@ -140,6 +141,66 @@ def inference_num_image_tiles(
     return (grid_sizes.prod(dim=1) // (pixel_shuffle_factor**2)).to(dtype=torch.int)
 
 
+def inference_expanded_image_token_counts(
+    tile_feature_counts: torch.Tensor,
+    tiles_per_media: int | Sequence[int] | torch.Tensor,
+    *,
+    feature_multiplier: int = 1,
+) -> torch.Tensor:
+    """Aggregate projected feature counts for canonical inference prompts.
+
+    Dynamic image processors can split one source image into multiple RADIO
+    tiles, while each ``<img>...</img>`` region belongs to the source image.
+    The canonical model needs one ``<image>`` placeholder per projected
+    feature, so per-tile counts must be summed back to one count per region.
+    Temporal inference uses one logical tile per tubelet and a fixed feature
+    multiplier for the post-pixel-shuffle tubelet width.
+
+    Args:
+        tile_feature_counts: Number of projected feature rows produced by each
+            RADIO tile or temporal tubelet.
+        tiles_per_media: Number of entries in ``tile_feature_counts`` owned by
+            each ``<img>...</img>`` region.
+        feature_multiplier: Additional projected width per count. Use one for
+            dynamic images and the tubelet feature width for temporal video.
+
+    Returns:
+        One expanded placeholder count per ``<img>...</img>`` region.
+
+    Raises:
+        ValueError: If counts are non-positive or do not account for every
+            tile/tubelet.
+    """
+    flat_feature_counts = tile_feature_counts.reshape(-1)
+    if torch.any(flat_feature_counts <= 0):
+        raise ValueError("tile_feature_counts entries must be greater than 0.")
+    if feature_multiplier <= 0:
+        raise ValueError("feature_multiplier must be greater than 0.")
+
+    if isinstance(tiles_per_media, int):
+        media_tile_counts = [tiles_per_media]
+    elif isinstance(tiles_per_media, torch.Tensor):
+        media_tile_counts = [int(count) for count in tiles_per_media.detach().cpu().reshape(-1).tolist()]
+    else:
+        media_tile_counts = [int(count) for count in tiles_per_media]
+    if not media_tile_counts or any(count <= 0 for count in media_tile_counts):
+        raise ValueError("tiles_per_media entries must be greater than 0.")
+    if sum(media_tile_counts) != flat_feature_counts.numel():
+        raise ValueError(
+            "tiles_per_media must account for every tile feature count; "
+            f"got {sum(media_tile_counts)} tiles for {flat_feature_counts.numel()} counts."
+        )
+
+    offset = 0
+    expanded_counts = []
+    for tile_count in media_tile_counts:
+        expanded_counts.append(
+            int(flat_feature_counts[offset : offset + tile_count].sum().item()) * feature_multiplier
+        )
+        offset += tile_count
+    return torch.tensor(expanded_counts, dtype=torch.int, device=tile_feature_counts.device)
+
+
 def inference_merged_sequence_length(
     input_ids: torch.Tensor,
     *,
@@ -147,7 +208,10 @@ def inference_merged_sequence_length(
     num_image_tiles: torch.Tensor | None,
     image_seq_len: int,
 ) -> int:
-    """Return the unpadded sequence length after vision-token replacement.
+    """Return the legacy unpadded length after model-owned vision expansion.
+
+    This helper is deprecated because the canonical model consumes an already
+    expanded sequence; its merged length is simply ``input_ids.shape[1]``.
 
     Args:
         input_ids: One inference prompt row, including generated tokens so far.
@@ -158,6 +222,12 @@ def inference_merged_sequence_length(
     Returns:
         The real merged sequence length before pipeline padding.
     """
+    warnings.warn(
+        "inference_merged_sequence_length is deprecated with the Nemotron Omni LLaVA collapse/expand path; "
+        "canonical expanded-sequence inference uses input_ids.shape[1].",
+        FutureWarning,
+        stacklevel=2,
+    )
     if input_ids.ndim != 2 or input_ids.shape[0] != 1:
         raise ValueError(f"input_ids must have shape [1, S], got {tuple(input_ids.shape)}.")
     if image_seq_len <= 0:
