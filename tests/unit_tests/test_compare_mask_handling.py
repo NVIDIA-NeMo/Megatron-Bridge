@@ -20,6 +20,7 @@ auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, d
 
 import os
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -76,6 +77,7 @@ try:
         from compare import (  # noqa: E402
             SingleBatchIterator,
             _broadcast_hf_results,
+            _load_hf_reference_logits,
             _maybe_gather_tensor_parallel_logits,
             _run_hf_inference,
             _run_megatron_forward,
@@ -89,6 +91,63 @@ finally:
 @pytest.mark.unit
 class TestCompareMaskHandling:
     """Tests for attention_mask handling in compare.py Megatron and HF paths."""
+
+    def test_gemma3_config_is_detected_as_vision_language_model(self):
+        """Structured vision and text configs identify Gemma 3 as a VLM."""
+        config = SimpleNamespace(
+            model_type="gemma3",
+            architectures=["Gemma3ForConditionalGeneration"],
+            text_config=object(),
+            vision_config=object(),
+        )
+
+        with patch.object(compare.AutoConfig, "from_pretrained", return_value=config):
+            assert compare.is_vision_language_model("google/gemma-3-4b-it") is True
+
+    def test_vlm_inputs_preserve_image_token_types_and_tp_padding(self):
+        """VLM preprocessing keeps Gemma image inputs without requiring a grid."""
+        input_ids = torch.tensor([[1, 2, 3]])
+        token_type_ids = torch.tensor([[0, 1, 0]])
+        pixel_values = torch.randn(1, 3, 4, 4)
+        processed = {
+            "input_ids": input_ids,
+            "pixel_values": pixel_values,
+            "token_type_ids": token_type_ids,
+        }
+        processor = MagicMock()
+        processor.apply_chat_template.return_value = processed
+        tokenizer = SimpleNamespace(pad_token_id=7)
+        image = object()
+
+        with patch.object(compare, "load_image", return_value=image):
+            actual_input_ids, actual_pixels, image_grid_thw, actual_token_type_ids = compare.process_inputs(
+                tokenizer,
+                processor,
+                "/tmp/example.png",
+                "Describe this image.",
+                is_vl_model=True,
+                tp_size=2,
+            )
+
+        torch.testing.assert_close(actual_input_ids, torch.tensor([[1, 2, 3, 7]]))
+        assert actual_pixels is pixel_values
+        assert image_grid_thw is None
+        torch.testing.assert_close(actual_token_type_ids, torch.tensor([[0, 1, 0, 0]]))
+        processor.apply_chat_template.assert_called_once_with(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": "Describe this image."},
+                    ],
+                }
+            ],
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
 
     def test_single_batch_iterator_stores_none_attention_mask(self):
         """Test that SingleBatchIterator preserves None attention_mask in batch dict."""
@@ -210,6 +269,32 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
 
+    def test_hf_path_receives_multimodal_token_type_ids(self):
+        """Gemma 3 token types reach HF so its image attention mask matches Megatron."""
+        mock_hf_model = MagicMock()
+        mock_output = MagicMock()
+        mock_output.logits = torch.randn(1, 3, 100)
+        mock_hf_model.return_value = mock_output
+        input_ids = torch.tensor([[1, 2, 3]])
+        token_type_ids = torch.tensor([[0, 1, 0]])
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.decode.return_value = "test"
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "print_rank_0"),
+        ):
+            _run_hf_inference(
+                mock_hf_model,
+                input_ids,
+                pixel_values=torch.randn(1, 3, 4, 4),
+                image_grid_thw=None,
+                tokenizer=mock_tokenizer,
+                token_type_ids=token_type_ids,
+            )
+
+        assert mock_hf_model.call_args.kwargs["token_type_ids"] is token_type_ids
+
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
         broadcast_shapes = []
@@ -229,6 +314,26 @@ class TestCompareMaskHandling:
         assert hf_logits.dtype == torch.float32
         assert hf_next_token.shape == (1,)
         assert broadcast_shapes == [(1,), (1,), (163840,)]
+
+    def test_memory_bounded_hf_reference_logits_validate_input_ids(self, tmp_path):
+        """Test that saved HF logits are accepted only for the exact tokenized input."""
+        path = tmp_path / "hf_logits.pt"
+        input_ids = torch.tensor([[1, 2, 3]])
+        logits = torch.tensor([[0.1, 0.7, 0.2]])
+        torch.save({"input_ids": input_ids, "logits": logits}, path)
+        tokenizer = MagicMock()
+        tokenizer.decode.return_value = "token"
+
+        with patch.object(compare, "_is_rank_0", return_value=True), patch.object(compare, "print_rank_0"):
+            loaded, next_token, *_ = _load_hf_reference_logits(path, input_ids, tokenizer)
+
+        assert torch.equal(loaded, logits.reshape(-1))
+        assert next_token.item() == 1
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            pytest.raises(ValueError, match="different input token IDs"),
+        ):
+            _load_hf_reference_logits(path, torch.tensor([[9]]), tokenizer)
 
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
     def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):

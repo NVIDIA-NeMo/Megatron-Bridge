@@ -17,6 +17,7 @@
 from types import SimpleNamespace
 
 import pytest
+from transformers import GlmMoeDsaConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
@@ -24,6 +25,14 @@ from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
 
 pytestmark = pytest.mark.unit
+
+_DSA_INDEXER_SUFFIXES = {
+    "linear_wq_b.weight": "wq_b.weight",
+    "linear_wk.weight": "wk.weight",
+    "k_norm.weight": "k_norm.weight",
+    "k_norm.bias": "k_norm.bias",
+    "linear_weights_proj.weight": "weights_proj.weight",
+}
 
 
 @pytest.fixture
@@ -44,6 +53,11 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
         "num_hidden_layers": 78,
         "moe_intermediate_size": 2048,
         "n_shared_experts": 1,
+        "qk_head_dim": 256,
+        "qk_nope_head_dim": 192,
+        # Transformers currently normalizes this raw-config value from 64 to
+        # head_dim=192 for GLM-5.2. The bridge must not propagate that value.
+        "qk_rope_head_dim": 192,
         "rope_parameters": {"rope_theta": 1_000_000},
         "index_head_dim": 128,
         "index_n_heads": 32,
@@ -58,6 +72,42 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
         lambda _self, _hf_pretrained: SimpleNamespace(),
     )
     return GLM5Bridge().provider_bridge(SimpleNamespace(config=SimpleNamespace(**config)))
+
+
+def test_hf_config_ignores_upstream_num_experts_default() -> None:
+    """GLM-5 ignores the num_experts default injected by affected Transformers versions."""
+    hf_config = GlmMoeDsaConfig(n_routed_experts=8)
+
+    provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
+
+    assert hf_config.num_experts == 256
+    assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
+
+
+@pytest.mark.parametrize(
+    ("hf_config", "should_map"),
+    [
+        (SimpleNamespace(num_experts=256, n_routed_experts=8), False),
+        (SimpleNamespace(num_experts=8), True),
+        (SimpleNamespace(n_routed_experts=8), True),
+    ],
+)
+def test_num_experts_workaround_is_config_shape_specific(hf_config: SimpleNamespace, should_map: bool) -> None:
+    """The workaround applies only to the conflicting upstream config shape."""
+    bridge = GLM5Bridge()
+
+    result = bridge._should_map_hf_config_field(hf_config, "num_experts", "num_moe_experts", 256)
+
+    assert result is should_map
+
+
+def test_megatron_config_export_keeps_generic_moe_aliases() -> None:
+    """GLM-5 keeps the generic reverse mappings rather than establishing a special default."""
+    mapped_config = GLM5Bridge.megatron_to_hf_config(SimpleNamespace(num_moe_experts=8))
+
+    assert mapped_config["num_experts"] == 8
+    assert mapped_config["num_local_experts"] == 8
+    assert mapped_config["n_routed_experts"] == 8
 
 
 @pytest.mark.parametrize(
@@ -78,6 +128,7 @@ def test_provider_bridge_maps_dsa_architecture_from_hf_config(
 
     assert provider.experimental_attention_variant == "dsa"
     assert provider.cp_comm_type == "allgather"
+    assert provider.qk_pos_emb_head_dim == 64
     assert provider.dsa_indexer_head_dim == 128
     assert provider.dsa_indexer_n_heads == 32
     assert provider.dsa_indexer_topk == 2048
@@ -163,6 +214,34 @@ def test_mapping_registry_includes_mtp_attention_and_dense_mlp_mappings(
         "gate": "model.layers.4.mlp.gate_proj.weight",
         "up": "model.layers.4.mlp.up_proj.weight",
     }
+
+
+def test_mapping_registry_includes_dsa_indexer_mappings(glm5_bridge: GLM5Bridge) -> None:
+    """Every tensor on a full GLM-5.2 DSA indexer maps to its HF peer."""
+    mappings = _mapping_by_megatron_param(glm5_bridge)
+    registry = glm5_bridge.mapping_registry()
+
+    for megatron_suffix, hf_suffix in _DSA_INDEXER_SUFFIXES.items():
+        megatron_param = f"decoder.layers.*.self_attention.core_attention.indexer.{megatron_suffix}"
+        mapping = mappings[megatron_param]
+        assert isinstance(mapping, AutoMapping)
+        assert mapping.hf_param == f"model.layers.*.self_attn.indexer.{hf_suffix}"
+
+        resolved_mapping = registry.megatron_to_hf_lookup(megatron_param.replace("*", "2"))
+        assert resolved_mapping is not None
+        assert resolved_mapping.hf_param == f"model.layers.2.self_attn.indexer.{hf_suffix}"
+
+
+@pytest.mark.parametrize("layer_prefix", ["transformer_layer", "mtp_model_layer"])
+def test_mapping_registry_includes_mtp_dsa_indexer_mappings(glm5_bridge: GLM5Bridge, layer_prefix: str) -> None:
+    """A full GLM-5.2 MTP layer maps every DSA indexer tensor."""
+    mappings = _mapping_by_megatron_param(glm5_bridge)
+
+    for megatron_suffix, hf_suffix in _DSA_INDEXER_SUFFIXES.items():
+        megatron_param = f"mtp.layers.0.{layer_prefix}.self_attention.core_attention.indexer.{megatron_suffix}"
+        mapping = mappings[megatron_param]
+        assert isinstance(mapping, AutoMapping)
+        assert mapping.hf_param == f"model.layers.4.self_attn.indexer.{hf_suffix}"
 
 
 def test_mapping_registry_includes_mtp_standalone_weights(glm5_bridge: GLM5Bridge) -> None:

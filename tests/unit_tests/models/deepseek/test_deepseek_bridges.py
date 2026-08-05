@@ -92,7 +92,6 @@ class TestDeepSeekV3Bridge:
             "tie_word_embeddings": False,
             "topk_group": 4,
             "topk_method": "noaux_tc",
-            "aux_loss_alpha": 0.0001,
             "torch_dtype": "bfloat16",
             "transformers_version": "4.33.1",
             "use_cache": True,
@@ -125,7 +124,7 @@ class TestDeepSeekV3Bridge:
         assert provider.vocab_size == mock_pretrained_v3.config.vocab_size
         assert provider.layernorm_epsilon == mock_pretrained_v3.config.rms_norm_eps
         assert provider.rotary_base == mock_pretrained_v3.config.rope_theta
-        assert provider.moe_aux_loss_coeff == mock_pretrained_v3.config.aux_loss_alpha
+        assert provider.moe_aux_loss_coeff == 0.0001
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16

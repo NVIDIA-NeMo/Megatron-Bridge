@@ -114,6 +114,8 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 For hosted or local Hugging Face data and a complete one-GPU Qwen3-VL run, start with the
 [Hugging Face multimodal tutorial](../../../../tutorials/data/hf-multimodal/README.md). For sharded WebDataset data,
 use the [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md).
+For a worked image-caption training example, see the
+[DataComp Energon tutorial](../../../../tutorials/data/datacomp/README.md).
 
 ## Controlling Energon visual-token computation budget
 

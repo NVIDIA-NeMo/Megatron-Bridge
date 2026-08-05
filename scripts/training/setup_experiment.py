@@ -76,6 +76,13 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
+        "--additional-slurm-params",
+        "--additional_slurm_params",
+        type=_parse_additional_slurm_params,
+        default={},
+        help="Additional sbatch parameters as semicolon-separated KEY=VALUE pairs.",
+    )
+    execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
         help="Do not emit a Slurm GPU/GRES request on clusters that allocate whole GPU nodes implicitly.",
@@ -163,6 +170,17 @@ def _parse_mounts(values: list[str]) -> list[str]:
     return mounts
 
 
+def _parse_additional_slurm_params(value: str) -> dict[str, str]:
+    """Parse semicolon-separated Slurm executor parameters."""
+    parameters: dict[str, str] = {}
+    for item in value.split(";"):
+        key, separator, parameter_value = item.partition("=")
+        if not separator or not key or not parameter_value:
+            raise argparse.ArgumentTypeError("--additional-slurm-params expects semicolon-separated KEY=VALUE pairs.")
+        parameters[key] = parameter_value
+    return parameters
+
+
 def _validate_args(
     args: argparse.Namespace,
     benchmark_metadata: BenchmarkRecipeMetadata | None = None,
@@ -181,9 +199,11 @@ def _validate_args(
     if benchmark_metadata is not None:
         requested_gpus = args.nodes * args.gpus_per_node
         if requested_gpus != benchmark_metadata.num_gpus:
-            raise ValueError(
-                f"Benchmark recipe requires exactly {benchmark_metadata.num_gpus} GPUs, but --nodes and "
-                f"--gpus-per-node request {requested_gpus}."
+            logger.info(
+                "Weak scaling benchmark recipe '%s' from %d to %d GPUs.",
+                benchmark_metadata.recipe_name,
+                benchmark_metadata.num_gpus,
+                requested_gpus,
             )
 
 
@@ -252,8 +272,6 @@ def _build_executor(
         partition=args.partition,
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
-        mem="0",
-        exclusive=True,
         time=args.time,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
@@ -273,7 +291,10 @@ def _build_executor(
     # Keep Slurm control commands available to the batch script without
     # forwarding the host PATH into the training container.
     slurm_env_names = list(dict.fromkeys(["PATH", *env_names]))
-    executor.additional_parameters = {"export": ",".join(slurm_env_names)}
+    executor.additional_parameters = {
+        **args.additional_slurm_params,
+        "export": ",".join(slurm_env_names),
+    }
     executor.srun_args = srun_args
     return executor
 

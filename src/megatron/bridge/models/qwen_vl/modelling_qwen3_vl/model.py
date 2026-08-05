@@ -376,8 +376,9 @@ class Qwen3VLModel(MegatronModule):
         """Expose LM fields on the VLM root for the CUDA graph helper when cuda_graph_impl is enabled.
 
         The CUDA graph helper expects ``position_embedding_type``, ``rotary_pos_emb``, and ``decoder`` on
-        the model, but in Qwen3-VL these live on ``language_model``. Assigning ``decoder`` here shadows
-        the :meth:`decoder` property for this instance only when graphs are used.
+        the model, but in Qwen3-VL these live on ``language_model``. ``rotary_pos_emb`` and ``decoder`` are
+        exposed through properties so they do not get registered as root-level module aliases, which would
+        otherwise change checkpoint keys away from the ``language_model.*`` prefix.
         """
         llm_cuda_graph_enabled = (
             self.language_model is not None
@@ -391,8 +392,6 @@ class Qwen3VLModel(MegatronModule):
             "that set variable_seq_lengths) or turn off CUDA graph."
         )
         self.position_embedding_type = self.language_model.position_embedding_type
-        self.rotary_pos_emb = self.language_model.rotary_pos_emb
-        self.decoder = self.language_model.decoder
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
@@ -400,6 +399,11 @@ class Qwen3VLModel(MegatronModule):
         if self.add_decoder:
             return self.language_model.shared_embedding_or_output_weight()
         return None
+
+    @property
+    def rotary_pos_emb(self):
+        """Expose language model rotary embeddings without registering a root module alias."""
+        return getattr(self.language_model, "rotary_pos_emb", None)
 
     @property
     def decoder(self):

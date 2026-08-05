@@ -322,9 +322,8 @@ def dequantize_mxfp4_e2m1_packed(
 ) -> torch.Tensor:
     """Dequantize MXFP4 E2M1 weights packed two values per byte.
 
-    ``scale`` is expected to be one scale per row and per K tile. E8M0 scale
-    tensors can be passed directly; ``.to(torch.float32)`` materializes their
-    power-of-two values.
+    ``scale`` is expected to be one scale per row and per K tile. ``uint8``
+    E8M0 tensors use exponent bias 127 and are decoded to powers of two.
     """
     w_u8 = weight_packed.view(torch.uint8)
     lo = (w_u8 & 0xF).to(torch.int64)
@@ -333,7 +332,13 @@ def dequantize_mxfp4_e2m1_packed(
     table = torch.tensor(_FP4_E2M1_TABLE_VALUES, dtype=torch.float32, device=weight_packed.device)
     logical = torch.stack([table[lo], table[hi]], dim=-1).reshape(weight_packed.shape[0], -1)
 
-    scale_f32 = scale.to(torch.float32)
+    if scale.dtype == torch.uint8:
+        scale_f32 = torch.ldexp(
+            torch.ones_like(scale, dtype=torch.float32),
+            scale.to(torch.int32) - 127,
+        )
+    else:
+        scale_f32 = scale.to(torch.float32)
     if scale_f32.dim() != 2 or scale_f32.shape[0] != logical.shape[0] or logical.shape[1] % scale_f32.shape[1] != 0:
         raise RuntimeError(
             f"Unsupported MXFP4 scale geometry: "
@@ -390,7 +395,16 @@ def quantize_mxfp4_e2m1_like_scale(
     for row_start in range(0, rows, rows_per_chunk):
         row_end = min(row_start + rows_per_chunk, rows)
         chunk = weight_f32[row_start:row_end].reshape(-1, scale_cols, block_size)
-        chunk_scale = scale_from_amax(chunk.abs().amax(dim=-1), FP4_E2M1_MAX, source_scale.dtype)
+        chunk_amax = chunk.abs().amax(dim=-1)
+        if source_scale.dtype == torch.uint8:
+            unrounded_scale = torch.where(
+                chunk_amax > 0,
+                chunk_amax / FP4_E2M1_MAX,
+                torch.ones_like(chunk_amax),
+            )
+            chunk_scale = torch.exp2(torch.ceil(torch.log2(unrounded_scale)).clamp(min=-127, max=127))
+        else:
+            chunk_scale = scale_from_amax(chunk_amax, FP4_E2M1_MAX, source_scale.dtype)
         scale_f32[row_start:row_end] = chunk_scale
 
         normalized = chunk / chunk_scale[:, :, None]
@@ -401,7 +415,11 @@ def quantize_mxfp4_e2m1_like_scale(
         hi = codes[:, 1::2].to(torch.int16)
         packed[row_start:row_end] = (lo | (hi << 4)).to(torch.uint8)
 
-    return packed.contiguous().view(torch.int8), scale_f32.to(dtype=source_scale.dtype)
+    if source_scale.dtype == torch.uint8:
+        output_scale = (torch.log2(scale_f32).round() + 127).clamp(min=0, max=254).to(torch.uint8)
+    else:
+        output_scale = scale_f32.to(dtype=source_scale.dtype)
+    return packed.contiguous().view(torch.int8), output_scale
 
 
 def maybe_dequantize_hf_quantized_weight(

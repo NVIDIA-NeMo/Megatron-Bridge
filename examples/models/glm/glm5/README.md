@@ -38,7 +38,7 @@ The PyPI source distribution is incomplete; install from the git repo.
 
 ## Inference (Megatron)
 
-[slurm_inference.sh](slurm_inference.sh) loads the HF checkpoint, converts to Megatron in-memory, and runs greedy text generation with `TP=1, PP=2, EP=32` across 64 GPUs. TP remains disabled because AbsorbedMLA requires sequence parallelism when `TP > 1`.
+[slurm_inference.sh](slurm_inference.sh) loads the HF checkpoint, converts to Megatron in-memory, and runs greedy text generation with `TP=1, PP=2, EP=32` across 64 GPUs. TP remains disabled because AbsorbedMLA requires sequence parallelism when `TP > 1`. The launcher passes `--legacy-full-prefix` to use non-cached autoregressive generation, which recomputes the full prefix at every decoding step. Cached MCore inference is not yet supported for AbsorbedMLA.
 
 ```bash
 sbatch examples/models/glm/glm5/slurm_inference.sh
