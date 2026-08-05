@@ -49,3 +49,54 @@ def test_gemma4_vl_sft_uses_long_distributed_timeout(monkeypatch: pytest.MonkeyP
     cfg = _gemma4_vl_module.gemma4_vl_26b_sft_config()
 
     assert cfg.dist.distributed_timeout_minutes == 90
+
+
+def test_gemma4_vl_sft_uses_memory_stable_8gpu_contract(monkeypatch: pytest.MonkeyPatch):
+    """Full Gemma 4 VL SFT should use the measured single-node memory contract."""
+    patch_recipe_module_global(monkeypatch, _gemma4_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _gemma4_vl_module.gemma4_vl_26b_sft_config()
+
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["core_attn", "moe_act"]
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.model.freeze_language_model is False
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size == 32
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+
+
+def test_gemma4_vl_peft_uses_memory_stable_4gpu_contract(monkeypatch: pytest.MonkeyPatch):
+    """Gemma 4 VL PEFT should use the measured single-node LoRA contract."""
+    patch_recipe_module_global(monkeypatch, _gemma4_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _gemma4_vl_module.gemma4_vl_26b_peft_config()
+
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size == 32
+    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+    assert cfg.peft.dim == 32
+    assert cfg.peft.alpha == 32
+    assert cfg.peft.dropout == 0.0
+    assert cfg.peft.sequence_parallel_input_regather is False
+    assert cfg.peft.share_expert_adapters is True
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
