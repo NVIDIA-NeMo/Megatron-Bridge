@@ -141,7 +141,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
     cfg.model.moe_expert_rank_capacity_factor = 1.2
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.recompute_modules = ["core_attn", "moe_act", "layernorm"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
