@@ -19,6 +19,9 @@ from collections.abc import Callable
 
 import pytest
 
+from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
+    llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
+)
 from megatron.bridge.perf_recipes.llama.h100.llama3 import (
     llama3_70b_pretrain_64gpu_h100_fp8cs_config,
 )
@@ -111,7 +114,7 @@ def test_llama3_70b_h100_fp8cs_sets_explicit_pipeline_layout(monkeypatch: pytest
 
 
 @pytest.mark.unit
-def test_llama3_70b_gb200_nvfp4_captures_whole_transformer_layer() -> None:
+def test_llama3_70b_gb200_nvfp4_captures_whole_transformer_layer(monkeypatch: pytest.MonkeyPatch) -> None:
     """The 64-GPU GB200 NVFP4 recipe captures the whole Transformer layer per graph.
 
     Megatron-Core expresses whole-layer coverage as an empty ``cuda_graph_modules``; the field's
@@ -119,9 +122,7 @@ def test_llama3_70b_gb200_nvfp4_captures_whole_transformer_layer() -> None:
     ``clear_cuda_graph_modules()`` also clears the deprecated ``cuda_graph_scope`` so the config
     stays off the conversion path in ``TransformerConfig.__post_init__``.
     """
-    from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
-        llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
-    )
+    patch_recipe_construction_dependencies(monkeypatch)
 
     cfg = llama3_70b_pretrain_64gpu_gb200_nvfp4_config()
 
