@@ -17,8 +17,8 @@ budget.
 
 A working draft-training reference already exists in NeMo AutoModel at
 `nemo_automodel/components/speculative/dspark/`. This document specifies how the
-same training recipe maps onto Megatron-Bridge and Megatron-Core, and proposes a
-phased plan. It intentionally does **not** ship the draft module itself: that is a
+same training recipe maps onto Megatron-Bridge and Megatron-Core. It
+intentionally does **not** ship the draft module itself: that is a
 Megatron-Core (or ModelOpt) neural module whose parallel/loss integration must be
 validated on multi-GPU runs, so it belongs in later, separately reviewed PRs.
 
@@ -140,7 +140,7 @@ The draft trains against features captured from the frozen target: the selected
 decoder-layer hidden states (fused by `fc` into the draft's context K/V) and the
 final hidden state (which drives the teacher distribution through the shared LM
 head). In Megatron-Core, this capture must respect tensor, pipeline, and context
-parallelism. Two options, to be decided in Phase 1:
+parallelism. Two options carry different trade-offs:
 
 - Colocated capture during the same forward (analogous to how MTP consumes extra
   token IDs), keeping the target and draft in one model.
@@ -156,36 +156,6 @@ registry must gain `dspark.*` entries (QKV and gated-MLP splits for the draft
 backbone, plain linears for `fc` and the heads), so trained drafts round-trip
 through `AutoBridge` for serving. The `mtp.*` mappings are the closest existing
 template.
-
-## Phased implementation plan
-
-- **Phase 0 (this PR): design.** Specify the algorithm, the Bridge mapping, and
-  the plan.
-- **Phase 1: the DSpark draft module.** Implement the semi-autoregressive backbone
-  plus Markov and confidence heads as a parallel-aware module (Megatron-Core
-  native, or a ModelOpt speculative module), with the three-term loss. Validate
-  numerically with L0 unit tests and L1/L2 functional tests within the 2-GPU cap.
-  This is the load-bearing, separately reviewed piece.
-- **Phase 2: Bridge integration.** Add `dspark_provider.py`, `forward_step_dspark`,
-  `post_training/dspark.py`, the `training/dspark.py` entry, and the `dspark.*`
-  weight mappings, following the distillation files.
-- **Phase 3: recipe, example, and convergence.** Add a recipe/config and an
-  example, and validate acceptance-length (`tau`) convergence against the AutoModel
-  reference on a small target (for example Qwen3 dense) on multi-GPU.
-
-## Open questions and risks
-
-- **Module placement.** MCore-native (a Megatron-LM PR, full TP/PP/EP/CP support)
-  versus ModelOpt-injected (Bridge-only, but tied to ModelOpt). Phase 1 must
-  decide this first; it drives everything downstream.
-- **Parallelism.** The draft heads and the block-attention mask need correct
-  tensor/pipeline/expert/context-parallel behavior; this is the part that cannot
-  be validated single-GPU and must go through functional tests.
-- **Optional dependency.** If the draft leans on `modelopt.torch.speculative`, it
-  must be an optional extra and land as a separate dependency PR first, per
-  `CONTRIBUTING.md`.
-- **Target-feature capture cost.** Colocated capture holds the target in memory;
-  offline precompute adds a cache format. The choice affects the recipe surface.
 
 ## References
 
