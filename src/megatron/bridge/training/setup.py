@@ -72,22 +72,27 @@ from megatron.bridge.training.utils.train_utils import start_memory_history_reco
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
-def _get_language_model_embedding_ranks(
+def _get_embedding_ranks(
     pp_ranks: list[int],
     pipeline_model_parallel_size: int | None = None,
     *,
     model_config: GPTModelConfig | GPTModelProvider | HybridModelConfig | HybridModelProvider,
 ) -> list[int]:
-    """Return pipeline ranks that hold synchronized language-model embeddings."""
+    """Get the embedding ranks for a Bridge language-model config."""
+    # HyperCommGrid passes PP size as a second argument; MCore's MPU path does not.
     del pipeline_model_parallel_size
 
-    embedding_ranks = {pp_ranks[0]}
+    # Keep this rank construction aligned with pretrain_gpt.get_embedding_ranks in MCore.
+    embedding_ranks = [pp_ranks[0]]
     if len(pp_ranks) > 1:
         if model_config.share_embeddings_and_output_weights:
-            embedding_ranks.add(pp_ranks[-1])
+            embedding_ranks.append(pp_ranks[-1])
         transformer_config = model_config.transformer if hasattr(model_config, "transformer") else model_config
-        embedding_ranks.update(get_mtp_ranks(pp_ranks, transformer_config))
-    return sorted(embedding_ranks)
+        mtp_ranks = get_mtp_ranks(pp_ranks, transformer_config)
+        embedding_ranks.extend(mtp_ranks)
+    embedding_ranks = list(set(embedding_ranks))
+    embedding_ranks = sorted(embedding_ranks)
+    return embedding_ranks
 
 
 def _resolve_embedding_ranks_callback(
@@ -100,7 +105,7 @@ def _resolve_embedding_ranks_callback(
 
     language_model_configs = (GPTModelConfig, GPTModelProvider, HybridModelConfig, HybridModelProvider)
     if isinstance(model_config, language_model_configs):
-        return partial(_get_language_model_embedding_ranks, model_config=model_config)
+        return partial(_get_embedding_ranks, model_config=model_config)
     return None
 
 
