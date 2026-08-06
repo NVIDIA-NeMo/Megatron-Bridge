@@ -1032,6 +1032,41 @@ class MegatronModelBridge(
         """
         return converted_weights_dict
 
+    def _truncate_vocab_padding(
+        self,
+        task: WeightConversionTask[Any],
+        converted_weights_dict: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """Remove Megatron-only vocabulary rows from an HF export tensor."""
+        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight")
+        if not task.global_param_name.endswith(vocab_param_suffixes):
+            return converted_weights_dict
+
+        hf_param = task.mapping.hf_param
+        if not isinstance(hf_param, str) or hf_param not in converted_weights_dict:
+            return converted_weights_dict
+
+        hf_config = self.hf_config
+        config_candidates = (
+            hf_config,
+            getattr(hf_config, "text_config", None),
+            getattr(hf_config, "llm_config", None),
+        )
+        vocab_size = None
+        for candidate in config_candidates:
+            candidate_vocab_size = getattr(candidate, "vocab_size", None)
+            if isinstance(candidate_vocab_size, int) and candidate_vocab_size > 0:
+                vocab_size = candidate_vocab_size
+                break
+        if vocab_size is None:
+            return converted_weights_dict
+
+        tensor = converted_weights_dict[hf_param]
+        if tensor.ndim == 0 or tensor.shape[0] <= vocab_size:
+            return converted_weights_dict
+
+        return {**converted_weights_dict, hf_param: tensor[:vocab_size]}
+
     @staticmethod
     def _cast_export_weight_dtype(
         weights: Dict[str, torch.Tensor], weight_dtype: Optional[torch.dtype]
@@ -1517,6 +1552,7 @@ class MegatronModelBridge(
                     adapter_weights,
                 )
 
+            converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
             converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
