@@ -84,6 +84,27 @@ def test_default_pack_path_fingerprints_preprocessing(tmp_path):
     assert prompt_builder.default_pack_path != chat_builder.default_pack_path
 
 
+def test_default_pack_path_fingerprints_max_single_sequence_length(tmp_path):
+    """Different single-sequence caps must not reuse the same packed artifact."""
+
+    def build(max_single_sequence_length: int) -> GPTSFTDatasetBuilder:
+        return GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                dataset_root=tmp_path,
+                seq_length=128,
+                enable_offline_packing=True,
+                offline_packing_specs=PackedSequenceSpecs(
+                    packed_sequence_size=128,
+                    max_single_sequence_length=max_single_sequence_length,
+                    tokenizer_model_name="mock-tokenizer",
+                ),
+            ),
+            tokenizer=MagicMock(),
+        )
+
+    assert build(120).default_pack_path != build(112).default_pack_path
+
+
 def test_default_pack_path_is_stable_for_equivalent_non_hf_tokenizers(tmp_path):
     def build() -> GPTSFTDatasetBuilder:
         tokenizer = build_tokenizer(TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=128))

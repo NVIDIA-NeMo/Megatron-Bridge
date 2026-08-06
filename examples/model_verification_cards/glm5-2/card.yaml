@@ -7,13 +7,12 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. GLM-5.2 H100 support verification currently covers exact GPU
   checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence,
-  bounded full SFT with export/reload
-  inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with
-  a reloadable middle checkpoint and verified continuation. GB200 support
-  verification currently covers bounded pretraining, bounded full SFT, 128K
-  packed long-context SFT, bounded PEFT, bounded checkpoint resume, and
-  deterministic legacy Megatron inference; post-SFT export/reload inference
-  remains pending.
+  bounded full SFT with export/reload inference, 200K-context CP32 SFT,
+  bounded PEFT, and bounded pretraining with a reloadable middle checkpoint
+  and verified continuation. GB200 support verification currently covers
+  bounded pretraining, bounded full SFT, 128K packed long-context SFT, bounded
+  PEFT, bounded checkpoint resume, and deterministic legacy Megatron
+  inference; post-SFT export/reload inference remains pending.
 verification_index:
   model_level:
     verified:
@@ -149,6 +148,7 @@ items:
       completion was:
       "1.  **Analyze the Request:**
           *   **Topic:**"
+      It produced exactly 16 new tokens.
 
   pretrain:
     H100:
@@ -176,50 +176,57 @@ items:
         initial_loss: 13.15907
         final_loss: 6.385243
         last_10_steps_step_time_ms_avg: 31204.920
-        last_10_steps_model_tflops_per_gpu_avg: 50.620
+        last_10_steps_model_tflops_per_gpu_avg: 54.595
       expected_result: >
         The uninterrupted 352-H100 TP1/PP11/CP1/EP32/ETP1 run completed 100
         real-data steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss
         coefficient 0.001, MTP1, and flex/DeepEP dispatch. Loss remained finite
         from 13.15907 to 6.385243, final grad norm was 0.796, and every step
         recorded zero skipped and NaN iterations. The final 10 steps averaged
-        31,204.920 ms and 50.620 TFLOPS/GPU; peak observed GPU memory was
+        31,204.920 ms and 54.595 TFLOPS/GPU; peak observed GPU memory was
         80,999 MiB. The matching step-50 and step-100 checkpoints contain
         model, optimizer, scheduler, data-order, and RNG state; the step-50
         checkpoint reloads successfully.
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: e79f756196e0b97ee3ad94263a896c120b32c1e5  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
         --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain
         --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-        'dataset.blend=[["work/data/glm5-2/pretrain-tulu3-text-document/tulu3_glm52_text_document_text_document"],null]'
-        dataset.path_to_cache=work/cache/glm5-2/pretrain-tulu3-gb200
-        dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
-        --save_dir work/model-verification/glm5-2/pretrain-gb200-cudnn/checkpoints
+        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200
+        dataset.random_seed=1234 dataset.num_workers=8
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model
+        tokenizer.use_tokenizer_vocab_size=false rng.seed=1234
+        scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false
+        checkpoint.load=null checkpoint.pretrained_checkpoint=null
+        checkpoint.save_optim=true checkpoint.save_rng=true
+        checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false
+        --save_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: 2026-08-04
       metrics:
-        initial_loss: 13.19136
-        final_loss: 8.171059
-        last_10_steps_step_time_ms_avg: 60610.850
-        last_10_steps_model_tflops_per_gpu_avg: 101.310
+        initial_loss: 13.168150
+        final_loss: 6.523522
+        last_10_steps_step_time_ms_avg: 64786.540
+        last_10_steps_model_tflops_per_gpu_avg: 102.520
       expected_result: >
         The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100
-        real-data pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse
+        RP2 head_01 pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse
         indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch.
-        Loss remained finite from 13.19136 to 8.171059, final grad norm was
-        1.394, and every step recorded zero skipped and NaN iterations. The
-        final 10 steps averaged 60,610.850 ms and 101.310 TFLOPS/GPU. Step-50
-        and step-100 checkpoints were written with model, optimizer, scheduler,
-        data-order, and RNG state for resume verification. These losses are not
-        directly comparable with the H100 pretrain result: H100 used Wikitext
-        at sequence length 2,048, while GB200 used Tulu 3 at sequence length
-        4,096.
+        The RP2 Llama SentencePiece tokenizer is used while retaining GLM-5.2's
+        configured vocabulary size, so this is support verification rather
+        than a cross-tokenizer convergence claim. Loss remained finite from
+        13.168150 to 6.523522, final grad norm was 2.775, and every step
+        recorded zero skipped and NaN iterations. The final 10 steps averaged
+        64,786.540 ms and 102.520 TFLOPS/GPU. Step-50 and step-100 checkpoints
+        contain model, optimizer, scheduler, data-order, and RNG state.
 
   sft:
     H100:
@@ -246,7 +253,7 @@ items:
         initial_loss: 1.909875
         final_loss: 0.6634203
         last_10_steps_step_time_ms_avg: 4436.290
-        last_10_steps_model_tflops_per_gpu_avg: 9.450
+        last_10_steps_model_tflops_per_gpu_avg: 10.154
       expected_result: >
         The immutable-revision 416-H100 run completes exactly 100 full-SFT
         steps at TP1/PP13/CP2/EP32/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse
@@ -258,31 +265,44 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: cc190939aad0e1ee0edfb98c5455ae3fe833140b  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
+        context_parallel_size: 4
+        moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
         --recipe glm52_sft_192gpu_gb200_bf16_config --mode sft
-        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        --pretrained_checkpoint
+        work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88
         --max_steps 100
         tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja
         --save_dir work/model-verification/glm5-2/sft-gb200-cudnn/checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: 2026-08-04
       metrics:
-        initial_loss: 1.831100
-        final_loss: 0.5953441
-        last_10_steps_step_time_ms_avg: 68370.590
-        last_10_steps_model_tflops_per_gpu_avg: 9.180
+        initial_loss: 1.704979
+        final_loss: 0.3682597
+        last_10_steps_step_time_ms_avg: 8593.990
+        last_10_steps_model_tflops_per_gpu_avg: 12.446
       expected_result: >
         The immutable-revision 192-GB200 run completed exactly 100 full-SFT
-        steps at TP1/PP6/CP1/EP32/ETP1, GBS/MBS 32/1, with offline-packed
-        Tulu 3 data, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1,
-        and all-to-all expert dispatch. Loss remained finite from 1.831100 to
-        0.5953441, final grad norm was 0.837, and every step recorded zero
-        skipped and NaN iterations. The step-100 checkpoint was written and is
-        available for a future GB200 export/reload gate.
+        steps at TP1/PP6/CP4/EP32/ETP1, DP8, and GBS/MBS 8/1 without gradient
+        accumulation. It used the pinned Tulu 3 train[:10000] split with the
+        GLM assistant-only chat template, 8,192-token offline packs, pad-8
+        sequence alignment, an 8,184-token single-sequence cap, constant-shape
+        cu_seqlens, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1,
+        natural routing, and HybridEP. Packing is 99.72% efficient across 421
+        rows with a 23.75 packing factor. The 100-step window contains
+        6,553,600 token slots and 4,283,561 supervised tokens. Metadata and
+        Parquet SHA-256 values are cbd964c686b74f82804ceea2df75bb00fbe28648f0458a641b9db27977a55b1b
+        and b2c6f71a6b5add331750956622073cc8ced0bb6b2742e1d7a0e1a9f763cbaa0c.
+        Loss remained finite from 1.704979 to 0.3682597, final grad norm was
+        0.873, and every step recorded zero skipped and NaN iterations. The
+        final 10 steps averaged 8,593.990 ms and 12.446 TFLOPS/GPU. A complete
+        step-100 distributed checkpoint was written for the future GB200
+        export/reload gate.
 
   sft_export_inference:
     H100:
@@ -342,43 +362,48 @@ items:
         initial_loss: 8.283127
         final_loss: 2.557671
         last_10_steps_step_time_ms_avg: 36603.370
-        last_10_steps_model_tflops_per_gpu_avg: 210.650
+        last_10_steps_model_tflops_per_gpu_avg: 39.648
       expected_result: >
         The 608-H100 TP1/PP19/CP32/EP32/ETP1 run completed exactly 20 optimizer
         steps over 200,000-token packed rows with cuDNN DSA, sparse indexer loss
         coefficient 0.001, and MTP1. Loss remained finite from 8.283127 to
         2.557671, final grad norm was 10838.703, and every step recorded zero
         skipped and NaN iterations. The last 10 steps averaged 36,603.370 ms
-        and 210.650 TFLOPS/GPU; peak observed GPU memory was 81,005 MiB.
+        and 39.648 TFLOPS/GPU; peak observed GPU memory was 81,005 MiB.
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: bdb637740154729a2409645703a0b3c78c38fa8c  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 32
+        moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
         --recipe glm52_sft_192gpu_gb200_bf16_128k_config --mode sft
-        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
-        --max_steps 20 --seq_length 131072 --lr 1e-6 --min_lr 0 --warmup_iters 2
+        --pretrained_checkpoint
+        work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88
+        --max_steps 20
         tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja
-        checkpoint.load=null ddp.check_for_nan_in_grad=true
-        ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
+        dataset.dataset_root=work/data/glm5-2/synthetic-long-sft-128k
+        dataset.max_train_samples=1120
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: 2026-08-05
       metrics:
-        initial_loss: 0.3235812
-        final_loss: 0.1924341
-        last_10_steps_step_time_ms_avg: 29269.730
-        last_10_steps_model_tflops_per_gpu_avg: 236.510
+        initial_loss: 0.4159648
+        final_loss: 0.000511673
+        last_10_steps_step_time_ms_avg: 143248.820
+        last_10_steps_model_tflops_per_gpu_avg: 88.848
       expected_result: >
         The immutable-revision 192-GB200 run completed exactly 20 optimizer
-        steps over 131,072-token packed rows at TP1/PP6/CP32/EP32/ETP1,
-        GBS/MBS 8/1, with cuDNN DSA, sparse indexer loss coefficient 0.001,
-        MTP1, padded cu_seqlens, and all-to-all expert dispatch. Loss remained
-        finite from 0.3235812 to 0.1924341, final grad norm was 1448.863, and
-        every step recorded zero skipped and NaN iterations. The final 10 steps
-        averaged 29,269.730 ms and 236.510 TFLOPS/GPU.
+        steps at TP1/PP6/CP32/EP32/ETP1, DP1, and GBS/MBS 56/1 with cuDNN DSA,
+        MTP1, HybridEP, and full activation recompute. The explicit PP6 decoder
+        layout [14, 16, 12, 12, 12, 12] completed without OOM using 32
+        single-sequence, 131,072-token synthetic packs. Loss remained finite
+        from 0.4159648 to 0.000511673 with zero skipped or NaN iterations across
+        146,786,080 supervised tokens. The final 10 steps averaged 143,248.820
+        ms and 88.848 TFLOPS/GPU. This verifies long-context execution only;
+        the 8K pinned-Tulu run provides real-data convergence evidence.
 
   peft:
     H100:
@@ -401,7 +426,7 @@ items:
         initial_loss: 1.909421
         final_loss: 0.8835775
         last_10_steps_step_time_ms_avg: 4638.550
-        last_10_steps_model_tflops_per_gpu_avg: 17.240
+        last_10_steps_model_tflops_per_gpu_avg: 19.423
       expected_result: >
         The immutable-revision 208-H100 run completes exactly 100 LoRA steps at
         TP1/PP13/CP1/EP16/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse indexer
@@ -429,7 +454,7 @@ items:
         initial_loss: 1.831100
         final_loss: 0.8957523
         last_10_steps_step_time_ms_avg: 68588.270
-        last_10_steps_model_tflops_per_gpu_avg: 9.330
+        last_10_steps_model_tflops_per_gpu_avg: 1.423
       expected_result: >
         The immutable-revision 192-GB200 run completed exactly 100 LoRA steps
         at TP1/PP6/CP1/EP32/ETP1, GBS/MBS 32/1, with offline-packed Tulu 3
@@ -465,7 +490,7 @@ items:
         initial_loss: 7.219822
         final_loss: 6.372624
         last_10_steps_step_time_ms_avg: 32002.290
-        last_10_steps_model_tflops_per_gpu_avg: 49.350
+        last_10_steps_model_tflops_per_gpu_avg: 53.235
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -478,31 +503,39 @@ items:
         zero skipped or NaN iterations. Step 51 matches exactly at 7.219822.
         Step 100 is 6.372624 versus the uninterrupted reference's 6.385243, an
         absolute difference of 0.012619 within the allowed 0.063853. Final
-        grad norm is 2.169; the last 10 steps average 32,002.290 ms and 49.350
+        grad norm is 2.169; the last 10 steps average 32,002.290 ms and 53.235
         TFLOPS/GPU. Peak observed allocator memory is 65.230 GiB allocated and
         69.684 GiB reserved.
     GB200:
       status: verified
       precision: bf16
       depends_on: pretrain
+      bridge_commit: e79f756196e0b97ee3ad94263a896c120b32c1e5  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
         --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain
         --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-        'dataset.blend=[["work/data/glm5-2/pretrain-tulu3-text-document/tulu3_glm52_text_document_text_document"],null]'
-        dataset.path_to_cache=work/cache/glm5-2/pretrain-tulu3-gb200
-        dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
-        --load_dir work/model-verification/glm5-2/pretrain-gb200-cudnn/checkpoints
-        --save_dir work/model-verification/glm5-2/pretrain-resume-gb200-cudnn/checkpoints
-        --save_interval 0 checkpoint.ckpt_step=50
+        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200
+        dataset.random_seed=1234 dataset.num_workers=8
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model
+        tokenizer.use_tokenizer_vocab_size=false rng.seed=1234
+        scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false
+        checkpoint.ckpt_step=50
+        checkpoint.save_optim=true checkpoint.save_rng=true
+        checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false
+        --load_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints
+        --save_dir work/model-verification/glm5-2/pretrain-rp2-resume-gb200/checkpoints
+        --save_interval 0
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: 2026-08-04
       metrics:
-        initial_loss: 8.581669
-        final_loss: 8.192354
-        last_10_steps_step_time_ms_avg: 67700.250
-        last_10_steps_model_tflops_per_gpu_avg: 90.710
+        initial_loss: 7.233636
+        final_loss: 6.503141
+        last_10_steps_step_time_ms_avg: 60079.390
+        last_10_steps_model_tflops_per_gpu_avg: 110.552
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -510,10 +543,11 @@ items:
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: true
       expected_result: >
-        The run reloads the GB200 reference's step-50 model, optimizer,
+        The run reloads the RP2 reference's step-50 model, optimizer,
         scheduler, data-order, and RNG state and completes steps 51-100 with
-        zero skipped or NaN iterations. Step 51 matches exactly at 8.581669.
-        Step 100 is 8.192354 versus the uninterrupted reference's 8.171059, an
-        absolute difference of 0.021295 within the allowed 0.081712. Final grad
-        norm is 1.840; the last 10 steps average 67,700.250 ms and 90.710
+        zero skipped or NaN iterations. Step 51 is 7.233636 versus 7.233639 in
+        the uninterrupted reference, a relative difference of 4.1e-7. Step
+        100 is 6.503141 versus 6.523522, a relative difference of 0.003124;
+        both satisfy the 1e-6 absolute plus 1% relative tolerance. Final grad
+        norm is 1.690; the last 10 steps average 60,079.390 ms and 110.552
         TFLOPS/GPU.
