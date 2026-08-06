@@ -301,6 +301,11 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
     cfg.model.vision_cuda_graph_impl = "none"
     cfg.model.vision_cuda_graph_scope = []
     cfg.model.max_vision_cuda_graph_seq_length = None
+    # Native cross entropy materializes a full FP32 vocabulary buffer for the
+    # 248K-token language head. Keep real-data pretraining memory-bounded with
+    # the same TE loss kernel used by the verified full-SFT recipe.
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 

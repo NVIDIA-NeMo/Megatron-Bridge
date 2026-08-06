@@ -434,6 +434,8 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.model.vision_cuda_graph_impl == "none"
     assert cfg.model.vision_cuda_graph_scope == []
     assert cfg.model.max_vision_cuda_graph_seq_length is None
+    assert cfg.model.cross_entropy_loss_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
