@@ -1052,6 +1052,13 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     clear_cuda_graph_modules(cfg.model)
     cfg.model.vision_cuda_graph_impl = "none"
     cfg.model.vision_cuda_graph_scope = []
+
+    # The 23-layer last stage does not leave enough room for the FP32
+    # vocabulary-loss workspace used by full SFT. Move one language layer to
+    # the first stage; the shared 17/23 performance policy remains unchanged
+    # for pretraining and LoRA.
+    cfg.model.num_layers_in_first_pipeline_stage = 18
+    cfg.model.num_layers_in_last_pipeline_stage = 22
     return cfg
 
 
