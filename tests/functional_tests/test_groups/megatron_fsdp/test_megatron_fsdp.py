@@ -21,6 +21,7 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -80,6 +81,35 @@ class Llama3FSDPTestModelProvider(GPTModelProvider):
     gradient_accumulation_fusion: bool = False
 
 
+@dataclass
+class DenseHybridFSDPV2TestModelProvider(HybridModelProvider):
+    """Small dense HybridModel configuration for the MFSDP V2 smoke test."""
+
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-5
+    rotary_percent: float = 1.0
+    rotary_base: int = 500_000
+    seq_length: int = 128
+    num_layers: int | None = 2
+    hidden_size: int = 128
+    ffn_hidden_size: int = 512
+    num_attention_heads: int = 8
+    hybrid_layer_pattern: str | None = "**"
+    vocab_size: int | None = None
+    gradient_accumulation_fusion: bool = False
+
+
 def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3FSDPTestModelProvider:
     """Create a standardized FSDP model configuration."""
     base_config = {
@@ -101,6 +131,23 @@ def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Ll
         )
     base_config.update(kwargs)
     return Llama3FSDPTestModelProvider(**base_config)
+
+
+def create_dense_hybrid_fsdp_v2_model_config(**kwargs) -> DenseHybridFSDPV2TestModelProvider:
+    """Create the dense two-layer HybridModel configuration used by MFSDP V2."""
+    base_config = {
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
+        "attention_softmax_in_fp32": True,
+        "make_vocab_size_divisible_by": 128,
+        "vocab_size": None,
+        "bf16": True,
+        "pipeline_dtype": torch.bfloat16,
+    }
+    base_config.update(kwargs)
+    return DenseHybridFSDPV2TestModelProvider(**base_config)
 
 
 def create_base_training_config(
@@ -361,6 +408,62 @@ class TestMegatronFSDP:
 
             torch.distributed.barrier()
 
+        finally:
+            clear_directories(tmp_path)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_dense_hybrid_pretrain_smoke(self, tmp_path):
+        """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
+        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV2
+        from megatron.core.optimizer import FullyShardedOptimizer
+
+        from megatron.bridge.data.utils import get_dataset_provider
+        from megatron.bridge.training.setup import setup
+
+        initialize_distributed()
+        torch.distributed.barrier()
+
+        try:
+            cfg = create_fsdp_config_container(
+                seq_length=128,
+                train_iters=2,
+                train={"global_batch_size": 2},
+                logger={"log_params_norm": False},
+            )
+            cfg.model = create_dense_hybrid_fsdp_v2_model_config()
+            cfg.ddp.megatron_fsdp_version = 2
+            runtime_config_update(cfg)
+
+            state = GlobalState()
+            state.cfg = cfg
+            setup_out = setup(state, get_dataset_provider(cfg.dataset))
+
+            assert isinstance(setup_out.model[0], FullyShardedDataParallelV2)
+            assert isinstance(setup_out.optimizer, FullyShardedOptimizer)
+
+            run_training(
+                forward_step,
+                setup_out.model,
+                setup_out.optimizer,
+                setup_out.scheduler,
+                setup_out.train_data_iterator,
+                setup_out.valid_data_iterator,
+                setup_out.state,
+                setup_out.checkpoint_manager,
+                setup_out.pg_collection,
+            )
+
+            losses = _compute_forward_only_loss(
+                forward_step,
+                setup_out.model,
+                setup_out.train_data_iterator,
+                setup_out.state,
+                setup_out.pg_collection,
+            )
+            assert losses, "MFSDP V2 smoke test did not produce a loss"
+            assert all(torch.isfinite(loss).all() for loss in losses.values())
+
+            _finish_train(setup_out.state, setup_out.checkpoint_manager)
         finally:
             clear_directories(tmp_path)
 
