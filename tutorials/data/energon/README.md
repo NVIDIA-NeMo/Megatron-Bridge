@@ -292,10 +292,14 @@ increase worker memory because prepared token and visual tensors remain resident
 
 The first implementation supports eager Qwen-VL with `vlm_step`, including TP, SP, and CP. Standard eager `alltoall`
 expert parallelism has functional coverage for Qwen3.6-35B-A3B at TP1/PP1/EP8 with EP communication overlap disabled;
-this does not establish performance, and other EP dispatchers are rejected. Generic HF, Nemotron Omni, the legacy
-`qwen3_vl_step`, MBS greater than one, MTP, CUDA graphs, Qwen3-VL DistTrain, pipeline parallelism, and MoE
-expert-parallel communication overlap are unsupported. The checked example uses the Qwen3-VL 8B provider; validate
-other Qwen-VL variants before production use.
+this does not establish performance. Other EP dispatchers are accepted with fixed-width native packs but do not yet
+have equivalent runtime evidence. Logical and physical THD boundaries produce a mask that excludes fixed-width gaps
+from MoE auxiliary-loss, z-loss, and expert-bias statistics. Current MCore may still dispatch those padded positions;
+expert-capacity/token-dropping configurations do not yet have native-packing runtime coverage. Generic HF, Nemotron
+Omni, the legacy `qwen3_vl_step`, MBS greater than one, MTP, CUDA graphs, Qwen3-VL DistTrain, and pipeline parallelism
+are unsupported. Requested MoE expert-parallel communication overlap is disabled with a warning so training uses the
+non-overlapped path. The checked example uses the Qwen3-VL 8B provider; validate other Qwen-VL variants before
+production use.
 The older collate-time path remains available by leaving `packing_buffer_size=None`, setting
 `enable_in_batch_packing=True`, and using MBS greater than one.
 

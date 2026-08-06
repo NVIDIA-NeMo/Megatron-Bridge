@@ -115,13 +115,19 @@ The durable constraints for packed sequences in Bridge are:
   `ddp.average_in_collective=False`
 - standard eager `alltoall` expert parallelism has functional coverage for
   Qwen3.6-35B-A3B at TP1/PP1/EP8 with EP communication overlap disabled; this
-  is not a performance claim; other EP dispatchers are rejected for this path
+  is not a performance claim; other EP dispatchers are accepted with fixed-width
+  native packs but do not yet have equivalent runtime evidence; THD boundaries
+  produce a padding mask that excludes fixed-width gaps from MoE auxiliary-loss,
+  z-loss, and expert-bias statistics
+- current MCore may still dispatch those padded positions; expert-capacity/token-
+  dropping configurations do not yet have native-packing runtime coverage
 - `packing_buffer_size` counts candidate samples independently in every Energon
   worker; it is not a byte cache or a packed-sequence length
 - Energon native packing and collator-owned `enable_in_batch_packing=True` are
   mutually exclusive
 - Energon native packing does not currently support MTP, CUDA graphs, Qwen3-VL
-  DistTrain, pipeline parallelism, or MoE expert-parallel communication overlap
+  DistTrain, or pipeline parallelism; requested MoE expert-parallel communication
+  overlap is disabled with a warning so training uses the non-overlapped path
 - when context parallelism is used, sequence length must satisfy the standard
   CP divisibility constraints
 - Direct-HF sequence length must also satisfy the LCM of the training and

@@ -130,10 +130,15 @@ host memory until selection, start at 8-16 for high-resolution or video data
 and measure worker RSS, first-batch latency, and bin fill before increasing it.
 This path does not write offline packs; the source WebDataset shards remain
 unchanged. It supports eager Qwen-VL with MBS1 and rejects MTP, CUDA graphs,
-Qwen3-VL DistTrain, PP, and MoE expert-parallel communication overlap. Standard
-eager `alltoall` EP has functional coverage for Qwen3.6-35B-A3B at TP1/PP1/EP8
-with EP communication overlap disabled; this is not performance evidence or
-support for other EP dispatchers, which are rejected for this path.
+Qwen3-VL DistTrain, and PP. Requested MoE expert-parallel communication overlap
+is disabled with a warning. Standard eager `alltoall` EP has functional coverage
+for Qwen3.6-35B-A3B at TP1/PP1/EP8 with overlap disabled; this is not performance
+evidence. Other EP dispatchers are accepted with fixed-width native packs but do
+not yet have equivalent runtime evidence. The Qwen-VL model derives a MoE
+padding mask from logical and physical THD boundaries so fixed-width gaps do not
+enter auxiliary-loss, z-loss, or expert-bias statistics. Current MCore may still
+dispatch padded positions; expert-capacity/token-dropping configurations lack
+native-packing runtime coverage.
 
 Long-context baseline:
 

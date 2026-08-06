@@ -449,6 +449,20 @@ class TestQwenVLTaskEncoderNativePacking(unittest.TestCase):
         self.assertEqual(batch.position_ids[0, 8].item(), 0)
         self.assertEqual(batch.visual_inputs.pixel_values[:, 0].tolist(), [5.0, 4.0])
 
+    def test_native_pack_honors_fixed_final_width(self):
+        self.encoder.pad_to_max_length = True
+        packed_sample = self.encoder.pack_selected_samples([self._sample("four", 4, 4)])
+
+        batch = self.encoder.batch([packed_sample])
+
+        self.assertEqual(batch.input_ids.shape, (1, 12))
+        self.assertEqual(batch.cu_seqlens_q.tolist(), [0, 4])
+        self.assertEqual(batch.cu_seqlens_q_padded.tolist(), [0, 12])
+        self.assertEqual(batch.max_seqlen_q.item(), 12)
+        self.assertEqual(batch.total_tokens, 12)
+        self.assertTrue(torch.equal(batch.labels[0, 4:], torch.full((8,), -100)))
+        self.assertTrue(torch.equal(batch.loss_mask[0, 4:], torch.zeros(8)))
+
     def test_batch_rejects_malformed_overlength_packed_group(self):
         source_samples = [self._sample("nine-a", 9, 9), self._sample("nine-b", 9, 9)]
         packed_sample = self.encoder.pack_selected_samples(source_samples)

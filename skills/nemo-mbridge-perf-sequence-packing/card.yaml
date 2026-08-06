@@ -81,9 +81,10 @@ known_constraints:
   - VLM in-batch packing requires micro_batch_size > 1.
   - Energon online packing requires physical micro_batch_size == 1 and counts candidate samples per worker.
   - Energon online packing is mutually exclusive with collate-time in-batch packing and the deferred Qwen step.
-  - Energon online packing does not support MTP, CUDA graphs, pipeline parallelism, or MoE expert-parallel
-    communication overlap.
-  - Energon online packing with expert parallelism requires the standard alltoall dispatcher.
+  - Energon online packing does not support MTP, CUDA graphs, or pipeline parallelism.
+  - Requested MoE expert-parallel communication overlap is disabled with a warning for Energon online packing.
+  - EP dispatchers other than standard alltoall use fixed-width native packs but lack equivalent runtime evidence.
+  - Current MCore may dispatch fixed-width padding; expert-capacity/token-dropping configurations lack runtime coverage.
   - For finetuning with CP > 1, calculate_per_token_loss must be true.
   - For finetuning with CP > 1, ddp.average_in_collective must be false.
   - pad_cu_seqlens=true also requires pad_to_max_length=true.

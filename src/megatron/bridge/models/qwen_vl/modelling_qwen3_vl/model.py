@@ -75,6 +75,50 @@ def _select_sequence(
     return val.index_select(seq_dim, index).contiguous()
 
 
+def _get_packed_seq_padding_mask(
+    packed_seq_params: PackedSeqParams | None,
+    *,
+    total_tokens: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    """Build the MoE padding mask from logical and physical THD boundaries."""
+    if packed_seq_params is None or packed_seq_params.cu_seqlens_q_padded is None:
+        return None
+
+    cu_seqlens, physical_cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    if (
+        not isinstance(cu_seqlens, torch.Tensor)
+        or not isinstance(physical_cu_seqlens, torch.Tensor)
+        or cu_seqlens.dim() != 1
+        or physical_cu_seqlens.shape != cu_seqlens.shape
+        or cu_seqlens.numel() < 2
+    ):
+        raise ValueError("Packed MoE padding requires matching 1D query cu_seqlens metadata.")
+
+    cu_seqlens = cu_seqlens.to(device=device)
+    physical_cu_seqlens = physical_cu_seqlens.to(device=device)
+    logical_lengths = cu_seqlens[1:] - cu_seqlens[:-1]
+    physical_lengths = physical_cu_seqlens[1:] - physical_cu_seqlens[:-1]
+    if bool(
+        torch.any(logical_lengths <= 0)
+        or torch.any(physical_lengths < logical_lengths)
+        or cu_seqlens[0] != 0
+        or physical_cu_seqlens[0] != 0
+        or physical_cu_seqlens[-1] > total_tokens
+    ):
+        raise ValueError("Packed MoE padding metadata has invalid logical or physical query boundaries.")
+    if torch.equal(logical_lengths, physical_lengths) and int(physical_cu_seqlens[-1].item()) == total_tokens:
+        return None
+
+    positions = torch.arange(total_tokens, device=device)
+    segment_indices = torch.bucketize(positions, physical_cu_seqlens[1:], right=True)
+    in_physical_segment = segment_indices < logical_lengths.numel()
+    safe_segment_indices = segment_indices.clamp(max=logical_lengths.numel() - 1)
+    offsets = positions - physical_cu_seqlens[:-1].index_select(0, safe_segment_indices)
+    valid_tokens = in_physical_segment & (offsets < logical_lengths.index_select(0, safe_segment_indices))
+    return (~valid_tokens).unsqueeze(0)
+
+
 def _split_if_full_sequence(
     val: torch.Tensor | None,
     *,
@@ -507,6 +551,7 @@ class Qwen3VLModel(MegatronModule):
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
         loss_mask: torch.Tensor = None,
+        padding_mask: torch.Tensor = None,
         inference_params: InferenceParams = None,
         packed_seq_params: PackedSeqParams = None,
         extra_block_kwargs: dict = None,
@@ -541,6 +586,9 @@ class Qwen3VLModel(MegatronModule):
             inference_params (InferenceParams): Inference-time parameters including KV cache.
             mm_token_type_ids (torch.Tensor): Token type IDs from transformers >= 5.3.0 processors.
                 Not used by Qwen3VL.
+            padding_mask (torch.Tensor): Optional boolean MoE padding mask where
+                true marks padding. For THD input, it is derived from logical and
+                physical cumulative sequence boundaries when omitted.
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, torch.Tensor] | dict[str, torch.Tensor]: Language-model loss of shape
@@ -597,6 +645,32 @@ class Qwen3VLModel(MegatronModule):
         # are indexed below only when CP is enabled.
         lm_input_ids = input_ids
         full_sequence_length = input_ids.size(1) if input_ids is not None else None
+        if padding_mask is None and packed_seq_params is not None and not legacy_packed_bshd:
+            _, physical_cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+            if not isinstance(physical_cu_seqlens, torch.Tensor):
+                raise ValueError("Packed Qwen3-VL input requires physical query cu_seqlens metadata.")
+            packed_total_tokens = int(physical_cu_seqlens[-1].item())
+            padding_mask = _get_packed_seq_padding_mask(
+                packed_seq_params,
+                total_tokens=packed_total_tokens,
+                device=input_ids.device,
+            )
+            if padding_mask is not None:
+                if packed_cp_index is not None:
+                    padding_mask = _select_sequence(padding_mask, packed_cp_index, seq_dim=1)
+                elif packed_input_pre_sharded:
+                    padding_mask = _select_sequence(
+                        padding_mask,
+                        get_packed_seq_cp_partition_indices(
+                            packed_seq_params,
+                            total_tokens=packed_total_tokens,
+                            cp_size=cp_size,
+                            cp_rank=cp_rank,
+                            device=input_ids.device,
+                            cp_group=self.pg_collection.cp,
+                        ),
+                        seq_dim=1,
+                    )
         if self.language_model is not None:
             self.language_model.rotary_pos_emb.is_thd_format = False
 
@@ -790,6 +864,15 @@ class Qwen3VLModel(MegatronModule):
                     combined_embeddings, group=self.pg_collection.tp
                 )
                 combined_embeddings = combined_embeddings.contiguous()
+                if padding_mask is not None:
+                    padding_mask = (
+                        tensor_parallel.scatter_to_sequence_parallel_region(
+                            padding_mask.transpose(0, 1).contiguous(),
+                            group=self.pg_collection.tp,
+                        )
+                        .transpose(0, 1)
+                        .contiguous()
+                    )
 
         else:
             combined_embeddings = None
@@ -918,6 +1001,7 @@ class Qwen3VLModel(MegatronModule):
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
+            padding_mask=padding_mask,
             inference_params=inference_params,  # currently always None
             packed_seq_params=packed_seq_params,
             runtime_gather_output=runtime_gather_output,

@@ -456,12 +456,15 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         """Collate normalized Energon samples with the shared Qwen HF collator.
 
         Expected input format:
-            ``samples`` are ``QwenVLTaskSample`` objects whose ``example`` fields
-            follow the HF VLM collate schema.
+            Either normalized ``QwenVLTaskSample`` objects whose ``example``
+            fields follow the HF VLM collate schema, or one physical
+            ``QwenVLPackedTaskSample`` selected by Energon native packing.
 
         Output format:
             Returns ``QwenVLTaskBatch`` carrying the same tensors as
-            ``qwen2_5_collate_fn`` plus Energon batch metadata.
+            ``qwen2_5_collate_fn`` plus Energon batch metadata. Native packs may
+            be padded to ``seq_length`` while retaining separate real and
+            physical THD boundaries.
         """
         if samples and isinstance(samples[0], QwenVLPackedTaskSample):
             if len(samples) != 1 or not all(isinstance(sample, QwenVLPackedTaskSample) for sample in samples):
@@ -484,6 +487,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                 [sample.prepared_sequence for sample in source_samples if sample.prepared_sequence is not None],
                 sequence_length=self.seq_length,
                 pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+                pad_to_max_length=self.pad_to_max_length,
             )
         else:
             if not all(isinstance(sample, QwenVLTaskSample) for sample in samples):
