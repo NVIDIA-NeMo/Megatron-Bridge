@@ -284,9 +284,11 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
-    # The 200,704-pixel real-data budget can produce 32-by-32 vision patch
-    # grids, while the fixed-shape mock performance workload peaks at 784.
-    cfg.model.max_vision_cuda_graph_seq_length = 1024
+    # DataComp preserves variable image shapes. Keep language CUDA graphs, but
+    # do not force the real-data vision encoder through a fixed-shape graph.
+    cfg.model.vision_cuda_graph_impl = "none"
+    cfg.model.vision_cuda_graph_scope = []
+    cfg.model.max_vision_cuda_graph_seq_length = None
     return cfg
 
 
