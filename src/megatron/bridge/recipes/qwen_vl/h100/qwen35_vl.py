@@ -274,6 +274,11 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
+    # Preserve the architecture vocabulary for checkpoint-backed functional
+    # training. Qwen's tokenizer may expose only its core vocabulary while
+    # multimodal tokens remain represented by the model vocabulary.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
