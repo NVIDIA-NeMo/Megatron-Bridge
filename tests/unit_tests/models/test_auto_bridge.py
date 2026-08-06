@@ -1293,8 +1293,10 @@ class TestAutoBridge:
     def test_save_hf_pretrained(self, mock_is_init, mock_is_avail, mock_barrier, mock_get_rank):
         """Test saving a model in HuggingFace format."""
         # Setup mocks
+        save_events = []
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
-        mock_hf_model.save_artifacts = Mock()
+        mock_hf_model._save_config = Mock(side_effect=lambda *args, **kwargs: save_events.append("config"))
+        mock_hf_model.save_artifacts = Mock(side_effect=lambda *args, **kwargs: save_events.append("artifacts"))
         mock_hf_model.state = Mock()
         mock_hf_model.state.source = Mock(spec=["save_generator"])
 
@@ -1306,6 +1308,7 @@ class TestAutoBridge:
         mock_megatron_model = [Mock()]
 
         with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
+            mock_save_hf_weights.side_effect = lambda *args, **kwargs: save_events.append("weights")
             bridge = AutoBridge(mock_hf_model)
 
             # Mock _model_bridge to have no ADDITIONAL_FILE_PATTERNS
@@ -1320,6 +1323,7 @@ class TestAutoBridge:
                 mock_hf_model.save_artifacts.assert_called_once_with(
                     "./output_dir", original_source_path=None, additional_files=None
                 )
+                mock_hf_model._save_config.assert_called_once_with(Path("./output_dir"))
                 mock_save_hf_weights.assert_called_once_with(
                     mock_megatron_model,
                     "./output_dir",
@@ -1330,6 +1334,7 @@ class TestAutoBridge:
                     save_every_n_ranks=1,
                     weight_dtype=None,
                 )
+                assert save_events == ["config", "weights", "artifacts"]
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)

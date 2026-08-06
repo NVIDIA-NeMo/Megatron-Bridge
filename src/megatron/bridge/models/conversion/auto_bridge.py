@@ -1062,6 +1062,19 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError("save_hf_pretrained requires a pretrained HuggingFace model or config.")
         is_config_only = isinstance(self.hf_pretrained, PretrainedConfig)
 
+        def _save_config():
+            if is_config_only:
+                import json
+
+                Path(path).mkdir(parents=True, exist_ok=True)
+                config_dict = self.hf_pretrained.to_dict()
+                if not self.trust_remote_code:
+                    config_dict.pop("auto_map", None)
+                with open(Path(path) / "config.json", "w") as _f:
+                    json.dump(config_dict, _f, indent=2, sort_keys=True, allow_nan=True)
+            else:
+                self.hf_pretrained._save_config(Path(path))
+
         def _save_artifacts():
             if is_config_only:
                 artifact_source_path = self.hf_model_id or source_path
@@ -1082,15 +1095,8 @@ class AutoBridge(Generic[MegatronModelT]):
                         additional_files=additional_files,
                     )
                 else:
-                    import json
-
                     # A bridge built directly from a config has no reference artifacts to preserve.
-                    Path(path).mkdir(parents=True, exist_ok=True)
-                    config_dict = self.hf_pretrained.to_dict()
-                    if not self.trust_remote_code:
-                        config_dict.pop("auto_map", None)
-                    with open(Path(path) / "config.json", "w") as _f:
-                        json.dump(config_dict, _f, indent=2, sort_keys=True, allow_nan=True)
+                    _save_config()
 
             else:
                 # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
@@ -1099,11 +1105,14 @@ class AutoBridge(Generic[MegatronModelT]):
                     path, original_source_path=source_path, additional_files=additional_files
                 )
 
+        # save_hf_weights needs the final serialized config to decide whether
+        # source-only MTP keys should be ignored. This config-only phase does
+        # not load tokenizers, processors, custom code, or additional files.
         if dist.is_initialized():
             if dist.get_rank() == 0:
-                _save_artifacts()
+                _save_config()
         else:
-            _save_artifacts()
+            _save_config()
 
         self.save_hf_weights(
             model,
@@ -1115,6 +1124,16 @@ class AutoBridge(Generic[MegatronModelT]):
             save_every_n_ranks=save_every_n_ranks,
             weight_dtype=weight_dtype,
         )
+
+        # Artifact loading and serialization are rank-0-only and can take an
+        # unbounded amount of time. Keep them after all collective weight-save
+        # work so other ranks never wait in save_hf_weights' entry barrier while
+        # rank 0 is still saving artifacts.
+        if dist.is_initialized():
+            if dist.get_rank() == 0:
+                _save_artifacts()
+        else:
+            _save_artifacts()
 
     def save_hf_weights(
         self,
