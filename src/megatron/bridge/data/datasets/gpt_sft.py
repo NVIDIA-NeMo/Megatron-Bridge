@@ -790,6 +790,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
                 self.tokenizer,
                 self.tool_schemas,
                 loss_mode=self.loss_mode,
+                add_eos=self.add_eos,
+                max_length=self.max_seq_length,
             )
 
         # store metadata in dataset, in case user may have keys required in the prediction json files

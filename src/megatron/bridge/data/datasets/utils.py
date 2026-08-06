@@ -898,7 +898,10 @@ def _chat_preprocess(
     source: dict,
     tokenizer: MegatronTokenizer,
     tool_schemas: dict[str, Any] | list[dict[str, Any]] | None = None,
+    *,
     loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+    add_eos: bool = False,
+    max_length: int | None = None,
 ) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
@@ -920,6 +923,8 @@ def _chat_preprocess(
         tool_schemas - Optional tool_schemas to supply to apply_chat_template, these will be superseded
            by tools supplied with the message
         loss_mode - Assistant-only, final-assistant-turn, or full-sequence loss
+        add_eos - Append the tokenizer EOS when the rendered template does not already end with it
+        max_length - Maximum rendered-template length before an optional EOS is appended
 
     Output:
         {
@@ -936,7 +941,7 @@ def _chat_preprocess(
     * answer_ids contain tokenized messages with chat template applied for only the assistant's last generated
     output
     """
-    from megatron.bridge.data.conversation_processing import tokenize_chat_example
+    from megatron.bridge.data.conversation_processing import get_processor_tokenizer, tokenize_chat_example
     from megatron.bridge.data.token_utils import extract_skipped_token_ids
 
     try:
@@ -944,6 +949,7 @@ def _chat_preprocess(
             source,
             tokenizer,
             tool_schemas=tool_schemas,
+            max_length=max_length,
             skipped_tokens=extract_skipped_token_ids(tokenizer),
             loss_mode=loss_mode,
             return_final_assistant_start=True,
@@ -970,6 +976,27 @@ def _chat_preprocess(
     context_end_idx = tokenized.final_assistant_start
     if context_end_idx is None:
         context_end_idx = len(input_ids)
+
+    terminal_assistant = bool(tokenized.conversation and tokenized.conversation[-1].get("role") == "assistant")
+    rendered_at_limit = max_length is not None and len(input_ids) >= max_length
+    terminal_assistant_survived = terminal_assistant and (context_end_idx < len(input_ids) or not rendered_at_limit)
+    if add_eos:
+        eos_id = getattr(tokenizer, "eos_id", None)
+        if eos_id is None:
+            hf_tokenizer = get_processor_tokenizer(tokenizer)
+            eos_id = getattr(hf_tokenizer, "eos_token_id", None)
+        if eos_id is None:
+            raise ValueError("Chat preprocessing with add_eos=True requires a tokenizer EOS token ID.")
+        eos_id = int(eos_id)
+        eos_in_loss = loss_mode == "full" or terminal_assistant_survived
+        if not input_ids or input_ids[-1] != eos_id:
+            input_ids.append(eos_id)
+            mask.append(eos_in_loss)
+        elif eos_in_loss:
+            mask[-1] = True
+
+        if not terminal_assistant_survived:
+            context_end_idx = len(input_ids)
 
     context_ids = input_ids[:context_end_idx]
     answer_ids = input_ids[context_end_idx:]

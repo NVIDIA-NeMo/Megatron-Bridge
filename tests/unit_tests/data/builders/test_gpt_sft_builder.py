@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
 from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder
@@ -120,4 +121,64 @@ def test_default_pack_path_is_stable_for_equivalent_non_hf_tokenizers(tmp_path):
 
     first = build()
     second = build()
+    assert first.default_pack_path == second.default_pack_path
+
+
+def test_default_pack_path_fingerprints_effective_chat_template(tmp_path):
+    class PackingTokenizer:
+        def __init__(self, chat_template: str) -> None:
+            self._tokenizer = object()
+            self.chat_template = chat_template
+            self.unique_identifiers = {"class": "test.PackingTokenizer", "tokenizer_path": "same-tokenizer"}
+            self.bos_id = 1
+            self.eos_id = 2
+            self.pad_id = 0
+
+    def build(chat_template: str) -> GPTSFTDatasetBuilder:
+        return GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                dataset_root=tmp_path,
+                seq_length=128,
+                preprocessing=ChatSFTPreprocessingConfig(),
+                enable_offline_packing=True,
+                offline_packing_specs=PackedSequenceSpecs(
+                    packed_sequence_size=128,
+                    tokenizer_model_name="same-tokenizer",
+                ),
+            ),
+            tokenizer=PackingTokenizer(chat_template),
+        )
+
+    assert build("template-a").default_pack_path != build("template-b").default_pack_path
+    assert build("template-a").default_pack_path == build("template-a").default_pack_path
+
+
+def test_hf_snapshot_pack_path_uses_repository_name_and_stable_identity(tmp_path):
+    def build(cache_root: str) -> GPTSFTDatasetBuilder:
+        tokenizer = MagicMock()
+        tokenizer._tokenizer = MagicMock(spec=HuggingFaceTokenizer)
+        tokenizer.path = f"{cache_root}/models--zai-org--GLM-5.2/snapshots/4d67f66"
+        tokenizer.unique_identifiers = {
+            "class": "megatron.core.tokenizers.text.text_tokenizer.MegatronTokenizerText",
+            "tokenizer_path": tokenizer.path,
+        }
+        tokenizer.chat_template = "official-template"
+        tokenizer.bos_id = 1
+        tokenizer.eos_id = 2
+        tokenizer.pad_id = 0
+        return GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                dataset_root=tmp_path,
+                seq_length=128,
+                preprocessing=ChatSFTPreprocessingConfig(),
+                enable_offline_packing=True,
+                offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=128),
+            ),
+            tokenizer=tokenizer,
+        )
+
+    first = build("/cache-a")
+    second = build("/cache-b")
+
+    assert first._extract_tokenizer_model_name() == "zai-org--GLM-5.2"
     assert first.default_pack_path == second.default_pack_path

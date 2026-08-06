@@ -46,8 +46,8 @@ class AssistantMaskBoundaryConfig:
     Expected input format:
         ``role_start_tokens`` maps each chat role to the token-id sequence that
         immediately precedes that role's content in already-rendered
-        ``input_ids``. ``role_end_tokens`` maps each chat role to the token-id
-        sequence that terminates that role's turn. ``loss_roles`` names
+        ``input_ids``. ``role_end_tokens`` maps each explicitly terminated loss
+        role to the token-id sequence that ends its turn. ``loss_roles`` names
         top-level chat roles that should contribute to loss. This follows the
         common SFT convention used by chat-template based pipelines: once a role
         contributes to loss, the role's full rendered content contributes,
@@ -62,6 +62,9 @@ class AssistantMaskBoundaryConfig:
         ``role_end_token_variants`` provides ordered fallback end sequences for
         formats whose final turn may omit a trailing delimiter such as a
         newline. The primary ``role_end_tokens`` sequence is always preferred.
+        ``implicit_end_roles`` identifies formats such as GLM whose turns end
+        at the next role marker or at the unpadded sequence boundary instead of
+        emitting a dedicated end marker.
 
         Example::
 
@@ -90,6 +93,7 @@ class AssistantMaskBoundaryConfig:
     trim_leading_token_ids: Sequence[int] = ()
     trim_leading_token_sequences: Sequence[Sequence[int]] = ()
     role_end_token_variants: Mapping[str, Sequence[Sequence[int]]] = field(default_factory=dict)
+    implicit_end_roles: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -596,6 +600,33 @@ def _rendered_window_start(full_ids: Sequence[int], rendered_ids: Sequence[int],
     return None
 
 
+def _confirmed_truncation_side(
+    template_owner: Any,
+    conversation: Sequence[Mapping[str, Any]],
+    tokenize_kwargs: Mapping[str, Any],
+    rendered_ids: Sequence[int],
+) -> Literal["left", "right"] | None:
+    """Return the truncation side only when an aligned shorter render is observed."""
+    if not tokenize_kwargs.get("truncation"):
+        return None
+    max_length = tokenize_kwargs.get("max_length")
+    tokenizer = get_processor_tokenizer(template_owner)
+    truncation_side = getattr(tokenizer, "truncation_side", None)
+    if max_length is None or len(rendered_ids) < int(max_length) or truncation_side not in {"left", "right"}:
+        return None
+
+    untruncated_kwargs = dict(tokenize_kwargs)
+    untruncated_kwargs.pop("truncation", None)
+    untruncated_kwargs.pop("max_length", None)
+    full_chat = _apply_tokenized_chat_template(template_owner, conversation, untruncated_kwargs)
+    full_ids = _chat_template_input_ids(full_chat)
+    if len(full_ids) <= len(rendered_ids):
+        return None
+    if _rendered_window_start(full_ids, rendered_ids, template_owner) is None:
+        return None
+    return truncation_side
+
+
 def _infer_final_assistant_start(
     template_owner: Any,
     conversation: Sequence[Mapping[str, Any]],
@@ -768,6 +799,18 @@ def tokenize_chat_example(
     chat_example: dict[str, Any] = {"conversation": conversation}
     chat_example.update(template_kwargs)
     effective_boundary_config = boundary_config or infer_assistant_mask_boundary_config(processor)
+    boundary_truncation_side = None
+    if (
+        effective_boundary_config is not None
+        and selected_template_owner is not None
+        and selected_tokenize_kwargs is not None
+    ):
+        boundary_truncation_side = _confirmed_truncation_side(
+            selected_template_owner,
+            conversation,
+            selected_tokenize_kwargs,
+            input_ids.tolist(),
+        )
     if returned_mask is not None and effective_boundary_config is None:
         assistant_mask = returned_mask
     else:
@@ -778,6 +821,7 @@ def tokenize_chat_example(
                 processor,
                 None,
                 boundary_config=effective_boundary_config,
+                truncation_side=boundary_truncation_side,
                 warn_on_all_masked=False,
             ).to(dtype=torch.bool)
         except ValueError:
@@ -1009,6 +1053,31 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                 role_end_tokens={role: end_tokens for role in role_start_tokens},
                 role_end_token_variants={role: end_token_variants for role in role_start_tokens},
             )
+
+    # Templates without explicit role-end tokens delimit spans with the next
+    # structural role marker or the logical sequence boundary. This branch only
+    # infers masking boundaries for GLM's pinned signature; dataset-level EOS
+    # handling remains independent of assistant-mask inference.
+    glm_role_markers = {
+        CHATML_ASSISTANT_ROLE: "<|assistant|>",
+        "system": "<|system|>",
+        "user": "<|user|>",
+        "tool": "<|observation|>",
+    }
+    glm_template_signature = ("[gMASK]<sop>", "<|assistant|>", "<|user|>", "<|system|>")
+    if all(marker in template for marker in glm_template_signature):
+        role_start_tokens = {
+            role: token_ids
+            for role, marker in glm_role_markers.items()
+            if (token_ids := tokenize_text_without_special_tokens(tokenizer, marker))
+        }
+        if CHATML_ASSISTANT_ROLE in role_start_tokens:
+            return AssistantMaskBoundaryConfig(
+                role_start_tokens=role_start_tokens,
+                role_end_tokens={},
+                include_end_tokens_for_roles=(),
+                implicit_end_roles=(CHATML_ASSISTANT_ROLE,),
+            )
     return None
 
 
@@ -1201,6 +1270,7 @@ def _assistant_mask_from_conversation_turns(
         role: [token_ids for raw_token_ids in raw_variants if (token_ids := _as_token_id_list(raw_token_ids))]
         for role, raw_variants in boundary_config.role_end_token_variants.items()
     }
+    implicit_end_roles = set(boundary_config.implicit_end_roles)
     include_start_roles = set(boundary_config.include_start_tokens_for_roles)
     include_end_roles = set(boundary_config.include_end_tokens_for_roles)
     rendered_mask = torch.zeros(len(rendered_ids), dtype=torch.float32)
@@ -1209,6 +1279,11 @@ def _assistant_mask_from_conversation_turns(
         role = turn["role"]
         start_tokens = role_start_tokens.get(role)
         end_patterns = [role_end_tokens.get(role, []), *role_end_token_variants.get(role, [])]
+        # Prefix rendering is unsafe for implicitly terminated templates: later
+        # turns may change how an earlier assistant turn renders. The full-input
+        # boundary scan below does not have that ambiguity.
+        if role in implicit_end_roles:
+            return None
         if not start_tokens or not any(end_patterns):
             return None
 
@@ -1422,6 +1497,7 @@ def _assistant_mask_from_boundary_config(
     *,
     include_content: bool = True,
     conversation_roles: Sequence[str] | None = None,
+    truncation_side: Literal["left", "right"] | None = None,
 ) -> torch.Tensor | None:
     role_start_tokens = _token_map_from_boundary_config(boundary_config.role_start_tokens)
     role_end_tokens = _token_map_from_boundary_config(boundary_config.role_end_tokens)
@@ -1429,15 +1505,14 @@ def _assistant_mask_from_boundary_config(
         role: [token_ids for raw_token_ids in raw_variants if (token_ids := _as_token_id_list(raw_token_ids))]
         for role, raw_variants in boundary_config.role_end_token_variants.items()
     }
+    implicit_end_roles = set(boundary_config.implicit_end_roles)
     loss_roles = set(boundary_config.loss_roles)
-    if not role_start_tokens or not role_end_tokens or not loss_roles:
-        raise ValueError(
-            "AssistantMaskBoundaryConfig must provide non-empty role_start_tokens, role_end_tokens, and loss_roles."
-        )
-    missing_role_end_tokens = set(role_start_tokens) - set(role_end_tokens)
+    if not role_start_tokens or not loss_roles:
+        raise ValueError("AssistantMaskBoundaryConfig must provide non-empty role_start_tokens and loss_roles.")
+    missing_role_end_tokens = loss_roles - set(role_end_tokens) - implicit_end_roles
     if missing_role_end_tokens:
         raise ValueError(
-            "AssistantMaskBoundaryConfig role_end_tokens is missing entries for roles: "
+            "AssistantMaskBoundaryConfig requires role_end_tokens or implicit_end_roles for roles: "
             f"{sorted(missing_role_end_tokens)}."
         )
 
@@ -1450,20 +1525,31 @@ def _assistant_mask_from_boundary_config(
                 break
             markers.append((start_pos, role, len(start_tokens)))
             search_start = after_start
-    if not markers:
-        return None
-
     markers.sort(key=lambda marker: (marker[0], -marker[2]))
     deduped_markers: list[tuple[int, str, int]] = []
     for marker in markers:
         if deduped_markers and marker[0] == deduped_markers[-1][0]:
             continue
         deduped_markers.append(marker)
+    expected_loss_roles = None
     if conversation_roles is not None:
         expected_loss_roles = [role for role in conversation_roles if role in loss_roles]
         observed_loss_roles = [role for _, role, _ in deduped_markers if role in loss_roles]
-        if observed_loss_roles != expected_loss_roles:
+        if truncation_side == "right":
+            roles_match = observed_loss_roles == expected_loss_roles[: len(observed_loss_roles)]
+        elif truncation_side == "left":
+            roles_match = (
+                observed_loss_roles == expected_loss_roles[len(expected_loss_roles) - len(observed_loss_roles) :]
+            )
+        else:
+            roles_match = observed_loss_roles == expected_loss_roles
+        if not roles_match:
             return None
+
+    if not markers:
+        if truncation_side is not None and expected_loss_roles:
+            return torch.zeros(len(ids), dtype=torch.float32)
+        return None
 
     include_start_tokens_for_roles = set(boundary_config.include_start_tokens_for_roles)
     include_end_tokens_for_roles = set(boundary_config.include_end_tokens_for_roles)
@@ -1479,7 +1565,9 @@ def _assistant_mask_from_boundary_config(
             continue
 
         candidate_end_spans = []
-        for priority, role_end_pattern in enumerate([role_end_tokens[role], *role_end_token_variants.get(role, [])]):
+        for priority, role_end_pattern in enumerate(
+            [role_end_tokens.get(role, []), *role_end_token_variants.get(role, [])]
+        ):
             search_start = content_start
             while search_start < next_marker_start:
                 end_start, after_end = find_token_span(ids, role_end_pattern, search_start)
@@ -1488,14 +1576,18 @@ def _assistant_mask_from_boundary_config(
                 candidate_end_spans.append((end_start, priority, after_end))
                 search_start = end_start + 1
         if not candidate_end_spans:
-            continue
-        if conversation_roles is not None and len({end_start for end_start, _, _ in candidate_end_spans}) != 1:
-            return None
-        end_start, _, after_end = min(candidate_end_spans)
-        role_end_span = (end_start, after_end)
+            if role not in implicit_end_roles:
+                continue
+            role_end_span = None
+            content_end = next_marker_start
+        else:
+            if conversation_roles is not None and len({end_start for end_start, _, _ in candidate_end_spans}) != 1:
+                return None
+            end_start, _, after_end = min(candidate_end_spans)
+            role_end_span = (end_start, after_end)
+            content_end = role_end_span[0]
 
         found_loss_segment = True
-        content_end = role_end_span[0]
         if include_content:
             segment_start = _trim_leading_token_sequences(ids, content_start, content_end, trim_token_sequences)
             segment_start = _trim_leading_token_ids(ids, segment_start, content_end, trim_token_ids)
@@ -1507,7 +1599,11 @@ def _assistant_mask_from_boundary_config(
         if role in include_end_tokens_for_roles and role_end_span is not None:
             mask[role_end_span[0] : role_end_span[1]] = 1.0
 
-    return mask if found_loss_segment else None
+    if found_loss_segment:
+        return mask
+    if truncation_side is not None and expected_loss_roles:
+        return mask
+    return None
 
 
 def build_assistant_loss_mask(
@@ -1517,13 +1613,16 @@ def build_assistant_loss_mask(
     skipped_tokens: torch.Tensor | None = None,
     *,
     boundary_config: AssistantMaskBoundaryConfig | None = None,
+    truncation_side: Literal["left", "right"] | None = None,
     warn_on_all_masked: bool = True,
 ) -> torch.Tensor:
     """Build an unshifted assistant-only loss mask.
 
     The preferred path uses HF chat templates with ``{% generation %}`` blocks.
     When those are unavailable, callers may provide ``boundary_config`` to scan
-    explicit role token boundaries from rendered ``input_ids``.
+    explicit role token boundaries from rendered ``input_ids``. ``truncation_side``
+    allows a boundary scan to validate the surviving prefix or suffix of roles
+    when the caller knows the rendered sequence was truncated.
 
     Raises:
         ValueError: If neither a HF generation mask nor a valid explicit
@@ -1561,6 +1660,7 @@ def build_assistant_loss_mask(
                     ids,
                     boundary_config,
                     conversation_roles=conversation_roles,
+                    truncation_side=truncation_side,
                 )
             if boundary_mask is None and not boundary_scan_is_safe and mask is not None:
                 mask = None
@@ -1590,6 +1690,7 @@ def build_assistant_loss_mask(
                     boundary_config,
                     include_content=False,
                     conversation_roles=conversation_roles,
+                    truncation_side=truncation_side,
                 )
             if boundary_token_mask is not None:
                 mask = torch.maximum(mask, boundary_token_mask)

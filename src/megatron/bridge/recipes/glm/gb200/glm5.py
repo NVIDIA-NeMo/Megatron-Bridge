@@ -119,6 +119,7 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
@@ -176,7 +177,7 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     )
     cfg.dataset.hf_dataset.split = "train[:10000]"
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _TULU3_REVISION}
-    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-full-sft-gb200-8k-v5"
+    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-full-sft-gb200-8k-v6"
     cfg.dataset.hf_rewrite = False
     cfg.dataset.hf_validation_proportion = None
     cfg.dataset.max_train_samples = 10000
@@ -225,6 +226,7 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+
     cfg.model.seq_length = 131072
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
@@ -291,7 +293,6 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.dataset.preprocessing = ChatSFTPreprocessingConfig()
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
-    cfg.dataset.offline_packing_specs.tokenizer_model_name = "glm5"
     # HybridEP needs a fixed token width; CUDA graphs are disabled, so cu_seqlens can remain dynamic.
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
@@ -329,6 +330,7 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+
     cfg.model.seq_length = 2048
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
@@ -396,7 +398,7 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     )
     cfg.dataset.hf_dataset.split = "train[:10000]"
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _TULU3_REVISION}
-    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-peft-gb200"
+    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-peft-gb200-v2"
     cfg.dataset.hf_rewrite = False
     cfg.dataset.hf_validation_proportion = None
     cfg.dataset.max_train_samples = 10000
