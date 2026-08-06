@@ -82,8 +82,8 @@ class Llama3FSDPTestModelProvider(GPTModelProvider):
 
 
 @dataclass
-class DenseHybridFSDPV2TestModelProvider(HybridModelProvider):
-    """Small dense HybridModel configuration for the MFSDP V2 smoke test."""
+class DenseHybridSmokeModelProvider(HybridModelProvider):
+    """Small dense HybridModel configuration for the training smoke test."""
 
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
@@ -133,8 +133,8 @@ def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Ll
     return Llama3FSDPTestModelProvider(**base_config)
 
 
-def create_dense_hybrid_fsdp_v2_model_config(**kwargs) -> DenseHybridFSDPV2TestModelProvider:
-    """Create the dense two-layer HybridModel configuration used by MFSDP V2."""
+def create_dense_hybrid_smoke_model_config(**kwargs) -> DenseHybridSmokeModelProvider:
+    """Create the dense two-layer HybridModel configuration used by the smoke test."""
     base_config = {
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
@@ -147,7 +147,7 @@ def create_dense_hybrid_fsdp_v2_model_config(**kwargs) -> DenseHybridFSDPV2TestM
         "pipeline_dtype": torch.bfloat16,
     }
     base_config.update(kwargs)
-    return DenseHybridFSDPV2TestModelProvider(**base_config)
+    return DenseHybridSmokeModelProvider(**base_config)
 
 
 def create_base_training_config(
@@ -430,7 +430,7 @@ class TestMegatronFSDP:
                 train={"global_batch_size": 2},
                 logger={"log_params_norm": False},
             )
-            cfg.model = create_dense_hybrid_fsdp_v2_model_config()
+            cfg.model = create_dense_hybrid_smoke_model_config()
             cfg.ddp.megatron_fsdp_version = 2
             runtime_config_update(cfg)
 
