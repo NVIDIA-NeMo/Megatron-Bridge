@@ -1132,14 +1132,18 @@ class TestParallelLinearAdapter:
             is_expert=True,
             model_parallel_config=mock_config,
         )
-        same_ep_factory = adapter.sharded_state_dict(
-            prefix="adapter.",
-            metadata={"is_loading": True, "source_expert_model_parallel_size": 2},
-        )["adapter.linear_in.weight"]
-        reshard_factory = adapter.sharded_state_dict(
-            prefix="adapter.",
-            metadata={"is_loading": True, "source_expert_model_parallel_size": 4},
-        )["adapter.linear_in.weight"]
+        sharded_tensor = mock_linear_in.sharded_state_dict.return_value["adapter.linear_in.weight"]
+        same_ep_factory = adapter._apply_expert_axis_factory(
+            sharded_tensor,
+            (),
+            is_loading=True,
+        )
+        reshard_factory = adapter._apply_expert_axis_factory(
+            sharded_tensor,
+            (),
+            is_loading=True,
+            reshard_expert_parallel=True,
+        )
         local_shards = [torch.ones(2, 2), torch.full((2, 2), 3.0)]
 
         with patch("torch.distributed.all_reduce") as mock_all_reduce:
