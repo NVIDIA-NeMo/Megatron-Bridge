@@ -161,6 +161,9 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+
     _benchmark_common(cfg)
     # _enable_hybridep_full_iteration_mxfp8(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
