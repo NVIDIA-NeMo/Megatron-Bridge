@@ -17,9 +17,6 @@ set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
 
-# Ensure required packages are installed
-pip install -q datasets
-
 export CUDA_VISIBLE_DEVICES="0,1"
 
 uv run coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest \
