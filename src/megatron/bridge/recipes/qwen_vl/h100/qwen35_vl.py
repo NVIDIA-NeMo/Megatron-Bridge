@@ -284,6 +284,9 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # The 200,704-pixel real-data budget can produce 32-by-32 vision patch
+    # grids, while the fixed-shape mock performance workload peaks at 784.
+    cfg.model.max_vision_cuda_graph_seq_length = 1024
     return cfg
 
 

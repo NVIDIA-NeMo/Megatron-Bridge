@@ -430,6 +430,7 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.model.recompute_granularity is None
     assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
     assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    assert cfg.model.max_vision_cuda_graph_seq_length == 1024
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
     assert cfg.optimizer.use_precision_aware_optimizer is True

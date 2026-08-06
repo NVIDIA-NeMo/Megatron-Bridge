@@ -549,12 +549,13 @@ items:
       expected_result: >
         Pending a clean 50-step run at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512
         with the same pinned DataComp Energon source and processor revision as
-        functional pretraining. The fixed 200,704-pixel visual budget matches
-        the measured CUDA-graph shape. The recipe uses natural expert routing,
-        HybridEP, scoped Transformer Engine CUDA graphs, and no activation
-        recompute. The earlier mock-data tuning result selected this execution
-        policy but is not evidence for real-data loss or throughput; this leaf
-        remains unverified until the command records its final 10 steps.
+        functional pretraining. Its fixed 200,704-pixel visual budget is bounded
+        by a 1,024-token vision CUDA graph. The recipe uses natural expert
+        routing, HybridEP, scoped Transformer Engine CUDA graphs, and no
+        activation recompute. The earlier mock-data tuning result selected this
+        execution policy but is not evidence for real-data loss or throughput;
+        this leaf remains unverified until the command records its final 10
+        steps.
 
     GB200:
       status: verified
