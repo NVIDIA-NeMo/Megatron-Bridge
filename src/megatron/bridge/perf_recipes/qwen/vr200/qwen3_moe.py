@@ -15,7 +15,6 @@
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
-    CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
     _perf_precision,
@@ -162,17 +161,33 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
-
     _benchmark_common(cfg)
     # _enable_hybridep_full_iteration_mxfp8(cfg)
 
-    cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=True,
-        overlap_moe_expert_parallel_comm=True,
-        delay_wgrad_compute=True,
-    )
+    # cfg.model.cuda_graph_impl = "transformer_engine"
+    # cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.model.offload_modules = []
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+
+    cfg.mixed_precision.fp8_dot_product_attention = True
+
+    cfg.model.recompute_modules = ["core_attn", "moe_act", "layernorm"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
