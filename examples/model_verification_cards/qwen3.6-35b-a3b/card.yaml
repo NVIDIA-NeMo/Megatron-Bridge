@@ -5,8 +5,7 @@ title: qwen3_6_35b_a3b
 summary: >
   Performance scope: pretrain_performance.H100 uses the tuned 16-H100 library
   recipe with the same pinned DataComp source as functional pretraining. The
-  corresponding real-data SFT and LoRA measurements are verified; the
-  real-data pretrain measurement remains unverified pending a clean run.
+  corresponding real-data pretrain, SFT, and LoRA measurements are verified.
   pretrain_performance.GB200 retains its tuned fixed-shape synthetic benchmark.
   Functional timing and throughput remain sanity checks. This card verifies
   conversion, inference, and training.
@@ -26,7 +25,7 @@ verification_index:
       verified: [sft, peft]
       unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
   performance:
-    H100: unverified
+    H100: verified
     GB200: verified
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
@@ -35,7 +34,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: d9b4f9168b247b1068897358f061d82e63f8f1ef  # pragma: allowlist secret
+  bridge_commit: 5db2290dea4887a2ca9072c0d554707bf272945d  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -529,12 +528,12 @@ items:
 
   pretrain_performance:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config
-        --dataset energon --deterministic
+        --dataset energon
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
         --max_steps 50 --warmup_iters 10
@@ -545,26 +544,30 @@ items:
         dataset.do_validation=false dataset.pad_to_max_length=true
         scheduler.lr_decay_iters=50
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044 checkpoint.load=null
+        model.bos_token_id=248044 checkpoint.load=null checkpoint.save=null
         validation.eval_iters=0 validation.eval_interval=0
         logger.log_interval=1 logger.log_throughput=true
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml
-      last_verified: null
+      last_verified: 2026-08-05
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 3.604611
+        final_loss: 3.458849
+        last_10_steps_step_time_ms_avg: 22271.220
+        last_10_steps_model_tflops_per_gpu_avg: 135.610
       expected_result: >
-        Pending a clean 50-step run at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512
-        with the same pinned DataComp Energon source and processor revision as
-        functional pretraining. The recipe uses natural expert routing,
-        HybridEP, scoped Transformer Engine CUDA graphs for the language model,
-        a graph-free vision encoder for variable image shapes, and no activation
-        recompute. The earlier mock-data tuning result selected the fixed-shape
-        execution policy but is not evidence for real-data loss or throughput;
-        this leaf remains unverified until the command records its final 10
-        steps.
+        The exact 16-H100 command completed all 50 DataComp Energon steps at
+        TP1/PP2/CP1/EP8/ETP1, a 16/24 language-layer pipeline split, and
+        MBS1/GBS512. The persisted config confirmed the 248,320-token model
+        vocabulary, natural expert routing, HybridEP, selective core-attention,
+        GDN output-norm, and MoE-activation recompute, scoped Transformer Engine
+        CUDA graphs for language attention/router/preprocessing, a graph-free
+        variable-shape vision encoder, and Transformer Engine fused cross
+        entropy. Loss remained finite from 3.604611 to 3.458849 with zero
+        skipped or NaN iterations. Steps 41-50 averaged 22,271.220 ms and
+        135.610 model TFLOP/s/GPU, and the process exited successfully without
+        checkpoint output. The separate fixed-shape forced-balance tuning screen
+        remains the source of the 185.150-TFLOP/s/GPU leader policy; it is not
+        substituted for this real-data measurement.
 
     GB200:
       status: verified
