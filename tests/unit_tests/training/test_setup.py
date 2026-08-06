@@ -33,7 +33,7 @@ from megatron.bridge.training.setup import (
     _build_distributed_model,
     _register_pre_wrap_hook,
     _register_setup_pre_wrap_hook,
-    _resolve_embedding_ranks_callback,
+    _resolve_embedding_ranks_fn,
     _should_load_checkpoint,
     _update_model_config_funcs,
     _validate_and_set_vocab_size,
@@ -119,12 +119,12 @@ def test_mtp_embedding_group_includes_standalone_mtp_stage(
         share_embeddings_and_output_weights=share_embeddings_and_output_weights,
     )
 
-    get_embedding_ranks = _resolve_embedding_ranks_callback(model_config, None)
+    get_embedding_ranks = _resolve_embedding_ranks_fn(model_config, None)
     explicit_callback = Mock()
 
     assert get_embedding_ranks is not None
     assert get_embedding_ranks([0, 1, 2]) == expected_ranks
-    assert _resolve_embedding_ranks_callback(model_config, explicit_callback) is explicit_callback
+    assert _resolve_embedding_ranks_fn(model_config, explicit_callback) is explicit_callback
 
 
 def test_setup_forwards_model_aware_embedding_ranks_to_parallel_initialization():

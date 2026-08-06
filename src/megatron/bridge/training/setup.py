@@ -95,7 +95,7 @@ def _get_embedding_ranks(
     return embedding_ranks
 
 
-def _resolve_embedding_ranks_callback(
+def _resolve_embedding_ranks_fn(
     model_config: object,
     get_embedding_ranks: Callable[[list[int], Optional[int]], list[int]] | None,
 ) -> Callable[[list[int], Optional[int]], list[int]] | None:
@@ -278,7 +278,7 @@ def setup(
         set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
 
-    get_embedding_ranks = _resolve_embedding_ranks_callback(cfg.model, get_embedding_ranks)
+    get_embedding_ranks = _resolve_embedding_ranks_fn(cfg.model, get_embedding_ranks)
 
     # pg_collection is returned from initialize_megatron:
     # - When use_decentralized_pg=True: uses HyperCommGrid to create local process groups
