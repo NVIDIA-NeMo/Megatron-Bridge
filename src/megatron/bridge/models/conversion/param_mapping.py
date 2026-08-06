@@ -993,7 +993,11 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
                 hf_weights = hf_weights.to(target_param.dtype)
 
             actual_dim0_size = hf_weights.shape[0]
-            expect_dim0_size = target_param.shape[0] * self.tp_size
+            # DTensor.shape is already the global shape across TP ranks, while
+            # a regular Megatron parameter stores only its local TP shard.
+            expect_dim0_size = target_param.shape[0]
+            if not isinstance(target_param, DTensor):
+                expect_dim0_size *= self.tp_size
             if actual_dim0_size != expect_dim0_size:
                 assert self.megatron_param in {"embedding.word_embeddings.weight", "output_layer.weight"}, (
                     f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
