@@ -387,13 +387,13 @@ class TestSafeLoadConfigWithRetry:
 
                     assert result == self.mock_config
 
-    def test_custom_lock_directory_with_pathlib_path(self):
+    def test_custom_lock_directory_with_pathlib_path(self, tmp_path):
         """Test that custom lock directory works with pathlib.Path inputs."""
         mock_lock = MagicMock()
-        custom_lock_dir = "/shared/cluster/locks"
+        custom_lock_dir = tmp_path / "locks"
         path_obj = Path(self.test_path)
 
-        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": custom_lock_dir}):
+        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": str(custom_lock_dir)}):
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
                 mock_filelock.return_value = mock_lock
                 mock_lock.__enter__ = Mock(return_value=mock_lock)
