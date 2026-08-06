@@ -368,6 +368,7 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
         "model": {
             "tensor_model_parallel_size": getattr(args, "tensor_model_parallel_size", 1),
             "pipeline_model_parallel_size": getattr(args, "pipeline_model_parallel_size", 1),
+            "expert_model_parallel_size": getattr(args, "expert_model_parallel_size", 1),
             "encoder_tensor_model_parallel_size": getattr(args, "encoder_tensor_model_parallel_size", 0),
             "encoder_pipeline_model_parallel_size": getattr(args, "encoder_pipeline_model_parallel_size", 0),
         },
@@ -3824,7 +3825,7 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
 
 
 def _checkpoint_expert_parallel_size(checkpoint_path: str | Path) -> int | None:
-    """Read the source expert-parallel size from a checkpoint run config, if present."""
+    """Read the source expert-parallel size from checkpoint configuration, if present."""
 
     path_type = MultiStorageClientFeature.import_package().Path if MultiStorageClientFeature.is_enabled() else Path
     checkpoint_path = path_type(str(checkpoint_path))
@@ -3838,6 +3839,19 @@ def _checkpoint_expert_parallel_size(checkpoint_path: str | Path) -> int | None:
             expert_parallel_size = model_config.get("expert_model_parallel_size")
             if expert_parallel_size is not None:
                 return int(expert_parallel_size)
+
+    try:
+        common_state_dict = dist_checkpointing.load_common_state_dict(str(checkpoint_path))
+    except Exception:
+        logger.debug("Unable to inspect common checkpoint state at %s", checkpoint_path, exc_info=True)
+        return None
+    args = common_state_dict.get("args") if isinstance(common_state_dict, Mapping) else None
+    if isinstance(args, Mapping):
+        expert_parallel_size = args.get("expert_model_parallel_size")
+    else:
+        expert_parallel_size = getattr(args, "expert_model_parallel_size", None)
+    if expert_parallel_size is not None:
+        return int(expert_parallel_size)
     return None
 
 

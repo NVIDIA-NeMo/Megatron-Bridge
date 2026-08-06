@@ -1164,6 +1164,35 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_shared_grouped_expert_load_rejects_unknown_source_ep(self, mock_row_linear, mock_col_linear, mock_config):
+        """An EP>1 load must not silently assume that an unknown source topology is unchanged."""
+        del mock_row_linear
+        mock_linear_in = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", torch.zeros(2, 2), replica_id=(0, 0, 0)
+            ),
+        }
+        mock_linear_out = Mock()
+        mock_linear_out.sharded_state_dict.return_value = {}
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+
+        with pytest.raises(ValueError, match="requires the source expert_model_parallel_size"):
+            adapter.sharded_state_dict(prefix="adapter.", metadata={"is_loading": True})
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_grad_across_ep(
         self, mock_row_linear, mock_col_linear, mock_config
     ):

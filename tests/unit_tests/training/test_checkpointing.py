@@ -2895,6 +2895,7 @@ class TestMegatronLMCompatibility:
         mock_args = Mock()
         mock_args.tensor_model_parallel_size = 2
         mock_args.pipeline_model_parallel_size = 4
+        mock_args.expert_model_parallel_size = 8
         mock_args.encoder_tensor_model_parallel_size = 1
         mock_args.encoder_pipeline_model_parallel_size = 2
         mock_args.no_save_optim = False  # Will become save_optim = True
@@ -2909,6 +2910,7 @@ class TestMegatronLMCompatibility:
             "model": {
                 "tensor_model_parallel_size": 2,
                 "pipeline_model_parallel_size": 4,
+                "expert_model_parallel_size": 8,
                 "encoder_tensor_model_parallel_size": 1,
                 "encoder_pipeline_model_parallel_size": 2,
             },
@@ -2941,6 +2943,7 @@ class TestMegatronLMCompatibility:
             "model": {
                 "tensor_model_parallel_size": 1,
                 "pipeline_model_parallel_size": 1,  # default
+                "expert_model_parallel_size": 1,  # default
                 "encoder_tensor_model_parallel_size": 0,  # default
                 "encoder_pipeline_model_parallel_size": 0,  # default
             },
@@ -3796,6 +3799,23 @@ class TestFSDPDTensorFunctionality:
 
         assert result == 4
         mock_read_run_config.assert_called_once_with(parent_config)
+
+    def test_checkpoint_expert_parallel_size_falls_back_to_legacy_args(self):
+        """Legacy distributed checkpoints can provide EP topology through their common args."""
+        from megatron.bridge.training.checkpointing import _checkpoint_expert_parallel_size
+
+        common_state_dict = {"args": Mock(expert_model_parallel_size=4)}
+        with (
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=False),
+            patch(
+                "megatron.bridge.training.checkpointing.dist_checkpointing.load_common_state_dict",
+                return_value=common_state_dict,
+            ) as mock_load_common_state_dict,
+        ):
+            result = _checkpoint_expert_parallel_size("/checkpoints/iter_0000001")
+
+        assert result == 4
+        mock_load_common_state_dict.assert_called_once_with("/checkpoints/iter_0000001")
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     @patch("torch.distributed.checkpoint.FileSystemReader")

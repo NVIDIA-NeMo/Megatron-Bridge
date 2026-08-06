@@ -1514,6 +1514,12 @@ class ParallelLinearAdapter(nn.Module):
                 metadata.get("expert_model_parallel_size"),
             )
         destination_ep_size = _process_group_size(self.ep_group, self.config.expert_model_parallel_size or 1)
+        if is_loading and source_ep_size is None and destination_ep_size > 1:
+            raise ValueError(
+                "Shared grouped-expert adapter loading at EP>1 requires the source "
+                "expert_model_parallel_size in run_config.yaml, legacy checkpoint args, "
+                "or model sharded-state metadata."
+            )
         reshard_expert_parallel = source_ep_size is not None and source_ep_size != destination_ep_size
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
