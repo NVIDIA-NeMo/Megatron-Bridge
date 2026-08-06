@@ -1067,10 +1067,13 @@ class ConfigContainer(Container):
         self.dist.use_megatron_fsdp = True
         self.ddp.use_megatron_fsdp = True
 
-        if self.ddp.megatron_fsdp_version == 2:
+        if self.ddp.megatron_fsdp_version == 1:
+            self._validate_and_apply_megatron_fsdp_v1_configs()
+        else:
             self._validate_and_apply_megatron_fsdp_v2_configs()
-            return
 
+    def _validate_and_apply_megatron_fsdp_v1_configs(self) -> None:
+        """Validate and apply the established MFSDP V1 training contract."""
         # Megatron-FSDP always uses a distributed optimizer.
         if not self.ddp.use_distributed_optimizer or not self.optimizer.use_distributed_optimizer:
             print_rank_0("use_distributed_optimizer=True is required for Megatron-FSDP. Activating...")
