@@ -14,6 +14,8 @@
 
 """Declarative configuration for offline GPT SFT sequence packing."""
 
+import math
+import numbers
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +33,7 @@ class PackedSequenceSpecs:
     tokenizer_model_name: str | None = None
     num_tokenizer_workers: int = -1
     packed_train_data_path: str | Path | None = None
+    packed_train_data_blend: tuple[list[str | Path], list[float]] | None = None
     packed_val_data_path: str | Path | None = None
     packed_metadata_path: str | Path | None = None
     pad_cu_seqlens: bool = False
@@ -38,8 +41,12 @@ class PackedSequenceSpecs:
 
     def __post_init__(self) -> None:
         """Validate alignment settings and any explicitly supplied artifacts."""
+        if self.packed_train_data_path is not None and self.packed_train_data_blend is not None:
+            raise ValueError("Set either packed_train_data_path or packed_train_data_blend, not both.")
         if self.packed_train_data_path is not None:
             self._validate_packed_path("packed_train_data_path", self.packed_train_data_path)
+        if self.packed_train_data_blend is not None:
+            self._validate_packed_train_data_blend()
         if self.packed_val_data_path is not None:
             self._validate_packed_path("packed_val_data_path", self.packed_val_data_path)
         if self.pad_seq_to_mult is not None and self.pad_seq_to_mult <= 0:
@@ -78,3 +85,58 @@ class PackedSequenceSpecs:
             f"{attr_name} must be a .npy file or a packed parquet spec "
             f"(file/directory/glob ending in .parquet or .pq): {path_str}"
         )
+
+    def _validate_packed_train_data_blend(self) -> None:
+        """Validate weighted packed Parquet training sources."""
+        blend = self.packed_train_data_blend
+        assert blend is not None
+        if not isinstance(blend, (tuple, list)) or len(blend) != 2:
+            raise TypeError("packed_train_data_blend must be a (sources, weights) pair.")
+
+        sources, weights = blend
+        if isinstance(sources, (str, Path)) or not isinstance(sources, (tuple, list)):
+            raise TypeError("packed_train_data_blend sources must be a list of packed Parquet specs.")
+        if not isinstance(weights, (tuple, list)):
+            raise TypeError("packed_train_data_blend weights must be a list of positive numbers.")
+        if len(sources) < 2:
+            raise ValueError("packed_train_data_blend requires at least two sources.")
+        if len(sources) != len(weights):
+            raise ValueError("packed_train_data_blend sources and weights must have the same length.")
+
+        normalized_sources: list[str] = []
+        normalized_weights: list[float] = []
+        for source_index, source in enumerate(sources):
+            source_str = str(source)
+            if not is_packed_parquet_spec(source_str):
+                raise ValueError(
+                    "packed_train_data_blend only supports packed Parquet sources; "
+                    f"source {source_index} is invalid: {source_str}"
+                )
+            try:
+                if not resolve_packed_parquet_paths(source_str):
+                    raise FileNotFoundError(f"source {source_index} resolved to no files: {source_str}")
+            except ValueError as error:
+                raise FileNotFoundError(
+                    f"packed_train_data_blend source {source_index} could not be resolved: "
+                    f"{source_str}. Error: {error}"
+                ) from error
+            normalized_sources.append(source_str)
+
+        for weight_index, weight in enumerate(weights):
+            if isinstance(weight, bool) or not isinstance(weight, numbers.Real):
+                raise TypeError(f"packed_train_data_blend weight {weight_index} must be a number, got {weight!r}.")
+            normalized_weight = float(weight)
+            if not math.isfinite(normalized_weight) or normalized_weight <= 0.0:
+                raise ValueError(
+                    f"packed_train_data_blend weight {weight_index} must be finite and greater than 0, got {weight!r}."
+                )
+            normalized_weights.append(normalized_weight)
+
+        try:
+            weight_sum = math.fsum(normalized_weights)
+        except OverflowError as error:
+            raise ValueError("packed_train_data_blend weights must have a finite sum.") from error
+        if not math.isfinite(weight_sum):
+            raise ValueError("packed_train_data_blend weights must have a finite sum.")
+
+        self.packed_train_data_blend = (normalized_sources, normalized_weights)
