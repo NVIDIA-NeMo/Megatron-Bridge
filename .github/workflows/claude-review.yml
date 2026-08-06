@@ -28,11 +28,13 @@ jobs:
     # Subsequent commits do not re-trigger; re-request a review by commenting
     # "/claude review" (handled by the manual-review job below).
     # Skip bot-generated PRs: dependency bumps (`bump-ci-container-*`) and
-    # auto cherry-picks (`cherry-pick-*`).
+    # auto cherry-picks (`cherry-pick-*`). Fork pull requests do not receive an
+    # OIDC token, so their review must also use the maintainer-triggered path.
     if: |
       github.event_name == 'pull_request' &&
       needs.pre-flight.outputs.is_member == 'true' &&
       github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&
       !startsWith(github.event.pull_request.head.ref, 'cherry-pick-')
     runs-on: ubuntu-latest
