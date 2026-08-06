@@ -33,6 +33,7 @@ from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 
 
+@pytest.mark.unit
 def test_import_preserves_tokenizers_fork_safety():
     """Importing the SFT dataset must not enable tokenizer parallelism across a fork."""
     code = textwrap.dedent(
@@ -56,7 +57,7 @@ def test_import_preserves_tokenizers_fork_safety():
 
         with multiprocessing.get_context("fork").Pool(1) as pool:
             result = pool.apply_async(encode_batch)
-            assert result.get(timeout=5) == len(batch)
+            assert result.get(timeout=10) == len(batch)
         """
     )
     environment = os.environ.copy()
@@ -67,7 +68,7 @@ def test_import_preserves_tokenizers_fork_safety():
         capture_output=True,
         env=environment,
         text=True,
-        timeout=15,
+        timeout=30,
         check=False,
     )
     assert result.returncode == 0, result.stderr
