@@ -55,6 +55,7 @@ _PERF_RECIPE_DEF_PATTERN = re.compile(r"^def ([a-zA-Z0-9_]+_config)\(", re.MULTI
 _PRECISION_NAME_MAP = {
     "bf16": "bf16",
     "fp8_cs": "fp8cs",
+    "fp8_ds": "fp8ds",
     "fp8_mx": "fp8mx",
     "fp8_sc": "fp8sc",
     "nvfp4": "nvfp4",
