@@ -2216,10 +2216,11 @@ def _load_model_weights_from_checkpoint(
 
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
+    source_ep_size = _checkpoint_expert_parallel_size(checkpoint_path)
     model_sd_kwargs = dict(
         metadata=_model_sharded_state_dict_load_metadata(
             sharded_sd_metadata,
-            source_expert_parallel_size=_checkpoint_expert_parallel_size(checkpoint_path),
+            source_expert_parallel_size=source_ep_size,
         )
     )
 
@@ -2227,6 +2228,10 @@ def _load_model_weights_from_checkpoint(
     restore_modelopt_state(model, state_dict)
 
     model = unwrap_model(model)
+    if source_ep_size is None:
+        from megatron.bridge.peft.utils import validate_shared_expert_adapter_source_ep
+
+        validate_shared_expert_adapter_source_ep(model, source_ep_size)
     pg_collection = get_pg_collection(model)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
 
@@ -2734,6 +2739,7 @@ def _load_checkpoint_from_path(
                 "model": {
                     "tensor_model_parallel_size": cfg.model.tensor_model_parallel_size,
                     "pipeline_model_parallel_size": cfg.model.pipeline_model_parallel_size,
+                    "expert_model_parallel_size": cfg.model.expert_model_parallel_size,
                     "encoder_tensor_model_parallel_size": getattr(cfg.model, "encoder_tensor_model_parallel_size", 0),
                     "encoder_pipeline_model_parallel_size": getattr(
                         cfg.model, "encoder_pipeline_model_parallel_size", 0
@@ -2857,6 +2863,10 @@ def _load_checkpoint_from_path(
         source_ep_size = (
             source_model_config.get("expert_model_parallel_size") if isinstance(source_model_config, Mapping) else None
         )
+        if source_ep_size is None:
+            from megatron.bridge.peft.utils import validate_shared_expert_adapter_source_ep
+
+            validate_shared_expert_adapter_source_ep(model, source_ep_size)
         model_sd_kwargs = dict(
             metadata=_model_sharded_state_dict_load_metadata(
                 sharded_sd_metadata,

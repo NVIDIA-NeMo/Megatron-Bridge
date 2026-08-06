@@ -240,6 +240,14 @@ def enable_legacy_shared_expert_adapter_loading(
         True if at least one shared expert adapter was marked for legacy loading.
     """
 
+    legacy_candidates = []
+    for factory in _iter_sharded_tensor_factories(sharded_state_dict):
+        adapter_key = _legacy_shared_expert_adapter_key(factory)
+        if adapter_key is not None:
+            legacy_candidates.append((factory, adapter_key))
+    if not legacy_candidates:
+        return False
+
     checkpoint_metadata = dist_checkpointing.load_tensors_metadata(str(checkpoint_path))
     models = megatron_model if isinstance(megatron_model, list) else [megatron_model]
     adapters_by_name: dict[str, ParallelLinearAdapter] = {}
@@ -249,10 +257,7 @@ def enable_legacy_shared_expert_adapter_loading(
                 adapters_by_name[name.removeprefix("module.")] = module
 
     enabled = False
-    for factory in _iter_sharded_tensor_factories(sharded_state_dict):
-        adapter_key = _legacy_shared_expert_adapter_key(factory)
-        if adapter_key is None:
-            continue
+    for factory, adapter_key in legacy_candidates:
         built = factory.build()
         shards = built if isinstance(built, list) else [built]
         expected_shape = tuple(shards[0].global_shape)
@@ -263,6 +268,33 @@ def enable_legacy_shared_expert_adapter_loading(
                 enabled = True
 
     return enabled
+
+
+def validate_shared_expert_adapter_source_ep(
+    megatron_model: list[nn.Module] | nn.Module,
+    source_expert_parallel_size: int | None,
+) -> None:
+    """Reject ambiguous EP>1 shared-adapter loads after legacy detection."""
+
+    if source_expert_parallel_size is not None:
+        return
+    models = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+    for model in models:
+        if not isinstance(model, nn.Module):
+            continue
+        for module in model.modules():
+            if not isinstance(module, ParallelLinearAdapter) or not module._uses_grouped_expert_sharding():
+                continue
+            destination_ep_size = _process_group_size(
+                module.ep_group,
+                module.config.expert_model_parallel_size or 1,
+            )
+            if destination_ep_size > 1:
+                raise ValueError(
+                    "Shared grouped-expert adapter loading at EP>1 requires the source "
+                    "expert_model_parallel_size in run_config.yaml, legacy checkpoint args, "
+                    "or model sharded-state metadata."
+                )
 
 
 def _get_process_group(pg_collection: ProcessGroupCollection | None, *names: str) -> object | None:
@@ -412,9 +444,10 @@ def load_peft_adapter_checkpoint(
 
     model_chunks = _ensure_model_list(model)
     model_sd_kwargs = dict(model_sd_kwargs or {})
+    source_expert_parallel_size = _checkpoint_expert_parallel_size(adapter_checkpoint_path)
     model_sd_kwargs["metadata"] = _model_sharded_state_dict_load_metadata(
         model_sd_kwargs.get("metadata"),
-        source_expert_parallel_size=_checkpoint_expert_parallel_size(adapter_checkpoint_path),
+        source_expert_parallel_size=source_expert_parallel_size,
     )
     sharded_state_dict = _model_state_dict(
         model_chunks,
@@ -423,6 +456,21 @@ def load_peft_adapter_checkpoint(
         pg_collection=pg_collection,
     )
     sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, peft)
+    legacy_shared_expert_adapter = enable_legacy_shared_expert_adapter_loading(
+        model_chunks,
+        sharded_state_dict,
+        adapter_checkpoint_path,
+    )
+    if legacy_shared_expert_adapter:
+        sharded_state_dict = _model_state_dict(
+            model_chunks,
+            model_sd_kwargs,
+            ckpt_format,
+            pg_collection=pg_collection,
+        )
+        sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, peft)
+    else:
+        validate_shared_expert_adapter_source_ep(model_chunks, source_expert_parallel_size)
 
     checkpoint_path = str(adapter_checkpoint_path)
     if load_strategy is None:
@@ -1514,12 +1562,6 @@ class ParallelLinearAdapter(nn.Module):
                 metadata.get("expert_model_parallel_size"),
             )
         destination_ep_size = _process_group_size(self.ep_group, self.config.expert_model_parallel_size or 1)
-        if is_loading and source_ep_size is None and destination_ep_size > 1:
-            raise ValueError(
-                "Shared grouped-expert adapter loading at EP>1 requires the source "
-                "expert_model_parallel_size in run_config.yaml, legacy checkpoint args, "
-                "or model sharded-state metadata."
-            )
         reshard_expert_parallel = source_ep_size is not None and source_ep_size != destination_ep_size
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)

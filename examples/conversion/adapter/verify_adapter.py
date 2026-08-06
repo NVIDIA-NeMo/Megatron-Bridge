@@ -155,6 +155,10 @@ def _build_megatron_lora_model(
 
     from megatron.bridge.models.conversion.auto_bridge import AutoBridge
     from megatron.bridge.peft.lora import LoRA, VLMLoRA
+    from megatron.bridge.peft.utils import (
+        enable_legacy_shared_expert_adapter_loading,
+        validate_shared_expert_adapter_source_ep,
+    )
     from megatron.bridge.training.checkpointing import (
         _checkpoint_expert_parallel_size,
         _generate_model_state_dict,
@@ -224,15 +228,26 @@ def _build_megatron_lora_model(
         init_model_with_meta_device=False,
     )
 
+    source_expert_parallel_size = _checkpoint_expert_parallel_size(ckpt_path)
     model_sd_kwargs = {
         "metadata": _model_sharded_state_dict_load_metadata(
             None,
-            source_expert_parallel_size=_checkpoint_expert_parallel_size(ckpt_path),
+            source_expert_parallel_size=source_expert_parallel_size,
         )
     }
     sharded_sd = _generate_model_state_dict(model, model_sd_kwargs)
     sharded_sd = apply_peft_adapter_filter_to_state_dict(sharded_sd, lora)
-    loaded_sd = dist_checkpointing.load(sharded_sd, str(ckpt_path))
+    legacy_shared_expert_adapter = enable_legacy_shared_expert_adapter_loading(model, sharded_sd, ckpt_path)
+    if legacy_shared_expert_adapter:
+        sharded_sd = _generate_model_state_dict(model, model_sd_kwargs)
+        sharded_sd = apply_peft_adapter_filter_to_state_dict(sharded_sd, lora)
+    else:
+        validate_shared_expert_adapter_source_ep(model, source_expert_parallel_size)
+    loaded_sd = dist_checkpointing.load(
+        sharded_sd,
+        str(ckpt_path),
+        validate_access_integrity=not legacy_shared_expert_adapter,
+    )
     model_key = "model" if "model" in loaded_sd else next(k for k in loaded_sd if k.startswith("model"))
     model[0].load_state_dict(loaded_sd[model_key], strict=False)
 

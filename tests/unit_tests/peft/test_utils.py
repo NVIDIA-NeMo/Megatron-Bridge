@@ -43,6 +43,7 @@ from megatron.bridge.peft.utils import (
     is_grouped_expert_linear,
     pad_seq_to_mult,
     unpad_seq_to_mult,
+    validate_shared_expert_adapter_source_ep,
     wildcard_match,
 )
 
@@ -1188,8 +1189,10 @@ class TestParallelLinearAdapter:
             model_parallel_config=mock_config,
         )
 
+        model = nn.Module()
+        model.add_module("adapter", adapter)
         with pytest.raises(ValueError, match="requires the source expert_model_parallel_size"):
-            adapter.sharded_state_dict(prefix="adapter.", metadata={"is_loading": True})
+            validate_shared_expert_adapter_source_ep(model, None)
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
@@ -1418,7 +1421,10 @@ class TestParallelLinearAdapter:
             model_parallel_config=mock_config,
         )
         sharded_state_dict = {
-            "model": adapter.sharded_state_dict(prefix="decoder.layers.0.mlp.experts.linear_fc2.adapter.")
+            "model": adapter.sharded_state_dict(
+                prefix="decoder.layers.0.mlp.experts.linear_fc2.adapter.",
+                metadata={"is_loading": True},
+            )
         }
         metadata = {
             "decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_in.weight": ShardedTensor.from_rank_offsets(

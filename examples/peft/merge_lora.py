@@ -57,7 +57,10 @@ from megatron.core import dist_checkpointing
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.peft.lora import LoRA, VLMLoRA
-from megatron.bridge.peft.utils import enable_legacy_shared_expert_adapter_loading
+from megatron.bridge.peft.utils import (
+    enable_legacy_shared_expert_adapter_loading,
+    validate_shared_expert_adapter_source_ep,
+)
 from megatron.bridge.training.checkpointing import (
     _checkpoint_expert_parallel_size,
     _generate_model_state_dict,
@@ -223,10 +226,11 @@ def merge_lora(
     # 3) Load weights from the fine-tuned checkpoint
     print_rank_0(f"Loading LoRA adapter weights from {lora_dir}")
     # Generate full sharded_state_dict describing all model tensors
+    source_expert_parallel_size = _checkpoint_expert_parallel_size(lora_dir)
     model_sd_kwargs = {
         "metadata": _model_sharded_state_dict_load_metadata(
             None,
-            source_expert_parallel_size=_checkpoint_expert_parallel_size(lora_dir),
+            source_expert_parallel_size=source_expert_parallel_size,
         )
     }
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
@@ -236,6 +240,8 @@ def merge_lora(
     if legacy_shared_expert_adapter:
         sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
         sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora_peft)
+    else:
+        validate_shared_expert_adapter_source_ep(model, source_expert_parallel_size)
 
     # Load those tensors from the checkpoint directory
     loaded_sd = dist_checkpointing.load(
