@@ -15,6 +15,7 @@
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
+    CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
     _perf_precision,
@@ -166,6 +167,13 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     # _enable_hybridep_full_iteration_mxfp8(cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
