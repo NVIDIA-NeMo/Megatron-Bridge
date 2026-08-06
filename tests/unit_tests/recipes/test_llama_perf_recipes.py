@@ -78,3 +78,33 @@ def test_llama3_finetune_perf_recipes_use_offline_packing_specs(
     assert config.dataset.offline_packing_specs.packed_sequence_size == config.dataset.seq_length
     assert not hasattr(config.dataset, "packed_sequence_specs")
     assert config.dataset.dataset_kwargs["pad_to_max_length"] is True
+
+
+@pytest.mark.unit
+def test_llama3_70b_gb200_nvfp4_captures_whole_transformer_layer() -> None:
+    """The 64-GPU GB200 NVFP4 recipe captures the whole Transformer layer per graph.
+
+    Megatron-Core expresses whole-layer coverage as an empty ``cuda_graph_modules``; the field's
+    ``"full"`` default normalizes to the same empty list, and ``"full"`` itself is deprecated.
+    ``clear_cuda_graph_modules()`` also clears the deprecated ``cuda_graph_scope`` so the config
+    stays off the conversion path in ``TransformerConfig.__post_init__``.
+    """
+    from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
+        llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
+    )
+
+    cfg = llama3_70b_pretrain_64gpu_gb200_nvfp4_config()
+
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_modules == []
+    assert cfg.model.cuda_graph_scope is None
+
+    # TE RNG trackers are derived from graphs being active, not assigned by the recipe.
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+
+    # Parallelism and batch are unchanged by the capture-scope setting.
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 5
+    assert cfg.train.global_batch_size == 256
