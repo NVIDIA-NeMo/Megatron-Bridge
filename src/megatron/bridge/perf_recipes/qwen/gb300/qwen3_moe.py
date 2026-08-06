@@ -543,6 +543,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 64× GB300, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.comm_overlap.tp_comm_overlap = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -572,6 +573,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× GB300, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.comm_overlap.tp_comm_overlap = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -592,6 +594,33 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 8× GB300, NVFP4 (same layout as FP8-CS).
+
+    NVFP4's fp4_param_gather path is incompatible with TP comm overlap, so it
+    is disabled here.
+    """
+    cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.comm_overlap.tp_comm_overlap = False
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
