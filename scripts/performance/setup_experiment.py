@@ -49,11 +49,6 @@ except (ImportError, ModuleNotFoundError):
     from .utils.utils import configure_slurm_gpu_tuning, select_config_variant_interactive
 
 try:
-    from nemo_run.core.execution.xcalibur import XCaliburExecutor as _XCaliburExecutor
-except ImportError:
-    _XCaliburExecutor = None  # type: ignore[assignment,misc]
-
-try:
     import wandb
 
     HAVE_WANDB = True
@@ -636,7 +631,7 @@ def main(
         # runs. Creating the dir from the launcher would either fail (PVC
         # not present) or create a useless dir on the launcher's local FS.
         # Let the trainer container create its own dirs on first write.
-        if kubeflow_namespace is None:
+        if kubeflow_namespace is None and xcalibur_namespace is None:
             save_dir_path.mkdir(parents=True, exist_ok=True)
             save_dir_mount = f"{save_dir_path}:{save_dir_path}"
             if save_dir_mount not in custom_mounts:
@@ -719,7 +714,7 @@ def main(
         executor = xcalibur_executor(
             namespace=xcalibur_namespace,
             image=container_image,
-            num_nodes=num_gpus // gpus_per_node,
+            num_nodes=-(num_gpus // -gpus_per_node),
             gpus_per_node=gpus_per_node,
             image_pull_secret=xcalibur_image_pull_secret,
             workdir_pvc=xcalibur_workdir_pvc,

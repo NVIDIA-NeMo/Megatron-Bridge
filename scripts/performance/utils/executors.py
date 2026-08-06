@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional
 import nemo_run as run
 from nemo_run.config import get_nemorun_home, set_nemorun_home
 from nemo_run.core.execution.launcher import SlurmTemplate
-from nemo_run.core.execution.xcalibur import XCaliburExecutor
 
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
@@ -380,7 +379,8 @@ def xcalibur_executor(
     test_scale: Optional[str] = None,
     kubeconfig: Optional[str] = None,
     kube_context: Optional[str] = None,
-) -> XCaliburExecutor:
+):
+    from nemo_run.core.execution.xcalibur import XCaliburExecutor
     return XCaliburExecutor(
         namespace=namespace,
         container_image=image,
