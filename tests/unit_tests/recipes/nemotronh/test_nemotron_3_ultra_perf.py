@@ -169,17 +169,24 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("recipe_factory", "pipeline_parallel_size", "use_megatron_fsdp", "checkpoint_format"),
+    (
+        "recipe_factory",
+        "pipeline_parallel_size",
+        "expert_parallel_size",
+        "use_megatron_fsdp",
+        "checkpoint_format",
+    ),
     [
-        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config, 1, True, "fsdp_dtensor"),
-        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config, 2, False, "torch_dist"),
-        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 1, True, "fsdp_dtensor"),
-        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config, 4, False, "torch_dist"),
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config, 1, 32, True, "fsdp_dtensor"),
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config, 2, 32, False, "torch_dist"),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 1, 64, True, "fsdp_dtensor"),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config, 4, 64, False, "torch_dist"),
     ],
 )
 def test_gb200_ultra_bf16_verification_recipes_are_convergence_safe(
     recipe_factory,
     pipeline_parallel_size: int,
+    expert_parallel_size: int,
     use_megatron_fsdp: bool,
     checkpoint_format: str,
 ) -> None:
@@ -192,7 +199,7 @@ def test_gb200_ultra_bf16_verification_recipes_are_convergence_safe(
     assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_model_parallel_size == expert_parallel_size
     assert cfg.model.sequence_parallel is True
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
@@ -222,7 +229,7 @@ def test_gb200_ultra_bf16_verification_recipes_are_convergence_safe(
     assert cfg.checkpoint.ckpt_format == checkpoint_format
     assert cfg.logger.log_throughput is True
 
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expert_parallel_size
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1

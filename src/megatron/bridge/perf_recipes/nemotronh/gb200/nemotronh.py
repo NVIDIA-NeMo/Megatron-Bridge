@@ -358,11 +358,12 @@ def _nemotron_3_ultra_pretrain_gb200_bf16_base() -> ConfigContainer:
 def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config() -> ConfigContainer:
     """Nemotron 3 Ultra verification: 128× GB200, BF16, Megatron-FSDP HSDP.
 
-    Uses TP2/PP1/CP1/EP64 so the two 64-GPU HybridEP domains remain intact.
-    Parameters, gradients, and optimizer state are sharded within each domain.
+    Uses TP2/PP1/CP1/EP32 for four expert-data-parallel replicas. Parameters,
+    gradients, and optimizer state are sharded within each 64-GPU domain.
     """
     cfg = _nemotron_3_ultra_pretrain_gb200_bf16_base()
     cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
 
     _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=128)
     cfg.dist.use_megatron_fsdp = True
@@ -381,7 +382,7 @@ def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config() -> ConfigContainer
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -396,11 +397,12 @@ def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config() -> ConfigContainer
 def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Ultra verification: 128× GB200, BF16, distributed optimizer.
 
-    TP2/PP2/CP1/EP64 is the integral 128-GPU counterpart of the 256-GPU PP4
-    recipe and keeps 54 model layers on each pipeline stage.
+    TP2/PP2/CP1/EP32 yields two expert-data-parallel replicas and keeps 54
+    model layers on each pipeline stage.
     """
     cfg = _nemotron_3_ultra_pretrain_gb200_bf16_base()
     cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.ddp.use_megatron_fsdp = False
     cfg.dist.use_megatron_fsdp = False
@@ -415,7 +417,7 @@ def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
