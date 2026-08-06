@@ -42,6 +42,8 @@ from transformers import (
 )
 from transformers.models.qwen3_vl import Qwen3VLConfig
 
+from tests.functional_tests.fixture_utils import resolve_test_data_file
+
 
 HF_QWEN3_VL_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen3VLForConditionalGeneration"],
@@ -325,6 +327,10 @@ class TestQwen3VLGeneration:
         Args:
             qwen3_vl_toy_model_path: Path to the toy Qwen3 VL model (from fixture)
         """
+        image_path = resolve_test_data_file(
+            "megatron_bridge/assets/demo.jpeg",
+            "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+        )
         cmd = [
             "python",
             "-m",
@@ -332,7 +338,7 @@ class TestQwen3VLGeneration:
             "--nproc_per_node=2",
             "examples/conversion/hf_to_megatron_generate_vlm.py",
             f"--hf_model_path={qwen3_vl_toy_model_path}",
-            "--image_path=https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+            f"--image_path={image_path}",
             "--prompt=Describe this image.",
         ]
 

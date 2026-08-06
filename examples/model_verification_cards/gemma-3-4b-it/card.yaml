@@ -11,9 +11,9 @@ summary: >
   vision namespace gate does not pass; SFT, post-SFT export/inference, and
   PEFT remain pending. Pretraining and checkpoint resume are unsupported
   because there is no public exact-model pretraining recipe. Long-context SFT
-  is unsupported because the required arbitrary multimodal mask currently
-  excludes context parallelism and in-batch THD packing. Existing toy-model
-  tests are not used as exact-model evidence.
+  is unsupported because the required dense local/global attention biases
+  currently exclude context parallelism and in-batch THD packing. Existing
+  toy-model tests are not used as exact-model evidence.
 verification_index:
   model_level:
     verified:
@@ -35,11 +35,12 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 2d0175b116af6cb785bb8efab7ee053435496266  # pragma: allowlist secret
+  bridge_commit: 330f87c0a391eb2770cbf2306352cc807211d7ba  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
     status: verified
+    bridge_commit: 2d0175b116af6cb785bb8efab7ee053435496266  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
@@ -56,6 +57,7 @@ items:
 
   hf_to_megatron_gpu:
     status: verified
+    bridge_commit: 2d185b9619c302281eb1a3219b3c7afaee940afc  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -63,12 +65,13 @@ items:
       --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: 2026-07-24
+    last_verified: 2026-07-30
     expected_result: >
       Exact-revision distributed BF16 import completed with TP2/PP2/EP1/ETP1.
       All 781 Bridge tensors loaded and all four ranks saved a reloadable
       checkpoint with the vision tower and multimodal projector on the owning
-      pipeline stage.
+      pipeline stage. Independent TP2/PP2 and Gloo reloads retained
+      FusedAttention and matched all 883 mapped tensors exactly.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -92,6 +95,7 @@ items:
 
   megatron_to_hf_gpu:
     status: verified
+    bridge_commit: 2d185b9619c302281eb1a3219b3c7afaee940afc  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -101,7 +105,7 @@ items:
       --hf-path work/model-verification/gemma-3-4b-it/hf-export
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: 2026-07-24
+    last_verified: 2026-07-30
     expected_result: >
       TP2/PP2 distributed export completed without a missing PP owner. Source
       and export contained the same 883 keys with exact shapes, dtypes, and
@@ -123,16 +127,17 @@ items:
       --image_path work/model-verification/gemma-3-4b-it/candy.JPG
       --prompt "What animal is on the candy?"
       --tp 1 --pp 1 --ep 1 --etp 1
-    last_verified: 2026-07-24
+    last_verified: 2026-07-30
     expected_result: >
-      The exact-revision image-and-text comparison used TP1 without padding.
-      Token match: true; Hugging Face and Megatron both produced next token ID
-      22515 ("Based"). Cosine similarity: 0.990209, passing the required 0.99
-      threshold. Maximum and mean absolute logit differences were 6.046631
-      and 1.016037 respectively and are report-only diagnostics.
+      The exact-revision TP1 image-and-text comparison selected Transformer
+      Engine FusedAttention. Token match: true; Hugging Face and Megatron both
+      produced next token ID 22515 ("Based"). Cosine similarity: 0.990387,
+      passing the required 0.99 threshold; maximum and mean absolute logit
+      differences were 6.234131 and 1.007509 and are report-only diagnostics.
 
   inference:
     status: verified
+    bridge_commit: 2d185b9619c302281eb1a3219b3c7afaee940afc  # pragma: allowlist secret
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=4
@@ -144,11 +149,11 @@ items:
       --prompt "What animal is on the candy?"
       --max_new_tokens 32
       --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: 2026-07-24
+    last_verified: 2026-07-30
     expected_result: |-
-      One exact-revision TP2/PP2 BF16 greedy multimodal run generated exactly
-      32 tokens without reaching EOS. The public input was p-blog/candy.JPG at
-      documentation-images revision
+      One exact-revision TP2/PP2 BF16 greedy multimodal run selected
+      FusedAttention and generated exactly 32 tokens without reaching EOS. The
+      public input was p-blog/candy.JPG at documentation-images revision
       44c3249461c5a5336585d1e31e0a4ce7fce06a5a with SHA-256
       fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
       The JSON-escaped literal completion was: "Based on the image, the animal
@@ -224,10 +229,11 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        Gemma 3 VL image-bidirectional attention currently requires an
-        arbitrary unfused mask. The provider rejects context parallelism
-        greater than one, and the public recipes disable in-batch THD packing,
-        so there is no supported exact-model long-context SFT contract.
+        Gemma 3 VL image-bidirectional attention uses dense local/global
+        additive biases with FusedAttention. The provider rejects context
+        parallelism greater than one, and the public recipes disable in-batch
+        THD packing, so there is no supported exact-model long-context SFT
+        contract.
 
   peft:
     H100:
