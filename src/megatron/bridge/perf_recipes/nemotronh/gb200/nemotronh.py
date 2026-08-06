@@ -317,7 +317,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_base() -> ConfigContainer:
+def _nemotron_3_ultra_pretrain_gb200_bf16_base() -> ConfigContainer:
     """Build the convergence-safe BF16 GB200 verification workload."""
     cfg = nemotron_3_ultra_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
@@ -355,13 +355,85 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_base() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config() -> ConfigContainer:
+    """Nemotron 3 Ultra verification: 128× GB200, BF16, Megatron-FSDP HSDP.
+
+    Uses TP2/PP1/CP1/EP64 so the two 64-GPU HybridEP domains remain intact.
+    Parameters, gradients, and optimizer state are sharded within each domain.
+    """
+    cfg = _nemotron_3_ultra_pretrain_gb200_bf16_base()
+    cfg.model.pipeline_model_parallel_size = 1
+
+    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=128)
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Ultra verification: 128× GB200, BF16, distributed optimizer.
+
+    TP2/PP2/CP1/EP64 is the integral 128-GPU counterpart of the 256-GPU PP4
+    recipe and keeps 54 model layers on each pipeline stage.
+    """
+    cfg = _nemotron_3_ultra_pretrain_gb200_bf16_base()
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.dist.use_megatron_fsdp = False
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.average_in_collective = False
+    cfg.checkpoint.ckpt_format = "torch_dist"
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
 def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config() -> ConfigContainer:
     """Nemotron 3 Ultra verification: 256× GB200, BF16, Megatron-FSDP HSDP.
 
     Uses the PR 5287 TP2/PP1/CP1/EP64 execution and memory plan while retaining
     natural expert routing, numerical checks, and FP32 gradient communication.
     """
-    cfg = _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_base()
+    cfg = _nemotron_3_ultra_pretrain_gb200_bf16_base()
     cfg.model.pipeline_model_parallel_size = 1
 
     _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=256)
@@ -399,7 +471,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     This is the non-FSDP counterpart to the PR 5287 recipe. PP4 makes the
     256-GPU TP2/EP64 topology integral and limits each stage to 27 model layers.
     """
-    cfg = _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_base()
+    cfg = _nemotron_3_ultra_pretrain_gb200_bf16_base()
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.ddp.use_megatron_fsdp = False

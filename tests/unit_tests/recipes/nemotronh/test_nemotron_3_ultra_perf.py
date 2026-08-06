@@ -4,6 +4,8 @@ import torch
 import megatron.bridge.training.config as training_config
 from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
     nemotron_3_ultra_pretrain_64gpu_gb200_fp8mx_config,
+    nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config,
+    nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config,
     nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_config,
     nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_ub_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config,
@@ -169,6 +171,8 @@ def test_gb200_ultra_recipe_environments_are_not_shared() -> None:
 @pytest.mark.parametrize(
     ("recipe_factory", "pipeline_parallel_size", "use_megatron_fsdp", "checkpoint_format"),
     [
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config, 1, True, "fsdp_dtensor"),
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config, 2, False, "torch_dist"),
         (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 1, True, "fsdp_dtensor"),
         (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config, 4, False, "torch_dist"),
     ],
@@ -226,11 +230,21 @@ def test_gb200_ultra_bf16_verification_recipes_are_convergence_safe(
 
 
 @pytest.mark.unit
-def test_gb200_ultra_bf16_fsdp_verification_uses_fp32_optimizer_state() -> None:
-    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config()
+@pytest.mark.parametrize(
+    ("recipe_factory", "num_optimizer_instances"),
+    [
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config, 2),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 4),
+    ],
+)
+def test_gb200_ultra_bf16_fsdp_verification_uses_fp32_optimizer_state(
+    recipe_factory,
+    num_optimizer_instances: int,
+) -> None:
+    cfg = recipe_factory()
 
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
-    assert cfg.ddp.num_distributed_optimizer_instances == 4
+    assert cfg.ddp.num_distributed_optimizer_instances == num_optimizer_instances
     assert cfg.ddp.outer_dp_sharding_strategy == "optim"
     assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
     assert cfg.ddp.megatron_fsdp_main_params_dtype == torch.float32
@@ -245,34 +259,37 @@ def test_gb200_ultra_bf16_fsdp_verification_uses_fp32_optimizer_state() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("recipe_factory", "pipeline_parallel_size"),
+    ("recipe_factory", "world_size", "pipeline_parallel_size"),
     [
-        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 1),
-        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config, 4),
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config, 128, 1),
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_config, 128, 2),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config, 256, 1),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config, 256, 4),
     ],
 )
-def test_gb200_ultra_bf16_verification_recipes_validate_for_256_gpus(
+def test_gb200_ultra_bf16_verification_recipes_validate_for_declared_world_size(
     monkeypatch: pytest.MonkeyPatch,
     recipe_factory,
+    world_size: int,
     pipeline_parallel_size: int,
 ) -> None:
-    monkeypatch.setattr(training_config, "get_world_size_safe", lambda: 256)
+    monkeypatch.setattr(training_config, "get_world_size_safe", lambda: world_size)
     monkeypatch.setattr(training_config, "validate_flex_dispatcher_backend", lambda _model: None)
     cfg = recipe_factory()
 
     training_config.runtime_config_update(cfg)
 
     assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
-    data_parallel_size = 256 // (
+    data_parallel_size = world_size // (
         cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
     )
-    assert 256 == (
+    assert world_size == (
         data_parallel_size
         * cfg.model.tensor_model_parallel_size
         * cfg.model.pipeline_model_parallel_size
         * cfg.model.context_parallel_size
     )
-    expert_data_parallel_size = 256 // (
+    expert_data_parallel_size = world_size // (
         cfg.model.pipeline_model_parallel_size
         * cfg.model.expert_tensor_parallel_size
         * cfg.model.expert_model_parallel_size
@@ -377,6 +394,7 @@ def test_h100_ultra_fsdp_recipes_match_the_gb200_workloads(
 @pytest.mark.parametrize(
     ("recipe_factory", "world_size"),
     [
+        (nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config, 128),
         (nemotron_3_ultra_pretrain_64gpu_gb200_fp8mx_config, 64),
         (nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_config, 128),
         (nemotron_3_ultra_pretrain_128gpu_gb200_fp8mx_tp2_ub_config, 128),
