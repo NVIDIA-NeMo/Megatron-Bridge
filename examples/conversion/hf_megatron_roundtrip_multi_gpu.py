@@ -83,6 +83,18 @@ IGNORE_PRECISION_PARAMS = [
 # FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
+# MTP (multi-token-prediction) tied output heads — skip allclose.
+# Megatron-Core defines MTP with a SINGLE shared output layer that is tied to the
+# main model output layer (HF ``lm_head.weight``). On export every MTP head is
+# therefore materialized as a copy of ``lm_head``. The published HF checkpoint
+# instead stores a *separate* per-layer tensor
+# (``model.layers.<N>.transformer.shared_head.output.weight``) whose values
+# legitimately differ from ``lm_head``. Comparing the exported (tied) copy against
+# the HF per-layer tensor is meaningless, so skip it like the FP8 case. The main
+# LM head is ``lm_head.weight`` (not ``shared_head.output.weight``) and is still
+# verified normally.
+_MTP_TIED_HEAD_PARAMS = ["shared_head.output.weight"]
+
 
 def _configure_slurm_distributed_environment() -> None:
     """Translate native Slurm task variables into PyTorch distributed variables."""
@@ -212,14 +224,23 @@ def main(
     all_match = True
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
+    tied_skip_count = 0
+    tied_skip_samples: list[str] = []
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
             compare_original = original_param
 
+            # --- Case 0: MTP tied output head → skip (shared with lm_head) ---
+            if any(p in name for p in _MTP_TIED_HEAD_PARAMS):
+                tied_skip_count += 1
+                if len(tied_skip_samples) < 20:
+                    tied_skip_samples.append(name)
+                match = True
+
             # --- Case 1: FP8 → skip (lossy dequantisation) ---
-            if original_param.dtype in _FP8_DTYPES or compare_param.dtype in _FP8_DTYPES:
+            elif original_param.dtype in _FP8_DTYPES or compare_param.dtype in _FP8_DTYPES:
                 fp8_skip_count += 1
                 if len(fp8_skip_samples) < 20:
                     fp8_skip_samples.append(
@@ -265,6 +286,15 @@ def main(
                 console.print(f"  [yellow]{entry}[/yellow]")
             if fp8_skip_count > len(fp8_skip_samples):
                 console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
+        if tied_skip_count > 0:
+            console.print(
+                f"[yellow]WARNING: {tied_skip_count} MTP tied output head(s) skipped allclose "
+                f"(shared with lm_head; HF stores per-layer copies):[/yellow]"
+            )
+            for entry in tied_skip_samples:
+                console.print(f"  [yellow]{entry}[/yellow]")
+            if tied_skip_count > len(tied_skip_samples):
+                console.print(f"  [yellow]... and {tied_skip_count - len(tied_skip_samples)} more[/yellow]")
         console.print(table)
 
     if not all_match:
