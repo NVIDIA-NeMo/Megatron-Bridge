@@ -14,6 +14,7 @@ fi
 refs=$(git ls-remote \
   "$repo" \
   "refs/heads/main" \
+  "refs/heads/dev" \
   "refs/heads/pull-request/*" \
   "refs/heads/gh-readonly-queue/main/pr-*" \
   "refs/pull/*/merge")
@@ -25,6 +26,14 @@ main_sha=$(awk '$2 == "refs/heads/main" {print $1}' <<<"$refs")
 if [[ -n "$main_sha" ]] && \
   git -C "$object_store" fetch --quiet --filter=blob:none --no-tags "$repo" "$main_sha" "$revision"; then
   if git -C "$object_store" merge-base --is-ancestor "$revision" "$main_sha"; then
+    exit 0
+  fi
+fi
+
+dev_sha=$(awk '$2 == "refs/heads/dev" {print $1}' <<<"$refs")
+if [[ -n "$dev_sha" ]] && \
+  git -C "$object_store" fetch --quiet --filter=blob:none --no-tags "$repo" "$dev_sha" "$revision"; then
+  if git -C "$object_store" merge-base --is-ancestor "$revision" "$dev_sha"; then
     exit 0
   fi
 fi
