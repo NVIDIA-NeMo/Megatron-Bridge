@@ -16,6 +16,8 @@
 
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
+
 export CUDA_VISIBLE_DEVICES="0,1,2,3"
 MEGATRON_BRIDGE_ROOT="/opt/Megatron-Bridge/"
 
@@ -23,7 +25,7 @@ MEGATRON_BRIDGE_ROOT="/opt/Megatron-Bridge/"
 # This script tests the GB300 proxy configuration (FSDP + EP=4 + MoE optimizations)
 # to ensure perf-related features can run basic training without crashes
 output_log_file="/tmp/test_deepseek_recipes_pretrain_perf_gb200.log"
-uv run python -m torch.distributed.run --nproc_per_node=4 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -s -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/recipes/test_deepseek_recipes_pretrain_fsdp.py 2>&1 | tee -a $output_log_file
+uv run python -m torch.distributed.run --nproc_per_node=4 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -s -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/recipes/test_deepseek_recipes_pretrain_fsdp.py 2>&1 | tee -a $output_log_file
 coverage combine -q
 
 golden_values_path="$MEGATRON_BRIDGE_ROOT/tests/functional_tests/test_groups/recipes/golden_values/test_deepseek_recipes_pretrain_fsdp_gb200.json"

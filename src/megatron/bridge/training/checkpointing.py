@@ -1250,25 +1250,20 @@ def save_checkpoint(
             "converting to contiguous format for checkpoint"
         )
     if routed_interleave_size is not None or shared_interleave_size is not None:
-        if len(model) == 1:
-            state_dict["model"] = _process_state_dict_for_model_glu_interleaving(
-                state_dict["model"],
+        use_megatron_fsdp = cfg.ddp is not None and cfg.ddp.use_megatron_fsdp
+        model_keys = (
+            ["model"]
+            if "model" in state_dict
+            else sorted(key for key in state_dict if key.startswith("model") and key.removeprefix("model").isdigit())
+        )
+        for model_key in model_keys:
+            state_dict[model_key] = _process_state_dict_for_model_glu_interleaving(
+                state_dict[model_key],
                 routed_interleave_size,
                 shared_interleave_size,
                 interleave=False,
-                use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
+                use_megatron_fsdp=use_megatron_fsdp,
             )
-        else:
-            for i in range(len(model)):
-                model_key = "model%d" % i
-                if model_key in state_dict:
-                    state_dict[model_key] = _process_state_dict_for_model_glu_interleaving(
-                        state_dict[model_key],
-                        routed_interleave_size,
-                        shared_interleave_size,
-                        interleave=False,
-                        use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
-                    )
 
     # Apply PEFT filtering to preserve the existing adapter-only Megatron
     # checkpoint behavior.  ``also_save_hf_checkpoint=True`` only adds the
@@ -2482,6 +2477,20 @@ def _process_state_dict_for_glu_interleaving(
             new_data = _apply_glu_interleave_to_tensor_data(value.data, interleave_size, interleave)
             # Interleaving permutes elements; local shape unchanged. Preserve global sharding metadata.
             processed_state_dict[key] = replace(value, data=new_data, local_shape=new_data.shape)
+            num_keys_processed += 1
+            continue
+
+        if isinstance(value, list) and value and all(isinstance(shard, ShardedTensor) for shard in value):
+            if any(shard.data is None for shard in value):
+                processed_state_dict[key] = value
+                continue
+            shard_sizes = [shard.data.shape[0] for shard in value]
+            data = torch.cat([shard.data for shard in value], dim=0)
+            new_data = _apply_glu_interleave_to_tensor_data(data, interleave_size, interleave)
+            processed_state_dict[key] = [
+                replace(shard, data=shard_data, local_shape=shard_data.shape)
+                for shard, shard_data in zip(value, new_data.split(shard_sizes, dim=0))
+            ]
             num_keys_processed += 1
             continue
 
