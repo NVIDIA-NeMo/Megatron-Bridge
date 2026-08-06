@@ -435,6 +435,34 @@ class TestMaybeModifyLoadedHFWeight:
         assert result["k"].shape == (12, 8)
         assert result["v"].shape == (12, 8)
 
+    def test_kv_synthesis_uses_local_head_count_when_global_count_is_none(self, bridge):
+        bridge.hf_config = Gemma4TextConfig(
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=1,
+            head_dim=2,
+            global_head_dim=4,
+            num_global_key_value_heads=None,
+            num_kv_shared_layers=1,
+            layer_types=["sliding_attention", "full_attention"],
+        )
+        q_weight = torch.randn(16, 8)
+        q_name = "model.layers.1.self_attn.q_proj.weight"
+        hf_param = {
+            "q": q_name,
+            "k": "model.layers.1.self_attn.k_proj.weight",
+            "v": "model.layers.1.self_attn.v_proj.weight",
+        }
+
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, {q_name: q_weight})
+
+        assert result["k"].shape == (4, 8)
+        assert result["v"].shape == (4, 8)
+        assert torch.count_nonzero(result["k"]) == 0
+        assert torch.count_nonzero(result["v"]) == 0
+
     def test_kv_passthrough_when_v_present(self, bridge):
         sd = self._make_sd()
         sd["model.layers.0.self_attn.v_proj.weight"] = torch.randn(4, 8)

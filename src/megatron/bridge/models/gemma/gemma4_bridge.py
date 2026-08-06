@@ -409,12 +409,14 @@ class Gemma4Bridge(MegatronModelBridge):
                 if layer_match and layer_types:
                     layer_idx = int(layer_match.group(1))
                     if layer_idx < len(layer_types) and layer_types[layer_idx] == "full_attention":
-                        num_kv_heads = getattr(
+                        num_global_kv_heads = getattr(
                             text_config,
                             "num_global_key_value_heads",
-                            getattr(self, "_dense_num_global_query_groups", num_kv_heads),
+                            getattr(self, "_dense_num_global_query_groups", None),
                         )
-                elif hasattr(self, "_dense_num_global_query_groups"):
+                        if num_global_kv_heads is not None:
+                            num_kv_heads = num_global_kv_heads
+                elif getattr(self, "_dense_num_global_query_groups", None) is not None:
                     num_kv_heads = self._dense_num_global_query_groups
                 kv_shape = (num_kv_heads * kv_head_dim, q_weight.shape[1])
                 k_zero = torch.zeros(kv_shape, dtype=q_weight.dtype, device=q_weight.device)
