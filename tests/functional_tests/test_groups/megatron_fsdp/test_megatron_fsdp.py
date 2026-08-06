@@ -412,7 +412,7 @@ class TestMegatronFSDP:
             clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
-    def test_fsdp_v2_dense_hybrid_pretrain_smoke(self, tmp_path):
+    def test_mfsdp_v2_dense_hybrid_pretrain_smoke(self, tmp_path):
         """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
         from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV2
         from megatron.core.optimizer import FullyShardedOptimizer
