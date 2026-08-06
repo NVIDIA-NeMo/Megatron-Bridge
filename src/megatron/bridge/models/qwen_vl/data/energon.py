@@ -41,7 +41,9 @@ from megatron.bridge.data.energon.task_encoder_utils import (
 from megatron.bridge.data.packing.algorithms import first_fit_decreasing
 from megatron.bridge.models.qwen_vl.data.collate_fn import (
     QwenVLPreparedSequence,
-    make_qwen_vl_collator,
+    build_qwen_vl_packed_batch,
+    prepare_qwen_vl_sequence,
+    qwen2_5_collate_fn,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -154,6 +156,11 @@ class QwenVLPackedTaskSample:
     __restore_key__: tuple[Any, ...]
     __subflavors__: Dict
     samples: List[QwenVLTaskSample]
+
+
+def _aligned_sequence_length(sequence: QwenVLPreparedSequence, multiple: int) -> int:
+    """Return the physical length consumed by one aligned THD segment."""
+    return ((sequence.sequence_length + multiple - 1) // multiple) * multiple
 
 
 @dataclass
@@ -274,7 +281,6 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
         self.seq_len = max_padding_length
         self.image_token_id, self.video_token_id = _resolve_hf_mm_token_ids(self.hf_tokenizer)
-        self._collator = make_qwen_vl_collator()
 
     # Energon 7.0/7.1 store ``None`` for a bare decorator instead of inheriting
     # TaskEncoder's default. Keep the bound explicit so an all-overlength stream
@@ -356,7 +362,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         example = normalized_vlm_sample_to_hf_example(normalized_sample, media_first=True)
         prepared_sequence = None
         if self.enable_energon_packing:
-            prepared_sequence = self._collator.prepare_one(
+            prepared_sequence = prepare_qwen_vl_sequence(
                 example,
                 self.image_processor,
                 min_pixels=self.min_pixels,
@@ -380,10 +386,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                     )
                     raise SkipSample()
 
-            packing_length = self._collator.aligned_length(
-                prepared_sequence,
-                multiple=self.in_batch_packing_pad_to_multiple_of,
-            )
+            packing_length = _aligned_sequence_length(prepared_sequence, self.in_batch_packing_pad_to_multiple_of)
             if packing_length > self.seq_length:
                 raise ValueError(
                     f"Sample {sample.__key__} aligned sequence length {packing_length} "
@@ -407,7 +410,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
         multiple = self.in_batch_packing_pad_to_multiple_of
         packing_lengths = [
-            self._collator.aligned_length(sample.prepared_sequence, multiple=multiple)
+            _aligned_sequence_length(sample.prepared_sequence, multiple)
             for sample in samples
             if sample.prepared_sequence is not None
         ]
@@ -438,7 +441,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             ``input_ids``, ``labels``, ``loss_mask``, ``position_ids``, optional
             ``attention_mask``, and ``visual_inputs``.
         """
-        return self._collator(
+        return qwen2_5_collate_fn(
             examples,
             self.image_processor,
             sequence_length=self.seq_length,
@@ -474,16 +477,13 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             if any(sample.prepared_sequence is None for sample in source_samples):
                 raise ValueError("Packed Qwen-VL samples must contain prepared sequences.")
             packed_length = sum(
-                self._collator.aligned_length(
-                    sample.prepared_sequence,
-                    multiple=self.in_batch_packing_pad_to_multiple_of,
-                )
+                _aligned_sequence_length(sample.prepared_sequence, self.in_batch_packing_pad_to_multiple_of)
                 for sample in source_samples
                 if sample.prepared_sequence is not None
             )
             if packed_length > self.seq_length:
                 raise ValueError(f"Packed Qwen-VL group length {packed_length} exceeds seq_length={self.seq_length}.")
-            collated = self._collator.pack_prepared(
+            collated = build_qwen_vl_packed_batch(
                 [sample.prepared_sequence for sample in source_samples if sample.prepared_sequence is not None],
                 sequence_length=self.seq_length,
                 pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,

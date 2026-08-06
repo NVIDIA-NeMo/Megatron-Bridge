@@ -12,6 +12,7 @@ import torch
 from megatron.energon import WorkerConfig, get_savable_loader, get_val_dataset
 from PIL import Image
 
+import megatron.bridge.models.qwen_vl.data.energon as qwen_energon
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
 from megatron.bridge.models.qwen_vl.data.collate_fn import QwenVLPreparedSequence
 from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
@@ -139,18 +140,17 @@ def test_qwen_native_packing_loader_restores_pending_groups_and_flushes_partial_
     module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_example_data.py"))
     module["prepare_example_data"](tmp_path, num_workers=1)
 
+    monkeypatch.setattr(qwen_energon, "prepare_qwen_vl_sequence", _prepare_qwen_test_sequence)
     tokenizer = MagicMock(image_token_id=151655, video_token_id=151656)
 
     def build_encoder():
-        encoder = QwenVLTaskEncoder(
+        return QwenVLTaskEncoder(
             tokenizer=tokenizer,
             image_processor=MagicMock(),
             max_padding_length=16,
             enable_energon_packing=True,
             max_visual_tokens=None,
         )
-        monkeypatch.setattr(encoder._collator, "_prepare_one", _prepare_qwen_test_sequence)
-        return encoder
 
     def build_loader():
         worker_config = WorkerConfig.default_worker_config(num_workers)

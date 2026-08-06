@@ -21,7 +21,6 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.data.collators.contracts import PreparedSequenceCollator
 from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
 from megatron.bridge.data.collators.visual import THW_GRID_VISUAL_KEYS
@@ -61,8 +60,8 @@ class QwenVLPreparedSequence:
 
     Note:
         This model-owned storage layout is provisional and may evolve as more
-        VLMs adopt native packing. Shared packing code must depend only on the
-        ``PreparedSequence`` protocol, not on ``row`` or ``visual_values``.
+        VLMs adopt native packing. Callers should use ``sequence_length`` when
+        they do not need Qwen-specific ``row`` or ``visual_values`` payloads.
     """
 
     row: dict[str, torch.Tensor]
@@ -492,12 +491,3 @@ def qwen2_5_collate_fn(
         sequence_tensor_pad_values={"mm_token_type_ids": 0},
     )
     return batch
-
-
-def make_qwen_vl_collator() -> PreparedSequenceCollator[QwenVLPreparedSequence]:
-    """Create the model-owned collator contract used by Qwen-VL data paths."""
-    return PreparedSequenceCollator[QwenVLPreparedSequence](
-        qwen2_5_collate_fn,
-        prepare_one=prepare_qwen_vl_sequence,
-        pack_prepared=build_qwen_vl_packed_batch,
-    )

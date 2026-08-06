@@ -20,28 +20,17 @@ from functools import lru_cache
 from importlib import import_module
 from typing import Any
 
-from megatron.bridge.data.collators.contracts import ModelCollator
-
 
 @dataclass(frozen=True)
 class _ModelCollateSpec:
     module_name: str
     symbol_name: str
     required_for_all_examples: bool = False
-    collator_factory_symbol_name: str | None = None
 
 
 _MODEL_COLLATE_SPECS = {
-    "Qwen2_5_VLProcessor": _ModelCollateSpec(
-        "megatron.bridge.models.qwen_vl.data.collate_fn",
-        "qwen2_5_collate_fn",
-        collator_factory_symbol_name="make_qwen_vl_collator",
-    ),
-    "Qwen3VLProcessor": _ModelCollateSpec(
-        "megatron.bridge.models.qwen_vl.data.collate_fn",
-        "qwen2_5_collate_fn",
-        collator_factory_symbol_name="make_qwen_vl_collator",
-    ),
+    "Qwen2_5_VLProcessor": _ModelCollateSpec("megatron.bridge.models.qwen_vl.data.collate_fn", "qwen2_5_collate_fn"),
+    "Qwen3VLProcessor": _ModelCollateSpec("megatron.bridge.models.qwen_vl.data.collate_fn", "qwen2_5_collate_fn"),
     "Qwen3OmniMoeProcessor": _ModelCollateSpec(
         "megatron.bridge.models.qwen_omni.data.collate_fn",
         "qwen3_omni_collate_fn",
@@ -74,43 +63,17 @@ def model_collate_required_for_all_examples(processor_type: str) -> bool:
     return spec is not None and spec.required_for_all_examples
 
 
-def _registered_spec(processor_type: str) -> _ModelCollateSpec:
-    """Return one registered processor specification with a consistent error."""
+@lru_cache(maxsize=None)
+def resolve_model_collate(processor_type: str) -> Callable[..., dict[str, Any]]:
+    """Resolve a model-owned collator without importing unrelated model modules."""
     try:
-        return _MODEL_COLLATE_SPECS[processor_type]
+        spec = _MODEL_COLLATE_SPECS[processor_type]
     except KeyError as error:
         raise ValueError(
             f"No VLM collate function is registered for processor type '{processor_type}'. "
             "Register a model-owned collator or pass a collate function explicitly."
         ) from error
-
-
-def _resolve_callable(module: Any, spec: _ModelCollateSpec, symbol_name: str) -> Callable[..., Any]:
-    """Resolve and validate one callable declared by a collator specification."""
-    value = getattr(module, symbol_name)
-    if not callable(value):
-        raise TypeError(f"Registered collator symbol {spec.module_name}.{symbol_name} is not callable.")
-    return value
-
-
-def resolve_model_collator(processor_type: str) -> ModelCollator:
-    """Resolve the model collator contract without importing unrelated model modules."""
-    spec = _registered_spec(processor_type)
-    module = import_module(spec.module_name)
-    if spec.collator_factory_symbol_name is not None:
-        factory = _resolve_callable(module, spec, spec.collator_factory_symbol_name)
-        collator = factory()
-        if not isinstance(collator, ModelCollator):
-            raise TypeError(
-                f"Registered collator factory {spec.module_name}.{spec.collator_factory_symbol_name} "
-                "must return a ModelCollator."
-            )
-        return collator
-    return ModelCollator(_resolve_callable(module, spec, spec.symbol_name))
-
-
-@lru_cache(maxsize=None)
-def resolve_model_collate(processor_type: str) -> Callable[..., dict[str, Any]]:
-    """Resolve the legacy full-batch callable directly from its registered symbol."""
-    spec = _registered_spec(processor_type)
-    return _resolve_callable(import_module(spec.module_name), spec, spec.symbol_name)
+    collate = getattr(import_module(spec.module_name), spec.symbol_name)
+    if not callable(collate):
+        raise TypeError(f"Registered collator {spec.module_name}.{spec.symbol_name} is not callable.")
+    return collate
