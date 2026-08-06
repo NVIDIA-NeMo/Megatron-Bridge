@@ -111,7 +111,7 @@ cfg.dataset.enable_in_batch_packing = True
 cfg.train.micro_batch_size = 2
 ```
 
-Energon online packing for dense Qwen3-VL uses Energon's per-worker candidate buffer
+Energon online packing for Qwen-VL uses Energon's per-worker candidate buffer
 instead of limiting selection to one collator micro batch:
 
 ```python
@@ -129,8 +129,11 @@ tokens. Since prepared image/video patch tensors remain in
 host memory until selection, start at 8-16 for high-resolution or video data
 and measure worker RSS, first-batch latency, and bin fill before increasing it.
 This path does not write offline packs; the source WebDataset shards remain
-unchanged. It currently supports eager dense Qwen3-VL with MBS1 and rejects MTP,
-CUDA graphs, Qwen3-VL DistTrain, PP, and EP.
+unchanged. It supports eager Qwen-VL with MBS1 and rejects MTP, CUDA graphs,
+Qwen3-VL DistTrain, PP, and MoE expert-parallel communication overlap. Standard
+eager `alltoall` EP has functional coverage for Qwen3.6-35B-A3B at TP1/PP1/EP8
+with EP communication overlap disabled; this is not performance evidence or
+support for other EP dispatchers, which are rejected for this path.
 
 Long-context baseline:
 

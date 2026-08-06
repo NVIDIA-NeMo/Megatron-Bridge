@@ -24,7 +24,12 @@ import megatron.bridge.models.ministral3.data.collate_fn as ministral3_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
-from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples, resolve_model_collate
+from megatron.bridge.data.collators.contracts import ModelCollator, PreparedSequenceCollator
+from megatron.bridge.data.collators.registry import (
+    model_collate_required_for_all_examples,
+    resolve_model_collate,
+    resolve_model_collator,
+)
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -57,6 +62,61 @@ def test_only_nemotron_omni_requires_model_collate_for_all_examples():
 
 def test_vlm_collate_keeps_qwen_vl_registration():
     assert resolve_model_collate("Qwen2_5_VLProcessor") is collate.qwen2_5_collate_fn
+
+
+@pytest.mark.parametrize(
+    "processor_type",
+    [
+        "Qwen2_5_VLProcessor",
+        "Qwen3VLProcessor",
+        "Qwen3OmniMoeProcessor",
+        "NemotronNanoVLV2Processor",
+        "NemotronH_Nano_Omni_Reasoning_V3Processor",
+        "PixtralProcessor",
+        "Gemma3Processor",
+        "Gemma4Processor",
+        "Qwen2AudioProcessor",
+        "Glm4vProcessor",
+        "KimiK25Processor",
+    ],
+)
+def test_registered_model_collates_implement_common_contract(processor_type):
+    assert isinstance(resolve_model_collator(processor_type), ModelCollator)
+
+
+@pytest.mark.parametrize("processor_type", ["Qwen2_5_VLProcessor", "Qwen3VLProcessor"])
+def test_qwen_vl_collates_implement_prepared_sequence_contract(processor_type):
+    collator = resolve_model_collator(processor_type)
+
+    assert isinstance(collator, PreparedSequenceCollator)
+    assert collator.collate_fn is collate.qwen2_5_collate_fn
+
+
+def test_qwen_vl_collator_factory_returns_independent_contracts():
+    first = resolve_model_collator("Qwen3VLProcessor")
+    second = resolve_model_collator("Qwen3VLProcessor")
+
+    assert first is not second
+    assert first.collate_fn is second.collate_fn is collate.qwen2_5_collate_fn
+
+
+def test_legacy_resolver_cache_clear_refreshes_registered_module_symbol():
+    original = qwen_vl_collate.qwen2_5_collate_fn
+
+    def replacement(*args, **kwargs):  # noqa: ARG001
+        return {}
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(qwen_vl_collate, "qwen2_5_collate_fn", replacement)
+        resolve_model_collate.cache_clear()
+        assert resolve_model_collate("Qwen3VLProcessor") is replacement
+
+    resolve_model_collate.cache_clear()
+    assert resolve_model_collate("Qwen3VLProcessor") is original
+
+
+def test_non_packable_collator_does_not_claim_prepared_sequence_contract():
+    assert not isinstance(resolve_model_collator("Gemma3Processor"), PreparedSequenceCollator)
 
 
 class _DummyProcessor:

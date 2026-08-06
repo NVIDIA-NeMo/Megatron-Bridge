@@ -199,7 +199,7 @@ remove that waste, but it only chooses among the few samples already assigned to
 packing API instead keeps a per-worker candidate buffer and forms multiple packs from that larger window. No offline
 packed dataset is written: the WebDataset shards from sections 1 or 5 remain unchanged.
 
-For dense Qwen3-VL, Bridge implements the Energon lifecycle as follows:
+For the Qwen-VL collator path, Bridge implements the Energon lifecycle as follows:
 
 1. `encode_sample` runs the Qwen processor once and measures the exact sequence length after visual tokens expand.
 2. `select_samples_to_pack` applies first-fit decreasing to one worker's candidate buffer.
@@ -290,11 +290,12 @@ executed-token efficiency = sum(real segment lengths) / sum(aligned segment leng
 A buffer of 1 is a correctness baseline but gives little opportunity to combine samples. Very large buffers can
 increase worker memory because prepared token and visual tensors remain resident until their packs are emitted.
 
-The first implementation supports eager dense Qwen3-VL with `vlm_step`, including TP, SP, and CP. Generic HF, Nemotron
-Omni, the legacy `qwen3_vl_step`, MBS greater than one, MTP, CUDA graphs, Qwen3-VL DistTrain, pipeline parallelism,
-and expert parallelism
-are unsupported. The checked example and CW validation use the Qwen3-VL 8B provider; validate other Qwen-VL variants
-before production use.
+The first implementation supports eager Qwen-VL with `vlm_step`, including TP, SP, and CP. Standard eager `alltoall`
+expert parallelism has functional coverage for Qwen3.6-35B-A3B at TP1/PP1/EP8 with EP communication overlap disabled;
+this does not establish performance, and other EP dispatchers are rejected. Generic HF, Nemotron Omni, the legacy
+`qwen3_vl_step`, MBS greater than one, MTP, CUDA graphs, Qwen3-VL DistTrain, pipeline parallelism, and MoE
+expert-parallel communication overlap are unsupported. The checked example uses the Qwen3-VL 8B provider; validate
+other Qwen-VL variants before production use.
 The older collate-time path remains available by leaving `packing_buffer_size=None`, setting
 `enable_in_batch_packing=True`, and using MBS greater than one.
 
