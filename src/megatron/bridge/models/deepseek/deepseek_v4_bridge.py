@@ -878,12 +878,12 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             # MTP gated MLP (routed experts + shared expert)
             mappings += [
                 GatedMLPMapping(
-                    megatron_param=f"{mg_pfx}.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                    megatron_param=f"{mg_pfx}.mtp_model_layer.mlp.experts.local_experts.*.linear_fc1.weight",
                     gate=f"{ck_pfx}.ffn.experts.*.w1.weight",
                     up=f"{ck_pfx}.ffn.experts.*.w3.weight",
                 ),
                 AutoMapping(
-                    f"{mg_pfx}.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                    f"{mg_pfx}.mtp_model_layer.mlp.experts.local_experts.*.linear_fc2.weight",
                     f"{ck_pfx}.ffn.experts.*.w2.weight",
                 ),
                 GatedMLPMapping(

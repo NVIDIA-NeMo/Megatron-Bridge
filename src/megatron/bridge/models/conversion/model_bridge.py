@@ -1452,6 +1452,8 @@ class MegatronModelBridge(
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
+            if task is None:  # Parameter not on current PP rank (analogous to import-path skip)
+                continue
             if isinstance(task.param_weight, DTensor):
                 from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
                     uneven_dtensor_to_full_tensor,
