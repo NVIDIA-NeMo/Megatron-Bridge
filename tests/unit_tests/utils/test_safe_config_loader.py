@@ -437,13 +437,13 @@ class TestSafeLoadConfigWithRetry:
                         # Verify directory creation was attempted
                         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
-    def test_different_paths_different_locks_with_custom_dir(self):
+    def test_different_paths_different_locks_with_custom_dir(self, tmp_path):
         """Test that different model paths create different lock files in custom directory."""
         mock_lock = MagicMock()
-        custom_lock_dir = "/cluster/shared/locks"
+        custom_lock_dir = tmp_path / "locks"
         test_paths = ["model1", "model2", "org/model-name"]
 
-        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": custom_lock_dir}):
+        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": str(custom_lock_dir)}):
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
                 mock_filelock.return_value = mock_lock
                 mock_lock.__enter__ = Mock(return_value=mock_lock)
