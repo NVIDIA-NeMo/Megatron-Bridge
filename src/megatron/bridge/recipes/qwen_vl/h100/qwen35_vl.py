@@ -290,12 +290,12 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
 
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
     # Variable-shape DataComp images retain more activation memory than the
-    # fixed-shape benchmark. Recompute the low-cost attention, GDN output-norm,
-    # and MoE activation scopes while retaining the measured parallel layout.
+    # fixed-shape benchmark. Recompute attention, GDN output-norm, and complete
+    # MoE forwards while retaining the measured parallel layout.
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out", "moe_act"]
-    # DataComp preserves variable image shapes and its first-stage peak leaves
-    # no safe margin for CUDA graph pools. Keep both stacks graph-free.
+    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out", "moe"]
+    # Full MoE recompute covers the router and cannot nest a TE router graph.
+    # DataComp also preserves variable vision shapes, so keep both stacks graph-free.
     cfg.model.cuda_graph_impl = "none"
     clear_cuda_graph_modules(cfg.model)
     cfg.model.vision_cuda_graph_impl = "none"
