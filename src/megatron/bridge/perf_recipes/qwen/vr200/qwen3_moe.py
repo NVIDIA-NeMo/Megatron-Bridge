@@ -16,10 +16,12 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     ConfigContainer,
+    _benchmark_common,
+    _perf_precision,
+    qwen3_30b_a3b_pretrain_config,
 )
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
@@ -136,14 +138,31 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
 
 def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, FP8-MX (alias of GB300)."""
-    cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
+    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.model.bias_activation_fusion = True
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.moe_router_force_load_balancing = True
 
-    # cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
-    # cfg.model.moe_expert_rank_capacity_factor = 1.2
-    # cfg.model.recompute_granularity = "selective"
-    # cfg.model.recompute_modules = ["core_attn", "moe_act", "layernorm"]
-    cfg.model.cuda_graph_impl = "none"
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 8
 
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    _benchmark_common(cfg)
+    # _enable_hybridep_full_iteration_mxfp8(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -151,7 +170,8 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        # "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -161,9 +181,9 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
-        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        # "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        # "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
