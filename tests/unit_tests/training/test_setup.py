@@ -31,6 +31,7 @@ from megatron.bridge.training.setup import (
     _build_distributed_model,
     _register_pre_wrap_hook,
     _register_setup_pre_wrap_hook,
+    _resolve_embedding_ranks_callback,
     _should_load_checkpoint,
     _update_model_config_funcs,
     _validate_and_set_vocab_size,
@@ -72,6 +73,31 @@ def _make_checkpoint_source_config(
         peft=peft,
         _checkpoint_load_required=required,
     )
+
+
+@pytest.mark.parametrize(
+    ("share_embeddings_and_output_weights", "expected_ranks"),
+    [(False, [0, 1]), (True, [0, 1, 2])],
+)
+def test_mtp_embedding_group_includes_standalone_mtp_stage(
+    share_embeddings_and_output_weights,
+    expected_ranks,
+):
+    model_config = GPTModelProvider(
+        share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+        hidden_size=128,
+        mtp_num_layers=1,
+        num_attention_heads=1,
+        num_layers=1,
+        pipeline_model_parallel_layout="Et|m|L",
+        pipeline_model_parallel_size=3,
+    )
+    model_config.finalize()
+
+    get_embedding_ranks = _resolve_embedding_ranks_callback(model_config, None)
+
+    assert get_embedding_ranks is not None
+    assert get_embedding_ranks([0, 1, 2]) == expected_ranks
 
 
 def test_gpt_sft_config_receives_tokenizer_through_builder_binding_without_mutation():
