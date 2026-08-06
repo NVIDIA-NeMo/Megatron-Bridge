@@ -91,6 +91,7 @@ jobs:
       expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
       perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
       merge_sha:         ${{ steps.merge-sha.outputs.merge_sha }}
+      image_tag:         ${{ steps.merge-sha.outputs.image_tag }}
     steps:
       - name: Get PR info
         id: get-pr-info
@@ -109,6 +110,7 @@ jobs:
             SHA=${GITHUB_SHA}
           fi
           echo "merge_sha=${SHA}" | tee -a "$GITHUB_OUTPUT"
+          echo "image_tag=${SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" | tee -a "$GITHUB_OUTPUT"
 
       - name: Configure
         id: configure
@@ -520,7 +522,7 @@ jobs:
           no-cache: false
           tags: |
             ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ matrix.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+            ${{ matrix.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
@@ -546,7 +548,7 @@ jobs:
       - name: Run venv import check
         shell: bash -e -u -o pipefail {0}
         env:
-          IMAGE: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          IMAGE: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
         run: |
           docker run --rm \
             -v "${{ github.workspace }}/docker/common:/opt/import-check:ro" \
@@ -585,7 +587,7 @@ jobs:
           timeout: 18
           is_unit_test: "true"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
@@ -619,7 +621,7 @@ jobs:
           timeout: 18
           is_unit_test: "true"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
@@ -721,7 +723,7 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -762,7 +764,7 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -803,7 +805,7 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -835,7 +837,7 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -945,7 +947,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -994,7 +996,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -1043,7 +1045,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -1080,7 +1082,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.image_tag }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 

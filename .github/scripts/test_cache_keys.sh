@@ -59,6 +59,11 @@ assert_keys main-baseline main-baseline main-baseline main '' '' 317f4a21bbed0fb
 assert_keys main-baseline main-baseline main-baseline main '' '' 317f4a21bbed0fb8a4ac48ddef68356268c79394 refs/heads/main schedule main
 assert_keys main-deploy-release-1.2 main-baseline main-deploy-release-1.2 main '' '' 317f4a21bbed0fb8a4ac48ddef68356268c79394 refs/heads/deploy-release/1.2 push deploy-release/1.2
 
+workflow=$(cat .github/workflows/cicd-main.yml)
+grep -Fq 'image_tag=${SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' <<<"$workflow"
+test "$(grep -Fc 'needs.configure.outputs.image_tag' <<<"$workflow")" -eq 12
+! grep -Fq 'megatron-bridge:${{ needs.configure.outputs.merge_sha }}' <<<"$workflow"
+
 assert_donor() {
   local expected=$1
   local available=$2
