@@ -19,13 +19,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,
     _dummy_train_step,
     _finish_train,
+    _get_megatron_fsdp_types,
     _handle_mxfp8_param_buffer_copy,
     _maybe_register_fsdp_buffers,
     _should_skip_and_handle_iteration,
@@ -180,6 +180,21 @@ class TestCudaGraphCleanup:
 class TestFSDPRegistration:
     """Unit tests for FSDP buffer manual registration."""
 
+    def test_get_megatron_fsdp_types_ignores_factory(self):
+        class FSDPV1:
+            pass
+
+        class FSDPV2:
+            pass
+
+        adapter = SimpleNamespace(
+            FullyShardedDataParallel=lambda: None,
+            FullyShardedDataParallelV1=FSDPV1,
+            FullyShardedDataParallelV2=FSDPV2,
+        )
+
+        assert _get_megatron_fsdp_types(adapter) == (FSDPV1, FSDPV2)
+
     def test_maybe_register_fsdp_buffers_execution(self):
         """Test that manual registration is called when conditions are met."""
         # Setup mocks
@@ -188,7 +203,8 @@ class TestFSDPRegistration:
         config.ddp.fsdp_manual_registration = True
 
         # Mock model chunk
-        model_chunk = Mock(spec=megatron_FSDP)
+        fsdp_type = _get_megatron_fsdp_types()[0]
+        model_chunk = Mock(spec=fsdp_type)
         # Mock ddp_config on the chunk
         model_chunk.ddp_config = Mock()
         model_chunk.ddp_config.fsdp_manual_registration = True
