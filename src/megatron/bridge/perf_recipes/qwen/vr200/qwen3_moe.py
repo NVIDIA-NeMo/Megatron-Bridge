@@ -172,11 +172,11 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = True
     cfg.model.use_te_rng_tracker = True
 
-    cfg.model.offload_modules = []
+    cfg.model.offload_modules = ["expert_fc1"]
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_expert_rank_capacity_factor = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
     cfg.model.moe_shared_expert_overlap = False
