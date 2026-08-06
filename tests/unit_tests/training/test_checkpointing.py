@@ -3817,6 +3817,22 @@ class TestFSDPDTensorFunctionality:
         assert result == 4
         mock_load_common_state_dict.assert_called_once_with("/checkpoints/iter_0000001")
 
+    def test_checkpoint_expert_parallel_size_falls_back_after_invalid_run_config(self):
+        """A malformed run config must not prevent legacy common-args discovery."""
+        from megatron.bridge.training.checkpointing import _checkpoint_expert_parallel_size
+
+        with (
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch("megatron.bridge.training.checkpointing.read_run_config", side_effect=ValueError("invalid yaml")),
+            patch(
+                "megatron.bridge.training.checkpointing.dist_checkpointing.load_common_state_dict",
+                return_value={"args": Mock(expert_model_parallel_size=2)},
+            ),
+        ):
+            result = _checkpoint_expert_parallel_size("/checkpoints/iter_0000001")
+
+        assert result == 2
+
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     @patch("torch.distributed.checkpoint.FileSystemReader")
     @patch("torch.distributed.checkpoint.load_state_dict")

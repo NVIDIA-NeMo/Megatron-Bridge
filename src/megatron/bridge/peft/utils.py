@@ -444,10 +444,15 @@ def load_peft_adapter_checkpoint(
 
     model_chunks = _ensure_model_list(model)
     model_sd_kwargs = dict(model_sd_kwargs or {})
-    source_expert_parallel_size = _checkpoint_expert_parallel_size(adapter_checkpoint_path)
-    model_sd_kwargs["metadata"] = _model_sharded_state_dict_load_metadata(
+    discovered_source_ep_size = _checkpoint_expert_parallel_size(adapter_checkpoint_path)
+    load_metadata = _model_sharded_state_dict_load_metadata(
         model_sd_kwargs.get("metadata"),
-        source_expert_parallel_size=source_expert_parallel_size,
+        source_expert_parallel_size=discovered_source_ep_size,
+    )
+    model_sd_kwargs["metadata"] = load_metadata
+    source_expert_parallel_size = load_metadata.get(
+        "source_expert_model_parallel_size",
+        load_metadata.get("expert_model_parallel_size"),
     )
     sharded_state_dict = _model_state_dict(
         model_chunks,
@@ -1404,6 +1409,7 @@ class ParallelLinearAdapter(nn.Module):
         split_swiglu: bool = False,
         is_loading: bool = False,
         reshard_expert_parallel: bool = False,
+        same_expert_parallel_topology: bool = False,
     ) -> ShardedTensorFactory:
         """Map one shared 2D adapter tensor to this rank's global expert slots."""
 
@@ -1497,7 +1503,7 @@ class ParallelLinearAdapter(nn.Module):
                 sub_state_dict = [sub_state_dict]
 
             def mean_with_stable_accumulator(tensors):
-                if len(tensors) == 1 and not reshard_expert_parallel:
+                if same_expert_parallel_topology:
                     return tensors[0]
                 output_dtype = tensors[0].dtype
                 accumulator_dtype = torch.promote_types(output_dtype, torch.float32)
@@ -1563,6 +1569,8 @@ class ParallelLinearAdapter(nn.Module):
             )
         destination_ep_size = _process_group_size(self.ep_group, self.config.expert_model_parallel_size or 1)
         reshard_expert_parallel = source_ep_size is not None and source_ep_size != destination_ep_size
+        same_expert_parallel_topology = is_loading and source_ep_size == destination_ep_size
+        independent_load_buffers = is_loading and (source_ep_size is None or reshard_expert_parallel)
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
@@ -1578,8 +1586,9 @@ class ParallelLinearAdapter(nn.Module):
                     linear_in_sd[key] = self._apply_expert_axis_factory(
                         value,
                         sharded_offsets,
-                        is_loading=is_loading,
+                        is_loading=independent_load_buffers,
                         reshard_expert_parallel=reshard_expert_parallel,
+                        same_expert_parallel_topology=same_expert_parallel_topology,
                     )
             for key, value in list(linear_out_sd.items()):
                 if isinstance(value, ShardedTensor):
@@ -1587,8 +1596,9 @@ class ParallelLinearAdapter(nn.Module):
                         value,
                         sharded_offsets,
                         split_swiglu=split_swiglu,
-                        is_loading=is_loading,
+                        is_loading=independent_load_buffers,
                         reshard_expert_parallel=reshard_expert_parallel,
+                        same_expert_parallel_topology=same_expert_parallel_topology,
                     )
         elif self.is_expert:
             if _process_group_rank(self.tp_group) > 0:

@@ -1165,6 +1165,43 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_shared_grouped_expert_same_ep_load_reuses_staging_buffer(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Known unchanged EP topology should not allocate one full buffer per local expert."""
+        del mock_row_linear
+        weight = torch.zeros(2, 2)
+        mock_linear_in = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", weight, replica_id=(0, 0, 0)
+            ),
+        }
+        mock_linear_out = Mock()
+        mock_linear_out.sharded_state_dict.return_value = {}
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        factory = adapter.sharded_state_dict(
+            prefix="adapter.",
+            metadata={"is_loading": True, "source_expert_model_parallel_size": 2},
+        )["adapter.linear_in.weight"]
+
+        built = factory.build()
+
+        assert len({shard.data.untyped_storage().data_ptr() for shard in built}) == 1
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_shared_grouped_expert_load_rejects_unknown_source_ep(self, mock_row_linear, mock_col_linear, mock_config):
         """An EP>1 load must not silently assume that an unknown source topology is unchanged."""
         del mock_row_linear
@@ -2705,6 +2742,7 @@ def test_load_peft_adapter_checkpoint_filters_and_loads(monkeypatch) -> None:
         "/adapter",
         peft=peft,
         strict=False,
+        model_sd_kwargs={"metadata": {"source_expert_model_parallel_size": 2}},
         fully_parallel_load=False,
         load_strategy="strategy",
     )
@@ -2712,7 +2750,7 @@ def test_load_peft_adapter_checkpoint_filters_and_loads(monkeypatch) -> None:
     assert sorted(calls["sharded_state_dict"]["model"]) == ["adapter.weight"]
     assert calls["checkpoint_path"] == "/adapter"
     assert calls["load_strategy"] == "strategy"
-    assert calls["model_sd_kwargs"] == {"metadata": {"is_loading": True}}
+    assert calls["model_sd_kwargs"] == {"metadata": {"is_loading": True, "source_expert_model_parallel_size": 2}}
     assert torch.equal(model[0].loaded_state_dict["adapter.weight"], torch.tensor([4.0]))
     assert model[0].loaded_strict is False
 

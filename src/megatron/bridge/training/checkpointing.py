@@ -3843,7 +3843,11 @@ def _checkpoint_expert_parallel_size(checkpoint_path: str | Path) -> int | None:
         config_path = get_checkpoint_run_config_filename(str(config_root))
         if not file_exists(config_path):
             continue
-        run_config = read_run_config(config_path)
+        try:
+            run_config = read_run_config(config_path)
+        except Exception:
+            logger.debug("Unable to read checkpoint run config at %s", config_path, exc_info=True)
+            continue
         model_config = run_config.get("model", {})
         if isinstance(model_config, Mapping):
             expert_parallel_size = model_config.get("expert_model_parallel_size")
