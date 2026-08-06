@@ -309,6 +309,22 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
     # the same TE loss kernel used by the verified full-SFT recipe.
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
     return cfg
 
 
@@ -1077,6 +1093,22 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # softmax buffer for every live microbatch. Use the TE kernel to keep the
     # 248K-vocabulary SFT loss memory-bounded on H100.
     cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
     return cfg
 
 
@@ -2084,6 +2116,21 @@ def qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config() -> ConfigContainer:
     # expert linear modules. LoRA replaces those modules with ``LoRALinear``,
     # which does not implement that Transformer Engine hook.
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = False
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
     return cfg
 
 

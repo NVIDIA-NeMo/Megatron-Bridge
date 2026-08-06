@@ -42,6 +42,25 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # Restore the library-owned execution policy after generic benchmark
     # defaults adjust CUDA graph and HybridEP settings.
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
     return cfg
 
 
