@@ -26,8 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
-from megatron.bridge.data.collators.contracts import ModelCollator
-from megatron.bridge.data.collators.registry import resolve_model_collator
+from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.data.conversation_processing import (
     normalize_energon_vlm_sample,
     normalized_vlm_sample_to_hf_example,
@@ -121,10 +120,9 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
         collate_key = type(processor).__name__ if processor is not None else "default"
         if collate_fn is not None:
-            self._collator = ModelCollator(collate_fn)
+            self._collate_impl = collate_fn
         else:
-            self._collator = resolve_model_collator(collate_key)
-        self._collate_impl = self._collator.collate_fn
+            self._collate_impl = resolve_model_collate(collate_key)
 
     def encode_sample(self, sample: ChatMLSample) -> HFEnergonSample:
         """Normalize a single ChatML sample into a HF-style collate example.
@@ -171,7 +169,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             collate_kwargs["min_pixels"] = self.min_pixels
         if self.max_pixels is not None:
             collate_kwargs["max_pixels"] = self.max_pixels
-        return self._collator(examples, self.processor, **collate_kwargs)
+        return self._collate_impl(examples, self.processor, **collate_kwargs)
 
     # ------------------------------------------------------------------
     # batch

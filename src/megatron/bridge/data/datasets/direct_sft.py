@@ -77,13 +77,10 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         collate_key = type(processor).__name__ if processor is not None else "default"
         explicit_collate_impl = collate_impl is not None
         if collate_impl is None:
-            from megatron.bridge.data.collators.registry import resolve_model_collator
+            from megatron.bridge.data.collators.registry import resolve_model_collate
 
-            collator = resolve_model_collator(collate_key)
-        else:
-            from megatron.bridge.data.collators.contracts import ModelCollator
-
-            collator = ModelCollator(collate_impl)
+            collate_impl = resolve_model_collate(collate_key)
+        assert collate_impl is not None
 
         collate_kwargs: dict[str, Any] = {
             "sequence_length": sequence_length,
@@ -96,13 +93,13 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         }
         if explicit_collate_impl:
             collate_kwargs = _collate_kwargs_for_impl(
-                collator.collate_fn,
+                collate_impl,
                 collate_kwargs,
                 require_packing_support=bool(collate_kwargs["enable_in_batch_packing"]),
             )
 
         def _bound_collate(batch: list) -> dict[str, torch.Tensor]:
-            return collator(batch, self._processor, **collate_kwargs)
+            return collate_impl(batch, self._processor, **collate_kwargs)
 
         self.collate_fn = _bound_collate
 
