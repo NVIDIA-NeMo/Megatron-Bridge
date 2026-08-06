@@ -75,6 +75,7 @@ def _make_adapter(
     *,
     base_linear_name: str,
     input_is_parallel: bool,
+    use_cpu_initialization: bool = False,
 ) -> ParallelLinearAdapter:
     """Construct a real MCore-backed shared expert adapter."""
     config = ModelParallelConfig(
@@ -83,6 +84,7 @@ def _make_adapter(
         expert_tensor_parallel_size=1,
         params_dtype=torch.float32,
         gradient_accumulation_fusion=False,
+        use_cpu_initialization=use_cpu_initialization,
     )
     return ParallelLinearAdapter(
         in_features=8,
@@ -99,8 +101,9 @@ def _make_adapter(
 
 def _assert_identical_across_ep(tensor: torch.Tensor, ep_group: object) -> None:
     """Require bitwise equality for one logical tensor on every EP rank."""
-    gathered = [torch.empty_like(tensor) for _ in range(_EP_SIZE)]
-    dist.all_gather(gathered, tensor, group=ep_group)
+    collective_tensor = tensor if tensor.is_cuda else tensor.cuda()
+    gathered = [torch.empty_like(collective_tensor) for _ in range(_EP_SIZE)]
+    dist.all_gather(gathered, collective_tensor, group=ep_group)
     for replica in gathered[1:]:
         torch.testing.assert_close(replica, gathered[0], rtol=0, atol=0)
 
@@ -113,46 +116,69 @@ def _set_identical_nonzero_weights(adapter: ParallelLinearAdapter) -> None:
             parameter.copy_(values.reshape_as(parameter) * (0.01 * index))
 
 
+@pytest.fixture(scope="module")
+def ep_pg_collection() -> Iterator[ProcessGroupCollection]:
+    """Provide one shared two-rank EP topology for this test module."""
+    if int(os.environ.get("WORLD_SIZE", "1")) != _EP_SIZE:
+        pytest.skip("requires a two-rank torch.distributed launch")
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+
+    with _distributed_ep() as pg_collection:
+        yield pg_collection
+
+
 @pytest.mark.gpu
-def test_shared_expert_lora_initialization_is_identical_across_ep() -> None:
+def test_shared_expert_lora_initialization_is_identical_across_ep(
+    ep_pg_collection: ProcessGroupCollection,
+) -> None:
     """Every shared expert LoRA parameter must start bitwise identical across EP."""
-    if int(os.environ.get("WORLD_SIZE", "1")) != _EP_SIZE:
-        pytest.skip("requires a two-rank torch.distributed launch")
-    if not torch.cuda.is_available():
-        pytest.skip("requires CUDA")
-
-    with _distributed_ep() as pg_collection:
-        for base_linear_name, input_is_parallel in _ADAPTER_CASES:
-            adapter = _make_adapter(
-                pg_collection,
-                base_linear_name=base_linear_name,
-                input_is_parallel=input_is_parallel,
-            )
-            for parameter in adapter.parameters():
-                _assert_identical_across_ep(parameter.detach(), pg_collection.ep)
+    for base_linear_name, input_is_parallel in _ADAPTER_CASES:
+        adapter = _make_adapter(
+            ep_pg_collection,
+            base_linear_name=base_linear_name,
+            input_is_parallel=input_is_parallel,
+        )
+        for parameter in adapter.parameters():
+            _assert_identical_across_ep(parameter.detach(), ep_pg_collection.ep)
 
 
 @pytest.mark.gpu
-def test_shared_expert_lora_gradients_are_identical_across_ep() -> None:
+def test_shared_expert_lora_gradients_are_identical_across_ep(
+    ep_pg_collection: ProcessGroupCollection,
+) -> None:
     """EP gradient synchronization must produce identical nonzero gradients."""
-    if int(os.environ.get("WORLD_SIZE", "1")) != _EP_SIZE:
-        pytest.skip("requires a two-rank torch.distributed launch")
-    if not torch.cuda.is_available():
-        pytest.skip("requires CUDA")
+    ep_rank = dist.get_rank(group=ep_pg_collection.ep)
+    for base_linear_name, input_is_parallel in _ADAPTER_CASES:
+        adapter = _make_adapter(
+            ep_pg_collection,
+            base_linear_name=base_linear_name,
+            input_is_parallel=input_is_parallel,
+        )
+        _set_identical_nonzero_weights(adapter)
+        inputs = torch.arange(1, 25, device="cuda", dtype=torch.float32).reshape(3, 8) + ep_rank
+        adapter(inputs).square().sum().backward()
 
-    with _distributed_ep() as pg_collection:
-        ep_rank = dist.get_rank(group=pg_collection.ep)
-        for base_linear_name, input_is_parallel in _ADAPTER_CASES:
-            adapter = _make_adapter(
-                pg_collection,
-                base_linear_name=base_linear_name,
-                input_is_parallel=input_is_parallel,
-            )
-            _set_identical_nonzero_weights(adapter)
-            inputs = torch.arange(1, 25, device="cuda", dtype=torch.float32).reshape(3, 8) + ep_rank
-            adapter(inputs).square().sum().backward()
+        for parameter in adapter.parameters():
+            assert parameter.grad is not None
+            assert torch.count_nonzero(parameter.grad) > 0
+            _assert_identical_across_ep(parameter.grad, ep_pg_collection.ep)
 
-            for parameter in adapter.parameters():
-                assert parameter.grad is not None
-                assert torch.count_nonzero(parameter.grad) > 0
-                _assert_identical_across_ep(parameter.grad, pg_collection.ep)
+
+@pytest.mark.gpu
+def test_shared_expert_lora_cpu_initialization_is_identical_across_ep(
+    ep_pg_collection: ProcessGroupCollection,
+) -> None:
+    """CPU initialization must be synchronized when EP ranks use different seeds."""
+    ep_rank = dist.get_rank(group=ep_pg_collection.ep)
+    for base_linear_name, input_is_parallel in _ADAPTER_CASES:
+        torch.manual_seed(2026 + ep_rank)
+        adapter = _make_adapter(
+            ep_pg_collection,
+            base_linear_name=base_linear_name,
+            input_is_parallel=input_is_parallel,
+            use_cpu_initialization=True,
+        )
+        for parameter in adapter.parameters():
+            assert parameter.device.type == "cpu"
+            _assert_identical_across_ep(parameter.detach(), ep_pg_collection.ep)

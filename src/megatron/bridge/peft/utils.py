@@ -1293,7 +1293,7 @@ class ParallelLinearAdapter(nn.Module):
         weights = [
             weight
             for module in (self.linear_in, self.linear_out)
-            if isinstance(weight := getattr(module, "weight", None), torch.Tensor) and weight.is_cuda
+            if isinstance(weight := getattr(module, "weight", None), torch.Tensor)
         ]
         if not weights:
             return
@@ -1301,7 +1301,17 @@ class ParallelLinearAdapter(nn.Module):
         src_rank = torch.distributed.get_global_rank(self.ep_group, 0)
         with torch.no_grad():
             for weight in weights:
-                torch.distributed.broadcast(weight, src=src_rank, group=self.ep_group)
+                if weight.is_meta:
+                    raise RuntimeError(
+                        "Shared expert adapter parameters must be materialized before EP synchronization"
+                    )
+                if weight.is_cuda or torch.distributed.get_backend(self.ep_group) != "nccl":
+                    torch.distributed.broadcast(weight, src=src_rank, group=self.ep_group)
+                    continue
+
+                staged_weight = weight.to(torch.device("cuda", torch.cuda.current_device()))
+                torch.distributed.broadcast(staged_weight, src=src_rank, group=self.ep_group)
+                weight.copy_(staged_weight.cpu())
 
     def _register_shared_expert_grad_sync_hooks(self) -> None:
         """Keep shared grouped-expert adapters synchronized across EP ranks."""
