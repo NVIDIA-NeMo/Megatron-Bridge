@@ -339,12 +339,12 @@ class TestSafeLoadConfigWithRetry:
                 mock_auto_config.from_pretrained.assert_called_with(path, trust_remote_code=False)
                 mock_auto_config.reset_mock()
 
-    def test_custom_lock_directory_env_var(self):
+    def test_custom_lock_directory_env_var(self, tmp_path):
         """Test that MEGATRON_CONFIG_LOCK_DIR environment variable overrides default lock directory."""
         mock_lock = MagicMock()
-        custom_lock_dir = "/custom/locks"
+        custom_lock_dir = tmp_path / "locks"
 
-        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": custom_lock_dir}):
+        with patch.dict(os.environ, {"MEGATRON_CONFIG_LOCK_DIR": str(custom_lock_dir)}):
             with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
                 mock_filelock.return_value = mock_lock
                 mock_lock.__enter__ = Mock(return_value=mock_lock)
