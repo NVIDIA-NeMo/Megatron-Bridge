@@ -3760,6 +3760,43 @@ class TestFSDPDTensorFunctionality:
 
         assert result["distrib_optim_sharding_type"] == "dp_reshardable"
 
+    def test_checkpoint_expert_parallel_size_preserves_msc_uri(self):
+        """Run-config discovery must not collapse the double slash in MSC URIs."""
+        from megatron.bridge.training.checkpointing import _checkpoint_expert_parallel_size
+
+        class FakeMSCPath:
+            def __init__(self, value):
+                self.value = value
+
+            def __str__(self):
+                return self.value
+
+            def __truediv__(self, child):
+                return FakeMSCPath(f"{self.value.rstrip('/')}/{child}")
+
+            @property
+            def parent(self):
+                return FakeMSCPath(self.value.rsplit("/", 1)[0])
+
+        fake_msc = Mock(Path=FakeMSCPath)
+        parent_config = "msc://bucket/checkpoints/run_config.yaml"
+        with (
+            patch.object(MultiStorageClientFeature, "is_enabled", return_value=True),
+            patch.object(MultiStorageClientFeature, "import_package", return_value=fake_msc),
+            patch(
+                "megatron.bridge.training.checkpointing.file_exists",
+                side_effect=lambda path: path == parent_config,
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.read_run_config",
+                return_value={"model": {"expert_model_parallel_size": 4}},
+            ) as mock_read_run_config,
+        ):
+            result = _checkpoint_expert_parallel_size("msc://bucket/checkpoints/iter_0000001")
+
+        assert result == 4
+        mock_read_run_config.assert_called_once_with(parent_config)
+
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     @patch("torch.distributed.checkpoint.FileSystemReader")
     @patch("torch.distributed.checkpoint.load_state_dict")

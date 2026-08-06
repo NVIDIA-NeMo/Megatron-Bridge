@@ -32,7 +32,7 @@ from typing import Any, Callable, Literal, Mapping, Optional, Protocol, Union, r
 import numpy as np
 import torch
 import torch.nn.functional as F
-from megatron.core import dist_checkpointing, parallel_state, tensor_parallel
+from megatron.core import dist_checkpointing, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
 from megatron.core.dist_checkpointing.serialization import StateDict
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
@@ -3820,16 +3820,14 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
 
     metadata["singleton_local_shards"] = False
     metadata["chained_optim_avoid_prefix"] = True
-    expert_parallel_size = parallel_state.get_expert_model_parallel_world_size()
-    if expert_parallel_size > 0:
-        metadata["expert_model_parallel_size"] = expert_parallel_size
     return metadata
 
 
 def _checkpoint_expert_parallel_size(checkpoint_path: str | Path) -> int | None:
     """Read the source expert-parallel size from a checkpoint run config, if present."""
 
-    checkpoint_path = Path(checkpoint_path)
+    path_type = MultiStorageClientFeature.import_package().Path if MultiStorageClientFeature.is_enabled() else Path
+    checkpoint_path = path_type(str(checkpoint_path))
     for config_root in (checkpoint_path, checkpoint_path.parent):
         config_path = get_checkpoint_run_config_filename(str(config_root))
         if not file_exists(config_path):
