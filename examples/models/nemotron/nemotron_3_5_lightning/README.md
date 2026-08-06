@@ -223,6 +223,12 @@ France is Paris.`. Exporting the full-SFT checkpoint also produced a complete
 
 The H100 and GB200 LoRA checkpoints each exported to a standard PEFT package
 containing 12,532 adapter tensors, including 524 MTP tensors (262 A/B pairs).
+The public-revision GB200 LoRA checkpoint was also merged through the common
+Megatron-checkpoint path. The standalone artifact preserved all 6,513 base
+tensors by name, shape, and native dtype; 6,266 LoRA-targeted tensors changed,
+including all 262 MTP tensors with adapter pairs, while the other eight MTP
+tensors remained unchanged. Distributed inference from that artifact generated
+`The capital of France is Paris.  `.
 Full-SFT export and inference generated `The capital of France is Paris.`.
 
 When operating offline, set `HF_MODEL` to a mounted local snapshot for import,
