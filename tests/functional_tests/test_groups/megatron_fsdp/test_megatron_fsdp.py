@@ -426,9 +426,7 @@ class TestMegatronFSDP:
         try:
             cfg = create_fsdp_config_container(
                 seq_length=128,
-                train_iters=2,
-                train={"global_batch_size": 2},
-                logger={"log_params_norm": False},
+                train_iters=10,
             )
             cfg.model = create_dense_hybrid_smoke_model_config()
             cfg.ddp.megatron_fsdp_version = 2
