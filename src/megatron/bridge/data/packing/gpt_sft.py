@@ -61,8 +61,9 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         return_cu_seqlen: Whether to return `cu_seqlen` to pass to the model. Having `cu_seqlen` in the model input
                 enables THD attention kernel, which is the correct format for training with packed sequence to prevent
                 cross-sequence attention. This flag should be True unless you have a specific use case.
-        pad_seq_to_mult: The multiple used for padding sequences during packing. When > 1, cu_seqlens_unpadded
-                will be computed to support THD CP. When == 1 (no padding), cu_seqlens_unpadded is not computed.
+        pad_seq_to_mult: The multiple used for padding sequences during packing. When > 1, both logical and
+                physically padded cumulative sequence offsets are returned for THD CP.
+        pack_metadata_file_path: Path to the metadata JSON file used to stabilize cu_seqlens shapes.
         """
         np.random.seed(kwargs.get("seed", 1234))
         super().__init__(file_path, tokenizer, **kwargs)
@@ -161,8 +162,8 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
         Returns:
             dict: A dictionary of batched tensors, including 'tokens', 'labels',
-                  'loss_mask', 'position_ids', and potentially 'cu_seqlens',
-                  'cu_seqlens_argmin', 'max_seqlen' if `return_cu_seqlen` is True.
+                  'loss_mask', 'position_ids', and the MCore/TE packed-sequence
+                  fields if `return_cu_seqlen` is True.
         """
         input_ids = [
             np.concatenate(
@@ -198,49 +199,60 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         assert max_length <= self.max_seq_length
 
         position_ids: list[list[int]] = []
+        # TE naming: cu_seqlens contains logical offsets, while cu_seqlens_padded
+        # contains physical offsets including per-sequence alignment padding.
         cu_seqlens: list[list[int]] = []
-        # Only compute cu_seqlens_unpadded when pad_seq_to_mult > 1 (actual padding for CP)
-        cu_seqlens_unpadded: list[list[int]] | None = [] if self._pad_seq_to_mult > 1 else None
+        cu_seqlens_padded: list[list[int]] | None = [] if self._pad_seq_to_mult > 1 else None
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
-            if cu_seqlens_unpadded is not None:
-                cu_seqlens_unpadded.append([0])
+            if cu_seqlens_padded is not None:
+                cu_seqlens_padded.append([0])
             seqlens = np.array(item["seq_boundaries"][1:]) - np.array(item["seq_boundaries"][:-1])
             for length in seqlens:
                 # length minus 1 because input_ids is truncated by 1 for labels
                 position_ids[-1].extend(list(range(length - 1)))
-                cu_seqlens[-1].append(cu_seqlens[-1][-1] + length - 1)
+                if cu_seqlens_padded is not None:
+                    cu_seqlens_padded[-1].append(cu_seqlens_padded[-1][-1] + length - 1)
+                else:
+                    cu_seqlens[-1].append(cu_seqlens[-1][-1] + length - 1)
 
             # the last seq needs to be the max seq len because rope and attn kernels expect no padding
-            assert cu_seqlens[-1][-1] <= max_length
-
-            # since data is prepadded when cp_size > 1, there may be some extra padding at the end
-            # of the packed sequence. In this case, we need to add the max seq len to the end.
-            if cu_seqlens[-1][-1] != max_length:
-                cu_seqlens[-1].append(max_length)
-
-            if cu_seqlens_unpadded is not None:
+            if cu_seqlens_padded is not None:
+                assert cu_seqlens_padded[-1][-1] <= max_length
+                if cu_seqlens_padded[-1][-1] != max_length:
+                    cu_seqlens_padded[-1].append(max_length)
                 for i in range(len(item["seq_boundaries"]) - 1):
                     current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
-                    # Stop unpadded lengths at the last non-eos token so padding eos are excluded.
+                    # Stop logical lengths at the last non-EOS token so alignment padding is excluded.
                     current_seq_arr = np.array(current_seq)
                     non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
-                    seqlen_unpadded = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
-                    cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
+                    logical_seqlen = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
+                    cu_seqlens[-1].append(cu_seqlens[-1][-1] + logical_seqlen)
 
                 # if extra paddings are added in the packed sequence, they can't be counted as
                 # actual tokens for training
-                if len(cu_seqlens[-1]) > len(cu_seqlens_unpadded[-1]):
-                    cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1])
+                if len(cu_seqlens_padded[-1]) > len(cu_seqlens[-1]):
+                    cu_seqlens[-1].append(cu_seqlens[-1][-1])
+            else:
+                assert cu_seqlens[-1][-1] <= max_length
+                # Prepadded data may leave padding at the end of the packed sequence.
+                if cu_seqlens[-1][-1] != max_length:
+                    cu_seqlens[-1].append(max_length)
 
             if self.pad_cu_seqlens:
-                # pad cu_seqlens to a constant shape with zero length sequences
+                # Pad both boundary representations to the same static shape with zero-length
+                # sequences. TE expects corresponding logical and physical boundary arrays.
                 max_samples_per_bin = max(p["max_samples_per_bin"] for p in self.pack_metadata)
                 # plus 2 since cu_seqlens additionally contains 0 and may append max_length
-                pad_num = max_samples_per_bin - len(cu_seqlens[-1]) + 2
-                cu_seqlens[-1].extend([max_length] * pad_num)
+                if cu_seqlens_padded is not None:
+                    pad_num = max_samples_per_bin - len(cu_seqlens_padded[-1]) + 2
+                    cu_seqlens_padded[-1].extend([max_length] * pad_num)
+                    cu_seqlens[-1].extend([cu_seqlens[-1][-1]] * pad_num)
+                else:
+                    pad_num = max_samples_per_bin - len(cu_seqlens[-1]) + 2
+                    cu_seqlens[-1].extend([max_length] * pad_num)
 
         assert len(input_ids[0]) == len(position_ids[0]), (
             "Dataset problem: input_ids and position_ids lengths don't match"
@@ -263,13 +275,10 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         }
 
         if self.return_cu_seqlen:
-            cu_seqlens = self._collate_item(
-                cu_seqlens, max_length=max(len(length) for length in cu_seqlens) + 1, pad_id=-1
-            )
-            # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
-            cu_seqlens = torch.IntTensor(cu_seqlens)
-            cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
-            seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
+            # Offline packed SFT requires micro-batch size 1, so no sentinel padding is
+            # needed to batch variable-length metadata. Emit MCore/TE field names directly.
+            seqlens = torch.IntTensor(cu_seqlens_padded if cu_seqlens_padded is not None else cu_seqlens)
+            seqlens = seqlens[:, 1:] - seqlens[:, :-1]
             max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
 
             if self.pad_cu_seqlens:
@@ -284,25 +293,19 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 safe_max_seqlen = max(dataset_max_seqlen, padding_gap)
                 max_seqlen = torch.IntTensor([safe_max_seqlen] * len(cu_seqlens))
             else:
-                seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
                 max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
 
             cu_seqlens_batch = {
                 "attention_mask": None,  # no attention mask is needed for packed seq
-                "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
-                "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
-                "max_seqlen": max_seqlen,  # only required for perf
+                "cu_seqlens_q": torch.IntTensor(cu_seqlens),
+                "max_seqlen_q": max_seqlen,
+                "max_seqlen_kv": max_seqlen,
             }
+            cu_seqlens_batch["cu_seqlens_kv"] = cu_seqlens_batch["cu_seqlens_q"]
 
-            # Only include cu_seqlens_unpadded when pad_seq_to_mult > 1 (actual CP padding)
-            if cu_seqlens_unpadded is not None:
-                cu_seqlens_unpadded = self._collate_item(
-                    cu_seqlens_unpadded, max_length=max(len(length) for length in cu_seqlens_unpadded) + 1, pad_id=-1
-                )
-                cu_seqlens_unpadded = torch.IntTensor(cu_seqlens_unpadded)
-                cu_seqlens_unpadded_argmin = torch.argmin(cu_seqlens_unpadded, dim=1, keepdim=True)
-                cu_seqlens_batch["cu_seqlens_unpadded"] = cu_seqlens_unpadded
-                cu_seqlens_batch["cu_seqlens_unpadded_argmin"] = cu_seqlens_unpadded_argmin
+            if cu_seqlens_padded is not None:
+                cu_seqlens_batch["cu_seqlens_q_padded"] = torch.IntTensor(cu_seqlens_padded)
+                cu_seqlens_batch["cu_seqlens_kv_padded"] = cu_seqlens_batch["cu_seqlens_q_padded"]
 
             processed_batch.update(cu_seqlens_batch)
         else:

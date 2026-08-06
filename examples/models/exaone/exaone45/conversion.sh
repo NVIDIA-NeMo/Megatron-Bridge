@@ -17,6 +17,7 @@ set -euo pipefail
 
 WORKSPACE=${WORKSPACE:-/workspace}
 
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model LGAI-EXAONE/EXAONE-4.5-33B \
-    --megatron-path "${WORKSPACE}/models/EXAONE-4.5-33B"
+    --megatron-path "${WORKSPACE}/models/EXAONE-4.5-33B" \
+    --trust-remote-code
