@@ -404,9 +404,14 @@ def load_peft_adapter_checkpoint(
     from megatron.core.dist_checkpointing.strategies.fully_parallel import FullyParallelLoadStrategyWrapper
     from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 
-    from megatron.bridge.training.checkpointing import apply_peft_adapter_filter_to_state_dict
+    from megatron.bridge.training.checkpointing import (
+        _model_sharded_state_dict_load_metadata,
+        apply_peft_adapter_filter_to_state_dict,
+    )
 
     model_chunks = _ensure_model_list(model)
+    model_sd_kwargs = dict(model_sd_kwargs or {})
+    model_sd_kwargs["metadata"] = _model_sharded_state_dict_load_metadata(model_sd_kwargs.get("metadata"))
     sharded_state_dict = _model_state_dict(
         model_chunks,
         model_sd_kwargs,
@@ -1394,8 +1399,8 @@ class ParallelLinearAdapter(nn.Module):
             for expert_index in range(local_experts):
                 expert_offset = (expert_axis, first_expert_slot + expert_index, num_global_experts)
                 # Save shards all contain the same shared adapter value and can alias.
-                # Load shards need independent destinations until merge_fn averages them.
-                expert_tensor = tensor if not is_loading or expert_index == 0 else tensor.clone()
+                # Load shards need independent CPU destinations until merge_fn averages them.
+                expert_tensor = torch.empty_like(tensor, device="cpu") if is_loading else tensor
                 if not split_swiglu:
                     sharded_tensors.append(
                         ShardedTensor.from_rank_offsets(
@@ -1432,19 +1437,24 @@ class ParallelLinearAdapter(nn.Module):
                     )
             return sharded_tensors
 
+        @torch.no_grad()
         def sh_ten_merge_fn(sub_state_dict):
             if not isinstance(sub_state_dict, list):
                 sub_state_dict = [sub_state_dict]
+
+            def mean_in_place(tensors):
+                result = tensors[0]
+                for tensor in tensors[1:]:
+                    result.add_(tensor)
+                return result.div_(len(tensors))
+
             if split_swiglu:
                 if len(sub_state_dict) % 2 != 0:
                     raise ValueError(f"Expected even number of SwiGLU shards for {sharded_tensor.key}")
-                sub_state_dict = [
-                    torch.cat(sub_state_dict[index : index + 2], dim=swiglu_shard_axis)
-                    for index in range(0, len(sub_state_dict), 2)
-                ]
-            if len(sub_state_dict) == 1:
-                return sub_state_dict[0]
-            return torch.stack(sub_state_dict, dim=0).mean(dim=0)
+                gate_mean = mean_in_place(sub_state_dict[::2])
+                up_mean = mean_in_place(sub_state_dict[1::2])
+                return torch.cat((gate_mean, up_mean), dim=swiglu_shard_axis)
+            return mean_in_place(sub_state_dict)
 
         return ShardedTensorFactory(
             sharded_tensor.key,

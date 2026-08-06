@@ -1064,6 +1064,7 @@ class TestParallelLinearAdapter:
             f"got {torch.unique(merged).tolist()} with {expert_storage_count}/"
             f"{mock_config.num_moe_experts} independent expert buffers"
         )
+        assert all(shard.data.device.type == "cpu" for shard in built)
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
@@ -2550,9 +2551,13 @@ def test_load_peft_adapter_checkpoint_filters_and_loads(monkeypatch) -> None:
             }
         }
 
+    def fake_model_state_dict(model, model_sd_kwargs, ckpt_format, pg_collection=None):
+        calls["model_sd_kwargs"] = model_sd_kwargs
+        return {"model": model[0].sharded_state_dict()}
+
     _patch_checkpointing(
         monkeypatch,
-        lambda model, model_sd_kwargs, ckpt_format, pg_collection=None: {"model": model[0].sharded_state_dict()},
+        fake_model_state_dict,
         fake_filter,
     )
 
@@ -2576,6 +2581,7 @@ def test_load_peft_adapter_checkpoint_filters_and_loads(monkeypatch) -> None:
     assert sorted(calls["sharded_state_dict"]["model"]) == ["adapter.weight"]
     assert calls["checkpoint_path"] == "/adapter"
     assert calls["load_strategy"] == "strategy"
+    assert calls["model_sd_kwargs"] == {"metadata": {"is_loading": True}}
     assert torch.equal(model[0].loaded_state_dict["adapter.weight"], torch.tensor([4.0]))
     assert model[0].loaded_strict is False
 

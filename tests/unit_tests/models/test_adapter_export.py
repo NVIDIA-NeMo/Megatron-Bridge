@@ -820,7 +820,7 @@ class TestExportAdapterCkpt:
             patch(
                 "megatron.bridge.training.checkpointing._generate_model_state_dict",
                 return_value={"model": {}},
-            ),
+            ) as mock_generate_state_dict,
             patch(
                 "megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict",
                 side_effect=lambda sd, _lora: sd,
@@ -831,6 +831,7 @@ class TestExportAdapterCkpt:
             ),
         ):
             self.mock_dist_load = mock_dist_load
+            self.mock_generate_state_dict = mock_generate_state_dict
             yield
 
     def test_basic_export_calls_save_hf_adapter(self, bridge, ckpt_dir, tmp_path):
@@ -1002,6 +1003,7 @@ class TestExportAdapterCkpt:
         self.mock_dist_load.assert_called_once()
         load_path = self.mock_dist_load.call_args.args[1]
         assert load_path == str(ckpt_dir.resolve())
+        assert self.mock_generate_state_dict.call_args.args[1] == {"metadata": {"is_loading": True}}
 
     def test_base_model_name_from_name_or_path_fallback(self, bridge, ckpt_dir, tmp_path):
         """Falls back to hf_pretrained.name_or_path when model_name_or_path is empty."""

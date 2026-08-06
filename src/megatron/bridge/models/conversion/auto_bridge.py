@@ -1590,6 +1590,7 @@ class AutoBridge(Generic[MegatronModelT]):
         from megatron.bridge.peft.utils import enable_legacy_shared_expert_adapter_loading
         from megatron.bridge.training.checkpointing import (
             _generate_model_state_dict,
+            _model_sharded_state_dict_load_metadata,
             apply_peft_adapter_filter_to_state_dict,
         )
         from megatron.bridge.training.model_load_save import temporary_distributed_context
@@ -1648,13 +1649,14 @@ class AutoBridge(Generic[MegatronModelT]):
             """Load adapter weights into a materialized model and export them as PEFT."""
 
             # Load adapter weights from the PEFT checkpoint
-            sharded_state_dict = _generate_model_state_dict(model, {})
+            model_sd_kwargs = {"metadata": _model_sharded_state_dict_load_metadata(None)}
+            sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
             sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
             legacy_shared_expert_adapter = enable_legacy_shared_expert_adapter_loading(
                 model, sharded_state_dict, ckpt_path
             )
             if legacy_shared_expert_adapter:
-                sharded_state_dict = _generate_model_state_dict(model, {})
+                sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
                 sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
             loaded_sd = dist_checkpointing.load(
                 sharded_state_dict,

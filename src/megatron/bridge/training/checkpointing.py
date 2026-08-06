@@ -27,7 +27,7 @@ from enum import Enum, auto
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Literal, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Callable, Literal, Mapping, Optional, Protocol, Union, runtime_checkable
 
 import numpy as np
 import torch
@@ -3809,9 +3809,11 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
     return metadata
 
 
-def _model_sharded_state_dict_load_metadata(metadata: Optional[dict]) -> dict:
+def _model_sharded_state_dict_load_metadata(metadata: object | None) -> dict:
     """Return model sharding metadata that identifies checkpoint load scaffolding."""
 
+    if metadata is not None and not isinstance(metadata, Mapping):
+        raise TypeError(f"Expected model sharding metadata to be a mapping, got {type(metadata).__name__}")
     load_metadata = dict(metadata or {})
     load_metadata["is_loading"] = True
     return load_metadata
