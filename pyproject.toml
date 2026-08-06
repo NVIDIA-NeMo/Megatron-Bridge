@@ -83,7 +83,7 @@ dependencies = [
     "tensorboard>=2.19.0",
     "typing-extensions",
     "rich",
-    "wandb>=0.25.0",
+    "wandb==0.27.2",
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
@@ -129,11 +129,11 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@cfda38340769c432c12db3c0df574f8e6ce46c8c",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@4329ff84bfbdaa778a33cba02a15fb0807c64689",
     "mlflow>=3.15.0",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
-    "nvidia-modelopt==0.44.0rc5",
+    "nvidia-modelopt==0.46.0rc1",
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
@@ -168,12 +168,11 @@ requires-dist = []
 # above) changes — an out-of-date entry sends uv back to building TE.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.18.0+cfda3834"
+version = "2.17.1+4329ff84"
 requires-dist = [
     "einops",
     "importlib-metadata>=1.0",
     "nvdlfw-inspect",
-    "nvidia-cudnn-frontend>=1.25.0",
     "onnx",
     "onnxscript",
     "packaging",
@@ -242,7 +241,6 @@ build = [
     "numpy",
     "ninja",
     "nvidia-mathdx",
-    "nvidia-cudnn-frontend>=1.25.0",
 ]
 # CVE-carrying WAN diffusion codecs, needed only by WAN video caching
 # (src/megatron/bridge/diffusion/models/wan/inference/utils.py). All three are suppressed
