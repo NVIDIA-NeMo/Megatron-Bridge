@@ -131,10 +131,10 @@ def test_weight_verification_broadcasts_rank_zero_mismatch(monkeypatch: pytest.M
     assert tensor_calls == [(False, torch.int32, 3)]
 
 
-def test_roundtrip_synchronizes_result_and_saves_before_rendering_table(
+def test_roundtrip_synchronizes_result_and_saves_before_reporting_summary(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Ranks must not enter save while rank 0 renders an unbounded verification table."""
+    """Ranks must synchronize and save before rank 0 reports verification."""
     module = _load_roundtrip_module(monkeypatch)
     events = []
 
@@ -179,9 +179,9 @@ def test_roundtrip_synchronizes_result_and_saves_before_rendering_table(
         raising=False,
     )
     monkeypatch.setattr(
-        module.console,
-        "print",
-        lambda value, *args, **kwargs: events.append(("table", value)) if isinstance(value, module.Table) else None,
+        module,
+        "_print_verification_results",
+        lambda *args, **kwargs: events.append(("report", args)),
     )
     monkeypatch.setenv("WORLD_SIZE", "2")
 
@@ -190,6 +190,6 @@ def test_roundtrip_synchronizes_result_and_saves_before_rendering_table(
     event_names = [event[0] for event in events]
     assert "synchronize" in event_names
     assert event_names.index("synchronize") < event_names.index("save")
-    assert event_names.index("save") < event_names.index("table")
+    assert event_names.index("save") < event_names.index("report")
     save_kwargs = next(event[1] for event in events if event[0] == "save")
     assert save_kwargs["distributed_save"] is True

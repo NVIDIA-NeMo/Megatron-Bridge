@@ -53,7 +53,6 @@ import sys
 
 import torch
 from rich.console import Console
-from rich.table import Table
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
@@ -117,17 +116,29 @@ def _synchronize_weight_verification(all_match: bool) -> bool:
 
 
 def _print_verification_results(
-    table: Table,
+    verified_count: int,
+    mismatch_count: int,
+    mismatch_samples: list[str],
     fp8_skip_count: int,
     fp8_skip_samples: list[str],
 ) -> None:
-    """Render rank-0-only verification output after collective work completes.
+    """Print a bounded rank-0-only verification summary.
 
     Args:
-        table: Per-weight verification results.
+        verified_count: Number of weights compared or skipped as lossy FP8.
+        mismatch_count: Number of weights that did not match.
+        mismatch_samples: Bounded sample of mismatched weight names.
         fp8_skip_count: Number of lossy FP8 comparisons that were skipped.
         fp8_skip_samples: Sample names and dtypes for skipped FP8 comparisons.
     """
+    compared_count = verified_count - fp8_skip_count
+    matched_count = compared_count - mismatch_count
+    color = "green" if mismatch_count == 0 else "red"
+    console.print(f"[{color}]Weight verification: {matched_count}/{compared_count} compared weights matched[/]")
+    if mismatch_count:
+        console.print(f"[red]{mismatch_count} weight mismatches (showing up to 20):[/red]")
+        for entry in mismatch_samples:
+            console.print(f"  [red]{entry}[/red]")
     if fp8_skip_count > 0:
         console.print(
             f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
@@ -136,7 +147,6 @@ def _print_verification_results(
             console.print(f"  [yellow]{entry}[/yellow]")
         if fp8_skip_count > len(fp8_skip_samples):
             console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
-    console.print(table)
 
 
 @torchrun_main
@@ -221,16 +231,6 @@ def main(
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0
 
-    # Formatting
-    table: Table | None = None
-    if is_rank_0:
-        table = Table(title="Hugging Face Weights Verification")
-        table.add_column("Weight Name", style="cyan")
-        table.add_column("Shape")
-        table.add_column("DType")
-        table.add_column("Device")
-        table.add_column("Matches Original", justify="center")
-
     if is_rank_0:
         console.print(f"[yellow]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/yellow]")
@@ -252,11 +252,13 @@ def main(
     # 3. Regular params (same dtype, not in ignore list)  →  direct allclose.
 
     all_match = True
+    verified_count = 0
+    mismatch_count = 0
+    mismatch_samples: list[str] = []
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
-            assert table is not None
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
             compare_original = original_param
@@ -291,19 +293,22 @@ def main(
                 )
 
             all_match = all_match and match
-            table.add_row(
-                name,
-                str(tuple(param.shape)),
-                str(param.dtype).replace("torch.", ""),
-                str(param.device),
-                "✅" if match else "❌",
-            )
+            verified_count += 1
+            if not match:
+                mismatch_count += 1
+                if len(mismatch_samples) < 20:
+                    mismatch_samples.append(name)
 
     verification_failed = _synchronize_weight_verification(all_match)
     if verification_failed:
         if is_rank_0:
-            assert table is not None
-            _print_verification_results(table, fp8_skip_count, fp8_skip_samples)
+            _print_verification_results(
+                verified_count,
+                mismatch_count,
+                mismatch_samples,
+                fp8_skip_count,
+                fp8_skip_samples,
+            )
         raise ValueError("Weight mismatch detected")
 
     if skip_save:
@@ -326,8 +331,13 @@ def main(
             bridge.save_megatron_model(megatron_model, megatron_save_path)
 
     if is_rank_0:
-        assert table is not None
-        _print_verification_results(table, fp8_skip_count, fp8_skip_samples)
+        _print_verification_results(
+            verified_count,
+            mismatch_count,
+            mismatch_samples,
+            fp8_skip_count,
+            fp8_skip_samples,
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -188,7 +188,21 @@ class PreTrainedBase(ABC):
         revision = self.init_kwargs.get("revision")
         revision = revision if isinstance(revision, str) else None
 
-        self._save_config(save_path)
+        _ = getattr(self, "config")  # trigger lazy loading of config
+        if hasattr(self, "_config") and self._config is not None:
+            if hasattr(self._config, "quantization_config"):
+                # quantized export is not supported currently
+                del self._config.quantization_config
+            auto_map_missing = object()
+            auto_map = vars(self._config).get("auto_map", auto_map_missing)
+            strip_auto_map = auto_map is not auto_map_missing and getattr(self, "trust_remote_code", False) is not True
+            if strip_auto_map:
+                delattr(self._config, "auto_map")
+            try:
+                self._config.save_pretrained(save_path)
+            finally:
+                if strip_auto_map:
+                    self._config.auto_map = auto_map
 
         # Iterate over required artifacts to save them in a predictable order
         for name in self.ARTIFACTS:
@@ -270,25 +284,6 @@ class PreTrainedBase(ABC):
                 if copied_files:
                     # Successfully copied files, no need to try other paths
                     break
-
-    def _save_config(self, save_path: Path) -> None:
-        """Save only the model configuration without loading other artifacts."""
-        save_path.mkdir(parents=True, exist_ok=True)
-        _ = getattr(self, "config")  # trigger lazy loading of config
-        if hasattr(self, "_config") and self._config is not None:
-            if hasattr(self._config, "quantization_config"):
-                # quantized export is not supported currently
-                del self._config.quantization_config
-            auto_map_missing = object()
-            auto_map = vars(self._config).get("auto_map", auto_map_missing)
-            strip_auto_map = auto_map is not auto_map_missing and getattr(self, "trust_remote_code", False) is not True
-            if strip_auto_map:
-                delattr(self._config, "auto_map")
-            try:
-                self._config.save_pretrained(save_path)
-            finally:
-                if strip_auto_map:
-                    self._config.auto_map = auto_map
 
     @abstractmethod
     def _load_model(self) -> PreTrainedModel:
