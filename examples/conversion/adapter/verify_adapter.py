@@ -157,6 +157,7 @@ def _build_megatron_lora_model(
     from megatron.bridge.peft.lora import LoRA, VLMLoRA
     from megatron.bridge.training.checkpointing import (
         _generate_model_state_dict,
+        _model_sharded_state_dict_load_metadata,
         apply_peft_adapter_filter_to_state_dict,
     )
     from megatron.bridge.training.model_load_save import temporary_distributed_context
@@ -222,7 +223,8 @@ def _build_megatron_lora_model(
         init_model_with_meta_device=False,
     )
 
-    sharded_sd = _generate_model_state_dict(model, {})
+    model_sd_kwargs = {"metadata": _model_sharded_state_dict_load_metadata(None)}
+    sharded_sd = _generate_model_state_dict(model, model_sd_kwargs)
     sharded_sd = apply_peft_adapter_filter_to_state_dict(sharded_sd, lora)
     loaded_sd = dist_checkpointing.load(sharded_sd, str(ckpt_path))
     model_key = "model" if "model" in loaded_sd else next(k for k in loaded_sd if k.startswith("model"))

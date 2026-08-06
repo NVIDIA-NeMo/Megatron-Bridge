@@ -1442,19 +1442,23 @@ class ParallelLinearAdapter(nn.Module):
             if not isinstance(sub_state_dict, list):
                 sub_state_dict = [sub_state_dict]
 
-            def mean_in_place(tensors):
-                result = tensors[0]
-                for tensor in tensors[1:]:
+            def mean_with_stable_accumulator(tensors):
+                if len(tensors) == 1:
+                    return tensors[0]
+                output_dtype = tensors[0].dtype
+                accumulator_dtype = torch.promote_types(output_dtype, torch.float32)
+                result = torch.zeros_like(tensors[0], dtype=accumulator_dtype)
+                for tensor in tensors:
                     result.add_(tensor)
-                return result.div_(len(tensors))
+                return result.div_(len(tensors)).to(output_dtype)
 
             if split_swiglu:
                 if len(sub_state_dict) % 2 != 0:
                     raise ValueError(f"Expected even number of SwiGLU shards for {sharded_tensor.key}")
-                gate_mean = mean_in_place(sub_state_dict[::2])
-                up_mean = mean_in_place(sub_state_dict[1::2])
+                gate_mean = mean_with_stable_accumulator(sub_state_dict[::2])
+                up_mean = mean_with_stable_accumulator(sub_state_dict[1::2])
                 return torch.cat((gate_mean, up_mean), dim=swiglu_shard_axis)
-            return mean_in_place(sub_state_dict)
+            return mean_with_stable_accumulator(sub_state_dict)
 
         return ShardedTensorFactory(
             sharded_tensor.key,

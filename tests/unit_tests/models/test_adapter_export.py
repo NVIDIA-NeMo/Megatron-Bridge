@@ -1422,6 +1422,8 @@ class TestExportAdapterScript:
             export_adapter._export_adapter_distributed(args)
 
         assert mock_state_dict.call_count == 2
+        for call in mock_state_dict.call_args_list:
+            assert call.args[1] == {"metadata": {"is_loading": True}}
         assert mock_filter.call_count == 2
         mock_enable_legacy.assert_called_once_with([model_chunk], state_dicts[0], tmp_path)
         mock_load.assert_called_once_with(state_dicts[1], str(tmp_path), validate_access_integrity=False)

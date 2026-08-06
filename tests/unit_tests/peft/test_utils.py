@@ -1068,6 +1068,45 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_shared_grouped_expert_merge_accumulates_low_precision_values_stably(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Identical low-precision expert shards must remain identical after merging."""
+        del mock_row_linear
+        weight = torch.full((2, 2), 0.1, dtype=torch.bfloat16)
+        mock_linear_in = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", weight, replica_id=(0, 0, 0)
+            ),
+        }
+        mock_linear_out = Mock()
+        mock_linear_out.sharded_state_dict.return_value = {}
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 16
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=1, ep_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        factory = adapter.sharded_state_dict(prefix="adapter.", metadata={"is_loading": True})[
+            "adapter.linear_in.weight"
+        ]
+        built = factory.build()
+        for shard in built:
+            shard.data.copy_(weight)
+
+        merged = factory.merge_fn([shard.data for shard in built])
+
+        assert torch.equal(merged, weight)
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_grad_across_ep(
         self, mock_row_linear, mock_col_linear, mock_config
     ):
