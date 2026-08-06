@@ -1361,6 +1361,7 @@ class ParallelLinearAdapter(nn.Module):
 
         expert_axis, first_expert_slot, num_global_experts = self._expert_axis_info(sharded_offsets)
         local_experts = self.local_experts_per_rank()
+        destination_ep_size = _process_group_size(self.ep_group, self.config.expert_model_parallel_size or 1)
         base_prepend_axis_num = len(sharded_offsets)
         output_prepend_axis_num = base_prepend_axis_num + 1
         swiglu_shard_axis = 0
@@ -1457,9 +1458,9 @@ class ParallelLinearAdapter(nn.Module):
                 for tensor in tensors:
                     result.add_(tensor.to(accumulator_device))
                 result.div_(len(tensors))
-                if reshard_expert_parallel and self.ep_size > 1:
+                if reshard_expert_parallel and destination_ep_size > 1:
                     torch.distributed.all_reduce(result, group=self.ep_group)
-                    result.div_(self.ep_size)
+                    result.div_(destination_ep_size)
                 return result.to(output_dtype)
 
             if split_swiglu:
@@ -1512,7 +1513,8 @@ class ParallelLinearAdapter(nn.Module):
                 "source_expert_model_parallel_size",
                 metadata.get("expert_model_parallel_size"),
             )
-        reshard_expert_parallel = source_ep_size is not None and source_ep_size != self.ep_size
+        destination_ep_size = _process_group_size(self.ep_group, self.config.expert_model_parallel_size or 1)
+        reshard_expert_parallel = source_ep_size is not None and source_ep_size != destination_ep_size
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)

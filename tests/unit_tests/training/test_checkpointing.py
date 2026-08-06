@@ -2548,6 +2548,10 @@ class TestLoadModelWeightsFromCheckpoint:
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
 
         with (
+            patch(
+                "megatron.bridge.training.checkpointing._checkpoint_expert_parallel_size",
+                return_value=None,
+            ),
             patch("megatron.bridge.training.checkpointing.gc.collect") as mock_gc_collect,
             patch("megatron.bridge.training.checkpointing.torch.cuda.is_available", return_value=True),
             patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache") as mock_empty_cache,
