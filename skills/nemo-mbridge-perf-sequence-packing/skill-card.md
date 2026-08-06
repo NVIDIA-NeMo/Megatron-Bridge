@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers configuring sequence packing and long-context training for LLM and VLM finetuning workloads in Megatron-Bridge. <br>
+Developers and engineers configuring sequence packing and long-context training for LLM and VLM workloads in Megatron-Bridge. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -31,7 +31,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Code] <br>
+**Output Type(s):** [Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -43,18 +43,18 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 task (1 positive) in isolated k8s-sandbox pods. Dataset digest: sha256:57d3c088. <br>
+1 evaluation task (1 positive), evaluated in isolated k8s-sandbox pods with 1 attempt per task. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks that the skill is safe to use — no unsafe operations, secret leakage, or unauthorized access. <br>
-- Correctness: Checks that the skill produces correct answers against reference ground truth. <br>
-- Discoverability: Checks that the skill is found and activated when the task requires it. <br>
-- Effectiveness: Checks that the skill helps the agent complete the user's goal and expected workflow. <br>
-- Efficiency: Checks that the skill avoids wasted tool or skill usage. <br>
+- Security: Whether the skill is safe to use (unsafe operations, secret leakage, unauthorized access). <br>
+- Correctness: Whether the final answer is correct against the reference answer. <br>
+- Discoverability: Whether the right skill was loaded and activated when needed. <br>
+- Effectiveness: Whether the skill helped complete the user's goal and expected workflow (goal_accuracy 50% + behavior_check 50%). <br>
+- Efficiency: Whether wasted tool or skill usage was avoided (routing quality, workspace-aware reads, productive tool use). <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - `skill_execution`: Whether the expected skill was found and executed. <br>
 - `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
@@ -66,17 +66,12 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 66% → 94% (+29 points) | 67% → 89% (+22 points) |
+| Overall | 40% → 93% (+53 points) | 65% → 96% (+31 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 40% → 100% (+60 points) | 100% → 100% (±0 points) |
-| Discoverability | 100% → 100% (±0 points) | 50% → 94% (+44 points) |
-| Effectiveness | 11% → 72% (+61 points) | 68% → 82% (+15 points) |
-| Efficiency | 77% → 100% (+23 points) | 17% → 67% (+50 points) |
-
-## Testing Completed: <br>
-**[x] Agent Red-Teaming** <br>
-**[ ] Network Security** <br>
-**[ ] Product Security** <br>
+| Correctness | 0% → 100% (+100 points) | 100% → 100% (±0 points) |
+| Discoverability | 50% → 100% (+50 points) | 50% → 88% (+38 points) |
+| Effectiveness | 0% → 72% (+72 points) | 76% → 95% (+19 points) |
+| Efficiency | 50% → 92% (+42 points) | 0% → 100% (+100 points) |
 
 ## Skill Version(s): <br>
 1.0.0+b7643bd (source: pyproject.toml) <br>
