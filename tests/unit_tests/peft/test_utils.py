@@ -967,6 +967,103 @@ class TestParallelLinearAdapter:
         merged = factory.merge_fn([torch.ones(2, 2), torch.full((2, 2), 3.0)])
         torch.testing.assert_close(merged, torch.full((2, 2), 2.0))
 
+    @pytest.mark.parametrize(
+        ("base_linear_name", "linear_out_shape", "key", "rank_values", "expected_mean"),
+        [
+            pytest.param(
+                "decoder.layers.0.mlp.experts.linear_fc1",
+                (4, 2),
+                "adapter.linear_in.weight",
+                (1.0, 3.0),
+                2.0,
+                id="fc1-linear-in",
+            ),
+            pytest.param(
+                "decoder.layers.0.mlp.experts.linear_fc1",
+                (4, 2),
+                "adapter.linear_out.weight",
+                (11.0, 7.0),
+                9.0,
+                id="fc1-linear-out",
+            ),
+            pytest.param(
+                "decoder.layers.0.mlp.experts.linear_fc2",
+                (2, 2),
+                "adapter.linear_in.weight",
+                (1.0, 3.0),
+                2.0,
+                id="fc2-linear-in",
+            ),
+            pytest.param(
+                "decoder.layers.0.mlp.experts.linear_fc2",
+                (2, 2),
+                "adapter.linear_out.weight",
+                (11.0, 7.0),
+                9.0,
+                id="fc2-linear-out",
+            ),
+        ],
+    )
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_factory_averages_loaded_ep_values(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_config,
+        base_linear_name,
+        linear_out_shape,
+        key,
+        rank_values,
+        expected_mean,
+    ):
+        """Every shared-expert adapter tensor should average EP=2 values when loaded at EP=1."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", torch.zeros(2, 2), replica_id=(0, 0, 0)
+            ),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_out.weight", torch.zeros(linear_out_shape), replica_id=(0, 0, 0)
+            ),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config.gated_linear_unit = True
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=1, ep_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=linear_out_shape[0],
+            dim=2,
+            base_linear_name=base_linear_name,
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        state_dict = adapter.sharded_state_dict(prefix="adapter.")
+
+        factory = state_dict[key]
+        assert isinstance(factory, ShardedTensorFactory)
+        built = factory.build()
+        shards_per_expert = len(built) // mock_config.num_moe_experts
+        saved_expert_values = (rank_values[0], rank_values[0], rank_values[1], rank_values[1])
+        for shard_index, shard in enumerate(built):
+            shard.data.fill_(saved_expert_values[shard_index // shards_per_expert])
+
+        merged = factory.merge_fn([shard.data for shard in built])
+        expert_storage_count = len({shard.data.untyped_storage().data_ptr() for shard in built})
+
+        assert torch.equal(merged, torch.full_like(merged, expected_mean)) and (
+            expert_storage_count == mock_config.num_moe_experts
+        ), (
+            f"{key}: expected EP mean {expected_mean} from rank values {rank_values}, "
+            f"got {torch.unique(merged).tolist()} with {expert_storage_count}/"
+            f"{mock_config.num_moe_experts} independent expert buffers"
+        )
+
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_grad_across_ep(

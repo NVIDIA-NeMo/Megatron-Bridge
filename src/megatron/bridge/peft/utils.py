@@ -1392,11 +1392,12 @@ class ParallelLinearAdapter(nn.Module):
             sharded_tensors = []
             for expert_index in range(local_experts):
                 expert_offset = (expert_axis, first_expert_slot + expert_index, num_global_experts)
+                expert_tensor = tensor.clone()
                 if not split_swiglu:
                     sharded_tensors.append(
                         ShardedTensor.from_rank_offsets(
                             key,
-                            tensor,
+                            expert_tensor,
                             *sharded_offsets,
                             *preserved_rank_offsets,
                             expert_offset,
@@ -1406,7 +1407,7 @@ class ParallelLinearAdapter(nn.Module):
                     )
                     continue
 
-                tensor_w, tensor_v = torch.chunk(tensor, 2, dim=swiglu_shard_axis)
+                tensor_w, tensor_v = torch.chunk(expert_tensor, 2, dim=swiglu_shard_axis)
                 offset_w = (output_swiglu_global_axis, swiglu_rank_offset, swiglu_axis_frag * 2)
                 offset_v = (
                     output_swiglu_global_axis,
