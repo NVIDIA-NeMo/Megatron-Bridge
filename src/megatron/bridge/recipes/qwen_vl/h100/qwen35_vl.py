@@ -1031,6 +1031,14 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the tuned full-SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 H100 GPUs."""
     cfg = _qwen35_vl_35b_a3b_sft_base_config()
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+
+    # Full SFT retains FP32 optimizer state for its convergence contract. The
+    # measured H100 execution policy only fits that state with activation
+    # recompute; pretraining and LoRA use their own memory policies.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
     return cfg
 
 
