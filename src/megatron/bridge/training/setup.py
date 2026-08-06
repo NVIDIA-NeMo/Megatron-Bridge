@@ -70,7 +70,12 @@ from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 try:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1 as megatron_FSDP
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+        FullyShardedDataParallelV1,
+        FullyShardedDataParallelV2,
+    )
+
+    megatron_FSDP = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
 except ImportError:
     from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 
