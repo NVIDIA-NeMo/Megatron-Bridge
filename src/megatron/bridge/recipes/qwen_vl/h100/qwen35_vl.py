@@ -289,6 +289,11 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # Variable-shape DataComp images retain more activation memory than the
+    # fixed-shape benchmark. Recompute the low-cost attention and MoE activation
+    # scopes while retaining the measured parallel layout and TE CUDA graphs.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "moe_act"]
     # DataComp preserves variable image shapes. Keep language CUDA graphs, but
     # do not force the real-data vision encoder through a fixed-shape graph.
     cfg.model.vision_cuda_graph_impl = "none"

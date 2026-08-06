@@ -5,10 +5,11 @@ title: qwen3_6_35b_a3b
 summary: >
   Performance scope: pretrain_performance.H100 uses the tuned 16-H100 library
   recipe with the same pinned DataComp source as functional pretraining. The
-  corresponding real-data pretrain, SFT, and LoRA measurements remain
-  unverified pending clean runs; pretrain_performance.GB200 retains its tuned
-  fixed-shape synthetic benchmark. Functional timing and throughput remain
-  sanity checks. This card verifies conversion, inference, and training.
+  corresponding real-data SFT and LoRA measurements are verified; the
+  real-data pretrain measurement remains unverified pending a clean run.
+  pretrain_performance.GB200 retains its tuned fixed-shape synthetic benchmark.
+  Functional timing and throughput remain sanity checks. This card verifies
+  conversion, inference, and training.
 verification_index:
   model_level:
     verified:
@@ -20,8 +21,7 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [pretrain, sft_long_context, checkpoint_resume]
-      unverified: [sft, sft_export_inference, peft]
+      verified: [pretrain, sft, sft_export_inference, peft, sft_long_context, checkpoint_resume]
     GB200:
       verified: [sft, peft]
       unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
@@ -228,8 +228,9 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 7f9b59730d17a255d46ff02e3795546f0284f748  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -252,21 +253,22 @@ items:
         work/model-verification/qwen3.6-35b-a3b/sft-support-v11/checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/sft-support-v11/resolved-config.yaml
-      last_verified: null
+      last_verified: 2026-08-05
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 2.211317
+        final_loss: 1.006886
+        last_10_steps_step_time_ms_avg: 3268.140
+        last_10_steps_model_tflops_per_gpu_avg: 57.690
       expected_result: >
-        Pending a clean 100-step real-data run with the same pinned MedPix
-        revision, processor revision, fixed 448-by-448 images, MBS1/GBS32,
-        natural expert routing, optimizer precision, and learning-rate schedule
-        as the prior convergence run. The new library recipe changes execution
-        to TP1/PP2/CP1/EP8/ETP1 with HybridEP and one-layer full-uniform
-        recompute. Scoped CUDA graphs are disabled because Megatron Core does
-        not support them with full-layer recompute, so the historical loss and
-        throughput metrics do not verify this command.
+        The exact 16-H100 command completed all 100 MedPix SFT steps at
+        TP1/PP2/CP1/EP8/ETP1, MBS1/GBS32, natural expert routing, HybridEP,
+        one-layer full-uniform recompute, graph-free language and vision
+        stacks, FP32 optimizer state, and Transformer Engine fused cross
+        entropy. Loss was finite from 2.211317 to 1.006886 with zero skipped or
+        NaN iterations. Steps 91-100 averaged 3,268.140 ms and 57.690 model
+        TFLOP/s/GPU. Step-50 and step-100 saves both completed; the final
+        checkpoint contains 20 nonempty files, including 16 distributed shards,
+        totaling 509,636,716,209 bytes, and the tracker selects iteration 100.
 
     GB200:
       status: verified
@@ -306,8 +308,9 @@ items:
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 7f9b59730d17a255d46ff02e3795546f0284f748  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -327,12 +330,18 @@ items:
           --prompt "What was observed in the imaging?"
           --image work/data/medpix/verification.png
           --max-new-tokens 32 --chat-template --disable-thinking
-      last_verified: null
+      last_verified: 2026-08-05
       expected_result: >
-        Pending the new H100 SFT run. After its step-100 checkpoint exists, the
-        export must complete without missing, unexpected, mismatched, or
-        errored keys, and the maintained HF verifier must reload that export
-        and complete the bounded processor-native MedPix generation command.
+        CPU export from the exact step-100 SFT checkpoint completed successfully,
+        converted 21,802 mappings, and reported that every source tensor was
+        written. The unchanged HF path contains 34 nonempty files totaling
+        71,923,885,897 bytes, including all 26 indexed safetensors shards. A
+        subsequent shared one-H100 run strictly reloaded all 1,026 tensors and
+        completed the bounded processor-native MedPix prompt. It generated
+        exactly 32 tokens at the 32-token maximum. The literal completion was:
+        "The imaging shows CT:  Hyperdense mass in the right cerebellar
+        hemisphere with surrounding edema.\n\nMRI: Right cerebellar hemisphere
+        mass with mixed".
 
   sft_long_context:
     H100:
@@ -380,8 +389,9 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 19b2647fe9495dd1497e0400a760abf8ca541309  # pragma: allowlist secret
       enabled_features:
         cuda_graph:
           implementation: transformer_engine
@@ -407,21 +417,22 @@ items:
         work/model-verification/qwen3.6-35b-a3b/peft-support-v5/checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/peft-support-v5/resolved-config.yaml
-      last_verified: null
+      last_verified: 2026-08-05
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 2.212696
+        final_loss: 1.270382
+        last_10_steps_step_time_ms_avg: 1714.300
+        last_10_steps_model_tflops_per_gpu_avg: 109.940
       expected_result: >
-        Pending a clean 100-step real-data run with the same pinned MedPix
-        revision, processor revision, fixed 448-by-448 images, MBS1/GBS32,
-        natural expert routing, rank-32 alpha-32 zero-dropout LoRA targets,
-        optimizer precision, and learning-rate schedule as the prior LoRA run.
-        The new 16-H100 library recipe changes execution to
-        TP1/PP2/CP1/EP8/ETP1 with HybridEP, scoped Transformer Engine CUDA
-        graphs, and no activation recompute, so the historical loss and
-        throughput metrics do not verify this command.
+        The exact 16-H100 command completed all 100 MedPix LoRA steps at
+        TP1/PP2/CP1/EP8/ETP1, MBS1/GBS32, natural expert routing, HybridEP,
+        scoped Transformer Engine CUDA graphs, and no activation recompute.
+        The recipe disables dispatch-backward/expert-wgrad overlap because
+        LoRA-wrapped expert linears do not expose Megatron Core's backward_dw
+        hook. Loss was finite from 2.212696 to 1.270382 with zero skipped or NaN
+        iterations. Steps 91-100 averaged 1,714.300 ms and 109.940 model
+        TFLOP/s/GPU. The step-100 checkpoint contains 20 nonempty files,
+        including 16 distributed shards, totaling 5,004,722,270 bytes.
 
     GB200:
       status: verified
