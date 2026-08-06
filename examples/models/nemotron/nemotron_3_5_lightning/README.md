@@ -20,7 +20,7 @@ wrappers are intentionally scoped to the 0.5.1 release line; Megatron Bridge
 | `pretrain.sh` | Pretraining recipe with H100 and GB200 profiles |
 | `sft.sh` | Packed OpenMathInstruct-2 full SFT with H100 and GB200 profiles |
 | `lora.sh` | Rank-32 LoRA fine-tuning with H100 and GB200 profiles |
-| `adapter.sh` | Export, verify, or merge a LoRA adapter |
+| `adapter.sh` | Export a LoRA adapter or merge a Megatron LoRA checkpoint |
 
 All scripts must be launched from the repository root. They use the mounted
 checkout for both Bridge and Megatron-Core:
@@ -165,36 +165,31 @@ TP=1 EP=8 \
   ./examples/models/nemotron/nemotron_3_5_lightning/adapter.sh export
 ```
 
-Verify that PEFT loads the adapter, changes the base-model logits, and agrees
-with Megatron's in-memory merged export on top-1 plus cosine-similarity and
-relative-L2 thresholds. Top-k tokens are also shown as a diagnostic:
+Merge the Megatron LoRA checkpoint with its Megatron base checkpoint into a
+standalone Hugging Face checkpoint. This uses the repository's common
+`examples/peft/merge_lora.py` path; it does not consume the separately exported
+Hugging Face PEFT package.
 
 ```bash
+PRETRAINED_CHECKPOINT=/workspace/models/nemotron-3.5-lightning-megatron/iter_0000000 \
 LORA_CHECKPOINT=/workspace/results/nemotron-3.5-lightning-lora-h100/iter_0000100 \
-HF_ADAPTER_PATH=/workspace/models/nemotron-3.5-lightning-lora-adapter \
-TP=1 EP=8 \
-  ./examples/models/nemotron/nemotron_3_5_lightning/adapter.sh verify
-```
-
-Finally, merge the HF adapter into a standalone HF checkpoint. This operation
-materializes the full base model on one device; use a GPU with enough memory
-(for example, GB200) or select a suitable `--device-map` when invoking
-`merge_adapter.py` directly.
-
-```bash
-HF_ADAPTER_PATH=/workspace/models/nemotron-3.5-lightning-lora-adapter \
 HF_MERGED_PATH=/workspace/models/nemotron-3.5-lightning-lora-merged \
+TP=1 EP=8 \
   ./examples/models/nemotron/nemotron_3_5_lightning/adapter.sh merge
 ```
 
-The merge utility checks that the adapter changes the base logits and that the
-BF16-fused model preserves PEFT's top-1 token and greedy continuation while
-meeting cosine-similarity and relative-L2 thresholds. Transformers does not
-instantiate Lightning's training-only MTP modules during inference, so the
-utility separately applies every MTP LoRA pair and carries the remaining MTP
-tensors unchanged into the standalone checkpoint. The result therefore keeps
-all 6,513 base-model tensors and can be used for either inference or subsequent
-training.
+The common merger reconstructs the training model, loads the base and LoRA
+distributed checkpoints, and asks the Bridge conversion path to fuse adapter
+weights while exporting every supported model tensor, including MTP. This is
+preferable to maintaining a Lightning-only copy of adapter merge logic.
+
+The exact 26.06.01 image bundles PEFT 0.19.1 with Transformers 5.8.1. For this
+model, PEFT reconstructs Transformers `WeightConverter` objects with
+`distributed_operation` and `quantization_operation`, but that Transformers
+constructor does not accept those arguments. Consequently, direct loading of
+the exported PEFT package in this exact image is not a supported verification
+path. The export remains a standard PEFT artifact for use with a compatible
+PEFT/Transformers environment; no model-local monkeypatch is installed.
 
 ## Manual 26.06.01 verification
 
@@ -226,30 +221,11 @@ checkpoint and the exported HF checkpoint both generated `The capital of
 France is Paris.`. Exporting the full-SFT checkpoint also produced a complete
 6,513-tensor HF artifact and the same continuation.
 
-The H100 LoRA checkpoint exported to a standard PEFT package containing 12,532
-adapter tensors, including 524 MTP tensors (262 A/B pairs). Adapter loading and
-standalone merge were exercised in the same container. For the BF16 merge,
-PEFT and fused models had cosine similarity
-0.998045444 and relative L2 error 0.06499264, retained the same top-1 token,
-and generated the same four-token continuation, ` Paris.  `. The final merged
-artifact contains all 6,513 tensors, including all 270 MTP tensors. A
-key-by-key safetensors-header audit found the same names, shapes, and native
-dtypes as the base checkpoint, and distributed inference from the artifact
-generated `The capital of France is Paris.`.
-
-The GB200 LoRA checkpoint also completed the full adapter lifecycle. PEFT and
-Megatron adapter logits retained the same top-1 token, with cosine similarity
-0.999420285 and relative L2 error 0.03422275; the first four top-5 tokens were
-identical and a near-tied fifth token differed. The standalone BF16 merge
-retained the same top-5 tokens and greedy continuation as PEFT, with cosine
-similarity 0.998933911 and relative L2 error 0.04592380. The merge applied all
-262 MTP LoRA pairs and carried the other eight MTP tensors unchanged. A
-6,513-tensor header audit preserved every name, shape, and dtype, and the
-merged checkpoint generated `The capital of France is Paris.  ` under
-distributed inference. Full-SFT export and inference generated
-`The capital of France is Paris.`.
+The H100 and GB200 LoRA checkpoints each exported to a standard PEFT package
+containing 12,532 adapter tensors, including 524 MTP tensors (262 A/B pairs).
+Full-SFT export and inference generated `The capital of France is Paris.`.
 
 When operating offline, set `HF_MODEL` to a mounted local snapshot for import,
-export, inference, verification, and merge. A Hub ID alone cannot resolve
+export, inference, and merge. A Hub ID alone cannot resolve
 weight shards unless the snapshot is stored in the standard Hugging Face cache
 layout.

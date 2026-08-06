@@ -22,6 +22,7 @@ source "${EXAMPLE_DIR}/_common.sh"
 HF_MODEL=${HF_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16}
 WORKSPACE=${WORKSPACE:-/workspace}
 LORA_CHECKPOINT=${LORA_CHECKPOINT:-}
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-}
 HF_ADAPTER_PATH=${HF_ADAPTER_PATH:-${WORKSPACE}/models/nemotron-3.5-lightning-lora-adapter}
 HF_MERGED_PATH=${HF_MERGED_PATH:-${WORKSPACE}/models/nemotron-3.5-lightning-lora-merged}
 TP=${TP:-1}
@@ -30,9 +31,9 @@ EP=${EP:-8}
 ETP=${ETP:-1}
 
 usage() {
-    echo "Usage: $0 {export|verify|merge}"
+    echo "Usage: $0 {export|merge}"
     echo ""
-    echo "export/verify require LORA_CHECKPOINT. merge requires HF_ADAPTER_PATH."
+    echo "export requires LORA_CHECKPOINT. merge requires LORA_CHECKPOINT and PRETRAINED_CHECKPOINT."
 }
 
 if [[ $# -ne 1 ]]; then
@@ -50,21 +51,15 @@ case "$1" in
             --dtype bf16 \
             --tp "${TP}" --pp "${PP}" --ep "${EP}" --etp "${ETP}"
         ;;
-    verify)
-        require_path LORA_CHECKPOINT
-        require_path HF_ADAPTER_PATH
-        run_bridge_distributed "${EXAMPLE_DIR}/verify_adapter.py" \
-            --hf-model-path "${HF_MODEL}" \
-            --hf-adapter-path "${HF_ADAPTER_PATH}" \
-            --lora-checkpoint "${LORA_CHECKPOINT}" \
-            --tp "${TP}" --pp "${PP}" --ep "${EP}"
-        ;;
     merge)
-        require_path HF_ADAPTER_PATH
-        run_bridge_python "${EXAMPLE_DIR}/merge_adapter.py" \
-            --hf-model "${HF_MODEL}" \
-            --adapter-path "${HF_ADAPTER_PATH}" \
-            --output "${HF_MERGED_PATH}"
+        require_path LORA_CHECKPOINT
+        require_path PRETRAINED_CHECKPOINT
+        run_bridge_distributed examples/peft/merge_lora.py \
+            --hf-model-path "${HF_MODEL}" \
+            --lora-checkpoint "${LORA_CHECKPOINT}" \
+            --pretrained "${PRETRAINED_CHECKPOINT}" \
+            --output "${HF_MERGED_PATH}" \
+            --tp "${TP}" --pp "${PP}" --ep "${EP}"
         ;;
     *)
         usage >&2

@@ -19,11 +19,11 @@ library and comparing logits against the Megatron checkpoint.
 
 Supports both CPU-only (single process) and multi-GPU (torchrun) modes.
 
-Verification criteria:
+Verification criteria (configurable with ``--top-k``):
   * PEFT model logits must differ from the base model (adapter has effect).
-  * When ``--lora-checkpoint`` is given, PEFT and Megatron-merged logits must
-    have the same top-1 token and satisfy configurable cosine-similarity and
-    relative-L2 thresholds. Top-k tokens remain visible as diagnostics.
+  * When ``--lora-checkpoint`` is given, the top-k predicted tokens
+    from the PEFT model must match those from the Megatron model with merged
+    weights.
 
 CPU mode (no GPU required)::
 
@@ -57,11 +57,9 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def parse_args() -> argparse.Namespace:
@@ -79,9 +77,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prompt", default="The capital of France is", help="Prompt for the forward pass.")
     parser.add_argument("--trust-remote-code", action="store_true")
-    parser.add_argument("--top-k", type=int, default=5, help="Number of top tokens to display.")
-    parser.add_argument("--min-cosine-similarity", type=float, default=0.995)
-    parser.add_argument("--max-relative-l2", type=float, default=0.1)
+    parser.add_argument("--top-k", type=int, default=5, help="Number of top tokens to compare.")
 
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size")
@@ -118,99 +114,25 @@ def _print_top_k(label: str, logits: torch.Tensor, tokenizer, k: int) -> None:
     print(f"  {label} top-{k}: {pairs}")
 
 
-def _compare_logits(
+def _compare_top_k(
     label: str,
     ref_logits: torch.Tensor,
     cand_logits: torch.Tensor,
     tokenizer,
     k: int,
-    *,
-    min_cosine_similarity: float,
-    max_relative_l2: float,
 ) -> bool:
-    """Return True when logits preserve top-1 and meet numerical thresholds."""
+    """Return True if the top-k token IDs match between ref and cand."""
     ref_ids, ref_tok, _ = _top_k_info(ref_logits, tokenizer, k)
     cand_ids, cand_tok, _ = _top_k_info(cand_logits, tokenizer, k)
+    match = ref_ids == cand_ids
     diff = (ref_logits - cand_logits).abs()
-    relative_l2 = (torch.linalg.vector_norm(diff) / torch.linalg.vector_norm(ref_logits)).item()
-    cosine_similarity = torch.nn.functional.cosine_similarity(ref_logits, cand_logits, dim=0).item()
-    top_1_match = ref_ids[0] == cand_ids[0]
-    passed = top_1_match and cosine_similarity >= min_cosine_similarity and relative_l2 <= max_relative_l2
-    status = "PASS" if passed else "FAIL"
+    status = "PASS" if match else "FAIL"
     print(f"\n  {label}")
     print(f"    top-{k} tokens ref : {ref_tok}")
     print(f"    top-{k} tokens cand: {cand_tok}")
     print(f"    max logit diff: {diff.max().item():.6e}  mean: {diff.mean().item():.6e}")
-    print(f"    relative L2: {relative_l2:.6e}  cosine similarity: {cosine_similarity:.9f}")
-    print(f"    top-1 match: {top_1_match}")
     print(f"    => {status}")
-    return passed
-
-
-def _load_megatron_export(model: torch.nn.Module, state_dict: dict[str, torch.Tensor]) -> list[str]:
-    """Load an exported state while accounting for training-only MTP tensors.
-
-    Some Hugging Face inference classes intentionally do not instantiate the
-    training-only ``mtp`` module even though the native checkpoint contains
-    those tensors. All model-consumed keys must still match exactly, and only
-    an ``mtp.``-prefixed unexpected key is permitted.
-
-    Returns:
-        The sorted training-only MTP keys omitted by the HF inference model.
-    """
-    incompatible_keys = model.load_state_dict(state_dict, strict=False)
-    missing_keys = sorted(incompatible_keys.missing_keys)
-    unexpected_keys = sorted(incompatible_keys.unexpected_keys)
-    return _validate_megatron_export_keys(missing_keys, unexpected_keys)
-
-
-def _validate_megatron_export_keys(missing_keys: list[str], unexpected_keys: list[str]) -> list[str]:
-    """Require complete HF inference weights while permitting training-only MTP tensors."""
-    training_only_mtp_keys = [key for key in unexpected_keys if key.startswith("mtp.")]
-    unsupported_unexpected_keys = [key for key in unexpected_keys if not key.startswith("mtp.")]
-    if missing_keys or unsupported_unexpected_keys:
-        raise RuntimeError(
-            "Megatron export does not match the HF inference model: "
-            f"missing={missing_keys[:10]}, unexpected={unsupported_unexpected_keys[:10]}"
-        )
-    return training_only_mtp_keys
-
-
-def _load_converted_megatron_export(
-    hf_model_path: str,
-    state_dict: dict[str, torch.Tensor],
-    *,
-    trust_remote_code: bool,
-) -> tuple[torch.nn.Module, list[str]]:
-    """Load native HF keys through the model's Transformers conversion mapping."""
-    config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=trust_remote_code)
-    model_class = _resolve_causal_lm_class(config, hf_model_path, trust_remote_code=trust_remote_code)
-    model, loading_info = model_class.from_pretrained(
-        None,
-        config=config,
-        state_dict=state_dict,
-        torch_dtype=torch.float32,
-        output_loading_info=True,
-    )
-    missing_keys = sorted(loading_info.get("missing_keys", []))
-    unexpected_keys = sorted(loading_info.get("unexpected_keys", []))
-    mismatched_keys = loading_info.get("mismatched_keys", [])
-    error_messages = loading_info.get("error_msgs", [])
-    if mismatched_keys or error_messages:
-        raise RuntimeError(
-            "Transformers could not convert the Megatron export: "
-            f"mismatched={mismatched_keys[:10]}, errors={error_messages[:10]}"
-        )
-    training_only_mtp_keys = _validate_megatron_export_keys(missing_keys, unexpected_keys)
-    return model, training_only_mtp_keys
-
-
-def _resolve_causal_lm_class(config: Any, hf_model_path: str, *, trust_remote_code: bool) -> type[torch.nn.Module]:
-    """Resolve a concrete model class before loading an in-memory state dict."""
-    auto_map = getattr(config, "auto_map", None) or {}
-    if trust_remote_code and "AutoModelForCausalLM" in auto_map:
-        return get_class_from_dynamic_module(auto_map["AutoModelForCausalLM"], hf_model_path)
-    return AutoModelForCausalLM._model_mapping[type(config)]
+    return match
 
 
 # ---------------------------------------------------------------------------
@@ -446,30 +368,20 @@ def main() -> None:
 
         print(f"\n[Step 4] Top-{k} logit verification ...")
 
-        mg_hf, training_only_mtp_keys = _load_converted_megatron_export(
+        mg_hf = AutoModelForCausalLM.from_pretrained(
             args.hf_model_path,
-            mg_merged_sd,
+            torch_dtype=torch.float32,
             trust_remote_code=args.trust_remote_code,
         )
-        if training_only_mtp_keys:
-            print(
-                f"  HF inference model omits {len(training_only_mtp_keys)} "
-                "training-only MTP tensors; all inference tensors loaded exactly."
-            )
+        if getattr(mg_hf.config, "tie_word_embeddings", False) and "lm_head.weight" not in mg_merged_sd:
+            mg_merged_sd["lm_head.weight"] = mg_merged_sd["model.embed_tokens.weight"]
+        mg_hf.load_state_dict(mg_merged_sd, strict=True)
         mg_hf = mg_hf.to(device)
         mg_logits = _forward_logits(mg_hf, tokenizer, args.prompt, device)
         _print_top_k("Megatron merged", mg_logits, tokenizer, k)
         del mg_hf
 
-        if not _compare_logits(
-            "PEFT vs Megatron merged",
-            peft_logits,
-            mg_logits,
-            tokenizer,
-            k,
-            min_cosine_similarity=args.min_cosine_similarity,
-            max_relative_l2=args.max_relative_l2,
-        ):
+        if not _compare_top_k("PEFT vs Megatron merged", peft_logits, mg_logits, tokenizer, k):
             all_pass = False
 
         # Result
