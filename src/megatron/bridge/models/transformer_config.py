@@ -152,6 +152,15 @@ class TransformerConfig(MCoreTransformerConfig):
         config.finalize()
     """
 
+    # YARN position embedding parameters consumed from the nested config by MCore GPTModel.
+    yarn_rotary_scaling_factor: float | None = None
+    yarn_original_max_position_embeddings: int | None = None
+    yarn_beta_fast: float | None = None
+    yarn_beta_slow: float | None = None
+    yarn_mscale: float | None = None
+    yarn_mscale_all_dim: float | None = None
+    yarn_correction_range_round_to_int: bool | None = None
+
     _NO_COPY_KEYS = {"_pg_collection"}
 
     def __post_init__(self) -> None:

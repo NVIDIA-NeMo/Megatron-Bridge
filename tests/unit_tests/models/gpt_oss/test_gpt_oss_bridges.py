@@ -17,7 +17,9 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from transformers import GptOssConfig
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_oss.gpt_oss_bridge import GPTOSSBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -67,3 +69,54 @@ class TestGptOssBridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_autobridge_model_config_preserves_yarn_fields(self):
+        config = GptOssConfig(architectures=["GptOssForCausalLM"])
+        bridge = AutoBridge.from_hf_config(config)
+
+        with pytest.warns(FutureWarning, match="get_model_config"):
+            provider = bridge.to_megatron_provider(load_weights=False)
+        model_config = bridge.get_model_config()
+
+        aligned_fields = (
+            "normalization",
+            "gated_linear_unit",
+            "add_bias_linear",
+            "add_qkv_bias",
+            "share_embeddings_and_output_weights",
+            "position_embedding_type",
+            "moe_router_pre_softmax",
+            "moe_grouped_gemm",
+            "moe_token_dispatcher_type",
+            "moe_permute_fusion",
+            "moe_router_load_balancing_type",
+            "bias_activation_fusion",
+            "bias_dropout_fusion",
+            "hidden_dropout",
+            "fp16",
+            "bf16",
+            "params_dtype",
+            "activation_func",
+            "activation_func_clamp_value",
+            "glu_linear_offset",
+            "softmax_type",
+            "window_size",
+            "window_attn_skip_freq",
+            "moe_ffn_hidden_size",
+        )
+        assert {name: getattr(model_config, name) for name in aligned_fields} == {
+            name: getattr(provider, name) for name in aligned_fields
+        }
+
+        expected_yarn_fields = {
+            "yarn_rotary_scaling_factor": 32.0,
+            "yarn_original_max_position_embeddings": 4096,
+            "yarn_beta_fast": 32.0,
+            "yarn_beta_slow": 1.0,
+            "yarn_mscale": None,
+            "yarn_mscale_all_dim": None,
+            "yarn_correction_range_round_to_int": False,
+        }
+        assert {name: getattr(provider, name) for name in expected_yarn_fields} == expected_yarn_fields
+        assert {name: getattr(model_config.transformer, name) for name in expected_yarn_fields} == expected_yarn_fields
+        assert all(name not in model_config.__dict__ for name in expected_yarn_fields)
