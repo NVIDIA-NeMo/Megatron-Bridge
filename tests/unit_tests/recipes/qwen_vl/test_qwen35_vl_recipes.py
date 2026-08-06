@@ -417,8 +417,8 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.num_layers_in_first_pipeline_stage == 17
-    assert cfg.model.num_layers_in_last_pipeline_stage == 23
+    assert cfg.model.num_layers_in_first_pipeline_stage == 16
+    assert cfg.model.num_layers_in_last_pipeline_stage == 24
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False
@@ -428,9 +428,9 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is True
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "moe"]
-    assert cfg.model.cuda_graph_impl == "none"
-    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "moe_act"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
     assert cfg.model.vision_cuda_graph_impl == "none"
     assert cfg.model.vision_cuda_graph_scope == []
     assert cfg.model.max_vision_cuda_graph_seq_length is None

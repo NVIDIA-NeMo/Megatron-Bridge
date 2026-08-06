@@ -289,15 +289,18 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigCont
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # The first pipeline stage also owns the vision encoder. Move one language
+    # layer to the loss stage to retain activation headroom for variable-shape
+    # DataComp images without checkpointing the complete MoE forward.
+    cfg.model.num_layers_in_first_pipeline_stage = 16
+    cfg.model.num_layers_in_last_pipeline_stage = 24
     # Variable-shape DataComp images retain more activation memory than the
-    # fixed-shape benchmark. Recompute attention, GDN output-norm, and complete
-    # MoE forwards while retaining the measured parallel layout.
+    # fixed-shape benchmark. Recompute only the measured activation-heavy
+    # outputs while retaining the leader's scoped language CUDA graphs.
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out", "moe"]
-    # Full MoE recompute covers the router and cannot nest a TE router graph.
-    # DataComp also preserves variable vision shapes, so keep both stacks graph-free.
-    cfg.model.cuda_graph_impl = "none"
-    clear_cuda_graph_modules(cfg.model)
+    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out", "moe_act"]
+    # DataComp preserves variable vision shapes, so only the vision stack must
+    # remain graph-free.
     cfg.model.vision_cuda_graph_impl = "none"
     cfg.model.vision_cuda_graph_scope = []
     cfg.model.max_vision_cuda_graph_seq_length = None
