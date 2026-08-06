@@ -23,20 +23,35 @@ HF_MODEL=${HF_MODEL:-stepfun-ai/Step-3.5-Flash}
 MEGATRON_CKPT_PATH=${MEGATRON_CKPT_PATH:-${WORKSPACE}/models/stepfun-ai/Step-3.5-Flash}
 LOG_DIR=${LOG_DIR:-${WORKSPACE}/logs}
 
+# Parallelism for the multi-GPU import. Keep these in sync with inference.sh.
+TP=${TP:-1}
+PP=${PP:-1}
+EP=${EP:-4}
+NPROC_PER_NODE=${NPROC_PER_NODE:-4}
+
 mkdir -p "${LOG_DIR}" "$(dirname "${MEGATRON_CKPT_PATH}")"
 
 echo "[convert] HF model:        ${HF_MODEL}"
 echo "[convert] Megatron output: ${MEGATRON_CKPT_PATH}"
 echo "[convert] Log dir:         ${LOG_DIR}"
+echo "[convert] Parallelism:     TP=${TP} PP=${PP} EP=${EP} (nproc=${NPROC_PER_NODE})"
 
-# Single-rank import: the bridge handles per-expert / per-layer mapping itself,
-# so a single process is enough for the conversion step.
-./scripts/conversion/convert.sh import \
-    --hf-model "${HF_MODEL}" \
-    --megatron-path "${MEGATRON_CKPT_PATH}" \
-    2>&1 | tee "${LOG_DIR}/convert_step35_megatron.log"
+# Multi-GPU import: the roundtrip converter shards the HF weights across EP ranks,
+# so run it under torch.distributed.run rather than as a single process.
+if [ ! -d "${MEGATRON_CKPT_PATH}" ]; then
+    uv run python -m torch.distributed.run --nproc_per_node="${NPROC_PER_NODE}" \
+        examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+        --hf-model-id "${HF_MODEL}" \
+        --megatron-save-path "${MEGATRON_CKPT_PATH}" \
+        --output-dir "${LOG_DIR}" \
+        --tp "${TP}" --pp "${PP}" --ep "${EP}" \
+        2>&1 | tee "${LOG_DIR}/convert_step35_megatron.log"
 
-echo "[convert] Done. Checkpoint saved to: ${MEGATRON_CKPT_PATH}"
+    echo "[convert] Done. Checkpoint saved to: ${MEGATRON_CKPT_PATH}"
+else
+    echo "[convert] Megatron checkpoint already exists: ${MEGATRON_CKPT_PATH}"
+fi
+
 echo "[convert] Inference example: MEGATRON_MODEL_PATH=${MEGATRON_CKPT_PATH}/iter_0000000 bash examples/models/stepfun/step35/inference.sh"
 
 # Export Megatron -> HF (uncomment to round-trip)

@@ -42,15 +42,19 @@ The Step-3.5 bridge fuses the per-head `g_proj` rows into `linear_qkv.weight`
 `Step35DecoderLayer` can size sliding-attention layers (96 heads, 8 KV groups)
 differently from full-attention layers (64 heads).
 
-To import the HF checkpoint to a Megatron path:
+To import the HF checkpoint to a Megatron path, run the roundtrip converter under
+`torch.distributed.run` (it shards the HF weights across `EP` ranks):
 
 ```bash
-./scripts/conversion/convert.sh import \
-    --hf-model "${HF_MODEL}" \
-    --megatron-path "${MEGATRON_CKPT_PATH}"
+uv run python -m torch.distributed.run --nproc_per_node=4 \
+    examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+    --hf-model-id "${HF_MODEL}" \
+    --megatron-save-path "${MEGATRON_CKPT_PATH}" \
+    --output-dir "${WORKSPACE}/logs" \
+    --tp 1 --pp 1 --ep 4
 ```
 
-See [conversion.sh](conversion.sh) for a complete single-process CPU import example with
+See [conversion.sh](conversion.sh) for a complete 4-GPU import example with
 logging redirected to `${WORKSPACE}/logs/`.
 
 ### Export Megatron → HF
@@ -65,8 +69,8 @@ logging redirected to `${WORKSPACE}/logs/`.
 ## Inference
 
 [inference.sh](inference.sh) runs greedy generation directly with
-`torch.distributed.run` on 1 node / 8 GPUs with `TP=1`, `PP=1`, and `EP=8`.
-Run it from an interactive 8-GPU allocation or equivalent single-node
+`torch.distributed.run` on 1 node / 4 GPUs with `TP=1`, `PP=1`, and `EP=4`.
+Run it from an interactive 4-GPU allocation or equivalent single-node
 environment:
 
 ```bash
@@ -83,13 +87,17 @@ MEGATRON_MODEL_PATH="${MEGATRON_CKPT_PATH}/iter_0000000" \
 
 ### Expected output
 
-The following smoke-test output was produced with `TP=1`, `PP=1`, `EP=8`, and
-`MAX_NEW_TOKENS=4`:
+The following smoke-test output was produced with `TP=1`, `PP=1`, `EP=4`, and
+the default prompt:
 
 ```text
 ======== GENERATED TEXT OUTPUT ========
-Prompt: Write one concise sentence about Megatron Bridge.
-Generated: <｜begin▁of▁sentence｜>Write one concise sentence about Megatron Bridge. Write one concise sentence
+Prompt: Explain hyper-connections in transformer models.
+Generated:  - AI Q&A
+
+Explain hyper-connections in transformer models.
+
+Hyper-connections are a novel architectural component introduced to improve the performance of transformer models by replacing traditional residual connections with a more flexible and learnable approach to mixing information between layers. They aim to address limitations of residual connections, which can restrict the flow of information and hinder the model's ability to learn identity mappings. Hyper-connections allow each layer to dynamically control the strength of skip connections, enabling the network to learn to skip layers when beneficial
 =======================================
 ```
 

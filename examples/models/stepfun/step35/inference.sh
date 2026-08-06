@@ -16,7 +16,7 @@
 # ==============================================================================
 # Step-3.5-Flash Inference
 #
-# Run from an interactive one-node / 8-GPU environment. By default this loads the
+# Run from an interactive one-node / 4-GPU environment. By default this loads the
 # HF checkpoint and converts in memory. Set MEGATRON_MODEL_PATH to generate from a
 # pre-converted Megatron checkpoint instead.
 # ==============================================================================
@@ -25,13 +25,13 @@ set -xeuo pipefail
 
 HF_MODEL=${HF_MODEL:-stepfun-ai/Step-3.5-Flash}
 MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-}
-PROMPT=${PROMPT:-"What is artificial intelligence?"}
+PROMPT=${PROMPT:-"Explain hyper-connections in transformer models."}
 MAX_NEW_TOKENS=${MAX_NEW_TOKENS:-64}
 TP=${TP:-1}
 PP=${PP:-1}
-EP=${EP:-8}
+EP=${EP:-4}
 ETP=${ETP:-1}
-NPROC_PER_NODE=${NPROC_PER_NODE:-8}
+NPROC_PER_NODE=${NPROC_PER_NODE:-4}
 
 EXTRA_ARGS=()
 if [ -n "${MEGATRON_MODEL_PATH}" ]; then
