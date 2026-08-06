@@ -651,9 +651,9 @@ def test_nemotron_3_super_sft_defaults():
 
     _assert_basic_config(cfg)
 
-    # For full SFT, should use TP=1, PP=1, EP=8
-    assert cfg.model.tensor_model_parallel_size == 1
+    # Full SFT uses the checkpoint-safe TP8/EP16 layout.
+    assert cfg.model.tensor_model_parallel_size == 8
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.sequence_parallel is True
-    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_model_parallel_size == 16
     assert cfg.peft is None
