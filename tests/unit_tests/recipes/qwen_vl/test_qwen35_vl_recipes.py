@@ -428,7 +428,7 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is True
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["core_attn", "moe_act"]
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "moe_act"]
     assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
     assert cfg.model.vision_cuda_graph_impl == "none"
     assert cfg.model.vision_cuda_graph_scope == []
