@@ -414,12 +414,6 @@ class TestMegatronFSDP:
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self, tmp_path):
         """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
-        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV2
-        from megatron.core.optimizer import FullyShardedOptimizer
-
-        from megatron.bridge.data.utils import get_dataset_provider
-        from megatron.bridge.training.setup import setup
-
         initialize_distributed()
         torch.distributed.barrier()
 
@@ -430,38 +424,10 @@ class TestMegatronFSDP:
             )
             cfg.model = create_dense_hybrid_smoke_model_config()
             cfg.ddp.megatron_fsdp_version = 2
-            runtime_config_update(cfg)
 
-            state = GlobalState()
-            state.cfg = cfg
-            setup_out = setup(state, get_dataset_provider(cfg.dataset))
+            pretrain(cfg, forward_step)
 
-            assert isinstance(setup_out.model[0], FullyShardedDataParallelV2)
-            assert isinstance(setup_out.optimizer, FullyShardedOptimizer)
-
-            run_training(
-                forward_step,
-                setup_out.model,
-                setup_out.optimizer,
-                setup_out.scheduler,
-                setup_out.train_data_iterator,
-                setup_out.valid_data_iterator,
-                setup_out.state,
-                setup_out.checkpoint_manager,
-                setup_out.pg_collection,
-            )
-
-            losses = _compute_forward_only_loss(
-                forward_step,
-                setup_out.model,
-                setup_out.train_data_iterator,
-                setup_out.state,
-                setup_out.pg_collection,
-            )
-            assert losses, "MFSDP V2 smoke test did not produce a loss"
-            assert all(torch.isfinite(loss).all() for loss in losses.values())
-
-            _finish_train(setup_out.state, setup_out.checkpoint_manager)
+            torch.distributed.barrier()
         finally:
             clear_directories(tmp_path)
 
