@@ -35,6 +35,7 @@ class PackedSequenceSpecs:
     packed_val_data_path: str | Path | None = None
     packed_metadata_path: str | Path | None = None
     pad_cu_seqlens: bool = False
+    """Pad cumulative sequence boundaries for full-iteration, whole-layer, or attention-scoped CUDA graphs."""
     pad_seq_to_mult: int | None = 1
 
     def __post_init__(self) -> None:

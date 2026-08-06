@@ -184,7 +184,7 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
     cfg.dataset.offline_packing_specs.max_single_sequence_length = cfg.model.seq_length - packing_alignment
-    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
+    # HybridEP needs a fixed token width; CUDA graphs are disabled, so cu_seqlens can remain dynamic.
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     cfg.rng.seed = 5678
@@ -292,7 +292,7 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
     cfg.dataset.offline_packing_specs.tokenizer_model_name = "glm5"
-    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
+    # HybridEP needs a fixed token width; CUDA graphs are disabled, so cu_seqlens can remain dynamic.
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     cfg.rng.seed = 5678

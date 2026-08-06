@@ -221,7 +221,7 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert isinstance(cfg.dataset.preprocessing, ChatSFTPreprocessingConfig)
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
-    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
+    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
@@ -246,7 +246,7 @@ def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
         == cfg.model.seq_length - cfg.dataset.offline_packing_specs.pad_seq_to_mult
     )
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 2 * cfg.model.context_parallel_size
-    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
+    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
