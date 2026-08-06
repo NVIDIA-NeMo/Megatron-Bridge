@@ -139,6 +139,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
 
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
+    cfg.model.moe_expert_rank_capacity_factor = 1.2
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
