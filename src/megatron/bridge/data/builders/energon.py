@@ -102,6 +102,8 @@ class NemotronOmniEnergonTaskEncoderConfig:
 
     ``visual_keys`` is retained for configuration compatibility, but Omni owns
     its visual input contract and supports only ``("pixel_values",)``.
+    ``collapse_image_tokens=True`` selects the deprecated LLaVA compatibility
+    path; the default ``False`` selects the canonical expanded-sequence path.
     """
 
     hf_processor_path: str
@@ -113,6 +115,7 @@ class NemotronOmniEnergonTaskEncoderConfig:
     video_nframes: int
     use_temporal_video_embedder: bool
     patch_dim: int
+    collapse_image_tokens: bool = False
     trust_remote_code: bool | None = None
 
     def validate(self) -> None:
@@ -288,6 +291,7 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
         video_nframes=task_config.video_nframes,
         use_temporal_video_embedder=task_config.use_temporal_video_embedder,
         patch_dim=task_config.patch_dim,
+        collapse_image_tokens=task_config.collapse_image_tokens,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,
         enable_in_batch_packing=effective_packing,

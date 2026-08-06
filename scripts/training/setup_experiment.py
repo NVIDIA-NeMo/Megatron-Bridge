@@ -272,8 +272,6 @@ def _build_executor(
         partition=args.partition,
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
-        mem="0",
-        exclusive=True,
         time=args.time,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),

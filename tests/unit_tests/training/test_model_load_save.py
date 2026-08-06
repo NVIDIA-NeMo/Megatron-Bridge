@@ -195,7 +195,11 @@ class TestTemporaryDistributedContext:
         mock_socket_instance.getsockname.return_value = ("localhost", 12345)
         mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
 
-        with temporary_distributed_context(backend="gloo"):
+        with (
+            patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
+            patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed,
+            temporary_distributed_context(backend="gloo"),
+        ):
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
@@ -204,6 +208,7 @@ class TestTemporaryDistributedContext:
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once()
+        mock_seed.assert_not_called()
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")

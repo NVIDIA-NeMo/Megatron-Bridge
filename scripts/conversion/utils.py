@@ -13,6 +13,7 @@
 # limitations under the License.
 """Utilities shared by CPU and distributed GPU conversion backends."""
 
+import re
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
@@ -50,6 +51,8 @@ def resolve_hf_commit_revision(hf_model: str, hf_revision: str | None) -> str | 
     _validate_hf_revision_target(hf_model, hf_revision)
     if hf_revision is None:
         return None
+    if re.fullmatch(r"[0-9a-f]{40}", hf_revision):
+        return hf_revision
 
     from huggingface_hub import HfApi
 

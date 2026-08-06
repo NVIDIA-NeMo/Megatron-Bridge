@@ -110,8 +110,9 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma 4 VL 26B-A4B (MoE VLM).
 
     Default configuration: 8 GPUs
-    - TP=2, PP=1, EP=8 (max EP with 16 GPUs at TP=2,PP=1; DP=8, EP divides DP)
-    - No activation recompute — EP=8 shards 87.5% of expert params per GPU
+    - TP=4, PP=1, EP=8, ETP=1 (dense DP=2, expert DP=1)
+    - Selective core-attention and MoE-activation recompute
+    - Frozen vision encoder with trainable projection and language model
     - LR=5e-5 (full SFT)
     - Sequence length: 4096
     """
@@ -119,14 +120,26 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     _apply_gemma4_vl_common(cfg, _HF_PATH)
 
-    # Parallel settings — TP=2, PP=1, EP=8 on 2×8 GPUs
-    # DP = 16/(TP*PP) = 8; EP=8 shards experts across all DP ranks (1 expert replica)
-    cfg.model.tensor_model_parallel_size = 2
+    # The dense TP and expert EP meshes overlap: PP * max(TP, EP * ETP) = 8 GPUs.
+    # Dense DP = 8 / (TP * PP) = 2; expert DP = 8 / (PP * EP * ETP) = 1.
+    cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8  # override common EP=1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+
+    # Real CORD-v2 measurements require both modules to preserve H100 memory
+    # headroom after optimizer-state initialization. Full-layer recompute is not needed.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "moe_act"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+
+    # Decoder-focused SFT keeps the vision encoder fixed while training the
+    # multimodal projection and language model.
+    cfg.model.freeze_vision_model = True
 
     # Reduce overhead to fit within 30-min wall time.
     # 40 iters × ~15s + 5 min init + 4 evals × 35s = ~20 min → 10 min for checkpoint save.
@@ -170,7 +183,8 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     """Return a PEFT (LoRA/DoRA) config for Gemma 4 VL 26B-A4B (MoE VLM).
 
     Default configuration: 4 GPUs
-    - TP=4, PP=1, EP=4 (PEFT needs less memory, drop PP)
+    - TP=2, PP=1, EP=4, ETP=1 (dense DP=2, expert DP=1)
+    - MBS=1, GBS=32
     - LR=2e-4 (PEFT)
     - Sequence length: 4096
 
@@ -194,7 +208,12 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 4  # override common EP=1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+
+    # Real CORD-v2 measurements fit with substantial activation-memory headroom
+    # at MBS=1, so recompute and LoRA sequence-parallel input re-gather are not needed.
+    cfg.train.micro_batch_size = 1
 
     # Optimizer — higher LR for PEFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

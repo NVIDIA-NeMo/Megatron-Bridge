@@ -11,7 +11,12 @@ if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-refs=$(git ls-remote "$repo" "refs/heads/main" "refs/heads/pull-request/*" "refs/pull/*/merge")
+refs=$(git ls-remote \
+  "$repo" \
+  "refs/heads/main" \
+  "refs/heads/pull-request/*" \
+  "refs/heads/gh-readonly-queue/main/pr-*" \
+  "refs/pull/*/merge")
 object_store=$(mktemp -d)
 trap 'rm -rf "$object_store"' EXIT
 git -C "$object_store" init --quiet
@@ -25,7 +30,11 @@ if [[ -n "$main_sha" ]] && \
 fi
 
 while IFS=$'\t' read -r sha ref; do
-  if [[ "$sha" == "$revision" && "$ref" =~ ^refs/heads/pull-request/[0-9]+$ ]]; then
+  if [[ "$sha" != "$revision" ]]; then
+    continue
+  fi
+  if [[ "$ref" =~ ^refs/heads/pull-request/[0-9]+$ ]] || \
+    [[ "$ref" =~ ^refs/heads/gh-readonly-queue/main/pr-[0-9]+-[0-9a-f]{40}$ ]]; then
     exit 0
   fi
 done <<<"$refs"
