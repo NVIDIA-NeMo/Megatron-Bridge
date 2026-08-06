@@ -474,10 +474,10 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.recompute_num_layers == 1
     assert cfg.model.bias_activation_fusion is True
     assert cfg.model.apply_rope_fusion is False
-    assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
-    assert cfg.model.vision_cuda_graph_impl == "transformer_engine"
-    assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.vision_cuda_graph_impl == "none"
+    assert cfg.model.vision_cuda_graph_scope == []
     assert cfg.model.max_vision_cuda_graph_seq_length == 784
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True

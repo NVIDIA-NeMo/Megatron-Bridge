@@ -35,7 +35,7 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
-from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
 
 
 def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -> None:
@@ -1042,6 +1042,14 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
     cfg.model.recompute_modules = None
+
+    # Scoped CUDA graphs cannot be combined with full-layer recompute in
+    # Megatron Core. Full SFT needs recompute to retain its FP32 optimizer
+    # state, so keep both the language and vision stacks graph-free.
+    cfg.model.cuda_graph_impl = "none"
+    clear_cuda_graph_modules(cfg.model)
+    cfg.model.vision_cuda_graph_impl = "none"
+    cfg.model.vision_cuda_graph_scope = []
     return cfg
 
 

@@ -231,9 +231,6 @@ items:
       status: unverified
       precision: bf16
       enabled_features:
-        cuda_graph:
-          implementation: transformer_engine
-          scopes: [attn, mlp, moe_router, moe_preprocess]
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
@@ -266,8 +263,9 @@ items:
         revision, processor revision, fixed 448-by-448 images, MBS1/GBS32,
         natural expert routing, optimizer precision, and learning-rate schedule
         as the prior convergence run. The new library recipe changes execution
-        to TP1/PP2/CP1/EP8/ETP1 with HybridEP, scoped Transformer Engine CUDA
-        graphs, and no activation recompute, so the historical loss and
+        to TP1/PP2/CP1/EP8/ETP1 with HybridEP and one-layer full-uniform
+        recompute. Scoped CUDA graphs are disabled because Megatron Core does
+        not support them with full-layer recompute, so the historical loss and
         throughput metrics do not verify this command.
 
     GB200:
