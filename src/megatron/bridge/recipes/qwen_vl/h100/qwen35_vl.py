@@ -1053,13 +1053,10 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.vision_cuda_graph_impl = "none"
     cfg.model.vision_cuda_graph_scope = []
 
-    # The shared 23-layer last stage does not leave enough room for the FP32
-    # vocabulary-loss workspace used by full SFT. Move two language layers to
-    # the first stage so the loss allocation retains operating margin; the
-    # shared 17/23 performance policy remains unchanged for pretraining and
-    # LoRA.
-    cfg.model.num_layers_in_first_pipeline_stage = 19
-    cfg.model.num_layers_in_last_pipeline_stage = 21
+    # Native fused cross entropy materializes a full FP32 vocabulary-sized
+    # softmax buffer for every live microbatch. Use the TE kernel to keep the
+    # 248K-vocabulary SFT loss memory-bounded on H100.
+    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 

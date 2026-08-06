@@ -450,8 +450,8 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.virtual_pipeline_model_parallel_size is None
-    assert cfg.model.num_layers_in_first_pipeline_stage == 19
-    assert cfg.model.num_layers_in_last_pipeline_stage == 21
+    assert cfg.model.num_layers_in_first_pipeline_stage == 17
+    assert cfg.model.num_layers_in_last_pipeline_stage == 23
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.model.sequence_parallel is False
@@ -480,6 +480,8 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.vision_cuda_graph_impl == "none"
     assert cfg.model.vision_cuda_graph_scope == []
     assert cfg.model.max_vision_cuda_graph_seq_length == 784
+    assert cfg.model.cross_entropy_loss_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
     assert cfg.dataset.enable_in_batch_packing is False
