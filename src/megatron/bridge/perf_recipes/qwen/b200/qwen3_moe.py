@@ -323,10 +323,11 @@ def qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
         overlap_moe_expert_parallel_comm=True,
         delay_wgrad_compute=True,
     )
-    cfg.model.moe_hybridep_num_sms_preprocessing = 32
-    cfg.model.moe_hybridep_num_sms = 64
 
     _benchmark_common(cfg)
+    # After _benchmark_common: it forces moe_hybridep_num_sms=32 for every hybridep recipe.
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    cfg.model.moe_hybridep_num_sms = 64
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
