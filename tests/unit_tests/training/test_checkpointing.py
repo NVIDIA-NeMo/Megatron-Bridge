@@ -2566,7 +2566,8 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_unwrap_model.assert_called_once_with(mock_model)
         mock_generate_state_dict.assert_called_once()
         call_args = mock_generate_state_dict.call_args
-        assert call_args[0][1] == {"metadata": mock_metadata}
+        assert call_args[0][1] == {"metadata": {**mock_metadata, "is_loading": True}}
+        assert "is_loading" not in mock_metadata
         mock_strategy_cls.assert_called_once_with()
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
         mock_gc_collect.assert_called_once_with()

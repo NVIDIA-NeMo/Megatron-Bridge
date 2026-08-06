@@ -1345,6 +1345,7 @@ class ParallelLinearAdapter(nn.Module):
         sharded_offsets: Tuple,
         *,
         split_swiglu: bool = False,
+        is_loading: bool = False,
     ) -> ShardedTensorFactory:
         """Map one shared 2D adapter tensor to this rank's global expert slots."""
 
@@ -1392,7 +1393,9 @@ class ParallelLinearAdapter(nn.Module):
             sharded_tensors = []
             for expert_index in range(local_experts):
                 expert_offset = (expert_axis, first_expert_slot + expert_index, num_global_experts)
-                expert_tensor = tensor.clone()
+                # Save shards all contain the same shared adapter value and can alias.
+                # Load shards need independent destinations until merge_fn averages them.
+                expert_tensor = tensor if not is_loading or expert_index == 0 else tensor.clone()
                 if not split_swiglu:
                     sharded_tensors.append(
                         ShardedTensor.from_rank_offsets(
@@ -1478,6 +1481,7 @@ class ParallelLinearAdapter(nn.Module):
         # Non-grouped expert adapters already sit under .local_experts.* and keep
         # their existing expert-DP replica metadata instead.
         use_expert_axis = self._uses_grouped_expert_sharding() and not self.use_legacy_shared_expert_adapter_checkpoint
+        is_loading = bool(metadata and metadata.get("is_loading", False))
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
@@ -1490,13 +1494,18 @@ class ParallelLinearAdapter(nn.Module):
                         del sd[key]
             for key, value in list(linear_in_sd.items()):
                 if isinstance(value, ShardedTensor):
-                    linear_in_sd[key] = self._apply_expert_axis_factory(value, sharded_offsets)
+                    linear_in_sd[key] = self._apply_expert_axis_factory(
+                        value,
+                        sharded_offsets,
+                        is_loading=is_loading,
+                    )
             for key, value in list(linear_out_sd.items()):
                 if isinstance(value, ShardedTensor):
                     linear_out_sd[key] = self._apply_expert_axis_factory(
                         value,
                         sharded_offsets,
                         split_swiglu=split_swiglu,
+                        is_loading=is_loading,
                     )
         elif self.is_expert:
             if _process_group_rank(self.tp_group) > 0:

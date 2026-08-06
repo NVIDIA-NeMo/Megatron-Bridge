@@ -2215,7 +2215,7 @@ def _load_model_weights_from_checkpoint(
 
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
-    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
+    model_sd_kwargs = dict(metadata=_model_sharded_state_dict_load_metadata(sharded_sd_metadata))
 
     # [ModelOpt]: Restore state
     restore_modelopt_state(model, state_dict)
@@ -2847,7 +2847,7 @@ def _load_checkpoint_from_path(
             sharded_sd_metadata = {}
         sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
-        model_sd_kwargs = dict(metadata=sharded_sd_metadata)
+        model_sd_kwargs = dict(metadata=_model_sharded_state_dict_load_metadata(sharded_sd_metadata))
 
         # Build sharded state dict for loading
         with contextlib.ExitStack() as stack:
@@ -3807,6 +3807,14 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
     metadata["singleton_local_shards"] = False
     metadata["chained_optim_avoid_prefix"] = True
     return metadata
+
+
+def _model_sharded_state_dict_load_metadata(metadata: Optional[dict]) -> dict:
+    """Return model sharding metadata that identifies checkpoint load scaffolding."""
+
+    load_metadata = dict(metadata or {})
+    load_metadata["is_loading"] = True
+    return load_metadata
 
 
 def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:

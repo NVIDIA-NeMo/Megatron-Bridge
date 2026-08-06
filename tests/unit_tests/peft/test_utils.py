@@ -960,6 +960,7 @@ class TestParallelLinearAdapter:
 
         built = factory.build()
         assert len(built) == 2
+        assert len({shard.data.untyped_storage().data_ptr() for shard in built}) == 1
         assert built[0].global_shape == (4, 2, 2)
         assert built[0].global_offset == (2, 0, 0)
         assert built[1].global_offset == (3, 0, 0)
@@ -1043,7 +1044,7 @@ class TestParallelLinearAdapter:
             is_expert=True,
             model_parallel_config=mock_config,
         )
-        state_dict = adapter.sharded_state_dict(prefix="adapter.")
+        state_dict = adapter.sharded_state_dict(prefix="adapter.", metadata={"is_loading": True})
 
         factory = state_dict[key]
         assert isinstance(factory, ShardedTensorFactory)
