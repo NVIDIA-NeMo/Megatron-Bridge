@@ -1343,7 +1343,12 @@ class TestConfigContainerValidation:
             ("cuda_graph_impl", "local", 1, "does not support CUDA graphs"),
             ("vision_cuda_graph_impl", "transformer_engine", 1, "does not support CUDA graphs"),
             ("pipeline_model_parallel_size", 2, 2, "does not yet support pipeline parallelism"),
-            ("expert_model_parallel_size", 2, 2, "does not yet support expert parallelism"),
+            (
+                "overlap_moe_expert_parallel_comm",
+                True,
+                1,
+                "does not support MoE expert-parallel communication overlap",
+            ),
         ],
     )
     def test_native_energon_packing_rejects_unsupported_execution_modes(
@@ -1366,6 +1371,58 @@ class TestConfigContainerValidation:
 
         try:
             with pytest.raises(ValueError, match=message):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_allows_expert_parallelism(self):
+        """Allow native packing configuration with expert parallelism."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="alltoall",
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("dispatcher", ["allgather", "flex"])
+    def test_native_energon_packing_rejects_unvalidated_ep_dispatchers(self, dispatcher):
+        """Require the functionally validated alltoall dispatcher for native EP packing."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type=dispatcher,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.raises(ValueError, match="requires model.moe_token_dispatcher_type='alltoall'"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -3633,6 +3690,45 @@ class TestRuntimeConfigUpdate:
             assert full_cfg.data_parallel_size == 8  # world_size / model_parallel_size
             assert full_cfg.comm_overlap.data_parallel_size == 8  # Should be set by runtime_config_update
 
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_runtime_config_update_rejects_native_packing_with_moe_ep_overlap(self):
+        """Reject EP overlap after runtime communication settings reach the model."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        model_cfg = create_test_qwen3_vl_config(
+            bf16=True,
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="alltoall",
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        optimizer_cfg = create_test_optimizer_config(bf16=True)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            optimizer_config=optimizer_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        container.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=False,
+            overlap_moe_expert_parallel_comm=True,
+        )
+
+        try:
+            with (
+                patch("megatron.bridge.training.comm_overlap.is_torch_min_version", return_value=True),
+                pytest.raises(ValueError, match="does not support MoE expert-parallel communication overlap"),
+            ):
+                runtime_config_update(container)
+            assert model_cfg.overlap_moe_expert_parallel_comm is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

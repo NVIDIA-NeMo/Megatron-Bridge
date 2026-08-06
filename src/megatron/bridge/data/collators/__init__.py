@@ -14,7 +14,14 @@
 
 """Runtime dataset collators."""
 
+from megatron.bridge.data.collators.contracts import ModelCollator, PreparedSequence, PreparedSequenceCollator
 from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 
 
-__all__ = ["text_chat_collate_fn", "text_prompt_completion_collate_fn"]
+__all__ = [
+    "ModelCollator",
+    "PreparedSequence",
+    "PreparedSequenceCollator",
+    "text_chat_collate_fn",
+    "text_prompt_completion_collate_fn",
+]

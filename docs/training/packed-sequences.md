@@ -23,7 +23,7 @@ enablement through context parallelism:
 |---|---|---|
 | Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
 | Direct-HF/VLM in-batch packing | Direct Hugging Face and supported VLM finetuning | `enable_in_batch_packing=True` |
-| Energon online packing | Dense Qwen3-VL data streamed through Energon | `packing_buffer_size=<candidate samples per worker>` |
+| Energon online packing | Qwen-VL data using the model-owned Energon collator | `packing_buffer_size=<candidate samples per worker>` |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
 These are related but they are not the same knob. Offline packed SFT and
@@ -110,15 +110,18 @@ The durable constraints for packed sequences in Bridge are:
 - offline packed SFT requires configured `micro_batch_size == 1`
 - Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
   collation flattens those input rows into one physical THD batch row
-- Energon online packing currently supports dense Qwen3-VL, requires physical
-  `micro_batch_size == 1`, the generic `vlm_step`, per-token loss, and
+- Energon online packing currently supports the eager Qwen-VL collator path,
+  requires physical `micro_batch_size == 1`, the generic `vlm_step`, per-token loss, and
   `ddp.average_in_collective=False`
+- standard eager `alltoall` expert parallelism has functional coverage for
+  Qwen3.6-35B-A3B at TP1/PP1/EP8 with EP communication overlap disabled; this
+  is not a performance claim; other EP dispatchers are rejected for this path
 - `packing_buffer_size` counts candidate samples independently in every Energon
   worker; it is not a byte cache or a packed-sequence length
 - Energon native packing and collator-owned `enable_in_batch_packing=True` are
   mutually exclusive
 - Energon native packing does not currently support MTP, CUDA graphs, Qwen3-VL
-  DistTrain, pipeline parallelism, or expert parallelism
+  DistTrain, pipeline parallelism, or MoE expert-parallel communication overlap
 - when context parallelism is used, sequence length must satisfy the standard
   CP divisibility constraints
 - Direct-HF sequence length must also satisfy the LCM of the training and

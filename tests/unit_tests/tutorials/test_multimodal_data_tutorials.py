@@ -12,7 +12,6 @@ import torch
 from megatron.energon import WorkerConfig, get_savable_loader, get_val_dataset
 from PIL import Image
 
-import megatron.bridge.models.qwen_vl.data.energon as qwen_energon
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
 from megatron.bridge.models.qwen_vl.data.collate_fn import QwenVLPreparedSequence
 from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
@@ -24,10 +23,27 @@ HF_MULTIMODAL_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "hf-multimodal"
 ENERGON_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "energon"
 QWEN_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
 QWEN_ENERGON_EXAMPLE = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "peft_energon.sh"
+_QWEN_TEST_SEQUENCE_LENGTHS = {"red": 9, "green": 7, "blue": 6, "yellow": 5, "purple": 9, "orange": 7}
 
 
 def _load_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _prepare_qwen_test_sequence(example, processor, **kwargs):  # noqa: ARG001
+    serialized = repr(example["conversation"])
+    length = next(length for color, length in _QWEN_TEST_SEQUENCE_LENGTHS.items() if color in serialized)
+    tokens = torch.arange(1, length + 1, dtype=torch.long)
+    return QwenVLPreparedSequence(
+        row={
+            "input_ids": tokens,
+            "attention_mask": torch.ones(length, dtype=torch.long),
+            "position_ids": torch.arange(length, dtype=torch.long),
+            "labels": torch.cat([tokens[1:], torch.tensor([-100])]),
+            "loss_mask": torch.cat([torch.ones(length - 1), torch.zeros(1)]),
+        },
+        visual_values={},
+    )
 
 
 def test_hf_multimodal_preparation_writes_resolvable_qwen_rows(tmp_path: Path):
@@ -123,34 +139,18 @@ def test_qwen_native_packing_loader_restores_pending_groups_and_flushes_partial_
     module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_example_data.py"))
     module["prepare_example_data"](tmp_path, num_workers=1)
 
-    sequence_lengths = {"red": 9, "green": 7, "blue": 6, "yellow": 5, "purple": 9, "orange": 7}
-
-    def fake_prepare(example, processor, **kwargs):  # noqa: ARG001
-        serialized = repr(example["conversation"])
-        length = next(length for color, length in sequence_lengths.items() if color in serialized)
-        tokens = torch.arange(1, length + 1, dtype=torch.long)
-        return QwenVLPreparedSequence(
-            row={
-                "input_ids": tokens,
-                "attention_mask": torch.ones(length, dtype=torch.long),
-                "position_ids": torch.arange(length, dtype=torch.long),
-                "labels": torch.cat([tokens[1:], torch.tensor([-100])]),
-                "loss_mask": torch.cat([torch.ones(length - 1), torch.zeros(1)]),
-            },
-            visual_values={},
-        )
-
-    monkeypatch.setattr(qwen_energon, "prepare_qwen_vl_sequence", fake_prepare)
     tokenizer = MagicMock(image_token_id=151655, video_token_id=151656)
 
     def build_encoder():
-        return QwenVLTaskEncoder(
+        encoder = QwenVLTaskEncoder(
             tokenizer=tokenizer,
             image_processor=MagicMock(),
             max_padding_length=16,
             enable_energon_packing=True,
             max_visual_tokens=None,
         )
+        monkeypatch.setattr(encoder._collator, "_prepare_one", _prepare_qwen_test_sequence)
+        return encoder
 
     def build_loader():
         worker_config = WorkerConfig.default_worker_config(num_workers)

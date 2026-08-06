@@ -24,7 +24,6 @@ import torch
 from megatron.energon import SkipSample
 from PIL import Image
 
-import megatron.bridge.models.qwen_vl.data.energon as task_encoder_module
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
 from megatron.bridge.models.qwen_vl.data.collate_fn import QwenVLPreparedSequence
 from megatron.bridge.models.qwen_vl.data.energon import (
@@ -322,8 +321,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
             example={"conversation": [{"role": "user", "content": "two"}]},
         )
 
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(task_encoder_module, "qwen2_5_collate_fn", _fake_qwen_collate)
+        with patch.object(self.encoder._collator, "collate", side_effect=_fake_qwen_collate):
             batch = self.encoder.batch([s1, s2])
 
         self.assertIsInstance(batch, QwenVLTaskBatch)
@@ -472,7 +470,7 @@ class TestQwenVLTaskEncoderNativePacking(unittest.TestCase):
             ),
         )
 
-        with patch.object(task_encoder_module, "prepare_qwen_vl_sequence", return_value=prepared):
+        with patch.object(self.encoder._collator, "prepare_one", return_value=prepared):
             encoded = self.encoder.encode_sample(raw)
 
         self.assertEqual(encoded.__restore_key__, ("Webdataset", 7))
@@ -495,7 +493,7 @@ class TestQwenVLTaskEncoderNativePacking(unittest.TestCase):
         )
 
         with (
-            patch.object(task_encoder_module, "prepare_qwen_vl_sequence", return_value=prepared),
+            patch.object(self.encoder._collator, "prepare_one", return_value=prepared),
             self.assertRaisesRegex(ValueError, "aligned sequence length 16 exceeds seq_length=12"),
         ):
             self.encoder.encode_sample(raw)
@@ -632,7 +630,7 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
             "visual_inputs": GenericVisualInputs(),
         }
 
-        with patch.object(task_encoder_module, "qwen2_5_collate_fn", return_value=collated) as collate:
+        with patch.object(enc._collator, "collate", return_value=collated) as collate:
             enc.batch([sample])
 
         self.assertTrue(collate.call_args.kwargs["require_assistant_matches"])

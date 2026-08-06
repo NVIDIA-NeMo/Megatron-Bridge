@@ -71,6 +71,17 @@ def test_collator_import_boundaries_preserve_lazy_loading():
             "assert 'megatron.bridge.models.qwen_vl.data.collate_fn' in sys.modules; "
             "assert 'megatron.bridge.models.gemma_vl.data.collate_fn' not in sys.modules"
         ),
+        "lazy collator contract resolution": (
+            "import sys; "
+            "from megatron.bridge.data.collators.contracts import PreparedSequenceCollator; "
+            "from megatron.bridge.data.collators.registry import resolve_model_collator; "
+            f"{module_assertions}; "
+            "collator = resolve_model_collator('Qwen3VLProcessor'); "
+            "assert isinstance(collator, PreparedSequenceCollator); "
+            "assert collator.collate_fn.__name__ == 'qwen2_5_collate_fn'; "
+            "assert 'megatron.bridge.models.qwen_vl.data.collate_fn' in sys.modules; "
+            "assert 'megatron.bridge.models.gemma_vl.data.collate_fn' not in sys.modules"
+        ),
     }
 
     with ThreadPoolExecutor(max_workers=len(checks)) as executor:
