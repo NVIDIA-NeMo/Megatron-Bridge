@@ -158,6 +158,7 @@ class Qwen3VLGPTModel(GPTModel):
         *,
         inference_params: Optional[BaseInferenceContext] = None,
         loss_mask: Optional[Tensor] = None,
+        padding_mask: Optional[Tensor] = None,
         # args for deepstack
         visual_pos_masks: Optional[torch.Tensor] = None,
         deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
@@ -175,6 +176,9 @@ class Qwen3VLGPTModel(GPTModel):
         Args:
             runtime_gather_output (bool): Gather output at runtime. Default None means
                 `parallel_output` arg in the constructor will be used.
+            padding_mask (Tensor, optional): Boolean padding mask forwarded to
+                MoE layers. True positions are excluded from auxiliary-loss,
+                z-loss, and expert-bias statistics by the current MCore router.
             output_processor (Callable, optional): Custom postprocess hook forwarded to
                 the GPT model postprocessing path.
             output_processor_context (Any, optional): User-defined context forwarded to
@@ -192,6 +196,7 @@ class Qwen3VLGPTModel(GPTModel):
             decoder_input=decoder_input,
             inference_context=inference_context,
             packed_seq_params=packed_seq_params,
+            padding_mask=padding_mask,
         )
 
         (
@@ -201,6 +206,8 @@ class Qwen3VLGPTModel(GPTModel):
             rotary_pos_sin,
             sequence_len_offset,
         ) = preproc_output[:5]
+        if len(preproc_output) > 5:
+            padding_mask = preproc_output[5]
 
         # Run decoder.
         hidden_states = self.decoder(
@@ -214,6 +221,7 @@ class Qwen3VLGPTModel(GPTModel):
             # the standard components only.
             packed_seq_params=packed_seq_params,
             sequence_len_offset=sequence_len_offset,
+            padding_mask=padding_mask,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),
@@ -251,6 +259,7 @@ class Qwen3VLGPTModel(GPTModel):
             loss_mask=loss_mask,
             decoder_input=decoder_input,
             attention_mask=attention_mask,
+            padding_mask=padding_mask,
             inference_params=inference_params,
             packed_seq_params=postprocess_packed_seq_params,
             sequence_len_offset=sequence_len_offset,

@@ -1131,6 +1131,38 @@ class ConfigContainer(Container):
             "an HF model id."
         )
 
+    def _disable_native_energon_packing_moe_overlap(self) -> None:
+        """Disable unsupported MoE overlap settings for native Energon packing."""
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
+        if not enable_energon_packing:
+            return
+
+        overlap_configs: list[object] = [self.model]
+        if self.comm_overlap is not None:
+            overlap_configs.append(self.comm_overlap)
+            resolved_overlap = getattr(self.comm_overlap, "user_comm_overlap_cfg", None)
+            if resolved_overlap is not None:
+                overlap_configs.append(resolved_overlap)
+
+        overlap_fields = ("overlap_moe_expert_parallel_comm", "delay_wgrad_compute")
+        overlap_requested = any(
+            getattr(config, field_name, False) is True for config in overlap_configs for field_name in overlap_fields
+        )
+        if not overlap_requested:
+            return
+
+        warnings.warn(
+            "Disabling MoE expert-parallel communication overlap and delayed weight-gradient compute because "
+            "Energon native sequence packing does not yet implement the combined-1F1B VLM schedule-plan path.",
+            stacklevel=3,
+        )
+        for config in overlap_configs:
+            for field_name in overlap_fields:
+                if hasattr(config, field_name):
+                    setattr(config, field_name, False)
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1193,18 +1225,7 @@ class ConfigContainer(Container):
                 raise ValueError("Energon native sequence packing does not support Qwen3-VL DistTrain.")
             if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
                 raise ValueError("Energon native sequence packing does not yet support pipeline parallelism.")
-            if (
-                getattr(self.model, "expert_model_parallel_size", 1) > 1
-                and getattr(self.model, "moe_token_dispatcher_type", None) != "alltoall"
-            ):
-                raise ValueError(
-                    "Energon native sequence packing with expert parallelism requires "
-                    "model.moe_token_dispatcher_type='alltoall'."
-                )
-            if getattr(self.model, "overlap_moe_expert_parallel_comm", False):
-                raise ValueError(
-                    "Energon native sequence packing does not support MoE expert-parallel communication overlap."
-                )
+            self._disable_native_energon_packing_moe_overlap()
 
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
@@ -1878,6 +1899,10 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Calculate data parallel size (needed for comm overlap methods)
     cfg.set_data_parallel_size()
+
+    # Native Energon packing cannot use MoE EP overlap. Normalize every user-facing
+    # representation before CommOverlapConfig performs its stricter setup validation.
+    cfg._disable_native_energon_packing_moe_overlap()
 
     # Apply communication overlap configuration if provided
     if cfg.comm_overlap is not None:

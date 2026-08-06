@@ -250,14 +250,21 @@ def build_qwen_vl_packed_batch(
     *,
     sequence_length: int | None,
     pad_to_multiple_of: int,
+    pad_to_max_length: bool = False,
 ) -> dict[str, Any]:
-    """Build one canonical MCore THD row from prepared Qwen-VL sequences."""
+    """Build one canonical MCore THD row from prepared Qwen-VL sequences.
+
+    When ``pad_to_max_length`` is true, the last physical segment is padded so
+    the row reaches ``sequence_length`` while the unpadded THD boundaries keep
+    describing only real tokens.
+    """
     packed_batch = build_mcore_thd_sequence_batch_from_rows(
         [sequence.row for sequence in sequences],
         sequence_length=sequence_length,
         pad_token_id=0,
         ignore_index=IGNORE_INDEX,
         pad_to_multiple_of=pad_to_multiple_of,
+        pad_to_max_length=pad_to_max_length,
     )
     visual_values: dict[str, list[torch.Tensor]] = {key: [] for key in QWEN_VISUAL_KEYS}
     for sequence in sequences:
@@ -348,6 +355,7 @@ def qwen2_5_collate_fn(
             prepared_sequences,
             sequence_length=sequence_length,
             pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+            pad_to_max_length=pad_to_max_length,
         )
 
     idx_with = [i for i, h in enumerate(has_media) if h]
