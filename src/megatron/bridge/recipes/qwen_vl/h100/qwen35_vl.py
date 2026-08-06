@@ -2062,6 +2062,10 @@ def qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the tuned LoRA config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 H100 GPUs."""
     cfg = qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config()
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # Delayed expert weight-gradient computation calls ``backward_dw`` on the
+    # expert linear modules. LoRA replaces those modules with ``LoRALinear``,
+    # which does not implement that Transformer Engine hook.
+    cfg.model.overlap_dispatch_backward_with_experts_wgrad = False
     return cfg
 
 
