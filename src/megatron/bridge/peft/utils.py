@@ -405,13 +405,17 @@ def load_peft_adapter_checkpoint(
     from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 
     from megatron.bridge.training.checkpointing import (
+        _checkpoint_expert_parallel_size,
         _model_sharded_state_dict_load_metadata,
         apply_peft_adapter_filter_to_state_dict,
     )
 
     model_chunks = _ensure_model_list(model)
     model_sd_kwargs = dict(model_sd_kwargs or {})
-    model_sd_kwargs["metadata"] = _model_sharded_state_dict_load_metadata(model_sd_kwargs.get("metadata"))
+    model_sd_kwargs["metadata"] = _model_sharded_state_dict_load_metadata(
+        model_sd_kwargs.get("metadata"),
+        source_expert_parallel_size=_checkpoint_expert_parallel_size(adapter_checkpoint_path),
+    )
     sharded_state_dict = _model_state_dict(
         model_chunks,
         model_sd_kwargs,
@@ -1351,6 +1355,7 @@ class ParallelLinearAdapter(nn.Module):
         *,
         split_swiglu: bool = False,
         is_loading: bool = False,
+        reshard_expert_parallel: bool = False,
     ) -> ShardedTensorFactory:
         """Map one shared 2D adapter tensor to this rank's global expert slots."""
 
@@ -1443,14 +1448,19 @@ class ParallelLinearAdapter(nn.Module):
                 sub_state_dict = [sub_state_dict]
 
             def mean_with_stable_accumulator(tensors):
-                if len(tensors) == 1:
+                if len(tensors) == 1 and not reshard_expert_parallel:
                     return tensors[0]
                 output_dtype = tensors[0].dtype
                 accumulator_dtype = torch.promote_types(output_dtype, torch.float32)
-                result = torch.zeros_like(tensors[0], dtype=accumulator_dtype)
+                accumulator_device = sharded_tensor.data.device if reshard_expert_parallel else tensors[0].device
+                result = torch.zeros_like(tensors[0], dtype=accumulator_dtype, device=accumulator_device)
                 for tensor in tensors:
-                    result.add_(tensor)
-                return result.div_(len(tensors)).to(output_dtype)
+                    result.add_(tensor.to(accumulator_device))
+                result.div_(len(tensors))
+                if reshard_expert_parallel and self.ep_size > 1:
+                    torch.distributed.all_reduce(result, group=self.ep_group)
+                    result.div_(self.ep_size)
+                return result.to(output_dtype)
 
             if split_swiglu:
                 if len(sub_state_dict) % 2 != 0:
@@ -1496,6 +1506,13 @@ class ParallelLinearAdapter(nn.Module):
         # their existing expert-DP replica metadata instead.
         use_expert_axis = self._uses_grouped_expert_sharding() and not self.use_legacy_shared_expert_adapter_checkpoint
         is_loading = bool(metadata and metadata.get("is_loading", False))
+        source_ep_size = None
+        if metadata:
+            source_ep_size = metadata.get(
+                "source_expert_model_parallel_size",
+                metadata.get("expert_model_parallel_size"),
+            )
+        reshard_expert_parallel = source_ep_size is not None and source_ep_size != self.ep_size
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
@@ -1512,6 +1529,7 @@ class ParallelLinearAdapter(nn.Module):
                         value,
                         sharded_offsets,
                         is_loading=is_loading,
+                        reshard_expert_parallel=reshard_expert_parallel,
                     )
             for key, value in list(linear_out_sd.items()):
                 if isinstance(value, ShardedTensor):
@@ -1520,6 +1538,7 @@ class ParallelLinearAdapter(nn.Module):
                         sharded_offsets,
                         split_swiglu=split_swiglu,
                         is_loading=is_loading,
+                        reshard_expert_parallel=reshard_expert_parallel,
                     )
         elif self.is_expert:
             if _process_group_rank(self.tp_group) > 0:

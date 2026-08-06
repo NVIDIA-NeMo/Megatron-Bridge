@@ -1107,6 +1107,59 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_shared_grouped_expert_merge_reduces_across_ep_only_when_resharding(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """EP topology changes must produce one global mean without altering same-EP loads."""
+        del mock_row_linear
+        mock_linear_in = Mock()
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", torch.zeros(2, 2), replica_id=(0, 0, 0)
+            ),
+        }
+        mock_linear_out = Mock()
+        mock_linear_out.sharded_state_dict.return_value = {}
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        same_ep_factory = adapter.sharded_state_dict(
+            prefix="adapter.",
+            metadata={"is_loading": True, "source_expert_model_parallel_size": 2},
+        )["adapter.linear_in.weight"]
+        reshard_factory = adapter.sharded_state_dict(
+            prefix="adapter.",
+            metadata={"is_loading": True, "source_expert_model_parallel_size": 4},
+        )["adapter.linear_in.weight"]
+        local_shards = [torch.ones(2, 2), torch.full((2, 2), 3.0)]
+
+        with patch("torch.distributed.all_reduce") as mock_all_reduce:
+            same_ep_merged = same_ep_factory.merge_fn(local_shards)
+
+        mock_all_reduce.assert_not_called()
+        torch.testing.assert_close(same_ep_merged, torch.full((2, 2), 2.0))
+
+        def add_other_destination_mean(tensor, group):
+            assert group is mock_config._pg_collection.ep
+            tensor.add_(6.0)
+
+        with patch("torch.distributed.all_reduce", side_effect=add_other_destination_mean) as mock_all_reduce:
+            resharded = reshard_factory.merge_fn(local_shards)
+
+        mock_all_reduce.assert_called_once()
+        torch.testing.assert_close(resharded, torch.full((2, 2), 4.0))
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_grad_across_ep(
         self, mock_row_linear, mock_col_linear, mock_config
     ):

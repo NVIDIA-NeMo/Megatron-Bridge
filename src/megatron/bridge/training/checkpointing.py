@@ -32,7 +32,7 @@ from typing import Any, Callable, Literal, Mapping, Optional, Protocol, Union, r
 import numpy as np
 import torch
 import torch.nn.functional as F
-from megatron.core import dist_checkpointing, tensor_parallel
+from megatron.core import dist_checkpointing, parallel_state, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
 from megatron.core.dist_checkpointing.serialization import StateDict
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
@@ -2215,7 +2215,12 @@ def _load_model_weights_from_checkpoint(
 
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
-    model_sd_kwargs = dict(metadata=_model_sharded_state_dict_load_metadata(sharded_sd_metadata))
+    model_sd_kwargs = dict(
+        metadata=_model_sharded_state_dict_load_metadata(
+            sharded_sd_metadata,
+            source_expert_parallel_size=_checkpoint_expert_parallel_size(checkpoint_path),
+        )
+    )
 
     # [ModelOpt]: Restore state
     restore_modelopt_state(model, state_dict)
@@ -2847,7 +2852,16 @@ def _load_checkpoint_from_path(
             sharded_sd_metadata = {}
         sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
-        model_sd_kwargs = dict(metadata=_model_sharded_state_dict_load_metadata(sharded_sd_metadata))
+        source_model_config = run_config.get("model", {})
+        source_ep_size = (
+            source_model_config.get("expert_model_parallel_size") if isinstance(source_model_config, Mapping) else None
+        )
+        model_sd_kwargs = dict(
+            metadata=_model_sharded_state_dict_load_metadata(
+                sharded_sd_metadata,
+                source_expert_parallel_size=source_ep_size,
+            )
+        )
 
         # Build sharded state dict for loading
         with contextlib.ExitStack() as stack:
@@ -3806,16 +3820,42 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
 
     metadata["singleton_local_shards"] = False
     metadata["chained_optim_avoid_prefix"] = True
+    expert_parallel_size = parallel_state.get_expert_model_parallel_world_size()
+    if expert_parallel_size > 0:
+        metadata["expert_model_parallel_size"] = expert_parallel_size
     return metadata
 
 
-def _model_sharded_state_dict_load_metadata(metadata: object | None) -> dict:
+def _checkpoint_expert_parallel_size(checkpoint_path: str | Path) -> int | None:
+    """Read the source expert-parallel size from a checkpoint run config, if present."""
+
+    checkpoint_path = Path(checkpoint_path)
+    for config_root in (checkpoint_path, checkpoint_path.parent):
+        config_path = get_checkpoint_run_config_filename(str(config_root))
+        if not file_exists(config_path):
+            continue
+        run_config = read_run_config(config_path)
+        model_config = run_config.get("model", {})
+        if isinstance(model_config, Mapping):
+            expert_parallel_size = model_config.get("expert_model_parallel_size")
+            if expert_parallel_size is not None:
+                return int(expert_parallel_size)
+    return None
+
+
+def _model_sharded_state_dict_load_metadata(
+    metadata: object | None,
+    *,
+    source_expert_parallel_size: int | None = None,
+) -> dict:
     """Return model sharding metadata that identifies checkpoint load scaffolding."""
 
     if metadata is not None and not isinstance(metadata, Mapping):
         raise TypeError(f"Expected model sharding metadata to be a mapping, got {type(metadata).__name__}")
     load_metadata = dict(metadata or {})
     load_metadata["is_loading"] = True
+    if source_expert_parallel_size is not None:
+        load_metadata["source_expert_model_parallel_size"] = source_expert_parallel_size
     return load_metadata
 
 

@@ -59,6 +59,7 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.peft.lora import LoRA, VLMLoRA
 from megatron.bridge.peft.utils import enable_legacy_shared_expert_adapter_loading
 from megatron.bridge.training.checkpointing import (
+    _checkpoint_expert_parallel_size,
     _generate_model_state_dict,
     _model_sharded_state_dict_load_metadata,
     apply_peft_adapter_filter_to_state_dict,
@@ -222,7 +223,12 @@ def merge_lora(
     # 3) Load weights from the fine-tuned checkpoint
     print_rank_0(f"Loading LoRA adapter weights from {lora_dir}")
     # Generate full sharded_state_dict describing all model tensors
-    model_sd_kwargs = {"metadata": _model_sharded_state_dict_load_metadata(None)}
+    model_sd_kwargs = {
+        "metadata": _model_sharded_state_dict_load_metadata(
+            None,
+            source_expert_parallel_size=_checkpoint_expert_parallel_size(lora_dir),
+        )
+    }
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
     # Keep only LoRA adapter tensors (and any other trainable parameters) so we don't read unnecessary dense weights.
     sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora_peft)

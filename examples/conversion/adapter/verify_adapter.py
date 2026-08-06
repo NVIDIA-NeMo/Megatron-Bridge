@@ -156,6 +156,7 @@ def _build_megatron_lora_model(
     from megatron.bridge.models.conversion.auto_bridge import AutoBridge
     from megatron.bridge.peft.lora import LoRA, VLMLoRA
     from megatron.bridge.training.checkpointing import (
+        _checkpoint_expert_parallel_size,
         _generate_model_state_dict,
         _model_sharded_state_dict_load_metadata,
         apply_peft_adapter_filter_to_state_dict,
@@ -223,7 +224,12 @@ def _build_megatron_lora_model(
         init_model_with_meta_device=False,
     )
 
-    model_sd_kwargs = {"metadata": _model_sharded_state_dict_load_metadata(None)}
+    model_sd_kwargs = {
+        "metadata": _model_sharded_state_dict_load_metadata(
+            None,
+            source_expert_parallel_size=_checkpoint_expert_parallel_size(ckpt_path),
+        )
+    }
     sharded_sd = _generate_model_state_dict(model, model_sd_kwargs)
     sharded_sd = apply_peft_adapter_filter_to_state_dict(sharded_sd, lora)
     loaded_sd = dist_checkpointing.load(sharded_sd, str(ckpt_path))

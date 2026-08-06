@@ -54,6 +54,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.lora import LoRA, VLMLoRA
 from megatron.bridge.peft.utils import enable_legacy_shared_expert_adapter_loading
 from megatron.bridge.training.checkpointing import (
+    _checkpoint_expert_parallel_size,
     _generate_model_state_dict,
     _model_sharded_state_dict_load_metadata,
     apply_peft_adapter_filter_to_state_dict,
@@ -210,7 +211,12 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
                 f"got {len(model)}. Use pipeline parallel size 1 without virtual pipeline parallelism."
             )
 
-        model_sd_kwargs = {"metadata": _model_sharded_state_dict_load_metadata(None)}
+        model_sd_kwargs = {
+            "metadata": _model_sharded_state_dict_load_metadata(
+                None,
+                source_expert_parallel_size=_checkpoint_expert_parallel_size(ckpt_path),
+            )
+        }
         sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
         sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
         legacy_shared_expert_adapter = enable_legacy_shared_expert_adapter_loading(
