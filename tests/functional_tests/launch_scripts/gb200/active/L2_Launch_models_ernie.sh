@@ -1,11 +1,13 @@
 #!/bin/bash
 set -xeuo pipefail
 
+REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
+
 export CUDA_VISIBLE_DEVICES="0,1"
 
 uv run coverage run \
-    --data-file=/opt/Megatron-Bridge/.coverage \
-    --source=/opt/Megatron-Bridge/ \
+    --data-file="${REPO_ROOT}/.coverage" \
+    --source="${REPO_ROOT}" \
     --parallel-mode \
     -m pytest \
     -o log_cli=true \

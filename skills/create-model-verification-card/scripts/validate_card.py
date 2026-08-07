@@ -1172,7 +1172,7 @@ def _validate_inference(
     if token_count_text not in expected:
         errors.append(f"{_pointer(*path, 'expected_result')}: state the {token_count_text}-token maximum")
     actual_count_patterns = (
-        r"\bexact(?:ly)?\s+(\d+)(?:-token|\s+(?:new\s+|generated\s+)?tokens?|\s+generation\s+steps?)\b",
+        r"\bexact(?:ly)?\s+(\d+)(?:-token|\s+(?:new\s+|generated\s+)?(?:greedy\s+)?tokens?|\s+generation\s+steps?)\b",
         r"\b(\d+)-token\s+(?:greedy\s+)?(?:result|output|completion|completions)\b",
         r"\b(?:generated|produced|returned?)\s+(?:exactly\s+)?(\d+)\s+(?:new\s+|generated\s+)?tokens?\b",
         r"\bafter\s+(\d+)\s+(?:new\s+|generated\s+)?tokens?\b",

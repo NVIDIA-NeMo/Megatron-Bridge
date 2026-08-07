@@ -48,7 +48,7 @@ ARG INSTALL_DEEPEP=True
 ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
 ARG REINSTALL_NVSHMEM=True
 
-ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
+ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     VIRTUAL_ENV=/opt/venv \
     UV_LINK_MODE=copy \
@@ -67,6 +67,7 @@ ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
 
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
     curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
+    install -m 0755 /root/.local/bin/uv /usr/local/bin/uv && \
     uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
     apt-get update && apt install -y --only-upgrade gnupg openssl libssl3t64 && \
     apt-get clean && \

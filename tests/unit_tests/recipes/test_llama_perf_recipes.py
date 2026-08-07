@@ -22,6 +22,9 @@ import pytest
 from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
     llama3_8b_pretrain_8gpu_gb200_nvfp4_config,
 )
+from megatron.bridge.perf_recipes.llama.h100.llama3 import (
+    llama3_70b_pretrain_64gpu_h100_fp8cs_config,
+)
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import (
     patch_recipe_construction_dependencies,
@@ -109,3 +112,27 @@ def test_llama3_8b_gb200_nvfp4_runs_dpa_in_fp8_current_scaling(monkeypatch: pyte
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.train.global_batch_size == 128
     assert cfg.train.micro_batch_size == 4
+
+
+@pytest.mark.unit
+def test_llama3_70b_h100_fp8cs_sets_explicit_pipeline_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 64-GPU H100 FP8-CS recipe pins an explicit pipeline layout.
+
+    The transformer layers do not split evenly across PP8/VP5 once the embedding and loss stages
+    are placed, so the default split leaves the first and last stages heavier than the middle
+    ones. Pipeline throughput is set by the slowest stage, so the layout is pinned rather than
+    derived.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    cfg = llama3_70b_pretrain_64gpu_h100_fp8cs_config()
+
+    assert cfg.model.pipeline_model_parallel_layout == "Et*2|(t*2|)*34,t*3|(t*2|)*3,tL"
+
+    # The layout is only valid for this parallelism; pin it alongside.
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.virtual_pipeline_model_parallel_size == 5
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1

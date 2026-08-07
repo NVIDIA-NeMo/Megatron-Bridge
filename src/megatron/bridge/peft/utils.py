@@ -1621,18 +1621,6 @@ def _apply_grouped_expert_swiglu_sharded_factory(
         ]
 
     def sh_ten_merge_fn(sub_state_dict):
-        if not singleton_local_shards and len(sub_state_dict) > 1:
-            # Dist checkpoint load reconstructs one local fused shard per expert-TP
-            # rank, so the incoming tensors look like [gate_0|up_0, gate_1|up_1, ...].
-            # Restore the fused [gate_0, gate_1, ..., up_0, up_1, ...] layout before
-            # concatenating back along the SwiGLU axis.
-            gate_parts = []
-            up_parts = []
-            for tensor in sub_state_dict:
-                gate_part, up_part = torch.chunk(tensor, 2, dim=swiglu_shard_axis)
-                gate_parts.append(gate_part)
-                up_parts.append(up_part)
-            sub_state_dict = [*gate_parts, *up_parts]
         try:
             return torch.cat(sub_state_dict, dim=swiglu_shard_axis)
         except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
