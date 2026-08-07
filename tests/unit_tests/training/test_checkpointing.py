@@ -5040,8 +5040,8 @@ class TestMaybeLoadDataloaderState:
 
         train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
 
-    def test_restores_energon_state_with_weights_only(self, tmp_path):
-        """Existing Energon dataclass and NumPy state remains loadable through the restricted loader."""
+    def test_restores_energon_state_via_restricted_unpickler(self, tmp_path):
+        """Energon dataclass and NumPy state round-trips correctly through the restricted zip loader."""
         from megatron.energon.flavors.webdataset.sample_loader import SliceState
         from megatron.energon.rng import SystemRngState
         from megatron.energon.savable_loader import (
