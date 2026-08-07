@@ -53,6 +53,9 @@ from megatron.bridge.utils.common_utils import (
 )
 
 
+_KIMI_LEGACY_PREFIX_MOE_CHUNKS = 4
+
+
 # ---------------------------------------------------------------------------
 # Forward step
 # ---------------------------------------------------------------------------
@@ -147,6 +150,57 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
+def _checkpoint_load_overrides(
+    model_provider: object,
+    *,
+    tp: int,
+    pp: int,
+    ep: int,
+    etp: int,
+    pp_layout: str | None,
+    is_kimi: bool,
+) -> dict[str, object]:
+    """Build checkpoint overrides, including Kimi's legacy-prefix chunk contract."""
+    overrides: dict[str, object] = {
+        "tensor_model_parallel_size": tp,
+        "pipeline_model_parallel_size": pp,
+        "expert_model_parallel_size": ep,
+        "expert_tensor_parallel_size": etp,
+        "pipeline_dtype": torch.bfloat16,
+    }
+    if pp_layout:
+        overrides["pipeline_model_parallel_layout"] = pp_layout
+    if is_kimi:
+        legacy_prefix_moe_chunks = getattr(model_provider, "legacy_prefix_moe_chunks", None)
+        if not isinstance(legacy_prefix_moe_chunks, int) or legacy_prefix_moe_chunks < 1:
+            raise ValueError("Kimi provider must define a positive legacy_prefix_moe_chunks value.")
+        overrides["legacy_prefix_moe_chunks"] = legacy_prefix_moe_chunks
+        overrides["transformer_layer_spec"] = getattr(model_provider, "transformer_layer_spec")
+    return overrides
+
+
+def _configure_legacy_prefix_generation(model_provider: object, *, is_kimi: bool) -> None:
+    """Enable the measured Kimi MoE allocation bound only for this legacy-prefix loop."""
+    if not is_kimi:
+        return
+    if not hasattr(model_provider, "legacy_prefix_moe_chunks"):
+        raise ValueError("Kimi provider must define legacy_prefix_moe_chunks.")
+    model_provider.legacy_prefix_moe_chunks = _KIMI_LEGACY_PREFIX_MOE_CHUNKS
+
+
+def _gather_last_token_logits(output: torch.Tensor, real_seq_len: int) -> torch.Tensor:
+    """Gather only the last real token's tensor-parallel vocabulary shards."""
+    local_logits = output[:, real_seq_len - 1]
+    world_size = parallel_state.get_tensor_model_parallel_world_size()
+    gathered_logits = [torch.zeros_like(local_logits) for _ in range(world_size)]
+    dist.all_gather(
+        gathered_logits,
+        local_logits,
+        group=parallel_state.get_tensor_model_parallel_group(),
+    )
+    return torch.cat(gathered_logits, dim=-1)
+
+
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
     maybe_initialize_distributed()
@@ -187,6 +241,7 @@ def main(args) -> None:
     if args.megatron_model_path:
         print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
         model_provider = bridge.to_megatron_provider(load_weights=False)
+        _configure_legacy_prefix_generation(model_provider, is_kimi=is_kimi)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
@@ -198,15 +253,15 @@ def main(args) -> None:
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
 
-        mp_overrides = {
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-            "pipeline_dtype": torch.bfloat16,
-        }
-        if args.pp_layout:
-            mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout
+        mp_overrides = _checkpoint_load_overrides(
+            model_provider,
+            tp=tp,
+            pp=pp,
+            ep=ep,
+            etp=etp,
+            pp_layout=args.pp_layout,
+            is_kimi=is_kimi,
+        )
         model = bridge.load_megatron_model(
             args.megatron_model_path,
             mp_overrides=mp_overrides,
@@ -215,6 +270,7 @@ def main(args) -> None:
     else:
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
         model_provider = bridge.to_megatron_provider(load_weights=True)
+        _configure_legacy_prefix_generation(model_provider, is_kimi=is_kimi)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
@@ -364,25 +420,24 @@ def main(args) -> None:
 
             if parallel_state.is_pipeline_last_stage():
                 world_size = parallel_state.get_tensor_model_parallel_world_size()
-                gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
-                dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
-                output = torch.cat(gathered_tensors, dim=2)
-
-                last_pos = real_seq_len - 1
-                next_token_ids = torch.argmax(output[:, last_pos], dim=-1, keepdim=True)
+                output_shape = torch.Size((*output.shape[:-1], output.shape[-1] * world_size))
+                last_token_logits = _gather_last_token_logits(output, real_seq_len)
+                del output
+                next_token_ids = torch.argmax(last_token_logits, dim=-1, keepdim=True)
 
                 if step < 5:
                     print_rank_last(
-                        f"Step {step}: output shape={output.shape}, "
-                        f"real_seq_len={real_seq_len}, var={output.var():.4f}"
+                        f"Step {step}: output shape={output_shape}, "
+                        f"real_seq_len={real_seq_len}, last-token var={last_token_logits.var():.4f}"
                     )
-                    logits = output[0, last_pos, :]
+                    logits = last_token_logits[0]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_last(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
                     print_rank_last(
                         f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
                     )
+                del last_token_logits
             else:
                 next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
 

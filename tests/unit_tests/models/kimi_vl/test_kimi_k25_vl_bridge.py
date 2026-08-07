@@ -24,6 +24,7 @@ from megatron.bridge.models.conversion.param_mapping import AutoMapping, Replica
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_spec import build_kimi_k25_vl_spec
 
 
 @pytest.fixture
@@ -175,6 +176,8 @@ class TestKimiK25VLBridgeProviderBridge:
         assert provider.moe_router_topk == 8
         assert provider.moe_router_score_function == "sigmoid"
         assert provider.moe_router_enable_expert_bias is True
+        assert provider.legacy_prefix_moe_chunks == 1
+        assert provider.transformer_layer_spec.func is build_kimi_k25_vl_spec
 
     def test_provider_bridge_moe_layer_freq(self, kimi_bridge, mock_hf_pretrained):
         """Test MoE layer frequency computation."""

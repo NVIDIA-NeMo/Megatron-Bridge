@@ -16,7 +16,6 @@ from functools import partial
 from typing import Dict, List, Mapping
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -32,6 +31,7 @@ from megatron.bridge.models.conversion.quantization_utils import (
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge.models.kimi_vl.kimi_k25_vl_spec import build_kimi_k25_vl_spec
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
 
@@ -69,7 +69,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         provider = KimiK25VLModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
         # --- Language model architecture defaults (MoE + MLA) ---
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = partial(build_kimi_k25_vl_spec, use_transformer_engine=HAVE_TE)
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
