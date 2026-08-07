@@ -91,6 +91,11 @@ def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str
         "preprocessing": asdict(preprocessing),
         "dataset_kwargs": dataset_kwargs,
     }
+    if (
+        config.offline_packing_specs is not None
+        and config.offline_packing_specs.max_single_sequence_length is not None
+    ):
+        packing_identity["max_single_sequence_length"] = config.offline_packing_specs.max_single_sequence_length
     return hashlib.sha256(
         json.dumps(packing_identity, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()[:12]
@@ -560,6 +565,9 @@ class GPTSFTDatasetBuilder:
         self.packed_sequence_size = (
             -1 if config.offline_packing_specs is None else config.offline_packing_specs.packed_sequence_size
         )
+        self._max_single_sequence_length = (
+            None if config.offline_packing_specs is None else config.offline_packing_specs.max_single_sequence_length
+        )
         self.dataset_kwargs = normalize_gpt_sft_dataset_kwargs(config)
         self._pad_cu_seqlens = (
             False if config.offline_packing_specs is None else config.offline_packing_specs.pad_cu_seqlens
@@ -662,7 +670,7 @@ class GPTSFTDatasetBuilder:
             output_metadata_path=self.pack_metadata,
             packed_sequence_size=self.packed_sequence_size,
             tokenizer=self.tokenizer,
-            max_seq_length=self.seq_length,
+            max_seq_length=self._max_single_sequence_length or self.seq_length,
             seed=self.seed,
             dataset_kwargs=self.dataset_kwargs,
             pad_seq_to_mult=self._pad_seq_to_mult,

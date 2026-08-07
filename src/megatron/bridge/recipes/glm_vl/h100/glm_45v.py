@@ -94,6 +94,7 @@ def glm_45v_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 8192
     """
     cfg = _sft_common_vlm()
+    cfg.dataset.enable_in_batch_packing = False
 
     # Model configuration
     hf_path = "zai-org/GLM-4.5V"
@@ -244,6 +245,7 @@ def glm_45v_peft_32gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
     """
     cfg = _peft_common_vlm()
+    cfg.dataset.enable_in_batch_packing = False
 
     # PEFT scheme
     if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:

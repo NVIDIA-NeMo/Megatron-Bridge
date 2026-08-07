@@ -232,6 +232,18 @@ def _squeeze_metadata(value: PackedMetadataValue) -> PackedMetadataValue:
     return value.squeeze()
 
 
+def _as_python_int(value: PackedMetadataValue, *, field_name: str) -> int | None:
+    """Normalize scalar packed-sequence metadata to MCore's integer contract."""
+    value = _squeeze_metadata(value)
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise ValueError(f"{field_name} must contain exactly one value, got shape {tuple(value.shape)}")
+        return int(value.item())
+    return int(value)
+
+
 def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqParams:
     """Build packed sequence parameters from a batch dictionary.
 
@@ -254,8 +266,8 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
     if "cu_seqlens_q" in batch:
         cu_seqlens_q = _squeeze_metadata(batch["cu_seqlens_q"])
         cu_seqlens_kv = _squeeze_metadata(batch.get("cu_seqlens_kv"))
-        max_seqlen_q = _squeeze_metadata(batch.get("max_seqlen_q"))
-        max_seqlen_kv = _squeeze_metadata(batch.get("max_seqlen_kv"))
+        max_seqlen_q = _as_python_int(batch.get("max_seqlen_q"), field_name="max_seqlen_q")
+        max_seqlen_kv = _as_python_int(batch.get("max_seqlen_kv"), field_name="max_seqlen_kv")
         return PackedSeqParams(
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_kv=cu_seqlens_kv if cu_seqlens_kv is not None else cu_seqlens_q,
@@ -265,6 +277,14 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen_kv if max_seqlen_kv is not None else max_seqlen_q,
             total_tokens=batch.get("total_tokens"),
             qkv_format="thd",
+            # cp_partition_mode available in dev MCore only.
+            **(
+                {
+                    "cp_partition_mode": batch.get("cp_partition_mode", "zigzag"),
+                }
+                if hasattr(PackedSeqParams, "cp_partition_mode")
+                else {}
+            ),
         )
 
     cu_seqlens_padded = batch["cu_seqlens"].squeeze()
@@ -288,7 +308,7 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
         else:
             cu_seqlens_unpadded = cu_seqlens_unpadded[: torch.argmin(cu_seqlens_unpadded)]
 
-    max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
+    max_seqlen = _as_python_int(batch.get("max_seqlen"), field_name="max_seqlen")
     total_tokens = batch.get("total_tokens")
 
     # When cu_seqlens_unpadded is present (pad_seq_to_mult > 1), pass both unpadded and padded
@@ -303,6 +323,14 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen,
             total_tokens=total_tokens,
             qkv_format="thd",
+            # cp_partition_mode available in dev MCore only.
+            **(
+                {
+                    "cp_partition_mode": batch.get("cp_partition_mode", "zigzag"),
+                }
+                if hasattr(PackedSeqParams, "cp_partition_mode")
+                else {}
+            ),
         )
     else:
         return PackedSeqParams(
@@ -312,4 +340,12 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen,
             total_tokens=total_tokens,
             qkv_format="thd",
+            # cp_partition_mode available in dev MCore only.
+            **(
+                {
+                    "cp_partition_mode": batch.get("cp_partition_mode", "zigzag"),
+                }
+                if hasattr(PackedSeqParams, "cp_partition_mode")
+                else {}
+            ),
         )

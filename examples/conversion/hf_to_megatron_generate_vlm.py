@@ -33,7 +33,7 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+from transformers import AutoConfig, AutoProcessor, AutoTokenizer, GenerationConfig
 from vlm_generate_utils import (
     pad_input_ids_to_tp_multiple,
     patch_kimi_vision_processor,
@@ -45,7 +45,12 @@ from vlm_generate_utils import (
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import (
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+    print_rank_last,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +149,7 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
 
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
+    maybe_initialize_distributed()
     tp = args.tp
     pp = args.pp
     ep = args.ep
@@ -166,6 +172,7 @@ def main(args) -> None:
     if is_kimi and image_token_id is None:
         image_token_id = 163605
     is_gemma4 = "gemma4" in model_type
+    is_minimax = model_type == "minimax_m3_vl"
     is_mistral3 = model_type == "mistral3"
 
     # ------------------------------------------------------------------
@@ -278,10 +285,12 @@ def main(args) -> None:
             args.prompt,
             is_gemma4=is_gemma4,
             is_kimi=is_kimi,
+            is_minimax=is_minimax,
             is_mistral3=is_mistral3,
             image_token_id=image_token_id,
         )
 
+    prompt_length = input_ids_raw.size(1)
     input_ids_raw = input_ids_raw.cuda()
     pixel_values = to_cuda(pixel_values)
     image_grid_thw = to_cuda(image_grid_thw)
@@ -295,7 +304,19 @@ def main(args) -> None:
     # Greedy generation loop
     # ------------------------------------------------------------------
     generated_ids = input_ids_raw.clone()
-    stop_tokens = [tokenizer.eos_token_id]
+    try:
+        generation_config = GenerationConfig.from_pretrained(
+            args.hf_model_path,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
+    except OSError:
+        generation_config = GenerationConfig.from_model_config(config)
+    stop_token_ids = generation_config.eos_token_id
+    if stop_token_ids is None:
+        stop_token_ids = [tokenizer.eos_token_id]
+    elif isinstance(stop_token_ids, int):
+        stop_token_ids = [stop_token_ids]
+    stop_tokens = set(stop_token_ids)
 
     for step in range(args.max_new_tokens):
         with torch.no_grad():
@@ -377,11 +398,13 @@ def main(args) -> None:
                 break
 
     generated_text = tokenizer.decode(list(generated_ids[0]))
+    completion = tokenizer.decode(generated_ids[0, prompt_length:].tolist(), skip_special_tokens=True)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
     print_rank_0(f"Prompt: {args.prompt}")
     print_rank_0(f"Generated: {generated_text}")
+    print_rank_0(f"Completion: {completion}")
     print_rank_0("=======================================")
 
 
@@ -418,7 +441,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--trust_remote_code", action="store_true", help="Trust remote code for HF model loading")
     args = parser.parse_args()
-
     main(args)
 
     if torch.distributed.is_initialized():

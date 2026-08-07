@@ -1,12 +1,11 @@
 title: cuda_graphs
-validated_on: "2026-07-26"
+validated_on: "2026-07-31"
 summary: >
   Megatron Bridge supports CUDA graph capture through two implementations:
   local full-iteration graphs (MCore FullCudaGraphWrapper) and Transformer
   Engine scoped graphs (TECudaGraphHelper) for fine-grained capture of
   attention, MLP, and MoE router modules. Requires static tensor shapes
-  and TE RNG tracker. Verified on Qwen3.5-35B-A3B, Qwen3-30B-A3B, and
-  GPT-OSS-20B MoE pretrain
+  and TE RNG tracker. Verified on Qwen3-30B-A3B and GPT-OSS-20B MoE pretrain
   with TE-scoped graphs, showing roughly 15-25% lower iteration time and
   20-33% higher throughput when the eager baseline is launch-bound. A later
   H100 Qwen3-30B-A3B all-to-all short run captured successfully but was
@@ -15,8 +14,7 @@ summary: >
   and packed-sequence finetuning remains fragile: Qwen3 SFT hits the
   non-Tensor `packed_seq_params` graph assertion, while GPT-OSS SFT/LoRA were
   blocked earlier by missing TE packed-sequence attention backends in the
-  tested container. Kernel JIT, graph warmup/capture, and steady graph replay
-  are separate benchmark phases and must be timed separately.
+  tested container.
 validation_status:
   config_validation:
     - code_verified  # config.py:1524-1531
@@ -38,8 +36,6 @@ validation_status:
     - code_verified  # train.py:1414-1443
   perf_harness_override:
     - code_verified  # overrides.py:102-124
-  jit_graph_replay_phase_separation:
-    - documented
   test_functions_exist:
     - code_verified  # grep confirmed test function names in test files
   end_to_end_functional_smoke:
@@ -48,12 +44,6 @@ validation_status:
     - measured  # Qwen3-30B-A3B, TP2 PP2 EP4, 2x H100 nodes
   qwen3_moe_h100_alltoall_te_scoped_neutral:
     - measured  # Qwen3-30B-A3B H100 BF16, alltoall, replay 42.00s vs 41.36s eager
-  qwen3_moe_h100_fp8_blockwise_te_scoped:
-    - measured  # Qwen3-30B-A3B H100, 26.08.rc2, about 29.18s eager vs 19.99728s scoped replay
-  qwen35_mixed_fp8_blockwise_full_te_scoped_regression:
-    - measured  # Two replay steps 44.8776/44.8274s vs 24.21325s eager; bounded job timed out after iteration 6
-  qwen35_h100_full_iteration_static_capacity_block:
-    - measured  # Dynamic expert sizes retain host sync; TE op-fuser GroupedMLP was sm100-only
   qwen3_sft_packed_sequence_block:
     - measured  # packed_seq_params is not a Tensor for TE-scoped graphs
   gpt_oss_20b_pretrain_te_scoped:
@@ -73,11 +63,7 @@ training_dimensions:
       391-399ms and 37.9-42.2 to 49.4-50.4 TFLOP/s/GPU. A 2026-05-18
       Qwen3-30B-A3B H100 BF16 all-to-all run captured 48 TE-scoped graphable
       layers but replay was slightly slower than eager, so speedup depends on
-      launch overhead and dispatcher/container shape. On a later 26.08.rc2
-      Qwen3 H100 blockwise-FP8 path, the same narrow scope improved about
-      29.18s eager steps to 19.99728s replay steps, while the campaign's BF16
-      attention-scope A/B was negative; precision and expert-kernel changes
-      require a new graph baseline.
+      launch overhead and dispatcher/container shape.
   memory:
     effect: "-"
     confidence: medium
@@ -111,6 +97,7 @@ enable_when:
   - the run has memory headroom for pinned graph buffers
   - throughput improvement is desired without changing training math
   - pretrain or other static-shape workloads can avoid packed-sequence paths
+  - a matched eager profile shows meaningful host or launch overhead
 avoid_when:
   - sequence length or batch shapes vary across steps
   - CPU offloading is enabled
@@ -131,10 +118,6 @@ interactions:
     - recompute_granularity=full only works with local full_iteration, not TE scoped
     - packed_sequence=True is incompatible with Qwen3-style TE-scoped graph capture because packed_seq_params is not a Tensor
     - older TE/container builds may fail packed-sequence attention before any graph-specific behavior is reached
-    - Inductor, Triton, or TileLang JIT must finish before graph capture timing; persist compiler caches outside ephemeral container HOME
-    - optimizer.optimizer_cuda_graph has an independent distributed capture path and must complete its own bounded capture smoke
-    - dropless Hopper MoE full-iteration capture remains blocked when dynamic tokens_per_expert reaches the host and static rank capacity requires an sm100-only operation-fuser GroupedMLP
-    - current MCore TE scope labels select graphable layer objects; moe_router or moe_preprocess selects an entire TransformerLayer when its MLP is MoE, so all-MoE models may graph every layer
   incompatible:
     - cpu_offloading
     - moe with moe_router
@@ -143,7 +126,9 @@ feature_meaning:
   cuda_graph_impl: >
     Which graph capture backend to use: local (MCore), transformer_engine (TE), or none.
   cuda_graph_scope: >
-    Which modules to capture: full_iteration, attn, mlp, moe, moe_router, moe_preprocess, mamba.
+    Which modules to capture: full_iteration, attn, mlp, moe, moe_router,
+    moe_preprocess, mamba. The scope follows the actual module type; mamba is
+    not a generic label for linear attention, and Qwen3.5 GDN uses attn.
   cuda_graph_warmup_steps: >
     Number of eager warmup steps before graph capture begins (default 3).
 config_keys:
@@ -155,13 +140,12 @@ config_keys:
   - rerun_state_machine.check_for_nan_in_loss
   - ddp.check_for_nan_in_grad
 recommended_path:
-  phase_1: persist_and_warm_kernel_jit_caches
-  phase_2: run_cuda_graph_warmup_and_capture
-  phase_3: measure_steady_replay_only
+  prerequisite: profile_eager_host_or_launch_overhead
   model.cuda_graph_impl: transformer_engine_for_scoped_or_local_for_full
-  model.cuda_graph_scope: attn_plus_moe_router_moe_preprocess_for_moe_models
+  model.cuda_graph_scope: moe_router_plus_moe_preprocess_first_for_dropless_moe_then_ab_attn
   rng.te_rng_tracker: true
   model.use_te_rng_tracker: true
+  acceptance: prove_replay_then_compare_post_capture_steady_iterations_against_eager_on_final_stack
 expected_metric_change:
   - metric: step_time
     direction: down
@@ -196,40 +180,6 @@ measured_results:
     graphable_layers_per_pp: 24
     capture_time_s: 5.6
     status: success
-  - model: Qwen3-30B-A3B
-    task: pretrain
-    precision: hybrid_fp8_blockwise
-    parallelism: 16xH100_recipe
-    nodes: 2
-    gpu: H100_80GB
-    scope: "attn+moe_router+moe_preprocess"
-    impl: transformer_engine
-    baseline_iter_ms_approx: 29180
-    graph_iter_ms: 19997.28
-    step_time_reduction_pct_approx: 31.47
-    graph_tflops: 301.60
-    stable_window: iterations_5_10
-    numerical_status: finite_zero_skipped_zero_nan
-    status: success
-    source: Qwen3_H100_release_performance_reference
-  - model: Qwen3.5-35B-A3B
-    task: pretrain
-    precision: hybrid_fp8_blockwise_with_bf16_grouped_experts
-    parallelism: TP1_PP1_EP16
-    nodes: 2
-    gpu: H100_80GB
-    scope: "attn+moe_router+moe_preprocess"
-    impl: transformer_engine
-    baseline_iter_ms: 24213.25
-    capture_iter_ms: 51853.3
-    replay_iter_ms: "44877.6/44827.4"
-    replay_mean_ms: 44852.5
-    replay_step_time_regression_pct: 85.24
-    replay_tflops: 131.33
-    numerical_status: finite_zero_skipped_zero_nan_through_iteration_6
-    terminal_status: timeout_after_iteration_6
-    status: rejected
-    source: Qwen3.5_H100_mixed_blockwise_scoped_graph_measurement
   - model: Qwen3-30B-A3B
     task: sft_packed
     parallelism: TP2_PP2_EP4
@@ -305,10 +255,6 @@ failure_modes:
     symptom: "Available backends = {FlashAttention=False, FusedAttention=False, UnfusedDotProductAttention=False}"
     likely_cause: TE/container build does not provide the packed-sequence attention backend required by the recipe
     fix: upgrade the container or TE build before evaluating CUDA graphs
-  - name: hopper_dropless_moe_full_iteration
-    symptom: "dynamic tokens_per_expert host synchronization, or operation-fuser GroupedMLP architecture rejection"
-    likely_cause: "static rank-capacity full-graph path requires a fused implementation unavailable on sm90 in the tested stack"
-    fix: "use TE-scoped attn+moe_router+moe_preprocess graphs; do not bypass the architecture guard"
   - name: dynamic_shapes
     symptom: capture or replay failure after warmup
     likely_cause: sequence length or micro-batch size changes across steps
@@ -328,15 +274,13 @@ known_constraints:
   - With expandable_segments, NCCL_GRAPH_REGISTER=0 required (MCore cuda_graphs.py:1428, 1697).
   - MoE recompute unsupported with moe_router scope + TE impl (MCore transformer_config.py:1977).
   - full recompute (recompute_granularity=full) only works with local full_iteration, not TE scoped.
-  - Current TE _layer_is_graphable logic treats moe_router/moe_preprocess as whole-TransformerLayer selectors when layer.mlp is MoELayer; inspect graphable-layer count before assuming submodule-only capture.
+  - mamba scope applies to real Mamba layers; Qwen3.5 GDN is in self_attention and uses attn scope.
 known_limitations:
   - Most public recipes default to cuda_graph_impl none.
   - Tensor shapes must be static; variable-length sequences break graph replay.
   - TE-scoped graphs and packed-sequence finetuning remain a fragile combination across model families.
   - Large-model MoE rollout is memory-headroom-sensitive even when smaller-model TE-scoped graphs work.
-  - A BF16 graph A/B does not predict FP8: the measured Qwen3 26.08.rc2 blockwise-FP8 path improved from about 29.18s eager to 19.99728s scoped replay even though the campaign's BF16 attention-scope A/B was negative.
-  - Precision-specific graph gains do not transfer across model/expert boundaries: Qwen3.5 mixed blockwise FP8 with BF16 grouped experts regressed from 24.21325s eager to a 44.8525s two-step full-scope replay mean; the bounded job timed out after iteration 6 and is rejected, not accepted as a complete performance result.
-  - Qwen3.5 has moe_layer_freq=1 and the rejected run reported 41 graphable layers; a router/preprocess-only follow-up was cancelled before allocation because it would select the same 40 model layers plus MTP rather than isolate router kernels.
+  - A successful capture is not a speedup guarantee, and a prior win may disappear after dispatcher, overlap, precision, or recompute changes.
 evidence:
   - docs/training/cuda-graphs.md
   - docs/performance-guide.md

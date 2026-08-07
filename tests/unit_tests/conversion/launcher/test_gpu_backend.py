@@ -123,7 +123,8 @@ class _FakeHfPretrained:
 
 
 class TestImportHfToMegatron:
-    def test_import_saves_megatron_checkpoint_with_tokenizer_metadata(self, cli, monkeypatch):
+    @pytest.mark.parametrize("low_memory_save", [False, True])
+    def test_import_saves_megatron_checkpoint_with_tokenizer_metadata(self, cli, monkeypatch, low_memory_save):
         calls = []
         prepared_outputs = []
 
@@ -162,13 +163,14 @@ class TestImportHfToMegatron:
             etp=1,
             torch_dtype="bfloat16",
             trust_remote_code=True,
+            low_memory_save=low_memory_save,
             distributed_timeout_minutes=None,
             overwrite=False,
         )
 
         save_call = next(call for call in calls if call[0] == "save_megatron_model")
         assert save_call[1] == (["megatron-model"], "/ckpt")
-        assert "low_memory_save" not in save_call[2]
+        assert save_call[2]["low_memory_save"] is low_memory_save
         assert save_call[2]["hf_tokenizer_path"] == "hf"
         assert save_call[2]["hf_tokenizer_kwargs"] == {
             "padding_side": "left",
@@ -417,6 +419,8 @@ class TestRoundtrip:
         assert skipped_fp8 is False
 
     def test_verification_raises_on_weight_mismatch(self, cli, monkeypatch):
+        events = []
+
         class FakeBridge:
             hf_pretrained = types.SimpleNamespace(state={"weight": torch.tensor([2.0])})
 
@@ -424,9 +428,12 @@ class TestRoundtrip:
                 yield "weight", torch.tensor([1.0])
 
         monkeypatch.setattr(cli.torch.distributed, "get_rank", lambda: 0)
-        monkeypatch.setattr(cli.torch.distributed, "broadcast", lambda tensor, src: None)
+        monkeypatch.setattr(cli.torch.distributed, "broadcast", lambda tensor, src: events.append("broadcast"))
         monkeypatch.setattr(cli.torch.cuda, "current_device", lambda: "cpu")
-        monkeypatch.setattr(cli._CONSOLE, "print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli._CONSOLE, "print", lambda *args, **kwargs: events.append("report"))
 
         with pytest.raises(ValueError, match="Weight mismatch detected"):
             cli._verify_roundtrip_weights(FakeBridge(), ["megatron-model"])
+
+        assert events[0] == "broadcast"
+        assert "report" in events

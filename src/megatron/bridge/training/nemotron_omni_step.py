@@ -15,7 +15,8 @@
 """Nemotron Omni training step -- extends llava_step with sound support.
 
 Adds ``sound_clips`` and ``sound_length`` to the model forward kwargs so that
-LLaVAModel processes audio embeddings alongside vision embeddings.
+the canonical expanded-sequence model and explicit LLaVA compatibility model
+can process audio embeddings alongside vision embeddings.
 """
 
 import logging
@@ -82,6 +83,11 @@ def get_batch_from_iterator(
     if "cu_seqlens_q" in batch:
         required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
+        if batch.get("padding_mask") is not None:
+            # Preserve the physical THD gap mask through every decoder PP stage
+            # so CP/SP localization remains ready for routing after MCore #6111.
+            # The mask is deliberately not forwarded into MCore until then.
+            required_device_keys.add("padding_mask")
 
     if is_first_pp_stage or is_last_pp_stage:
         input_key = "tokens" if batch.get("tokens") is not None else "input_ids"
@@ -91,7 +97,8 @@ def get_batch_from_iterator(
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
         if "num_image_tiles" in batch:
-            # LLaVA expands labels around image placeholders on the last stage.
+            # Retained only for the deprecated LLaVA compatibility model,
+            # which expands labels around compact image placeholders.
             required_device_keys.add("num_image_tiles")
 
     _batch_required_keys = {}
@@ -126,7 +133,7 @@ def _resolve_images(batch: dict) -> torch.Tensor | None:
     return None
 
 
-# Matches nemotron_omni_provider.py: patch_dim is hardcoded to 16 when building LLaVAModel.
+# Matches the canonical model and deprecated LLaVA compatibility provider.
 _VISION_PATCH_DIM = 16
 
 
@@ -175,7 +182,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
     is_last = is_pp_last_stage(pg_collection.pp)
     skip_attention_mask = getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True)
     if (not is_first) and (not is_last) and skip_attention_mask and not _uses_packed_sequence_metadata(cfg):
-        return (None,) * 14
+        return (None,) * 15
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -191,10 +198,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
     num_frames = batch.get("num_frames")
     num_image_tiles = batch.get("num_image_tiles")
 
-    # LLaVAModel._process_embedding_token_parallel does the LM-side CP split *after*
-    # vision/text embedding merge. Pre-splitting input_ids/labels here would break
-    # the image-token merge (num_image_tiles count would not match the CP-local
-    # image-token count in input_ids), so leave the LM tensors full-sequence.
+    # Leave language tensors in their complete collator-owned layout. The model
+    # inserts media first, then applies one shared CP index to embeddings,
+    # supervision tensors, and physical alignment padding.
     if images is not None:
         batch["images"] = images
 
@@ -221,6 +227,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
         num_frames,
         vision_packed_seq_params,
         num_image_tiles,
+        batch.get("padding_mask"),
     )
 
 
@@ -257,6 +264,7 @@ def forward_step(
             num_frames,
             vision_packed_seq_params,
             num_image_tiles,
+            padding_mask,
         ) = get_batch(data_iterator, state.cfg, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
@@ -275,6 +283,8 @@ def forward_step(
         "labels": labels,
         "loss_mask": loss_mask,
     }
+    if padding_mask is not None:
+        forward_args["padding_mask"] = padding_mask
 
     if sound_clips is not None:
         forward_args["sound_clips"] = sound_clips.to(dtype=torch.bfloat16)

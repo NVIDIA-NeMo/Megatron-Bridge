@@ -41,7 +41,7 @@ _MODEL_COLLATE_SPECS = {
     ),
     "NemotronH_Nano_Omni_Reasoning_V3Processor": _ModelCollateSpec(
         "megatron.bridge.models.nemotron_omni.data.collate_fn",
-        "nemotron_omni_collate_fn",
+        "nemotron_omni_expanded_collate_fn",
         required_for_all_examples=True,
     ),
     "PixtralProcessor": _ModelCollateSpec(

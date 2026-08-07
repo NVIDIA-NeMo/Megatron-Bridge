@@ -22,13 +22,19 @@ from pathlib import Path
 
 import pytest
 
+from tests.functional_tests.fixture_utils import resolve_test_data_file
+
 
 class TestGenerateVLMFromHF:
     @pytest.mark.run_only_on("GPU")
     def test_generate_vlm(self):
         """
-        Run distributed VLM generation on a small instruct model with an image URL.
+        Run distributed VLM generation on a small instruct model with an image fixture.
         """
+        image_path = resolve_test_data_file(
+            "megatron_bridge/assets/demo.jpeg",
+            "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+        )
         cmd = [
             "python",
             "-m",
@@ -38,14 +44,14 @@ class TestGenerateVLMFromHF:
             "-m",
             "coverage",
             "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
+            f"--data-file={Path(__file__).resolve().parents[4] / '.coverage'}",
+            f"--source={Path(__file__).resolve().parents[4]}",
             "--parallel-mode",
             "examples/conversion/hf_to_megatron_generate_vlm.py",
             "--hf_model_path",
             "Qwen/Qwen2.5-VL-3B-Instruct",
             "--image_path",
-            "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+            image_path,
             "--prompt",
             "Describe this image.",
             "--tp",

@@ -233,6 +233,7 @@ def test_stream_weights_megatron_to_hf_transforms_grouped_tensor_once_after_accu
     class GroupedMapping:
         is_grouped_export = True
         group_key = "hf.grouped"
+        ep_size = 1
 
         def megatron_to_hf(self, weight, module):
             return {self.group_key: weight}
@@ -283,6 +284,98 @@ def test_stream_weights_megatron_to_hf_transforms_grouped_tensor_once_after_accu
         "hf.grouped.scale",
         "hf.grouped.scale_2",
     ]
+
+
+def test_grouped_export_uses_mapping_local_ep_size(monkeypatch):
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: 1,
+    )
+    mapping = SimpleNamespace(is_grouped_export=True, ep_size=2)
+    model_config = SimpleNamespace(num_moe_experts=4)
+    buffers = {}
+
+    first = MegatronModelBridge._accumulate_grouped_export(
+        None,
+        SimpleNamespace(
+            mapping=mapping,
+            param_name="decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        ),
+        {"hf.grouped": torch.tensor([[0.0], [2.0]])},
+        model_config,
+        buffers,
+        {},
+    )
+    second = MegatronModelBridge._accumulate_grouped_export(
+        None,
+        SimpleNamespace(
+            mapping=mapping,
+            param_name="decoder.layers.0.mlp.experts.linear_fc2.weight1",
+        ),
+        {"hf.grouped": torch.tensor([[1.0], [3.0]])},
+        model_config,
+        buffers,
+        {},
+    )
+
+    assert first is None
+    torch.testing.assert_close(second["hf.grouped"], torch.tensor([[0.0], [1.0], [2.0], [3.0]]))
+    assert buffers == {}
+
+
+def test_grouped_export_retries_stack_on_cpu_after_cuda_oom(monkeypatch, caplog):
+    class FakeCudaTensor:
+        is_cuda = True
+
+        def __init__(self, value):
+            self.value = value
+
+        def cpu(self):
+            return torch.tensor([self.value])
+
+    original_stack = torch.stack
+    stack_devices = []
+
+    def stack_with_cuda_oom(tensors, dim=0):
+        stack_devices.append([type(tensor).__name__ for tensor in tensors])
+        if isinstance(tensors[0], FakeCudaTensor):
+            raise torch.OutOfMemoryError("simulated grouped-export CUDA OOM")
+        return original_stack(tensors, dim=dim)
+
+    monkeypatch.setattr(torch, "stack", stack_with_cuda_oom)
+    mapping = SimpleNamespace(is_grouped_export=True, ep_size=1)
+    model_config = SimpleNamespace(num_moe_experts=2)
+    buffers = {}
+
+    first = MegatronModelBridge._accumulate_grouped_export(
+        None,
+        SimpleNamespace(
+            mapping=mapping,
+            param_name="decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        ),
+        {"hf.grouped": FakeCudaTensor(1.0)},
+        model_config,
+        buffers,
+        {},
+    )
+    with caplog.at_level("WARNING"):
+        second = MegatronModelBridge._accumulate_grouped_export(
+            None,
+            SimpleNamespace(
+                mapping=mapping,
+                param_name="decoder.layers.0.mlp.experts.linear_fc2.weight1",
+            ),
+            {"hf.grouped": FakeCudaTensor(2.0)},
+            model_config,
+            buffers,
+            {},
+        )
+
+    assert first is None
+    torch.testing.assert_close(second["hf.grouped"], torch.tensor([[1.0], [2.0]]))
+    assert stack_devices == [["FakeCudaTensor", "FakeCudaTensor"], ["Tensor", "Tensor"]]
+    assert "retrying on CPU" in caplog.text
+    assert buffers == {}
 
 
 def test_stream_weights_megatron_to_hf_finalizes_exported_tensors_before_cpu(monkeypatch):

@@ -47,7 +47,11 @@ def _hf_config(tmp_path, **source_overrides):
 
 
 def test_config_round_trip_is_declarative_and_serializable(tmp_path):
-    specs = PackedSequenceSpecs(packed_sequence_size=128, pad_seq_to_mult=8)
+    specs = PackedSequenceSpecs(
+        packed_sequence_size=128,
+        max_single_sequence_length=120,
+        pad_seq_to_mult=8,
+    )
     config = GPTSFTDatasetConfig(
         seq_length=128,
         hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
@@ -67,8 +71,19 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     assert isinstance(restored.hf_dataset, HFDatasetSourceConfig)
     assert restored.hf_dataset.dataset_name == "squad"
     assert restored.offline_packing_specs.packed_sequence_size == 128
+    assert restored.offline_packing_specs.max_single_sequence_length == 120
     assert isinstance(restored.preprocessing, PromptCompletionSFTPreprocessingConfig)
     assert "tokenizer" not in serialized
+
+
+@pytest.mark.parametrize("max_single_sequence_length", [0, 129])
+def test_packed_specs_reject_invalid_max_single_sequence_length(max_single_sequence_length):
+    """The per-sequence cap must be positive and fit within the pack."""
+    with pytest.raises(ValueError, match="max_single_sequence_length"):
+        PackedSequenceSpecs(
+            packed_sequence_size=128,
+            max_single_sequence_length=max_single_sequence_length,
+        )
 
 
 @pytest.mark.parametrize(
@@ -556,7 +571,11 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
 
 
 def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch, tmp_path):
-    specs = PackedSequenceSpecs(packed_sequence_size=128, tokenizer_model_name="test-tokenizer")
+    specs = PackedSequenceSpecs(
+        packed_sequence_size=128,
+        max_single_sequence_length=120,
+        tokenizer_model_name="test-tokenizer",
+    )
     config = GPTSFTDatasetConfig(
         seq_length=128,
         hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
@@ -582,6 +601,7 @@ def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch
     builder.prepare_data()
 
     assert [call["input_path"].name for call in pack_calls] == ["training.jsonl", "validation.jsonl"]
+    assert all(call["max_seq_length"] == 120 for call in pack_calls)
     assert json.loads(builder.pack_metadata.read_text()) == []
 
 

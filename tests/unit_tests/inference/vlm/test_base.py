@@ -112,6 +112,46 @@ class TestSetupModelAndTokenizer:
         # Verify return values
         assert result_model == mock_wrapped_model
         assert result_processor == mock_processor
+        assert result_model.processor is mock_processor
+
+    @patch("megatron.bridge.inference.vlm.base.setup_inference_wrapper")
+    @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
+    @patch("megatron.bridge.inference.vlm.base.AutoBridge")
+    @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
+    @patch("megatron.bridge.inference.vlm.base.print_rank_0")
+    def test_setup_model_and_tokenizer_propagates_params_dtype(
+        self,
+        mock_print_rank_0,
+        mock_is_safe_repo,
+        mock_get_hf_model_id,
+        mock_auto_bridge,
+        mock_auto_processor,
+        mock_setup_inference_wrapper,
+    ):
+        mock_get_hf_model_id.return_value = "Qwen/Qwen2.5-VL-3B"
+
+        mock_bridge = MagicMock()
+        mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
+        mock_model_provider = MagicMock()
+        mock_bridge.to_megatron_provider.return_value = mock_model_provider
+
+        mock_model = MagicMock()
+        mock_model.cuda.return_value = mock_model
+        mock_bridge.load_megatron_model.return_value = [mock_model]
+
+        mock_processor = MagicMock()
+        mock_processor.tokenizer.pad_token = "<|pad|>"
+        mock_auto_processor.from_pretrained.return_value = mock_processor
+
+        setup_model_and_tokenizer(
+            megatron_model_path="/path/to/checkpoint",
+            params_dtype=torch.float16,
+        )
+
+        assert mock_model_provider.pipeline_dtype == torch.float16
+        assert mock_bridge.load_megatron_model.call_args.kwargs["mp_overrides"]["pipeline_dtype"] == torch.float16
+        assert mock_setup_inference_wrapper.call_args.kwargs["params_dtype"] == torch.float16
 
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint", return_value=None)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
@@ -322,6 +362,64 @@ class TestGenerate:
     """Tests for generate function."""
 
     @patch("megatron.bridge.inference.vlm.base.VLMEngine")
+    def test_generate_qwen_uses_wrapped_processor_by_default(self, mock_engine, mock_tokenizer, mock_image_processor):
+        mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
+        mock_processor = MagicMock()
+        mock_processor.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3]]),
+            "pixel_values": torch.tensor([1]),
+            "image_grid_thw": torch.tensor([2]),
+        }
+        mock_wrapper.processor = mock_processor
+
+        def tokenize_first_prompt(*, prompts, images, sampling_params):
+            controller = mock_engine.call_args.kwargs["text_generation_controller"]
+            return controller.tokenize_prompt(prompts[0], images[0])
+
+        mock_engine.return_value.generate.side_effect = tokenize_first_prompt
+
+        with patch(
+            "megatron.bridge.inference.vlm.vlm_inference_controller.TextGenerationController.__init__",
+            return_value=None,
+        ):
+            result = generate(
+                wrapped_model=mock_wrapper,
+                tokenizer=mock_tokenizer,
+                image_processor=mock_image_processor,
+                prompts=["test"],
+                images=["image"],
+            )
+
+        assert result[0] == [1, 2, 3]
+        mock_processor.assert_called_once_with(text=["test"], images="image", padding=True, return_tensors="pt")
+
+    @patch("megatron.bridge.inference.vlm.base.VLMEngine")
+    def test_generate_qwen_text_only_without_processor(self, mock_engine, mock_tokenizer, mock_image_processor):
+        mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
+
+        def tokenize_first_prompt(*, prompts, images, sampling_params):
+            controller = mock_engine.call_args.kwargs["text_generation_controller"]
+            image = images[0] if images is not None else None
+            return controller.tokenize_prompt(prompts[0], image)
+
+        mock_engine.return_value.generate.side_effect = tokenize_first_prompt
+
+        with patch(
+            "megatron.bridge.inference.vlm.vlm_inference_controller.TextGenerationController.__init__",
+            return_value=None,
+        ):
+            result = generate(
+                wrapped_model=mock_wrapper,
+                tokenizer=mock_tokenizer,
+                image_processor=mock_image_processor,
+                prompts=["test"],
+                images=None,
+            )
+
+        assert result == ([1, 2, 3], None)
+        mock_tokenizer.encode.assert_called_once_with("test", add_special_tokens=False)
+
+    @patch("megatron.bridge.inference.vlm.base.VLMEngine")
     @patch("megatron.bridge.inference.vlm.base.QwenVLTextGenerationController")
     def test_generate_qwen(self, mock_qwen_controller, mock_engine, mock_tokenizer, mock_image_processor):
         mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
@@ -380,3 +478,40 @@ class TestGenerate:
         mock_engine.return_value.generate.assert_called()
         call_args = mock_engine.return_value.generate.call_args
         assert call_args[1]["sampling_params"] == sampling_params
+
+    @pytest.mark.parametrize(
+        "stopping_control",
+        [
+            {"termination_id": 42},
+            {"stop_words": ["<STOP>"]},
+        ],
+        ids=["termination-id", "stop-words"],
+    )
+    @patch("megatron.bridge.inference.vlm.base.VLMEngine")
+    @patch("megatron.bridge.inference.vlm.base.QwenVLTextGenerationController")
+    def test_generate_rejects_unsupported_legacy_stopping_controls(
+        self,
+        mock_qwen_controller,
+        mock_engine,
+        mock_tokenizer,
+        mock_image_processor,
+        stopping_control,
+    ):
+        from megatron.core.inference.sampling_params import SamplingParams
+
+        mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
+        sampling_params = SamplingParams(num_tokens_to_generate=8, **stopping_control)
+
+        with pytest.raises(ValueError, match="legacy static generation does not support"):
+            generate(
+                wrapped_model=mock_wrapper,
+                tokenizer=mock_tokenizer,
+                image_processor=mock_image_processor,
+                prompts=["test"],
+                images=["image"],
+                processor="processor",
+                sampling_params=sampling_params,
+            )
+
+        mock_qwen_controller.assert_not_called()
+        mock_engine.assert_not_called()

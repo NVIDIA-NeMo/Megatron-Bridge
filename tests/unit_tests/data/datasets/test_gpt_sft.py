@@ -13,6 +13,10 @@
 # limitations under the License.
 
 import json
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -27,6 +31,47 @@ from megatron.bridge.data.datasets.gpt_sft import (
 )
 from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 from megatron.bridge.data.samplers import build_pretraining_data_loader
+
+
+@pytest.mark.unit
+def test_import_preserves_tokenizers_fork_safety():
+    """Importing the SFT dataset must not enable tokenizer parallelism across a fork."""
+    code = textwrap.dedent(
+        """
+        import multiprocessing
+
+        import megatron.bridge.data.datasets.gpt_sft
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordPiece
+        from tokenizers.pre_tokenizers import Whitespace
+
+        tokenizer = Tokenizer(
+            WordPiece(vocab={"[UNK]": 0, "hello": 1, "world": 2}, unk_token="[UNK]")
+        )
+        tokenizer.pre_tokenizer = Whitespace()
+        batch = ["hello world"] * 4096
+        tokenizer.encode_batch(batch)
+
+        def encode_batch():
+            return len(tokenizer.encode_batch(batch))
+
+        with multiprocessing.get_context("fork").Pool(1) as pool:
+            result = pool.apply_async(encode_batch)
+            assert result.get(timeout=10) == len(batch)
+        """
+    )
+    environment = os.environ.copy()
+    environment.pop("TOKENIZERS_PARALLELISM", None)
+    environment["RAYON_NUM_THREADS"] = "2"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def create_mock_tokenizer():
@@ -46,7 +91,7 @@ def create_mock_tokenizer():
     return mock_tokenizer
 
 
-def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default"):
+def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default", global_sample_mapping=False):
     """Create a GPT SFT dataset for testing with mocked tokenizer.
 
     When ``max_num_samples`` is None the dataset builds no ``samples_mapping``,
@@ -78,6 +123,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default"):
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
             memmap_workers=1,
+            global_sample_mapping=global_sample_mapping,
         )
     elif dataset_type == "packed":
         # Create a mock packed dataset file
@@ -136,6 +182,12 @@ class TestDataGPTSFTDataset:
     def test_build_samples_mapping(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path)
         dataset._build_samples_mapping()
+
+    def test_global_sample_mapping_respects_max_num_samples(self, tmp_path):
+        dataset, dataset_length = get_gpt_sft(tmp_path, max_num_samples=2, global_sample_mapping=True)
+
+        assert dataset_length > 2
+        assert len(dataset) == 2
 
     def test_gpt_sft_dataset(self, tmp_path):
         dataset, dataset_length = get_gpt_sft(tmp_path)

@@ -41,13 +41,18 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         "--gpus_per_node",
         type=int,
         dest="gpus_per_node",
-        help="GPUs per node; required for the GPU backend.",
+        help="GPUs per node; required for the GPU backend and optional as a CPU-backend runtime resource.",
     )
     execution.add_argument("--mem", default="0", help="Slurm memory request (default: 0, all node memory).")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit (default: 04:00:00).")
     execution.add_argument("--gres", help="Optional Slurm GRES value for GPU jobs.")
+    execution.add_argument(
+        "--exclusive",
+        action="store_true",
+        help="Request exclusive Slurm nodes; by default conversion jobs may share nodes.",
+    )
     execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
@@ -236,6 +241,7 @@ Examples:
   ./scripts/conversion/convert.sh roundtrip --executor local --device gpu \\
       --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B \\
       --ep 8
+
 """,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -246,6 +252,11 @@ Examples:
         allow_abbrev=False,
     )
     _add_common_conversion_arguments(import_parser, include_execution=include_execution)
+    import_parser.add_argument(
+        "--low-memory-save",
+        action="store_true",
+        help="Reduce peak GPU memory while saving large imported checkpoints at the cost of additional runtime.",
+    )
 
     export_parser = subparsers.add_parser(
         "export",
@@ -284,6 +295,7 @@ Examples:
         allow_abbrev=False,
     )
     _add_roundtrip_arguments(roundtrip_parser, include_execution=include_execution)
+
     return parser
 
 
@@ -348,7 +360,10 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     if args.distributed_timeout_minutes is not None:
         worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
 
-    if args.command == "export":
+    if args.command == "import":
+        if args.low_memory_save:
+            worker_args.append("--low-memory-save")
+    elif args.command == "export":
         worker_args.extend(["--hf-path", args.hf_path])
         if args.no_progress:
             worker_args.append("--no-progress")

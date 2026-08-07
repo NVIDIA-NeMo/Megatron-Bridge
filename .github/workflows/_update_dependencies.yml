@@ -43,7 +43,7 @@ jobs:
       TARGET_BRANCH: ${{ inputs.target-branch }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.TARGET_BRANCH }}
           token: ${{ secrets.PAT }}
@@ -63,7 +63,7 @@ jobs:
           fi
 
       - name: Checkout repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.SOURCE_BRANCH }}
           token: ${{ secrets.PAT }}
@@ -99,7 +99,7 @@ jobs:
           bash -c 'uv lock --upgrade'
 
       - name: Create Bump PR
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         id: create-pull-request
         env:
           title: "chore(beep boop 🤖): Bump `uv.lock` (${{ env.TARGET_BRANCH}}, mcore-${{ inputs.mcore-branch }}) (${{ needs.pre-flight.outputs.date }})"
