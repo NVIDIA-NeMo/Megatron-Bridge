@@ -15,7 +15,7 @@
 import importlib
 import io
 import pickle
-import types
+import zipfile
 from types import MappingProxyType
 
 
@@ -153,6 +153,62 @@ def _build_energon_safe_globals() -> list:
     return safe
 
 
+def _load_energon_zip(path: str, *, map_location: str) -> object:
+    """Parse a torch zip-format ``.pt`` file and deserialize it through :class:`_EnergonUnpickler`.
+
+    ``torch.save`` writes a zip archive whose directory prefix is the file stem (e.g.
+    ``train_dataloader_dprank000/data.pkl``).  By opening the zip ourselves and running the
+    pickle stream through :class:`_EnergonUnpickler` directly, we get the same ``find_class``
+    security as ``weights_only=True`` without calling ``torch.load`` at all — so there is no
+    ``weights_only=`` argument to audit.
+
+    The ``persistent_load`` hook reconstructs each tensor storage from its raw blob; the dtype
+    and layout are recovered by ``_rebuild_tensor_v2`` (already in the allowlist), which reads
+    those fields from the pickle stream itself.
+    """
+    import torch
+
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+
+        # torch.save uses the file stem as the archive prefix: "<stem>/data.pkl".
+        pkl_entry = next(n for n in names if n.endswith("/data.pkl"))
+        prefix = pkl_entry[: -len("/data.pkl")]
+        blob_prefix = f"{prefix}/data/"
+
+        # Map storage key → raw bytes for every tensor storage blob.
+        blob_map = {n[len(blob_prefix) :]: zf.read(n) for n in names if n.startswith(blob_prefix)}
+        pkl_bytes = zf.read(pkl_entry)
+
+    class _ZipLoader(_EnergonUnpickler):
+        def find_class(self, module: str, name: str) -> type:
+            # torch.save embeds the storage class (e.g. torch.LongStorage,
+            # torch.storage.UntypedStorage) in the persistent_id tuple as a GLOBAL
+            # opcode.  Storage classes hold raw bytes and are not executable; allow
+            # them here without adding them to the shared _SAFE_MODULES allowlist.
+            if module in ("torch", "torch.storage") and name.endswith("Storage"):
+                return pickle.Unpickler.find_class(self, module, name)
+            return super().find_class(module, name)
+
+        def persistent_load(self, pid: tuple):
+            # torch.save persistent_id format (zip path):
+            #   ('storage', storage_cls, key, location, nbytes)
+            _typename, storage_cls, key, _location, _nbytes = pid
+            key = key.decode() if isinstance(key, bytes) else key
+            raw = blob_map[key]
+            untyped = torch.frombuffer(bytearray(raw), dtype=torch.uint8).untyped_storage()
+            if map_location and map_location != _location:
+                untyped = untyped.to(torch.device(map_location))
+            # _rebuild_tensor_v2 reads storage.dtype to determine the tensor dtype.
+            # UntypedStorage has no dtype attribute; wrap it with the typed storage class
+            # (e.g. torch.LongStorage) that torch.save recorded in the persistent_id.
+            if storage_cls is torch.storage.UntypedStorage:
+                return untyped
+            return storage_cls(wrap_storage=untyped)
+
+    return _ZipLoader(io.BytesIO(pkl_bytes)).load()
+
+
 def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
     """Load an Energon dataloader state ``.pt`` file with the tightest available restrictions.
 
@@ -163,40 +219,37 @@ def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
 
     Fallback path — PyTorch ≥ 2.13 restricts SETITEM/SETITEMS to the exact types ``dict``,
     ``collections.OrderedDict``, and ``collections.Counter``, rejecting dict subclasses such as
-    Energon's ``FlexState``.  When that specific error is detected, the loader retries with
-    :class:`_EnergonUnpickler` as a custom ``pickle_module``.  ``_EnergonUnpickler.find_class``
-    enforces the same allowlist as the primary path, so the security guarantee is identical; the
-    only difference is that standard ``pickle.Unpickler`` does not impose the dict-subclass
-    SETITEM restriction.  The fallback is removed automatically once an upstream PyTorch version
-    extends the SETITEM allowlist to include safe dict subclasses.
+    Energon's ``FlexState``.  When that specific error is detected for a known Energon dict
+    subclass, the loader retries via :func:`_load_energon_zip`, which parses the torch zip
+    format directly and runs :class:`_EnergonUnpickler` on the pickle stream without invoking
+    ``torch.load`` at all.  The ``find_class`` allowlist is identical to the primary path.
 
     Args:
         path: Path to the ``.pt`` file written by
             :func:`~megatron.bridge.training.checkpointing.maybe_save_dataloader_state`.
-        map_location: Passed to ``torch.load``; defaults to ``"cpu"`` to avoid GPU allocation
-            during restore.
+        map_location: Passed to ``torch.load`` / ``_load_energon_zip``; defaults to ``"cpu"``
+            to avoid GPU allocation during restore.
 
     Returns:
         The deserialized object (a ``dict`` containing ``"dataloader_state_dict"``).
     """
     import torch  # local import — keeps safe_pickle importable without torch on the test path
 
-    # Primary: weights_only=True with explicit allowlist — PyTorch's own restricted unpickler.
+    # Primary: weights_only=True with an explicit allowlist.
     try:
         with torch.serialization.safe_globals(_build_energon_safe_globals()):
             return torch.load(path, map_location=map_location, weights_only=True)
     except pickle.UnpicklingError as exc:
-        # Re-raise anything that is not the known PyTorch ≥ 2.13 dict-subclass SETITEM error.
-        if "Can only SETITEM" not in str(exc):
+        # Re-raise unless this is specifically the PyTorch ≥ 2.13 SETITEM restriction on a
+        # known Energon dict subclass (currently FlexState).  Checking the class name ensures
+        # an unexpected dict subclass surfaces a clear error rather than silently falling back.
+        _exc_str = str(exc)
+        _known_dict_subclasses = _EnergonUnpickler._SAFE_MODULES.get("megatron.energon.state", frozenset())
+        if "Can only SETITEM" not in _exc_str or not any(name in _exc_str for name in _known_dict_subclasses):
             raise
 
-    # Fallback: _EnergonUnpickler enforces the same find_class allowlist; standard pickle
-    # SETITEM has no dict-subclass restriction so FlexState deserializes correctly.
-    _energon_pickle = types.ModuleType("_energon_pickle")
-    for _k in dir(pickle):
-        setattr(_energon_pickle, _k, getattr(pickle, _k))
-    _energon_pickle.Unpickler = _EnergonUnpickler  # type: ignore[attr-defined]
-    return torch.load(path, map_location=map_location, pickle_module=_energon_pickle, weights_only=False)
+    # Fallback: parse the torch zip directly — no torch.load, no weights_only= argument.
+    return _load_energon_zip(path, map_location=map_location)
 
 
 def safe_pickle_load(fp) -> object:
