@@ -232,6 +232,7 @@ def nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 def nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 16× H100, FP8 current-scaling."""
     cfg = nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config()
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
