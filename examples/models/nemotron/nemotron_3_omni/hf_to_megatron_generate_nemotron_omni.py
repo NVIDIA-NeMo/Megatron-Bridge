@@ -24,11 +24,10 @@ settings are modality-dependent:
   * Image: temporal_patch_dim=1,
     separate_video_embedder=False. Each HF-processor tile is pre-patchified
     into [1, total_patches, 3*P*P] and passed through RADIO's packed
-    dynamic-resolution path (is_packed_dynamic_res=True in LlavaModel). The
+    dynamic-resolution path. The
     ``imgs_sizes`` / ``vision_packed_seq_params`` tensors are built from the
-    per-tile shapes. ``num_image_tiles`` carries each tile's exact replacement
-    count to every pipeline stage (256 tokens for a 512x512 tile after
-    pixel_shuffle).
+    per-tile shapes, and the prompt is expanded to one image placeholder per
+    projected RADIO feature.
   * Audio / text-only: temporal_patch_dim=1 (the vision encoder is unused).
   * Video (and video+audio): temporal_patch_dim=2,
     separate_video_embedder=True, temporal_ckpt_compat=True so RADIO ViT
@@ -36,7 +35,8 @@ settings are modality-dependent:
     the shared SFT collator (used by `NemotronOmniTaskEncoder` with
     `use_temporal_video_embedder=True`): frames are grouped in pairs, all frames
     are pre-patchified into [1, total_patches, 3*P*P], and `imgs_sizes`
-    / `num_frames` / `vision_packed_seq_params` are plumbed through to LLaVAModel.
+    / `num_frames` / `vision_packed_seq_params` are plumbed through to the
+    canonical ``NemotronOmniModel``.
 
 Examples:
   # Single image:
@@ -84,7 +84,7 @@ from transformers import AutoProcessor, AutoTokenizer
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     COMPACT_IMAGE_PLACEHOLDER,
-    inference_merged_sequence_length,
+    inference_expanded_image_token_counts,
     inference_num_image_tiles,
     patchify_temporal_frame,
     select_inference_next_token,
@@ -204,8 +204,6 @@ class SingleBatchIterator:
             self.batch["imgs_sizes"] = kwargs["imgs_sizes"]
         if kwargs.get("num_frames", None) is not None:
             self.batch["num_frames"] = kwargs["num_frames"]
-        if kwargs.get("num_image_tiles", None) is not None:
-            self.batch["num_image_tiles"] = kwargs["num_image_tiles"]
         if kwargs.get("vision_packed_seq_params", None) is not None:
             self.batch["vision_packed_seq_params"] = kwargs["vision_packed_seq_params"]
 
@@ -248,7 +246,7 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     elif "pixel_values" in batch:
         forward_args["pixel_values"] = batch["pixel_values"]
 
-    # LLaVAModel.forward() requires `images` even for audio-only inference
+    # Keep the empty-image sentinel used by the training step for audio/text.
     if "images" not in forward_args and "pixel_values" not in forward_args:
         forward_args["images"] = torch.tensor([], dtype=torch.bfloat16, device=batch["tokens"].device).reshape(0, 0, 0)
 
@@ -263,8 +261,6 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         forward_args["imgs_sizes"] = batch["imgs_sizes"]
     if "num_frames" in batch:
         forward_args["num_frames"] = batch["num_frames"]
-    if "num_image_tiles" in batch:
-        forward_args["num_image_tiles"] = batch["num_image_tiles"]
     if "vision_packed_seq_params" in batch:
         forward_args["vision_packed_seq_params"] = batch["vision_packed_seq_params"]
 
@@ -272,7 +268,7 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         return x
 
     output = model(**forward_args)
-    # LlavaModel returns (logits, loss_mask) tuple; pipeline expects a single tensor
+    # CP training can return (logits, loss_mask); generation needs only logits.
     if isinstance(output, tuple):
         output = output[0]
     return output, loss_func
@@ -295,21 +291,47 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def _patchify_pixel_values(pv: torch.Tensor, patch_dim: int = _VISION_PATCH_DIM):
-    """Pack [N, 3, H, W] image-tiles into [1, total_patches, 3*P*P] patches.
+def _patchify_pixel_values(
+    pv: torch.Tensor | list[torch.Tensor] | tuple[torch.Tensor, ...],
+    patch_dim: int = _VISION_PATCH_DIM,
+):
+    """Pack image tiles into [1, total_patches, 3*P*P] patches.
 
-    ``N`` is typically 1 image * 1 tile (single-tile inference). When the HF
-    processor returns multiple rows (multi-image), they're concatenated along
-    the patch dim so RADIO's dynamic-resolution path sees a single packed
-    sequence that matches ``imgs_sizes``.
+    Dynamic-resolution processors return either one stacked ``[N, 3, H, W]``
+    tensor when all tiles have the same size, or a list of ``[3, H, W]`` /
+    ``[N, 3, H, W]`` tensors when tile sizes differ. Normalize both forms and
+    concatenate their patches so RADIO sees one packed sequence matching
+    ``imgs_sizes``.
     """
+    if isinstance(pv, torch.Tensor):
+        pixel_groups = [pv]
+    elif isinstance(pv, (list, tuple)):
+        pixel_groups = list(pv)
+    else:
+        raise TypeError(f"pixel_values must be a tensor or sequence of tensors, got {type(pv).__name__}")
+
+    tiles = []
+    for group in pixel_groups:
+        if not isinstance(group, torch.Tensor):
+            raise TypeError(f"Each pixel_values entry must be a tensor, got {type(group).__name__}")
+        if group.ndim == 3:
+            tiles.append(group)
+        elif group.ndim == 4:
+            tiles.extend(group.unbind(0))
+        else:
+            raise ValueError(f"Each pixel_values tensor must be 3D or 4D, got shape {tuple(group.shape)}")
+    if not tiles:
+        raise ValueError("pixel_values must contain at least one image tile")
+
     P = patch_dim
     patches_list = []
     sizes = []
-    for i in range(pv.shape[0]):
-        _, H, W = pv[i].shape
+    for tile in tiles:
+        _, H, W = tile.shape
+        if H % P != 0 or W % P != 0:
+            raise ValueError(f"Image tile shape {(H, W)} is not divisible by patch_dim={P}")
         py, px = H // P, W // P
-        p = pv[i : i + 1].reshape(1, 3, py, P, px, P).permute(0, 2, 4, 1, 3, 5).reshape(1, py * px, 3 * P * P)
+        p = tile.unsqueeze(0).reshape(1, 3, py, P, px, P).permute(0, 2, 4, 1, 3, 5).reshape(1, py * px, 3 * P * P)
         patches_list.append(p)
         sizes.append([H, W])
     packed = torch.cat(patches_list, dim=1)
@@ -344,18 +366,29 @@ def process_image_inputs(
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = processor(text=[text], images=images, return_tensors="pt")
 
-        pixel_values = inputs.pixel_values  # [N_tiles, 3, H, W]
+        pixel_values = inputs.pixel_values
+        # Pre-patchify for the packed dynamic-resolution RADIO path before
+        # validating ownership because heterogeneous tiles may be a list.
+        packed_pv, sizes = _patchify_pixel_values(pixel_values)
+        tile_count = len(sizes)
         if hasattr(inputs, "num_patches") and inputs.num_patches is not None:
-            num_patches = inputs.num_patches
+            num_patches = torch.as_tensor(inputs.num_patches, dtype=torch.long).reshape(-1)
+            if num_patches.numel() != len(images) or int(num_patches.sum().item()) != tile_count:
+                raise ValueError(
+                    "num_patches must provide one ownership count per source image and sum to the number of tiles"
+                )
         else:
-            num_patches = torch.ones(pixel_values.shape[0], dtype=torch.int)
+            if tile_count != len(images):
+                raise ValueError(
+                    "The image processor returned multiple tiles per source image without num_patches ownership "
+                    "metadata."
+                )
+            num_patches = torch.ones(len(images), dtype=torch.long)
 
-        # Pre-patchify for the packed dynamic-resolution RADIO path.
-        packed_pv, sizes = _patchify_pixel_values(pixel_values)  # [1, N*py*px, 3*P*P]
         imgs_sizes = torch.tensor(sizes, dtype=torch.long)
 
         print_rank_0(
-            f"Image: {image_path}, tiles={pixel_values.shape[0]}, "
+            f"Image: {image_path}, tiles={tile_count}, "
             f"packed_shape={tuple(packed_pv.shape)}, num_patches={num_patches.tolist()}"
         )
         return inputs.input_ids, packed_pv, num_patches, imgs_sizes
@@ -583,6 +616,11 @@ def process_video_audio_inputs(
     return input_ids, packed_pixel_values, num_patches, imgs_sizes, num_frames, sound_clips, sound_length
 
 
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Build keyword arguments for revision-pinned Hugging Face loads."""
+    return {"revision": revision} if revision is not None else {}
+
+
 def main(args) -> None:
     """Main function for Nemotron Omni VL generation from HuggingFace models.
 
@@ -605,11 +643,10 @@ def main(args) -> None:
     # unused for text/audio-only inference.
     #
     # Image: temporal_patch_dim=1 so that RADIO
-    #   runs the packed dynamic-resolution path (is_packed_dynamic_res=True in
-    #   LlavaModel). Each HF-processor tile is pre-patchified into a packed
+    #   runs the packed dynamic-resolution path. Each HF-processor tile is pre-patchified into a packed
     #   [1, N*patches, 3*P*P] tensor and passed with imgs_sizes /
-    #   vision_packed_seq_params. num_image_tiles supplies exact post-shuffle
-    #   replacement counts to PP stages without a vision encoder.
+    #   vision_packed_seq_params. The prompt is expanded before model forward
+    #   so every pipeline stage sees the canonical sequence length.
     #
     # Video (and video+audio): temporal_patch_dim=2,
     #   separate_video_embedder=True so RADIO exercises the trained
@@ -642,7 +679,11 @@ def main(args) -> None:
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=True,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
 
         # Initialize model parallel before loading
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -654,6 +695,9 @@ def main(args) -> None:
         model_provider.temporal_patch_dim = temporal_patch_dim
         model_provider.separate_video_embedder = separate_video_embedder
         model_provider.temporal_ckpt_compat = temporal_ckpt_compat
+        # Canonical multimodal inputs retain their actual expanded length.
+        # PP stages therefore need shape exchange instead of fixed receive buffers.
+        model_provider.variable_seq_lengths = pp > 1
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly. The mp_overrides values are applied to
@@ -672,13 +716,18 @@ def main(args) -> None:
                 "temporal_patch_dim": temporal_patch_dim,
                 "separate_video_embedder": separate_video_embedder,
                 "temporal_ckpt_compat": temporal_ckpt_compat,
+                "variable_seq_lengths": pp > 1,
             },
             wrap_with_ddp=False,
         )
     else:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=True,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -688,6 +737,7 @@ def main(args) -> None:
         model_provider.temporal_patch_dim = temporal_patch_dim
         model_provider.separate_video_embedder = separate_video_embedder
         model_provider.temporal_ckpt_compat = temporal_ckpt_compat
+        model_provider.variable_seq_lengths = pp > 1
         model_provider.initialize_model_parallel(seed=0)
         model_provider.finalize()
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
@@ -709,8 +759,16 @@ def main(args) -> None:
             inner.llava_model.config.grad_scale_func = None
 
     # Initialize tokenizer and processor
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=True,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
+    processor = AutoProcessor.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=True,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
     img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
     image_token_id = tokenizer.convert_tokens_to_ids("<image>")
@@ -723,7 +781,6 @@ def main(args) -> None:
     images = None
     imgs_sizes = None
     num_frames = None
-    num_image_tiles = None
     vision_packed_seq_params = None
 
     if args.video_path and args.audio_path:
@@ -755,28 +812,32 @@ def main(args) -> None:
         images = pixel_values.bfloat16() if pixel_values is not None else None
 
     if images is not None:
-        # Adjust image tokens if <img>/<img> wrapper tokens are present.
-        # The HF processor may expand each <image> into many tokens (one per patch),
-        # but Megatron LlavaModel expects one <image> token per tile (image path)
-        # or one <image> token per temporal tubelet (video path).
+        tile_feature_counts = inference_num_image_tiles(
+            imgs_sizes,
+            patch_dim=_VISION_PATCH_DIM,
+            num_frames=num_frames,
+            temporal_patch_size=temporal_patch_dim,
+        )
+        expanded_counts = inference_expanded_image_token_counts(
+            tile_feature_counts,
+            num_patches,
+            feature_multiplier=image_seq_len,
+        )
+        # Normalize processor output to the canonical one-placeholder-per-
+        # projected-feature contract.
         has_img_wrapper_tokens = (
             img_start_token_id != tokenizer.unk_token_id
             and img_end_token_id != tokenizer.unk_token_id
             and (input_ids == img_start_token_id).any()
         )
         if has_img_wrapper_tokens:
-            input_ids = adjust_image_tokens(input_ids, num_patches, img_start_token_id, img_end_token_id)
-        num_image_tiles = inference_num_image_tiles(
-            imgs_sizes,
-            patch_dim=_VISION_PATCH_DIM,
-            num_frames=num_frames,
-            temporal_patch_size=temporal_patch_dim,
-        )
+            input_ids = adjust_image_tokens(input_ids, expanded_counts, img_start_token_id, img_end_token_id)
         num_placeholders = int((input_ids == image_token_id).sum().item())
-        if num_image_tiles.numel() != num_placeholders:
+        expected_placeholders = int(expanded_counts.sum().item())
+        if num_placeholders != expected_placeholders:
             raise ValueError(
-                "Vision metadata produced "
-                f"{num_image_tiles.numel()} replacement counts for {num_placeholders} image placeholders."
+                f"Vision metadata requires {expected_placeholders} expanded image placeholders; "
+                f"the prompt contains {num_placeholders}."
             )
     pixel_values = None
 
@@ -792,8 +853,6 @@ def main(args) -> None:
         imgs_sizes = imgs_sizes.cuda()
     if num_frames is not None:
         num_frames = num_frames.cuda()
-    if num_image_tiles is not None:
-        num_image_tiles = num_image_tiles.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -828,7 +887,6 @@ def main(args) -> None:
                 sound_length=sound_length,
                 imgs_sizes=imgs_sizes,
                 num_frames=num_frames,
-                num_image_tiles=num_image_tiles,
                 vision_packed_seq_params=vision_packed_seq_params,
             )
 
@@ -838,8 +896,7 @@ def main(args) -> None:
                 model=model,
                 num_microbatches=1,
                 forward_only=True,
-                # LLaVA pads PP activations to the configured model width, so
-                # pipeline receive buffers must use that same fixed length.
+                # Ignored for PP shape allocation when variable_seq_lengths is enabled.
                 seq_length=model_provider.seq_length,
                 micro_batch_size=1,
                 collect_non_loss_data=True,
@@ -854,12 +911,7 @@ def main(args) -> None:
                 gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
                 dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
                 output = torch.cat(gathered_tensors, dim=2)
-                merged_sequence_length = inference_merged_sequence_length(
-                    input_ids,
-                    image_token_index=image_token_id,
-                    num_image_tiles=num_image_tiles,
-                    image_seq_len=image_seq_len,
-                )
+                merged_sequence_length = input_ids.shape[1]
                 next_token_ids = select_inference_next_token(output, merged_sequence_length)
 
                 if step < 5:
@@ -909,6 +961,12 @@ if __name__ == "__main__":
         type=str,
         default="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
         help="Path to the HuggingFace Nemotron Omni VL model.",
+    )
+    parser.add_argument(
+        "--hf-revision",
+        dest="hf_revision",
+        default=None,
+        help="Immutable Hugging Face Hub revision used for model, tokenizer, and processor loading.",
     )
     parser.add_argument(
         "--prompt",

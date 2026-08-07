@@ -16,11 +16,13 @@ import pytest
 import torch
 
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    inference_expanded_image_token_counts,
     inference_merged_sequence_length,
     inference_num_image_tiles,
     select_inference_next_token,
     temporal_model_frames,
 )
+from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 
 
 def test_temporal_model_frames_duplicates_single_frame_for_temporal_embedder():
@@ -83,21 +85,125 @@ def test_inference_num_image_tiles_rejects_unshufflable_image_grid():
         inference_num_image_tiles(torch.tensor([[528, 512]]), patch_dim=16)
 
 
+def test_inference_expanded_image_token_counts_aggregates_dynamic_tiles_by_media():
+    counts = inference_expanded_image_token_counts(
+        torch.tensor([256, 128, 64]),
+        torch.tensor([2, 1]),
+    )
+
+    assert counts.tolist() == [384, 64]
+
+
+def test_inference_expanded_image_token_counts_applies_temporal_feature_width():
+    counts = inference_expanded_image_token_counts(
+        torch.ones(3, dtype=torch.int),
+        torch.ones(3, dtype=torch.int),
+        feature_multiplier=256,
+    )
+
+    assert counts.tolist() == [256, 256, 256]
+
+
+def test_inference_expanded_image_token_counts_rejects_incomplete_tile_ownership():
+    with pytest.raises(ValueError, match="account for every tile"):
+        inference_expanded_image_token_counts(torch.tensor([256, 128]), torch.tensor([1]))
+
+
+def test_canonical_dynamic_pre_expansion_preserves_legacy_merged_length():
+    image_token_id = -200
+    img_start_id = -201
+    img_end_id = -202
+    processor_input_ids = torch.tensor([[10, img_start_id, image_token_id, img_end_id, 11]])
+    tile_feature_counts = inference_num_image_tiles(
+        torch.tensor([[512, 512], [512, 256]]),
+        patch_dim=16,
+    )
+
+    legacy_compact_ids = adjust_image_tokens(
+        processor_input_ids,
+        torch.tensor([2]),
+        img_start_id,
+        img_end_id,
+    )
+    with pytest.warns(FutureWarning, match="deprecated"):
+        legacy_merged_length = inference_merged_sequence_length(
+            legacy_compact_ids,
+            image_token_index=image_token_id,
+            num_image_tiles=tile_feature_counts,
+            image_seq_len=1,
+        )
+
+    expanded_counts = inference_expanded_image_token_counts(tile_feature_counts, torch.tensor([2]))
+    canonical_input_ids = adjust_image_tokens(
+        processor_input_ids,
+        expanded_counts,
+        img_start_id,
+        img_end_id,
+    )
+
+    assert tile_feature_counts.tolist() == [256, 128]
+    assert expanded_counts.tolist() == [384]
+    assert canonical_input_ids.shape[1] == legacy_merged_length
+    assert int((canonical_input_ids == image_token_id).sum()) == 384
+
+
+def test_canonical_temporal_pre_expansion_preserves_legacy_merged_length():
+    image_token_id = -200
+    img_start_id = -201
+    img_end_id = -202
+    processor_input_ids = torch.tensor(
+        [[10, img_start_id, image_token_id, img_end_id, 11, img_start_id, image_token_id, img_end_id, 12]]
+    )
+    tubelet_counts = inference_num_image_tiles(
+        torch.tensor([[512, 512]] * 4),
+        patch_dim=16,
+        num_frames=torch.tensor([4]),
+        temporal_patch_size=2,
+    )
+
+    with pytest.warns(FutureWarning, match="deprecated"):
+        legacy_merged_length = inference_merged_sequence_length(
+            processor_input_ids,
+            image_token_index=image_token_id,
+            num_image_tiles=tubelet_counts,
+            image_seq_len=256,
+        )
+
+    expanded_counts = inference_expanded_image_token_counts(
+        tubelet_counts,
+        torch.ones_like(tubelet_counts),
+        feature_multiplier=256,
+    )
+    canonical_input_ids = adjust_image_tokens(
+        processor_input_ids,
+        expanded_counts,
+        img_start_id,
+        img_end_id,
+    )
+
+    assert tubelet_counts.tolist() == [1, 1]
+    assert expanded_counts.tolist() == [256, 256]
+    assert canonical_input_ids.shape[1] == legacy_merged_length
+    assert int((canonical_input_ids == image_token_id).sum()) == 512
+
+
 def test_inference_merged_sequence_length_uses_exact_image_replacements():
     input_ids = torch.tensor([[10, -200, 11, -200, 12]])
 
-    dynamic_length = inference_merged_sequence_length(
-        input_ids,
-        image_token_index=-200,
-        num_image_tiles=torch.tensor([3, 2]),
-        image_seq_len=1,
-    )
-    temporal_length = inference_merged_sequence_length(
-        input_ids,
-        image_token_index=-200,
-        num_image_tiles=torch.tensor([1, 1]),
-        image_seq_len=256,
-    )
+    with pytest.warns(FutureWarning, match="deprecated"):
+        dynamic_length = inference_merged_sequence_length(
+            input_ids,
+            image_token_index=-200,
+            num_image_tiles=torch.tensor([3, 2]),
+            image_seq_len=1,
+        )
+    with pytest.warns(FutureWarning, match="deprecated"):
+        temporal_length = inference_merged_sequence_length(
+            input_ids,
+            image_token_index=-200,
+            num_image_tiles=torch.tensor([1, 1]),
+            image_seq_len=256,
+        )
 
     assert dynamic_length == 8
     assert temporal_length == 515
@@ -114,10 +220,11 @@ def test_select_inference_next_token_ignores_pipeline_padding_logits():
 
 
 def test_inference_merged_sequence_length_rejects_misaligned_image_metadata():
-    with pytest.raises(ValueError, match="Expected 2 num_image_tiles entries"):
-        inference_merged_sequence_length(
-            torch.tensor([[10, -200, 11, -200, 12]]),
-            image_token_index=-200,
-            num_image_tiles=torch.tensor([3]),
-            image_seq_len=1,
-        )
+    with pytest.warns(FutureWarning, match="deprecated"):
+        with pytest.raises(ValueError, match="Expected 2 num_image_tiles entries"):
+            inference_merged_sequence_length(
+                torch.tensor([[10, -200, 11, -200, 12]]),
+                image_token_index=-200,
+                num_image_tiles=torch.tensor([3]),
+                image_seq_len=1,
+            )

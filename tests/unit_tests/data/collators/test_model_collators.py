@@ -38,6 +38,7 @@ collate = SimpleNamespace(
     kimi_k25_vl_collate_fn=kimi_collate.kimi_k25_vl_collate_fn,
     ministral3_collate_fn=ministral3_collate.ministral3_collate_fn,
     nemotron_omni_collate_fn=nemotron_omni_collate.nemotron_omni_collate_fn,
+    nemotron_omni_expanded_collate_fn=nemotron_omni_collate.nemotron_omni_expanded_collate_fn,
     nemotron_omni_llava_collate_fn=nemotron_omni_collate.nemotron_omni_llava_collate_fn,
     qwen2_5_collate_fn=qwen_vl_collate.qwen2_5_collate_fn,
     qwen2_audio_collate_fn=qwen_audio_collate.qwen2_audio_collate_fn,
@@ -53,6 +54,12 @@ def test_only_nemotron_omni_requires_model_collate_for_all_examples():
     assert model_collate_required_for_all_examples("NemotronH_Nano_Omni_Reasoning_V3Processor")
     assert not model_collate_required_for_all_examples("Qwen3VLProcessor")
     assert not model_collate_required_for_all_examples("UnknownProcessor")
+
+
+def test_nemotron_omni_registry_selects_canonical_expanded_contract():
+    assert (
+        resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is collate.nemotron_omni_expanded_collate_fn
+    )
 
 
 def test_vlm_collate_keeps_qwen_vl_registration():
@@ -1974,6 +1981,37 @@ def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
     assert batch["labels"][0, -5:].tolist() == [21, 22, 102, 103, -100]
 
 
+def test_nemotron_omni_collate_ignores_end_token_padding_when_building_loss_masks():
+    proc = _NemotronOmniProcessor(
+        tokenized_rows=[
+            [199, 10, 102, 103, 101, 21, 22, 102, 103],
+            [199, 11, 102, 103, 101, 31, 32, 33, 34, 35, 102, 103],
+        ]
+    )
+    proc.tokenizer.pad_token_id = 102
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "short question"},
+                {"role": "assistant", "content": "short answer"},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": "long question"},
+                {"role": "assistant", "content": "longer answer"},
+            ]
+        },
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc, pad_to_multiple_of=1)
+
+    assert batch["attention_mask"][0].tolist() == [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0]
+    assert torch.all(batch["loss_mask"][0, 9:] == 0)
+    assert batch["loss_mask"][0].sum() > 0
+    assert batch["loss_mask"][1].sum() > 0
+
+
 def test_nemotron_omni_collate_rejects_unsupported_visual_keys():
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6]])
 
@@ -1989,13 +2027,14 @@ def test_nemotron_omni_llava_collate_packs_heterogeneous_image_rows_at_post_merg
     processor = _DynamicNemotronOmniProcessor()
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
 
-    batch = collate.nemotron_omni_llava_collate_fn(
-        _heterogeneous_nemotron_examples(),
-        processor,
-        enable_in_batch_packing=True,
-        sequence_length=24,
-        in_batch_packing_pad_to_multiple_of=4,
-    )
+    with pytest.warns(FutureWarning, match="collapse/expand data contract is deprecated"):
+        batch = collate.nemotron_omni_llava_collate_fn(
+            _heterogeneous_nemotron_examples(),
+            processor,
+            enable_in_batch_packing=True,
+            sequence_length=24,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
 
     assert batch["input_ids"].tolist() == [
         [
@@ -2538,3 +2577,31 @@ def test_nemotron_omni_llava_collate_checks_temporal_model_expansion_before_trun
             use_temporal_video_embedder=True,
             patch_dim=16,
         )
+
+
+def test_nemotron_omni_expanded_collate_emits_one_placeholder_per_temporal_feature(monkeypatch):
+    processor = _NemotronOmniProcessor()
+    input_ids = torch.tensor([[10, NEMO_IMG_START_TOKEN_ID, NEMO_IMAGE_TOKEN_ID, NEMO_IMG_END_TOKEN_ID, 11]])
+    prepared = {
+        "input_ids": input_ids,
+        "attention_mask": torch.ones_like(input_ids),
+        "visual_inputs": GenericVisualInputs(pixel_values=torch.ones(1, 1, 768)),
+    }
+    examples = [{"conversation": [{"role": "user", "content": "one tubelet"}]}]
+    monkeypatch.setattr(
+        nemotron_omni_collate,
+        "_prepare_temporal_rows",
+        lambda *args, **kwargs: (prepared, examples, torch.ones(1, dtype=torch.long)),
+    )
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+
+    batch = collate.nemotron_omni_expanded_collate_fn(
+        examples,
+        processor,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        pad_to_multiple_of=1,
+    )
+
+    assert int((batch["input_ids"] == NEMO_IMAGE_TOKEN_ID).sum().item()) == 256
+    assert int(batch["attention_mask"].sum().item()) == 260

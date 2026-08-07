@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
 from megatron.bridge.recipes.glm import gb200
 from megatron.bridge.recipes.glm.gb200 import glm5 as gb200_glm5
 from megatron.bridge.recipes.glm.h100 import glm5
@@ -37,6 +38,7 @@ class _FakeMegatronProvider(SimpleNamespace):
         "context_parallel_size",
         "cross_entropy_fusion_impl",
         "cross_entropy_loss_fusion",
+        "deallocate_pipeline_outputs",
         "dsa_indexer_loss_coeff",
         "dsa_indexer_skip_topk_offset",
         "dsa_indexer_topk_freq",
@@ -47,6 +49,8 @@ class _FakeMegatronProvider(SimpleNamespace):
         "gradient_accumulation_fusion",
         "microbatch_group_size_per_vp_stage",
         "moe_flex_dispatcher_backend",
+        "moe_grouped_gemm",
+        "moe_permute_fusion",
         "moe_router_force_load_balancing",
         "moe_shared_expert_overlap",
         "moe_token_dispatcher_type",
@@ -152,19 +156,19 @@ def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:
 
 
 @pytest.mark.parametrize(
-    ("recipe", "gbs", "steps"),
+    ("recipe", "cp", "gbs", "steps", "dispatcher", "backend"),
     [
-        (gb200.glm52_pretrain_192gpu_gb200_bf16_config, 1024, 100),
-        (gb200.glm52_sft_192gpu_gb200_bf16_config, 32, 100),
-        (gb200.glm52_peft_192gpu_gb200_bf16_config, 32, 100),
+        (gb200.glm52_pretrain_192gpu_gb200_bf16_config, 1, 1024, 100, "alltoall", None),
+        (gb200.glm52_sft_192gpu_gb200_bf16_config, 4, 8, 100, "flex", "hybridep"),
+        (gb200.glm52_peft_192gpu_gb200_bf16_config, 1, 32, 100, "alltoall", None),
     ],
 )
-def test_glm52_gb200_recipe_topologies(recipe, gbs, steps) -> None:
+def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backend) -> None:
     cfg = recipe()
 
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 6
-    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.context_parallel_size == cp
     assert cfg.model.expert_model_parallel_size == 32
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
@@ -173,12 +177,14 @@ def test_glm52_gb200_recipe_topologies(recipe, gbs, steps) -> None:
     assert cfg.model.num_layers_in_first_pipeline_stage == 14
     assert cfg.model.num_layers_in_last_pipeline_stage == 16
     assert cfg.model.microbatch_group_size_per_vp_stage == 6
-    assert cfg.model.moe_token_dispatcher_type == "alltoall"
-    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_token_dispatcher_type == dispatcher
+    assert cfg.model.moe_flex_dispatcher_backend == backend
     assert cfg.model.apply_rope_fusion is False
     assert cfg.train.global_batch_size == gbs
     assert cfg.train.micro_batch_size == 1
     assert cfg.train.train_iters == steps
+    data_parallel_size = 192 // (cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size)
+    assert cfg.train.global_batch_size % data_parallel_size == 0
 
 
 def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
@@ -188,25 +194,62 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert cfg.model.pipeline_model_parallel_size == 6
     assert cfg.model.context_parallel_size == 32
     assert cfg.model.expert_model_parallel_size == 32
-    assert cfg.model.pipeline_model_parallel_layout is None
-    assert cfg.model.num_layers_in_first_pipeline_stage == 14
-    assert cfg.model.num_layers_in_last_pipeline_stage == 16
+    assert cfg.model.pipeline_model_parallel_layout == gb200_glm5._GLM52_PP6_128K_LAYOUT
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    stages = cfg.model.pipeline_model_parallel_layout.split("|")
+    assert [stage.count("t") for stage in stages] == [14, 16, 12, 12, 12, 12]
+    decoder_starts = []
+    decoder_count = 0
+    for stage in stages:
+        decoder_starts.append(decoder_count)
+        decoder_count += stage.count("t")
+    assert decoder_starts == [0, 14, 30, 42, 54, 66]
+    assert all((start + 1 - 3) % 4 == 0 for start in decoder_starts[1:])
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.apply_rope_fusion is False
-    assert cfg.train.global_batch_size == 8
+    assert cfg.train.global_batch_size == 56
     assert cfg.train.micro_batch_size == 1
     assert cfg.train.train_iters == 20
     assert cfg.dataset.seq_length == 131072
-    assert cfg.dataset.dataset_root == "work/data/glm5-2/synthetic-long-context-gb200"
+    assert cfg.dataset.hf_dataset is None
+    assert cfg.dataset.dataset_root == "work/data/glm5-2/synthetic-long-sft-128k"
+    assert cfg.dataset.hf_output_root is None
+    assert cfg.dataset.max_train_samples == 1120
+    assert isinstance(cfg.dataset.preprocessing, ChatSFTPreprocessingConfig)
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
-    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
+    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
+    assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
+    cfg = gb200.glm52_sft_192gpu_gb200_bf16_config()
+
+    assert cfg.model.seq_length == 8192
+    assert cfg.model.context_parallel_size == 4
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.train.global_batch_size == 8
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.hf_dataset.split == "train[:10000]"
+    assert cfg.dataset.hf_dataset.load_kwargs == {"revision": gb200_glm5._TULU3_REVISION}
+    assert cfg.dataset.hf_output_root == "work/data/glm5-2/tulu3-full-sft-gb200-8k-v5"
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 8192
+    assert (
+        cfg.dataset.offline_packing_specs.max_single_sequence_length
+        == cfg.model.seq_length - cfg.dataset.offline_packing_specs.pad_seq_to_mult
+    )
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 2 * cfg.model.context_parallel_size
+    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
+    assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
 
 
 def test_glm52_gb200_recipes_do_not_depend_on_h100_recipes() -> None:

@@ -1007,7 +1007,7 @@ def _create_minimal_packed_dataset(tokenizer_eos_id: int = 0):
     dataset.pad_to_max_length = False
     dataset.max_seq_length = 32
     dataset.pad_seq_length_to_mult = 1
-    dataset._pad_seq_to_mult = 2  # Used in collate_fn for cu_seqlens_unpadded check (must be > 1 to compute)
+    dataset._pad_seq_to_mult = 2  # Emit distinct logical and physical cumulative offsets.
     dataset.ceil_to_power_2 = False
     dataset.tokenizer = SimpleNamespace(eos_id=tokenizer_eos_id)
     dataset.answer_only_loss = False
@@ -1018,10 +1018,10 @@ def _create_minimal_packed_dataset(tokenizer_eos_id: int = 0):
 
 
 class TestEOSIndexFixInPackedDataset:
-    """Test EOS index fix for cu_seqlens_unpadded calculation."""
+    """Test EOS index fix for logical cumulative sequence offsets."""
 
     def test_eos_index_logic_uses_shape_check(self):
-        """Ensure cu_seqlens_unpadded handles sequences with <2 EOS tokens."""
+        """Ensure logical offsets handle sequences with fewer than two EOS tokens."""
         dataset = _create_minimal_packed_dataset()
         batch = [
             {
@@ -1032,11 +1032,60 @@ class TestEOSIndexFixInPackedDataset:
         ]
 
         processed = dataset.collate_fn(batch)
-        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
+        cu_logical = processed["cu_seqlens_q"][0].tolist()
 
         # Expect a single non-EOS token tracked without indexing errors.
-        assert cu_unpadded == [0, 1]
+        assert cu_logical == [0, 1]
+        assert processed["cu_seqlens_kv"].tolist() == processed["cu_seqlens_q"].tolist()
         assert processed["attention_mask"] is None
+
+    def test_static_metadata_keeps_logical_and_physical_boundaries_aligned(self):
+        """Static metadata pads logical and physical boundary arrays to the same shape."""
+        dataset = _create_minimal_packed_dataset()
+        dataset.pad_to_max_length = True
+        dataset.max_seq_length = 8
+        dataset.pad_cu_seqlens = True
+        dataset.pack_metadata = [
+            {
+                "max_samples_per_bin": 3,
+                "dataset_max_seqlen": 8,
+                "min_packed_seqlen": 4,
+            }
+        ]
+        batch = [
+            {
+                "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.ones(5, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"].shape == processed["cu_seqlens_q_padded"].shape
+        assert processed["cu_seqlens_q"][0].tolist() == [0, 1, 1, 1, 1]
+        assert processed["cu_seqlens_kv"][0].tolist() == [0, 1, 1, 1, 1]
+        assert processed["cu_seqlens_q_padded"][0].tolist() == [0, 4, 8, 8, 8]
+        assert processed["cu_seqlens_kv_padded"][0].tolist() == [0, 4, 8, 8, 8]
+
+    def test_without_alignment_padding_omits_physical_variants(self):
+        """Identical logical and physical layouts use only the faster logical TE fields."""
+        dataset = _create_minimal_packed_dataset()
+        dataset._pad_seq_to_mult = 1
+        batch = [
+            {
+                "input_ids": np.array([7, 8, 9, 0, 0], dtype=np.int64),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.ones(5, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"][0].tolist() == [0, 4]
+        assert processed["cu_seqlens_kv"][0].tolist() == [0, 4]
+        assert "cu_seqlens_q_padded" not in processed
+        assert "cu_seqlens_kv_padded" not in processed
 
 
 def test_packed_full_loss_preserves_target_after_internal_eos():
@@ -1199,11 +1248,11 @@ class TestPackedSequenceWithChatEndToEnd:
         assert output_data[0]["loss_mask"] == expected_loss_mask
 
 
-class TestCuSeqlensUnpaddedCalculation:
-    """Test cu_seqlens_unpadded calculation with EOS fix."""
+class TestLogicalCuSeqlensCalculation:
+    """Test logical cumulative sequence offsets with the EOS fix."""
 
-    def test_cu_seqlens_unpadded_calculation_uses_correct_eos(self):
-        """Ensure cu_seqlens_unpadded honors the tokenizer's EOS id."""
+    def test_logical_cu_seqlens_uses_correct_eos(self):
+        """Ensure logical cumulative offsets honor the tokenizer's EOS id."""
         dataset = _create_minimal_packed_dataset(tokenizer_eos_id=999)
         batch = [
             {
@@ -1217,10 +1266,10 @@ class TestCuSeqlensUnpaddedCalculation:
         ]
 
         processed = dataset.collate_fn(batch)
-        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
+        cu_logical = processed["cu_seqlens_q"][0].tolist()
 
         # Each non-EOS token contributes exactly once despite EOS padding.
-        assert cu_unpadded == [0, 1, 2]
+        assert cu_logical == [0, 1, 2]
 
 
 class TestBackwardCompatibilityLossMask:

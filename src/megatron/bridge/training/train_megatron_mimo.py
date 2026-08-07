@@ -238,6 +238,9 @@ def train_megatron_mimo(
 
     # Get training config
     train_config = cfg.train
+    eval_interval = cfg.validation.eval_interval
+    if eval_interval is None:
+        eval_interval = train_config.eval_interval
     num_microbatches = get_num_microbatches()
     seq_length = cfg.dataset.seq_length
     micro_batch_size = train_config.micro_batch_size
@@ -394,11 +397,7 @@ def train_megatron_mimo(
                     wandb_writer.log({"iteration-time": iteration_time}, train_state.step)
 
         # Evaluation at specified intervals
-        if (
-            train_config.eval_interval is not None
-            and train_state.step % train_config.eval_interval == 0
-            and valid_data_iterator is not None
-        ):
+        if eval_interval and train_state.step % eval_interval == 0 and valid_data_iterator is not None:
             if train_config.manual_gc and train_config.manual_gc_eval:
                 gc.collect()
             evaluate_and_print_results(

@@ -242,6 +242,7 @@ def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatc
     assert encoder_cls.call_args.kwargs["processor"] is processor
     assert encoder_cls.call_args.kwargs["max_audio_duration"] == 10.0
     assert encoder_cls.call_args.kwargs["use_temporal_video_embedder"] is True
+    assert encoder_cls.call_args.kwargs["collapse_image_tokens"] is False
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True
 
 

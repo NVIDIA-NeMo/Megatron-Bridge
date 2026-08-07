@@ -484,7 +484,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
 
 
 def _load_hf_model(args, is_vl_model: bool):
-    """Load HuggingFace model on rank 0.
+    """Load an unsharded HuggingFace model on rank 0.
 
     Args:
         args: Command line arguments.
@@ -498,17 +498,15 @@ def _load_hf_model(args, is_vl_model: bool):
 
     print_rank_0("Loading HuggingFace model...")
     model_class = get_model_class(args.model_class, is_vl_model)
-    hf_model = model_class.from_pretrained(
-        args.hf_model_path,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
-        trust_remote_code=is_safe_repo(
+    load_kwargs = {
+        "torch_dtype": torch.bfloat16,
+        "trust_remote_code": is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
         **_hf_revision_kwargs(args.hf_revision),
-    )
-    hf_model = hf_model.eval()
+    }
+    hf_model = model_class.from_pretrained(args.hf_model_path, **load_kwargs).to(args.hf_device).eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
 
     # Register debug hooks if enabled
@@ -553,15 +551,26 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     if _is_rank_0():
         print_rank_0("Loading exported HF model for comparison...")
         model_class = get_model_class(args.model_class, is_vl_model)
-        hf_model = model_class.from_pretrained(
-            save_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
-        ).eval()
+        hf_model = (
+            model_class.from_pretrained(save_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
+            .to(args.hf_device)
+            .eval()
+        )
         if args.enable_debug_hooks:
             print_rank_0("Registering debug hooks for exported HF model...")
             debugger.register_hooks(hf_model, file_prefix="hf_debug_")
             print_rank_0("Exported HF debug hooks registered.")
         return hf_model
     return None
+
+
+def _get_hf_forward_model(hf_model, pixel_values):
+    """Select a composite model's language backbone for text-only comparison."""
+    language_model = getattr(hf_model, "language_model", None)
+    if pixel_values is None and isinstance(language_model, torch.nn.Module):
+        print_rank_0("Using the HuggingFace language backbone for a text-only comparison.")
+        return language_model
+    return hf_model
 
 
 def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, *, token_type_ids=None):
@@ -583,19 +592,29 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
     if not _is_rank_0() or hf_model is None:
         return None, None, None, None, None
 
+    hf_forward_model = _get_hf_forward_model(hf_model, pixel_values)
+
+    input_device = input_ids.device
+    try:
+        hf_device = next(hf_forward_model.parameters()).device
+    except (AttributeError, StopIteration, TypeError):
+        hf_device = input_device
+    if not isinstance(hf_device, (torch.device, str, int)):
+        hf_device = input_device
+
     with torch.no_grad():
         hf_inputs = {
-            "input_ids": input_ids,
-            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
+            "input_ids": input_ids.to(hf_device),
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool).to(hf_device),
         }
         if pixel_values is not None:
-            hf_inputs["pixel_values"] = pixel_values
+            hf_inputs["pixel_values"] = pixel_values.to(hf_device)
         if image_grid_thw is not None:
-            hf_inputs["image_grid_thw"] = image_grid_thw
+            hf_inputs["image_grid_thw"] = image_grid_thw.to(hf_device)
         if token_type_ids is not None:
-            hf_inputs["token_type_ids"] = token_type_ids
+            hf_inputs["token_type_ids"] = token_type_ids.to(hf_device)
 
-        hf_output = hf_model(**hf_inputs)
+        hf_output = hf_forward_model(**hf_inputs)
 
         # Debug: Check output type
         print_rank_0(f"HF output type: {type(hf_output)}")
@@ -621,7 +640,13 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         print_rank_0(f"HF next token: {hf_next_token.item()} ('{tokenizer.decode([hf_next_token.item()])}')")
         print_rank_0(f"HF Top 5: {hf_top5_info}")
 
-        return hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape
+        return (
+            hf_logits.to(input_device),
+            hf_next_token.to(input_device),
+            hf_logits_stats,
+            hf_top5_info,
+            logits_shape,
+        )
 
 
 def _load_hf_reference_logits(path, input_ids, tokenizer):
@@ -1026,6 +1051,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
+    parser.add_argument(
+        "--hf-device",
+        default="cuda",
+        help="CUDA device used by the rank-0 Hugging Face reference model (for example, cuda:2).",
+    )
     parser.add_argument(
         "--model_class",
         type=str,

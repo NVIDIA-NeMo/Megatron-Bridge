@@ -73,6 +73,13 @@ def _make_global_state(
                 manual_gc=False,
                 manual_gc_interval=0,
             ),
+            validation=SimpleNamespace(
+                eval_interval=None,
+                eval_iters=1,
+                eval_global_batch_size=1,
+                eval_micro_batch_size=1,
+                start_eval_at_iter=None,
+            ),
             dataset=SimpleNamespace(seq_length=128),
             checkpoint=SimpleNamespace(
                 save=save_dir,
@@ -394,14 +401,18 @@ class TestNonColocatedGuard:
 # ---------------------------------------------------------------------------
 
 
-def test_interval_evaluation_uses_evaluator_timer_ownership():
-    """Interval evaluation should let the shared evaluator own its timer."""
+@pytest.mark.parametrize("use_canonical_validation_config", [False, True], ids=["deprecated", "canonical"])
+def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_validation_config):
+    """Interval evaluation should honor both config paths and let the shared evaluator own its timer."""
     from megatron.core.timers import Timers
 
     from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
 
     state = _make_global_state(train_iters=1)
-    state.cfg.train.eval_interval = 1
+    if use_canonical_validation_config:
+        state.cfg.validation.eval_interval = 1
+    else:
+        state.cfg.train.eval_interval = 1
     state.timers = Timers(log_level=0, log_option="minmax")
 
     infra = _make_megatron_mimo_infra()

@@ -19,7 +19,7 @@ overrides = [
     { name = "mlflow", specifier = ">=3.15.0" },
     { name = "nvidia-cudnn-frontend", specifier = "==1.26.0" },
     { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
-    { name = "nvidia-modelopt", specifier = "==0.44.0rc5", index = "https://pypi.nvidia.com/" },
+    { name = "nvidia-modelopt", specifier = "==0.46.0rc1", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
     { name = "tokenizers", specifier = ">=0.22.0,<0.23" },
     { name = "torch", marker = "sys_platform == 'never'" },
@@ -2801,7 +2801,7 @@ wheels = [
 
 [[package]]
 name = "nvidia-modelopt"
-version = "0.44.0rc5"
+version = "0.46.0rc1"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
     { name = "ninja" },
@@ -2821,7 +2821,7 @@ dependencies = [
     { name = "tqdm" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/nvidia-modelopt/nvidia_modelopt-0.44.0rc5-py3-none-any.whl", hash = "sha256:4934c50f1fb94f7b60a6b53f2bdbd470e68b00d1161206118b0be196cc7d9b22" },
+    { url = "https://pypi.nvidia.com/nvidia-modelopt/nvidia_modelopt-0.46.0rc1-py3-none-any.whl", hash = "sha256:9eb5393812462674283d1919626d8ef23e17f15530b6626a6aaa32c5b810c5ad" },
 ]
 
 [[package]]
