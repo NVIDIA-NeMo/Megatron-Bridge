@@ -28,6 +28,8 @@ _parallel_state = MagicMock()
 _import_stubs = {
     "megatron": types.ModuleType("megatron"),
     "megatron.core": types.ModuleType("megatron.core"),
+    "megatron.core.inference": types.ModuleType("megatron.core.inference"),
+    "megatron.core.inference.contexts": types.ModuleType("megatron.core.inference.contexts"),
     "megatron.core.pipeline_parallel": types.ModuleType("megatron.core.pipeline_parallel"),
     "megatron.core.pipeline_parallel.schedules": types.ModuleType("megatron.core.pipeline_parallel.schedules"),
     "megatron.bridge": types.ModuleType("megatron.bridge"),
@@ -40,10 +42,12 @@ _import_stubs = {
     "vlm_generate_utils": types.ModuleType("vlm_generate_utils"),
 }
 _import_stubs["megatron.core"].parallel_state = _parallel_state
+_import_stubs["megatron.core.inference.contexts"].StaticInferenceContext = MagicMock()
 _import_stubs["megatron.core.pipeline_parallel.schedules"].get_forward_backward_func = MagicMock()
 _import_stubs["megatron.bridge"].AutoBridge = MagicMock()
 _import_stubs["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].get_last_rank = MagicMock()
+_import_stubs["megatron.bridge.utils.common_utils"].maybe_initialize_distributed = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_0 = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_last = MagicMock()
 for name in ("AutoConfig", "AutoProcessor", "AutoTokenizer", "GenerationConfig"):
@@ -60,7 +64,11 @@ for name in (
 
 with patch.dict(sys.modules, _import_stubs):
     _SCRIPT_GLOBALS = runpy.run_path(_SCRIPT)
+_build_inference_context = _SCRIPT_GLOBALS["_build_inference_context"]
+_checkpoint_load_overrides = _SCRIPT_GLOBALS["_checkpoint_load_overrides"]
+_last_real_token_logits = _SCRIPT_GLOBALS["_last_real_token_logits"]
 _main = _SCRIPT_GLOBALS["main"]
+_vlm_forward_step = _SCRIPT_GLOBALS["vlm_forward_step"]
 
 
 @pytest.mark.unit
@@ -145,3 +153,75 @@ def test_generation_stops_on_any_configured_eos_token() -> None:
         _main(args)
 
     assert forward.call_count == 1
+
+
+@pytest.mark.unit
+def test_kimi_builds_memory_bounded_prefill_context() -> None:
+    input_ids = torch.ones((2, 4), dtype=torch.long)
+    inference_context = MagicMock()
+    context_factory = MagicMock(return_value=inference_context)
+
+    with patch.dict(_build_inference_context.__globals__, {"StaticInferenceContext": context_factory}):
+        result = _build_inference_context(input_ids, is_kimi=True)
+
+    assert result is inference_context
+    context_factory.assert_called_once_with(max_batch_size=2, max_sequence_length=4)
+    assert inference_context.config.materialize_only_last_token_logits is False
+
+
+@pytest.mark.unit
+def test_non_kimi_vlm_does_not_receive_inference_context() -> None:
+    assert _build_inference_context(torch.ones((1, 2), dtype=torch.long), is_kimi=False) is None
+
+
+@pytest.mark.unit
+def test_kimi_checkpoint_load_preserves_memory_bounded_prefill_config() -> None:
+    provider = SimpleNamespace(mlp_chunks_for_prefill=4)
+
+    overrides = _checkpoint_load_overrides(
+        provider,
+        tp=2,
+        pp=1,
+        ep=48,
+        etp=1,
+        pp_layout=None,
+        is_kimi=True,
+    )
+
+    assert overrides["mlp_chunks_for_prefill"] == 4
+    assert overrides["tensor_model_parallel_size"] == 2
+    assert overrides["expert_model_parallel_size"] == 48
+    assert "mlp_chunks_for_prefill" not in _checkpoint_load_overrides(
+        provider,
+        tp=1,
+        pp=1,
+        ep=1,
+        etp=1,
+        pp_layout=None,
+        is_kimi=False,
+    )
+
+
+@pytest.mark.unit
+def test_vlm_forward_step_propagates_inference_context_when_present() -> None:
+    inference_context = object()
+    batch = {
+        "tokens": torch.tensor([[1, 2, 3]]),
+        "position_ids": torch.arange(3).unsqueeze(0),
+        "attention_mask": None,
+        "inference_context": inference_context,
+    }
+    model = MagicMock(return_value=torch.randn(1, 3, 16))
+
+    _vlm_forward_step(iter([batch]), model)
+
+    assert model.call_args.kwargs["inference_context"] is inference_context
+
+
+@pytest.mark.unit
+def test_last_real_token_logits_ignore_tp_padding() -> None:
+    logits = torch.arange(4 * 8, dtype=torch.float32).view(1, 4, 8)
+
+    result = _last_real_token_logits(logits, real_sequence_length=3)
+
+    assert torch.equal(result, logits[:, 2])

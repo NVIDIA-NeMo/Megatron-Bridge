@@ -78,6 +78,9 @@ See [slurm_inference.sh](slurm_inference.sh) for configuration details.
 
 Note:
 - `--trust_remote_code` is required for Kimi-K2.5 models.
+- The shared generation script automatically uses four memory-bounded MLP
+  chunks during Kimi prefill; this does not change the prompt or generation
+  token budget.
 - Use `--pp_layout` to specify custom pipeline layouts (e.g.
   `--pp_layout "Et*15|t*15|t*16|t*15L"` for PP=4).
 - You can optionally pass `--megatron_model_path` to use a pre-converted

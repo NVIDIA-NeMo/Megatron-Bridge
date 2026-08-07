@@ -97,6 +97,8 @@ class KimiK25VLBridge(MegatronModelBridge):
         provider.moe_router_bias_update_rate = 1e-3
         provider.moe_router_topk_scaling_factor = getattr(text_config, "routed_scaling_factor", 2.827)
         provider.moe_shared_expert_intermediate_size = text_config.moe_intermediate_size * text_config.n_shared_experts
+        # Bound routed-expert activation size for Kimi's long multimodal prefills.
+        provider.mlp_chunks_for_prefill = 4
         provider.moe_layer_freq = [0] * text_config.first_k_dense_replace + [1] * (
             text_config.num_hidden_layers - text_config.first_k_dense_replace
         )

@@ -127,8 +127,8 @@ def text_generation(monkeypatch):
         sys.modules.pop(spec.name, None)
 
 
-def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generation):
-    provider = types.SimpleNamespace(cache_mla_latents=True)
+def test_megatron_checkpoint_overrides_preserve_inference_config(text_generation):
+    provider = types.SimpleNamespace(cache_mla_latents=True, mlp_chunks_for_prefill=4)
 
     overrides = text_generation._megatron_checkpoint_overrides(
         provider,
@@ -153,6 +153,7 @@ def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generatio
     assert overrides["bf16"] is True
     assert overrides["fp16"] is False
     assert overrides["cache_mla_latents"] is True
+    assert overrides["mlp_chunks_for_prefill"] == 4
     assert overrides["inference_moe_token_dispatcher_type"] == "nvls"
 
 

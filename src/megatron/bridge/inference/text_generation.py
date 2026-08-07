@@ -189,6 +189,9 @@ def _megatron_checkpoint_overrides(
         overrides["attention_backend"] = AttnBackend[attention_backend]
     if hasattr(provider, "cache_mla_latents"):
         overrides["cache_mla_latents"] = bool(getattr(provider, "cache_mla_latents"))
+    mlp_chunks_for_prefill = getattr(provider, "mlp_chunks_for_prefill", 1)
+    if isinstance(mlp_chunks_for_prefill, int) and mlp_chunks_for_prefill > 1:
+        overrides["mlp_chunks_for_prefill"] = mlp_chunks_for_prefill
     if inference_moe_token_dispatcher_type is not None:
         overrides["inference_moe_token_dispatcher_type"] = inference_moe_token_dispatcher_type
     return overrides

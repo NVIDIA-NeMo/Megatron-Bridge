@@ -17,6 +17,7 @@ from typing import List, Optional
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
@@ -404,6 +405,7 @@ class KimiK25VLModel(MegatronModule):
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         *,
+        inference_context: BaseInferenceContext | None = None,
         loss_mask: Optional[Tensor] = None,
         packed_seq_params: PackedSeqParams = None,
     ) -> Tensor:
@@ -419,6 +421,7 @@ class KimiK25VLModel(MegatronModule):
                 the HF Kimi K2.5 processor output.
             labels: Target labels for supervised training.
             runtime_gather_output: If True, gather outputs across pipeline stages.
+            inference_context: Inference state used to activate memory-bounded prefill paths.
             loss_mask: Mask for loss computation.
 
         NOTE:
@@ -489,6 +492,7 @@ class KimiK25VLModel(MegatronModule):
             labels=labels,  # (B, T)
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            inference_context=inference_context,
             packed_seq_params=packed_seq_params,
         )
         if cp_size > 1:

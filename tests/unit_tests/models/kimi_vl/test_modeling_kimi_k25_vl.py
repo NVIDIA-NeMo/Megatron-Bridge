@@ -572,6 +572,32 @@ class TestKimiK25VLModelInit:
         model.language_model.set_input_tensor.assert_called_once_with(tensor)
 
 
+def test_forward_propagates_inference_context_to_language_model() -> None:
+    """Kimi must preserve the context that activates memory-bounded prefill paths."""
+    from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+    model = Mock()
+    model.pre_process = False
+    model.language_model.forward.return_value = torch.tensor(1.0)
+    inference_context = Mock()
+    input_ids = torch.tensor([[1, 2]])
+    position_ids = torch.tensor([[0, 1]])
+
+    with patch(
+        "megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.parallel_state.get_context_parallel_world_size",
+        return_value=1,
+    ):
+        output = KimiK25VLModel.forward(
+            model,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            inference_context=inference_context,
+        )
+
+    assert output.item() == 1.0
+    assert model.language_model.forward.call_args.kwargs["inference_context"] is inference_context
+
+
 class TestKimiK25VLModelFreeze:
     """Test model freezing."""
 

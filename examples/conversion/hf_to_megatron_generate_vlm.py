@@ -32,6 +32,7 @@ import argparse
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
+from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer, GenerationConfig
 from vlm_generate_utils import (
@@ -74,6 +75,7 @@ class SingleBatchIterator:
         pixel_values_videos=None,
         video_grid_thw=None,
         image_position_ids=None,
+        inference_context=None,
     ):
         self.batch = dict(
             tokens=input_ids,
@@ -94,6 +96,8 @@ class SingleBatchIterator:
             self.batch["video_grid_thw"] = video_grid_thw
         if image_position_ids is not None:
             self.batch["image_position_ids"] = image_position_ids
+        if inference_context is not None:
+            self.batch["inference_context"] = inference_context
         self._yielded = False
 
     def __iter__(self):
@@ -125,6 +129,8 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     ):
         if key in batch:
             forward_args[key] = batch[key]
+    if "inference_context" in batch:
+        forward_args["inference_context"] = batch["inference_context"]
 
     def loss_func(x, **kwargs):
         return x
@@ -145,6 +151,61 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
 def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     """Build keyword arguments for revision-pinned Hugging Face loads."""
     return {"revision": revision} if revision is not None else {}
+
+
+def _build_inference_context(
+    input_ids: torch.Tensor,
+    *,
+    is_kimi: bool,
+) -> StaticInferenceContext | None:
+    """Build the Kimi context that activates memory-bounded MoE prefill."""
+    if not is_kimi:
+        return None
+    inference_context = StaticInferenceContext(
+        max_batch_size=input_ids.size(0),
+        max_sequence_length=input_ids.size(1),
+    )
+    # TP padding can follow the last real token, so preserve full-prefix logits for exact indexing.
+    inference_context.config.materialize_only_last_token_logits = False
+    return inference_context
+
+
+def _last_real_token_logits(output: torch.Tensor, *, real_sequence_length: int) -> torch.Tensor:
+    """Select logits for the last non-padding token in a full-prefix output."""
+    if output.size(1) < real_sequence_length:
+        raise ValueError(
+            f"Megatron output sequence length {output.size(1)} is shorter than "
+            f"the real input sequence length {real_sequence_length}."
+        )
+    return output[:, real_sequence_length - 1]
+
+
+def _checkpoint_load_overrides(
+    model_provider: object,
+    *,
+    tp: int,
+    pp: int,
+    ep: int,
+    etp: int,
+    pp_layout: str | None,
+    is_kimi: bool,
+) -> dict[str, object]:
+    """Build checkpoint overrides, including Kimi's memory-bounded prefill contract."""
+    overrides: dict[str, object] = {
+        "tensor_model_parallel_size": tp,
+        "pipeline_model_parallel_size": pp,
+        "expert_model_parallel_size": ep,
+        "expert_tensor_parallel_size": etp,
+        "pipeline_dtype": torch.bfloat16,
+    }
+    if pp_layout:
+        overrides["pipeline_model_parallel_layout"] = pp_layout
+    if is_kimi:
+        mlp_chunks_for_prefill = getattr(model_provider, "mlp_chunks_for_prefill", None)
+        if not isinstance(mlp_chunks_for_prefill, int) or mlp_chunks_for_prefill < 1:
+            raise ValueError("Kimi provider must define a positive mlp_chunks_for_prefill value.")
+        overrides["mlp_chunks_for_prefill"] = mlp_chunks_for_prefill
+    return overrides
 
 
 def main(args) -> None:
@@ -198,15 +259,15 @@ def main(args) -> None:
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
 
-        mp_overrides = {
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-            "pipeline_dtype": torch.bfloat16,
-        }
-        if args.pp_layout:
-            mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout
+        mp_overrides = _checkpoint_load_overrides(
+            model_provider,
+            tp=tp,
+            pp=pp,
+            ep=ep,
+            etp=etp,
+            pp_layout=args.pp_layout,
+            is_kimi=is_kimi,
+        )
         model = bridge.load_megatron_model(
             args.megatron_model_path,
             mp_overrides=mp_overrides,
@@ -334,6 +395,7 @@ def main(args) -> None:
                 .unsqueeze(0)
                 .expand_as(input_ids)
             )
+            inference_context = _build_inference_context(input_ids, is_kimi=is_kimi)
 
             fwd_bwd_function = get_forward_backward_func()
             iterator = SingleBatchIterator(
@@ -347,6 +409,7 @@ def main(args) -> None:
                 pixel_values_videos=pixel_values_videos,
                 video_grid_thw=video_grid_thw,
                 image_position_ids=image_position_ids,
+                inference_context=inference_context,
             )
 
             output = fwd_bwd_function(
@@ -368,15 +431,15 @@ def main(args) -> None:
                 dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
                 output = torch.cat(gathered_tensors, dim=2)
 
-                last_pos = real_seq_len - 1
-                next_token_ids = torch.argmax(output[:, last_pos], dim=-1, keepdim=True)
+                last_token_logits = _last_real_token_logits(output, real_sequence_length=real_seq_len)
+                next_token_ids = torch.argmax(last_token_logits, dim=-1, keepdim=True)
 
                 if step < 5:
                     print_rank_last(
                         f"Step {step}: output shape={output.shape}, "
                         f"real_seq_len={real_seq_len}, var={output.var():.4f}"
                     )
-                    logits = output[0, last_pos, :]
+                    logits = last_token_logits[0]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_last(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")

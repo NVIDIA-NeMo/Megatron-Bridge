@@ -175,6 +175,7 @@ class TestKimiK25VLBridgeProviderBridge:
         assert provider.moe_router_topk == 8
         assert provider.moe_router_score_function == "sigmoid"
         assert provider.moe_router_enable_expert_bias is True
+        assert provider.mlp_chunks_for_prefill == 4
 
     def test_provider_bridge_moe_layer_freq(self, kimi_bridge, mock_hf_pretrained):
         """Test MoE layer frequency computation."""
