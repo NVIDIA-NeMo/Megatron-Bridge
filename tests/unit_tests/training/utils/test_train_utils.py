@@ -2508,7 +2508,10 @@ class TestCalcParamsL2Norm:
             def __init__(self):
                 # Minimal set of groups used by calc_params_l2_norm
                 self.dp_cp = object()
+                self.expt_dp = object()
+                self.expt_tp = object()
                 self.mp = object()
+                self.tp = object()
                 self.tp_ep_pp = object()
                 self.pp = object()
 
@@ -2519,11 +2522,13 @@ class TestCalcParamsL2Norm:
 
                 self.dp = _DP()
 
+        pg_collection = _PG()
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.get_pg_collection",
-            lambda model: _PG(),
+            lambda model: pg_collection,
             raising=True,
         )
+        return pg_collection
 
     @pytest.fixture
     def simple_model(self):
@@ -2730,8 +2735,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with sharded main params (distributed optimizer)."""
+        """Test dense sharded main params reduce over ordinary DP/CP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -2748,9 +2754,69 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(13.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(0.0)
         assert isinstance(result, float)
         assert result > 0
+
+    def test_bf16_sharded_dense_and_expert_norm_uses_matching_dp_groups(
+        self,
+        monkeypatch,
+        mock_model_config_bf16,
+        _patch_pg_collection,
+    ):
+        """Dense and expert optimizer shards contribute through their matching DP groups."""
+
+        class _DenseAndExpertModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16, device="cuda"))
+                self.expert.allreduce = False
+
+                self.dense.main_param = torch.tensor([2.0], device="cuda")
+                self.dense.main_param_sharded = True
+                self.expert.main_param = torch.tensor([3.0], device="cuda")
+                self.expert.main_param_sharded = True
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.dp_cp:
+                tensor.add_(12.0)
+            elif group is _patch_pg_collection.expt_dp:
+                tensor.add_(16.0)
+            elif group is not _patch_pg_collection.mp:
+                raise AssertionError("unexpected reduction group")
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            lambda param, **kwargs: True,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr("torch.distributed.get_process_group_ranks", lambda group: [0])
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(
+            _DenseAndExpertModel(),
+            mock_model_config_bf16,
+            force_create_fp32_copy=False,
+        )
+
+        # Dense: 2**2 local + 12 remote over DP/CP. Expert: 3**2 local + 16 remote over expert DP.
+        assert actual_norm == pytest.approx(math.sqrt(41.0))
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -2874,13 +2940,14 @@ class TestCalcParamsL2Norm:
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    def test_tp_duplicate_params(
+    def test_duplicate_filter_receives_tp_and_expert_tp_groups(
         self,
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_fp32,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm skips TP duplicate parameters."""
+        """Test duplicate filtering receives both tensor-parallel groups."""
         model = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
@@ -2901,6 +2968,97 @@ class TestCalcParamsL2Norm:
 
             # Should be 0 since all params are TP duplicates
             assert result == pytest.approx(0.0, abs=1e-5)
+            mock_is_not_tp_dup.assert_called_once_with(
+                model.weight,
+                tp_group=_patch_pg_collection.tp,
+                expert_tp_group=_patch_pg_collection.expt_tp,
+            )
+
+    def test_moe_param_norm_counts_logical_parameter_when_tp_ranks_differ(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+    ):
+        """Expert parameters use the expert-TP rank when it differs from regular TP."""
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        class _MixedModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert.allreduce = False
+
+        regular_tp_group = _RankGroup(rank=1)
+        expert_tp_group = _RankGroup(rank=0)
+        reduce_group = _RankGroup(rank=0)
+        pg_collection = SimpleNamespace(
+            tp=regular_tp_group,
+            expt_tp=expert_tp_group,
+            dp_cp=reduce_group,
+            expt_dp=reduce_group,
+            mp=reduce_group,
+            tp_ep_pp=reduce_group,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: pg_collection,
+        )
+
+        with (
+            mock.patch(
+                "megatron.core.tensor_parallel.layers.get_tensor_model_parallel_rank",
+                return_value=regular_tp_group.rank(),
+            ),
+            mock.patch("torch.distributed.get_process_group_ranks", return_value=[0]),
+            mock.patch("torch.distributed.all_reduce"),
+        ):
+            actual_norm = calc_params_l2_norm(_MixedModel(), mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(2.0)
+
+    def test_real_mcore_duplicate_filter_honors_expert_tp_group(self):
+        """Guard the Bridge<->MCore contract for expert-parameter duplicate filtering.
+
+        ``calc_params_l2_norm`` calls MCore's ``param_is_not_tensor_parallel_duplicate`` with an
+        ``expert_tp_group`` so that ``allreduce=False`` expert parameters de-duplicate over expert
+        tensor parallel instead of regular TP. Every other test in this class mocks that function,
+        so they would still pass against an MCore build that dropped the ``expert_tp_group`` kwarg --
+        silently undercounting expert parameter norms. Exercise the real function here so a pinned
+        MCore that regresses below this contract fails loudly (``TypeError`` or wrong result) rather
+        than degrading the training-log norm in production.
+        """
+        from megatron.core.tensor_parallel.layers import param_is_not_tensor_parallel_duplicate
+
+        assert "expert_tp_group" in inspect.signature(param_is_not_tensor_parallel_duplicate).parameters
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        duplicate_regular_tp = _RankGroup(rank=1)  # would be dropped as a regular-TP duplicate
+        primary_expert_tp = _RankGroup(rank=0)  # but is the primary shard on expert TP
+
+        expert_param = SimpleNamespace(allreduce=False)
+        dense_param = SimpleNamespace(allreduce=True)
+
+        # Expert param must route through expert_tp_group (rank 0 -> kept), not regular TP (rank 1).
+        assert param_is_not_tensor_parallel_duplicate(
+            expert_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
+        # Dense param still de-duplicates against the regular TP group (rank 1 -> dropped).
+        assert not param_is_not_tensor_parallel_duplicate(
+            dense_param, tp_group=duplicate_regular_tp, expert_tp_group=primary_expert_tp
+        )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.calc_dtensor_params_l2_norm")
     def test_megatron_fsdp_path(self, mock_calc_dtensor_norm, mock_model_config_fp32):
@@ -3225,12 +3383,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with MoE params using sharded main_param (distributed optimizer).
-
-        When MoE params have main_param_sharded=True, they should be added to
-        sharded_params_data for proper all-reduce across DP groups.
-        """
+        """Test expert sharded main params reduce over expert DP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -3248,7 +3403,14 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(0.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(13.0)
         assert isinstance(result, float)
         assert result > 0
 

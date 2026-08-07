@@ -189,8 +189,9 @@ bash examples/models/nemotron/nemotron_3_omni/inference.sh
 ## Training
 
 All training scripts use the Nemotron-3-Nano-Omni-30B-A3B-Reasoning
-pretrained checkpoint and enable in-batch sequence packing via
-`dataset.enable_in_batch_packing=True`. Default GPU layout per script:
+pretrained checkpoint. Sequence packing is workload-specific: CORD Full SFT
+is non-packed, while LoRA enables in-batch packing. Default GPU layout per
+script:
 
 - **Full SFT** — 2 nodes / 16 GPUs (full optimizer state for ~33 B params)
 - **LoRA PEFT** — 1 node / 8 GPUs
@@ -253,8 +254,15 @@ RADIO input contract. Recipe base: `nemotron_omni_cord_v2_*_config` in
 | Full SFT | [slurm_sft_cord_v2.sh](slurm_sft_cord_v2.sh) | `nemotron_omni_cord_v2_sft_config` |
 | LoRA | [slurm_peft_cord_v2.sh](slurm_peft_cord_v2.sh) | `nemotron_omni_cord_v2_peft_config` |
 
-Parallelism (both): TP=2, EP=8, CP=1, MBS=2, GBS=16, packed sequences,
-selective recompute. LoRA targets `linear_qkv`, `linear_proj`, `in_proj`,
+Parallelism (both): TP=2, EP=8, CP=1, GBS=16, selective language recompute.
+Full SFT uses non-packed MBS=1 so each CORD row remains within the 4096-token
+limit after the legacy LLaVA path expands its image placeholder; the unchanged
+global batch is accumulated over two microbatches. Full SFT also
+enables per-layer full recompute for the unfrozen RADIO tower and sets
+`model.radio_force_eval_mode=False` so its training-mode recompute guard
+executes. It offloads half of the optimizer state to CPU with transfer overlap
+to retain GPU memory headroom; CPE remains forced to eval mode. LoRA uses packed
+MBS=2 and targets `linear_qkv`, `linear_proj`, `in_proj`,
 `out_proj` (LM attention + Mamba projections); vision / sound encoders +
 projections frozen.
 
