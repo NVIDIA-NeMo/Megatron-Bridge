@@ -3,16 +3,18 @@
 
 title: glm5_2
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. GLM-5.2 H100 support verification currently covers exact GPU
-  checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence,
-  bounded full SFT with export/reload inference, 200K-context CP32 SFT,
-  bounded PEFT, and bounded pretraining with a reloadable middle checkpoint
-  and verified continuation. GB200 support verification currently covers
-  bounded pretraining, bounded full SFT, 128K packed long-context SFT, bounded
-  PEFT, bounded checkpoint resume, and deterministic legacy Megatron
-  inference; post-SFT export/reload inference remains pending.
+  Performance scope: pretrain_performance.GB200 is a full-model, fixed-shape
+  mock-data perf demo using forced expert balance and zero DSA indexer loss;
+  timing and throughput metrics from functional training items remain sanity
+  checks rather than optimized performance results. GLM-5.2 H100 support
+  verification currently covers exact GPU checkpoint round-trip on CPU and
+  GPU, HF-to-Megatron forward equivalence, bounded full SFT with export/reload
+  inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with
+  a reloadable middle checkpoint and verified continuation. GB200 support
+  verification currently covers bounded pretraining, bounded full SFT, 128K
+  packed long-context SFT, bounded PEFT, bounded checkpoint resume, and
+  deterministic legacy Megatron inference; post-SFT export/reload inference
+  remains pending.
 verification_index:
   model_level:
     verified:
@@ -28,6 +30,8 @@ verification_index:
       unverified: [sft_export_inference]
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    GB200: unverified
 model:
   hf_id: zai-org/GLM-5.2
   hf_revision: 4d67f66cc64d3219133b767c253b2ad1425c6c88  # pragma: allowlist secret
@@ -227,6 +231,35 @@ items:
         recorded zero skipped and NaN iterations. The final 10 steps averaged
         64,786.540 ms and 102.520 TFLOPS/GPU. Step-50 and step-100 checkpoints
         contain model, optimizer, scheduler, data-order, and RNG state.
+
+  pretrain_performance:
+    GB200:
+      status: unverified
+      precision: fp8_mx
+      command: >
+        ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
+        --recipe glm52_pretrain_192gpu_gb200_fp8mx_config --mode pretrain
+        --max_steps 50
+        logger.save_config_filepath=work/model-verification/glm5-2/gb200-performance/resolved-config.yaml
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        On 192x GB200, the exact full-model, fixed-shape mock-data perf demo is
+        expected to complete 50 steps at TP1/PP6/CP1/EP32/ETP1 and GBS/MBS
+        3072/1 with MXFP8, HybridEP using 32 dispatch and 32 combine SMs, forced
+        expert balance, zero DSA indexer auxiliary loss, and no activation
+        recompute. A prior four-step bring-up with three steady steps observed
+        39,429.2 ms/step and 499.60 model TFLOP/s/GPU; that window is shorter
+        than the required final-10 window, so the canonical item remains
+        unverified. Do not compare it directly with pretrain.GB200, which uses
+        RP2 data, BF16, GBS 1024, natural routing, nonzero indexer loss, and
+        all-to-all dispatch. A canonical rerun must complete all 50 steps with
+        finite losses, no skipped or NaN iterations, and all four final-10
+        metrics recorded before this item can be marked verified.
 
   sft:
     H100:
