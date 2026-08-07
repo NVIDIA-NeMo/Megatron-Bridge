@@ -1069,8 +1069,10 @@ class ConfigContainer(Container):
 
         if self.ddp.megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
-        else:
+        elif self.ddp.megatron_fsdp_version == 2:
             self._validate_and_apply_megatron_fsdp_v2_configs()
+        else:
+            raise ValueError(f"Unsupported megatron_fsdp_version: {self.ddp.megatron_fsdp_version}")
 
     def _validate_and_apply_megatron_fsdp_v1_configs(self) -> None:
         """Validate and apply the established MFSDP V1 training contract."""
