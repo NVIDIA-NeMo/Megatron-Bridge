@@ -3,6 +3,8 @@
 """Focused tests for model-verification-card validation."""
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,22 @@ def _load_validator():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_shipped_greedy_inference_cards_validate():
+    cards = [
+        REPO_ROOT / "examples" / "model_verification_cards" / model / "card.yaml" for model in ("glm5-2", "kimi-k3")
+    ]
+
+    result = subprocess.run(
+        [sys.executable, str(VALIDATOR_PATH), *(str(card) for card in cards)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_manual_forward_accepts_inference_launcher():
