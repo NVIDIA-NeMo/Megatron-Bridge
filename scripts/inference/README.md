@@ -58,6 +58,38 @@ comparison task and pass the comparison entry point's arguments unchanged:
   --tp 2
 ```
 
+Models too large for the Hugging Face and Megatron forms to coexist in one
+distributed process group can use a staged comparison. One public launcher
+invocation submits a single-process, one-node Hugging Face job first. That job
+uses every requested GPU through Transformers' automatic device map and may
+offload remaining weights to host memory. An `afterok`-dependent Megatron job
+then loads the saved logits from the explicit shared mount and validates that
+the model ID, immutable revision, prompt, tensor-parallel padding, and tokenized
+inputs still match before comparing outputs.
+
+```bash
+./scripts/inference/infer.sh \
+  --task model-comparison \
+  --staged-model-comparison \
+  --comparison-artifact-path /shared/comparisons/model-hf.pt \
+  --nodes 3 --gpus-per-node 8 --exclusive \
+  --account ACCOUNT --partition PARTITION --time 04:00:00 \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+  --mount /shared \
+  --env HF_TOKEN \
+  --hf_model_path org/large-model \
+  --hf-revision IMMUTABLE_COMMIT \
+  --megatron_model_path /shared/checkpoints/model/iter_0000000 \
+  --prompt "Megatron Bridge inference is" \
+  --tp 1 --pp 3 --ep 8 --etp 1
+```
+
+The artifact path must be absolute and contained by an explicit `--mount`
+destination that is shared by every requested node. `--nodes` controls the
+Megatron stage; the Hugging Face stage always requests one node, one task, and
+the same `--gpus-per-node` value.
+
 ## Model and checkpoint inputs
 
 Use `--hf-model-path` for the Hugging Face model ID or local directory that

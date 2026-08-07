@@ -346,3 +346,108 @@ class TestCompareMaskHandling:
         assert args.hf_revision == revision
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
+
+    def test_hf_loader_supports_auto_device_map_and_disk_offload(self, tmp_path):
+        """The staged HF job can distribute weights across visible GPUs and offload storage."""
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+                "--hf-device-map",
+                "auto",
+                "--hf-offload-folder",
+                str(tmp_path),
+            ]
+        )
+        model = MagicMock()
+        model.eval.return_value = model
+
+        class FakeModelClass:
+            from_pretrained = MagicMock(return_value=model)
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "get_model_class", return_value=FakeModelClass),
+            patch.object(compare, "is_safe_repo", return_value=False),
+            patch.object(compare, "print_rank_0"),
+        ):
+            actual = compare._load_hf_model(args, is_vl_model=False)
+
+        assert actual is model
+        assert FakeModelClass.from_pretrained.call_args.args == ("org/model",)
+        assert FakeModelClass.from_pretrained.call_args.kwargs["device_map"] == "auto"
+        assert FakeModelClass.from_pretrained.call_args.kwargs["offload_folder"] == str(tmp_path)
+        assert FakeModelClass.from_pretrained.call_args.kwargs["offload_state_dict"] is True
+
+    def test_staged_hf_artifact_round_trip_validates_exact_inputs(self, tmp_path):
+        """Saved logits are accepted only with the same model revision, prompt, and tokenized inputs."""
+        revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--hf-revision",
+                revision,
+                "--prompt",
+                "Hello",
+                "--tp",
+                "2",
+            ]
+        )
+        path = tmp_path / "hf-results.pt"
+        input_ids = torch.tensor([[1, 2]])
+        pixel_values = torch.tensor([[[1.0]]])
+        token_type_ids = torch.tensor([[0, 1]])
+        logits = torch.tensor([0.25, 0.75])
+        next_token = torch.tensor(1)
+
+        compare._save_hf_stage_artifact(
+            str(path),
+            args,
+            hf_logits=logits,
+            hf_next_token=next_token,
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            image_grid_thw=None,
+            token_type_ids=token_type_ids,
+        )
+        actual_logits, actual_next_token = compare._load_hf_stage_artifact(
+            str(path),
+            args,
+            input_ids=input_ids,
+            pixel_values=pixel_values,
+            image_grid_thw=None,
+            token_type_ids=token_type_ids,
+        )
+
+        torch.testing.assert_close(actual_logits, logits)
+        torch.testing.assert_close(actual_next_token, next_token.reshape(1))
+
+        args.prompt = "Different prompt"
+        with pytest.raises(ValueError, match="metadata 'prompt' does not match"):
+            compare._load_hf_stage_artifact(
+                str(path),
+                args,
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                image_grid_thw=None,
+                token_type_ids=token_type_ids,
+            )
+
+    def test_staged_hf_modes_are_mutually_exclusive(self):
+        """A comparison process cannot produce and consume an HF artifact simultaneously."""
+        with pytest.raises(SystemExit):
+            compare.build_parser().parse_args(
+                [
+                    "--hf_model_path",
+                    "org/model",
+                    "--prompt",
+                    "Hello",
+                    "--hf-output-path",
+                    "/shared/output.pt",
+                    "--hf-input-path",
+                    "/shared/input.pt",
+                ]
+            )

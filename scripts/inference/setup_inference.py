@@ -20,7 +20,7 @@ import argparse
 import logging
 import os
 import shlex
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -34,6 +34,11 @@ INFERENCE_TASKS = {
     "text-generation": Path("scripts/inference/text_generation.py"),
     "vlm-generation": Path("scripts/inference/vlm_generation.py"),
     "model-comparison": Path("examples/conversion/compare_hf_and_megatron/compare.py"),
+}
+_STAGED_COMPARISON_INTERNAL_OPTIONS = {
+    "--hf-device-map",
+    "--hf-input-path",
+    "--hf-output-path",
 }
 
 
@@ -62,6 +67,15 @@ launcher are forwarded unchanged to the selected repository entry point.
         choices=tuple(INFERENCE_TASKS),
         default="text-generation",
         help="Repository inference task to launch (default: text-generation).",
+    )
+    execution.add_argument(
+        "--staged-model-comparison",
+        action="store_true",
+        help=("Run model-comparison as a one-node Hugging Face job followed by a dependent distributed Megatron job."),
+    )
+    execution.add_argument(
+        "--comparison-artifact-path",
+        help="Mounted shared path used to pass Hugging Face logits to the dependent Megatron comparison job.",
     )
     execution.add_argument("--nodes", type=int, default=1, help="Number of Slurm nodes (default: 1).")
     execution.add_argument(
@@ -172,9 +186,43 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Slurm execution requires --account and --partition.")
     if not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
+    if args.staged_model_comparison and args.task != "model-comparison":
+        raise ValueError("--staged-model-comparison requires --task model-comparison.")
+    if args.staged_model_comparison and not args.comparison_artifact_path:
+        raise ValueError("--staged-model-comparison requires --comparison-artifact-path.")
+    if not args.staged_model_comparison and args.comparison_artifact_path:
+        raise ValueError("--comparison-artifact-path requires --staged-model-comparison.")
+    if args.comparison_artifact_path and not PurePosixPath(args.comparison_artifact_path).is_absolute():
+        raise ValueError("--comparison-artifact-path must be an absolute container path.")
 
 
-def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
+def _validate_staged_comparison_mount(args: argparse.Namespace, mounts: list[str]) -> None:
+    """Require the staged comparison artifact to live on an explicit shared mount."""
+    if not args.staged_model_comparison:
+        return
+
+    artifact_path = PurePosixPath(args.comparison_artifact_path)
+    container_mounts = [PurePosixPath(mount.rsplit(":", 1)[1]) for mount in mounts]
+    if not any(artifact_path == mount or mount in artifact_path.parents for mount in container_mounts):
+        raise ValueError("--comparison-artifact-path must be contained by an explicit --mount container path.")
+
+
+def _validate_staged_comparison_args(inference_args: list[str]) -> None:
+    """Reject entry-point arguments reserved for staged comparison orchestration."""
+    for argument in inference_args:
+        option = argument.split("=", 1)[0]
+        if option in _STAGED_COMPARISON_INTERNAL_OPTIONS:
+            raise ValueError(f"{option} is managed by --staged-model-comparison and cannot be passed directly.")
+
+
+def _build_executor(
+    args: argparse.Namespace,
+    env_names: list[str],
+    mounts: list[str],
+    *,
+    nodes: int | None = None,
+    ntasks_per_node: int | None = None,
+) -> object:
     """Build the srun-native NeMo-Run Slurm executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
     # Slurm's --export=NIL removes the site PATH used to find scontrol and srun
@@ -185,8 +233,8 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     executor = run.SlurmExecutor(
         account=args.account,
         partition=args.partition,
-        nodes=args.nodes,
-        ntasks_per_node=args.gpus_per_node,
+        nodes=args.nodes if nodes is None else nodes,
+        ntasks_per_node=args.gpus_per_node if ntasks_per_node is None else ntasks_per_node,
         cpus_per_task=args.cpus_per_task,
         mem=args.mem,
         exclusive=True if args.exclusive else None,
@@ -240,8 +288,10 @@ def main(argv: list[str] | None = None) -> None:
     _validate_args(args)
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
+    _validate_staged_comparison_mount(args, mounts)
+    if args.staged_model_comparison:
+        _validate_staged_comparison_args(inference_args)
     executor = _build_executor(args, env_names, mounts)
-    task = _build_task(args.task, inference_args)
     task_path = CONTAINER_REPO_ROOT / INFERENCE_TASKS[args.task]
 
     logger.info(
@@ -252,7 +302,32 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
     with run.Experiment(args.experiment_name or "inference") as experiment:
-        experiment.add(task, executor=executor, name=args.task)
+        if args.staged_model_comparison:
+            hf_executor = _build_executor(args, env_names, mounts, nodes=1, ntasks_per_node=1)
+            hf_task = _build_task(
+                args.task,
+                [
+                    *inference_args,
+                    "--hf-output-path",
+                    args.comparison_artifact_path,
+                    "--hf-device-map",
+                    "auto",
+                ],
+            )
+            megatron_task = _build_task(
+                args.task,
+                [*inference_args, "--hf-input-path", args.comparison_artifact_path],
+            )
+            hf_job_id = experiment.add(hf_task, executor=hf_executor, name="model-comparison-hf")
+            experiment.add(
+                megatron_task,
+                executor=executor,
+                name="model-comparison-megatron",
+                dependencies=[hf_job_id],
+            )
+        else:
+            task = _build_task(args.task, inference_args)
+            experiment.add(task, executor=executor, name=args.task)
         if args.submission_dry_run:
             experiment.dryrun()
             return
