@@ -73,16 +73,14 @@ Before training, ensure the following environment variables are set:
 
 ### Supervised Fine-Tuning (SFT)
 
-For single-node interactive runs, see [sft.sh](sft.sh).
+Use the verified `sft.H100` command in the [Gemma 4 26B-A4B-it model verification
+card](../../../model_verification_cards/gemma-4-26b-a4b-it/card.yaml). It launches the public
+`scripts/training/train.sh` entry point and records the exact checkpoint, dataset revision, topology, memory settings,
+metrics, and expected result.
 
-For multi-node Slurm jobs, see [slurm_sft.sh](slurm_sft.sh). Default configuration: TP=2, PP=1, EP=8 on 2 nodes (16 GPUs).
-
-```bash
-# Override defaults via environment variables
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-4-26B-A4B \
-TP=2 PP=1 EP=8 \
-sbatch --nodes=2 slurm_sft.sh
-```
+The verified recipe owns its TP4/PP1/EP8/ETP1 topology and selective `core_attn` plus `moe_act` recompute settings. Do
+not replace them with manual TP, PP, EP, or ETP overrides when reproducing the card result. The former model-specific
+SFT launchers were removed because their hard-coded topologies diverged from the verified recipe.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
@@ -94,13 +92,15 @@ For multi-node Slurm jobs, see [slurm_peft.sh](slurm_peft.sh). Default configura
 sbatch slurm_peft.sh
 ```
 
-### Recommended Configurations
+### Verified Configurations
 
-| Mode | TP | PP | EP | Nodes | Global Batch Size | Learning Rate | Notes |
-|------|----|----|----|----|-------------------|---------------|-------|
-| Full SFT | 2 | 1 | 8 | 2 | 32 | 5e-5 | Max EP=DP=8; vision unfrozen; no activation recompute |
-| Full SFT | 4 | 2 | 1 | 1 | 32 | 5e-5 | `recompute_granularity="selective"`; freeze vision |
-| LoRA | 2 | 1 | 4 | 1 | 32 | 2e-4 | EP=4 required (see note above) |
+| Mode | Verified hardware | Topology | Global Batch Size | Learning Rate | Notes |
+|------|-------------------|----------|-------------------|---------------|-------|
+| Full SFT | 8 H100 GPUs | TP4/PP1/EP8/ETP1 | 32 | 5e-5 | Freeze vision; selective `core_attn` and `moe_act` recompute |
+| LoRA | 4 H100 GPUs | TP2/PP1/EP4/ETP1 | 32 | 2e-4 | Train language-model adapters; no recompute |
+
+The model verification card is authoritative for the commands, immutable inputs, Bridge commit, metrics, and current
+verification status of these configurations.
 
 > **Note:** Do not use `recompute_granularity="full"`. Megatron's `CheckpointFunction` does not support non-tensor (tuple) arguments, causing a `TypeError` at runtime. Use `"selective"` instead.
 
