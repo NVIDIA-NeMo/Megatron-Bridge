@@ -191,6 +191,7 @@ def test_resource_validation_rejects_invalid_values(options, message):
     [
         (("--task", "model-comparison", "--staged-model-comparison"), "comparison-artifact-path"),
         (("--comparison-artifact-path", "/shared/result.pt"), "staged-model-comparison"),
+        (("--comparison-hf-partition", "interactive"), "staged-model-comparison"),
         (
             (
                 "--task",
@@ -364,11 +365,12 @@ def test_slurm_executor_can_override_nodes_and_tasks_for_hf_stage(tmp_path, monk
     monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
     args, _ = module.parse_args(_launcher_args("--nodes", "3", "--gpus-per-node", "8"))
 
-    executor = module._build_executor(args, [], [], nodes=1, ntasks_per_node=1)
+    executor = module._build_executor(args, [], [], nodes=1, ntasks_per_node=1, partition="interactive")
 
     assert executor.kwargs["nodes"] == 1
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 8
+    assert executor.kwargs["partition"] == "interactive"
 
 
 def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
@@ -490,6 +492,8 @@ def test_main_builds_dependent_hf_and_megatron_comparison_jobs(monkeypatch):
             "--staged-model-comparison",
             "--comparison-artifact-path",
             "/shared/results/hf.pt",
+            "--comparison-hf-partition",
+            "interactive",
             "--mount",
             "/shared",
             "--experiment-name",
@@ -502,7 +506,7 @@ def test_main_builds_dependent_hf_and_megatron_comparison_jobs(monkeypatch):
         )
     )
 
-    assert executor_calls == [{}, {"nodes": 1, "ntasks_per_node": 1}]
+    assert executor_calls == [{}, {"nodes": 1, "ntasks_per_node": 1, "partition": "interactive"}]
     assert task_calls[0][0] == "model-comparison"
     assert task_calls[0][1][-4:] == ["--hf-output-path", "/shared/results/hf.pt", "--hf-device-map", "auto"]
     assert task_calls[1][1][-2:] == ["--hf-input-path", "/shared/results/hf.pt"]

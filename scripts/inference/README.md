@@ -72,6 +72,7 @@ inputs still match before comparing outputs.
   --task model-comparison \
   --staged-model-comparison \
   --comparison-artifact-path /shared/comparisons/model-hf.pt \
+  --comparison-hf-partition INTERACTIVE_PARTITION \
   --nodes 3 --gpus-per-node 8 --exclusive \
   --account ACCOUNT --partition PARTITION --time 04:00:00 \
   --container-image /path/to/megatron-bridge.sqsh \
@@ -88,7 +89,9 @@ inputs still match before comparing outputs.
 The artifact path must be absolute and contained by an explicit `--mount`
 destination that is shared by every requested node. `--nodes` controls the
 Megatron stage; the Hugging Face stage always requests one node, one task, and
-the same `--gpus-per-node` value.
+the same `--gpus-per-node` value. By default both stages use `--partition`;
+`--comparison-hf-partition` can place only the one-node Hugging Face stage on a
+cluster's model-verification or interactive partition.
 
 ## Model and checkpoint inputs
 

@@ -77,6 +77,10 @@ launcher are forwarded unchanged to the selected repository entry point.
         "--comparison-artifact-path",
         help="Mounted shared path used to pass Hugging Face logits to the dependent Megatron comparison job.",
     )
+    execution.add_argument(
+        "--comparison-hf-partition",
+        help="Optional Slurm partition override for the one-node Hugging Face comparison stage.",
+    )
     execution.add_argument("--nodes", type=int, default=1, help="Number of Slurm nodes (default: 1).")
     execution.add_argument(
         "--gpus-per-node",
@@ -192,6 +196,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--staged-model-comparison requires --comparison-artifact-path.")
     if not args.staged_model_comparison and args.comparison_artifact_path:
         raise ValueError("--comparison-artifact-path requires --staged-model-comparison.")
+    if not args.staged_model_comparison and args.comparison_hf_partition:
+        raise ValueError("--comparison-hf-partition requires --staged-model-comparison.")
     if args.comparison_artifact_path and not PurePosixPath(args.comparison_artifact_path).is_absolute():
         raise ValueError("--comparison-artifact-path must be an absolute container path.")
 
@@ -222,6 +228,7 @@ def _build_executor(
     *,
     nodes: int | None = None,
     ntasks_per_node: int | None = None,
+    partition: str | None = None,
 ) -> object:
     """Build the srun-native NeMo-Run Slurm executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
@@ -232,7 +239,7 @@ def _build_executor(
     batch_env_names = ["PATH", *(name for name in env_names if name != "PATH")]
     executor = run.SlurmExecutor(
         account=args.account,
-        partition=args.partition,
+        partition=args.partition if partition is None else partition,
         nodes=args.nodes if nodes is None else nodes,
         ntasks_per_node=args.gpus_per_node if ntasks_per_node is None else ntasks_per_node,
         cpus_per_task=args.cpus_per_task,
@@ -303,7 +310,14 @@ def main(argv: list[str] | None = None) -> None:
 
     with run.Experiment(args.experiment_name or "inference") as experiment:
         if args.staged_model_comparison:
-            hf_executor = _build_executor(args, env_names, mounts, nodes=1, ntasks_per_node=1)
+            hf_executor = _build_executor(
+                args,
+                env_names,
+                mounts,
+                nodes=1,
+                ntasks_per_node=1,
+                partition=args.comparison_hf_partition,
+            )
             hf_task = _build_task(
                 args.task,
                 [
