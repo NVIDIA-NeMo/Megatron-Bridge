@@ -191,9 +191,10 @@ class _HFNameSuffixMapping:
     Reusing the base mapping would otherwise emit the original HF weight names (no suffix).
     """
 
-    def __init__(self, base_mapping: Any, suffix: str):
+    def __init__(self, base_mapping: Any, suffix: str, scale_block_size: int | None = None):
         self._base_mapping = base_mapping
         self._suffix = suffix
+        self.scale_block_size = scale_block_size
 
     def __getattr__(self, name: str) -> Any:
         # Delegate everything else (e.g., broadcast/gather helpers, megatron_param, etc.)
@@ -202,8 +203,8 @@ class _HFNameSuffixMapping:
     def resolve(self, captures: Tuple[str, ...]) -> "_HFNameSuffixMapping":
         # Preserve wildcard resolution behavior if the base mapping supports it.
         if hasattr(self._base_mapping, "resolve"):
-            return _HFNameSuffixMapping(self._base_mapping.resolve(captures), self._suffix)
-        return _HFNameSuffixMapping(self._base_mapping, self._suffix)
+            return _HFNameSuffixMapping(self._base_mapping.resolve(captures), self._suffix, self.scale_block_size)
+        return _HFNameSuffixMapping(self._base_mapping, self._suffix, self.scale_block_size)
 
     def hf_to_megatron(self, hf_weights: Any, megatron_module: torch.nn.Module) -> torch.Tensor:
         # Pass-through (not used by our export path, but keeps the wrapper mapping "complete").
@@ -1033,6 +1034,93 @@ class MegatronModelBridge(
         return converted_weights_dict
 
     @staticmethod
+    def _is_vocab_export_task(task: WeightConversionTask[Any]) -> bool:
+        """Return whether a conversion task emits an HF token embedding or language-model head."""
+        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight")
+        global_param_name = task.global_param_name.removesuffix("_scale_inv")
+        if not global_param_name.endswith(vocab_param_suffixes):
+            return False
+
+        hf_param = getattr(task.mapping, "hf_param", None)
+        vocab_hf_param_suffixes = ("embed_tokens.weight", "word_embeddings.weight", "lm_head.weight", "head.weight")
+        return isinstance(hf_param, str) and hf_param.endswith(vocab_hf_param_suffixes)
+
+    def _truncate_vocab_padding(
+        self,
+        task: WeightConversionTask[Any],
+        converted_weights_dict: Dict[str, torch.Tensor],
+        *,
+        scale_block_size: int | None = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Remove Megatron-only vocabulary rows from an HF export tensor."""
+        if not self._is_vocab_export_task(task):
+            return converted_weights_dict
+
+        hf_param = task.mapping.hf_param
+        is_scale_task = task.global_param_name.endswith("_scale_inv")
+        output_hf_param = f"{hf_param}_scale_inv" if is_scale_task else hf_param
+        if output_hf_param not in converted_weights_dict:
+            return converted_weights_dict
+
+        hf_config = self.hf_config
+        vocab_size = None
+        config_candidates = [hf_config]
+        visited_config_ids = set()
+        while config_candidates:
+            candidate = config_candidates.pop(0)
+            if candidate is None or id(candidate) in visited_config_ids:
+                continue
+            visited_config_ids.add(id(candidate))
+
+            candidate_vocab_size = getattr(candidate, "vocab_size", None)
+            if isinstance(candidate_vocab_size, int) and candidate_vocab_size > 0:
+                vocab_size = candidate_vocab_size
+                break
+            config_candidates.extend(
+                getattr(candidate, nested_config_name, None)
+                for nested_config_name in ("text_config", "llm_config", "thinker_config")
+            )
+        if vocab_size is None:
+            return converted_weights_dict
+
+        source_tensor = converted_weights_dict[output_hf_param]
+        target_rows = vocab_size
+        if is_scale_task:
+            scale_block_size = getattr(task.mapping, "scale_block_size", None)
+            local_scale = task.param_weight
+            module_weight = getattr(task.megatron_module, "weight", None)
+            if scale_block_size is None:
+                if (
+                    local_scale is None
+                    or module_weight is None
+                    or local_scale.ndim == 0
+                    or module_weight.ndim == 0
+                    or local_scale.shape[0] == 0
+                    or module_weight.shape[0] == 0
+                    or module_weight.shape[0] % local_scale.shape[0] != 0
+                ):
+                    return converted_weights_dict
+                scale_block_size = module_weight.shape[0] // local_scale.shape[0]
+        if scale_block_size is not None:
+            target_rows = math.ceil(vocab_size / scale_block_size)
+
+        if source_tensor.ndim == 0 or source_tensor.shape[0] <= target_rows:
+            return converted_weights_dict
+
+        padded_vocab_size = source_tensor.shape[0]
+        result = {}
+        for name, tensor in converted_weights_dict.items():
+            if tensor.ndim == 0:
+                result[name] = tensor
+            elif scale_block_size is not None and name.endswith("_scale_inv"):
+                result[name] = tensor[: math.ceil(vocab_size / scale_block_size)]
+            elif tensor.shape[0] == padded_vocab_size:
+                result[name] = tensor[:vocab_size]
+            else:
+                result[name] = tensor
+        return result
+
+    @staticmethod
     def _cast_export_weight_dtype(
         weights: Dict[str, torch.Tensor], weight_dtype: Optional[torch.dtype]
     ) -> Dict[str, torch.Tensor]:
@@ -1524,7 +1612,7 @@ class MegatronModelBridge(
                 hf_state_dict,
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
-
+            converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
             converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             tied_output_hf_name = None
@@ -1911,7 +1999,7 @@ class MegatronModelBridge(
         sorted_global_param_names_all_pp_ranks: List[str],
         pp_group: Any,
         fp8_scale_inv_attr: str,
-    ) -> Dict[str, bool]:
+    ) -> Dict[str, bool | int]:
         """Detect which global parameters are blockwise FP8 and gather flags across pipeline parallel ranks.
 
         This method scans all parameters in the megatron model to determine which ones are
@@ -1927,10 +2015,10 @@ class MegatronModelBridge(
                 underscore is accepted for backward compatibility.
 
         Returns:
-            Dictionary mapping global parameter names to boolean flags indicating
-            whether they are blockwise FP8 parameters with valid scale_inv attributes.
+            Dictionary mapping global parameter names to truthy FP8 flags. A positive
+            integer value carries the block length needed by remote pipeline ranks.
         """
-        local_fp8_flags: Dict[str, bool] = {}
+        local_fp8_flags: Dict[str, bool | int] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
         scale_inv_metadata_key = fp8_scale_inv_attr.removeprefix("_")
 
@@ -1964,18 +2052,28 @@ class MegatronModelBridge(
                             metadata = candidate_metadata
 
                 if "is_2D_scaled" in metadata and metadata.get(scale_inv_metadata_key) is not None:
-                    local_fp8_flags[global_name] = True
+                    scale_tensor = metadata[scale_inv_metadata_key]
+                    has_valid_row_ratio = (
+                        metadata.get("is_2D_scaled")
+                        and local_weights.ndim > 0
+                        and scale_tensor.ndim > 0
+                        and scale_tensor.shape[0] > 0
+                        and local_weights.shape[0] % scale_tensor.shape[0] == 0
+                    )
+                    local_fp8_flags[global_name] = (
+                        local_weights.shape[0] // scale_tensor.shape[0] if has_valid_row_ratio else True
+                    )
 
         # Gather across PP ranks to ensure consistent insertion decisions
-        fp8_flags_list: list[Dict[str, bool]] = [None] * get_pg_size(pp_group)
+        fp8_flags_list: list[Dict[str, bool | int]] = [None] * get_pg_size(pp_group)
         torch.distributed.all_gather_object(fp8_flags_list, local_fp8_flags, group=pp_group)
-        global_fp8_flags: Dict[str, bool] = {}
+        global_fp8_flags: Dict[str, bool | int] = {}
         for d in fp8_flags_list:
             if not d:
                 continue
             for k, v in d.items():
                 if v:
-                    global_fp8_flags[k] = True
+                    global_fp8_flags[k] = v
 
         return global_fp8_flags
 
@@ -2089,7 +2187,11 @@ class MegatronModelBridge(
                         global_param_name=scale_global_name,
                         megatron_module=local_module,
                         param_weight=scale_tensor,
-                        mapping=_HFNameSuffixMapping(base_mapping_for_scale, scale_inv_suffix),
+                        mapping=_HFNameSuffixMapping(
+                            base_mapping_for_scale,
+                            scale_inv_suffix,
+                            self._fp8_scale_block_size(global_fp8_flags.get(global_name)),
+                        ),
                     )
 
         # 4) Fill remaining placeholders (for PP ranks that don't own certain params).
@@ -2104,7 +2206,11 @@ class MegatronModelBridge(
                 if base_mapping is not None:
                     # clone mapping instance to avoid sharing state across tasks.
                     base_mapping_for_scale = mapping_registry.resolve_mapping(base_mapping, ())
-                    mapping = _HFNameSuffixMapping(base_mapping_for_scale, scale_inv_suffix)
+                    mapping = _HFNameSuffixMapping(
+                        base_mapping_for_scale,
+                        scale_inv_suffix,
+                        self._fp8_scale_block_size(global_fp8_flags.get(base_global_name)),
+                    )
                 else:
                     mapping = None
             else:
@@ -2124,6 +2230,11 @@ class MegatronModelBridge(
             )
 
         return tasks
+
+    @staticmethod
+    def _fp8_scale_block_size(fp8_flag: bool | int | None) -> int | None:
+        """Extract the gathered FP8 row-block size without treating bool as int."""
+        return fp8_flag if isinstance(fp8_flag, int) and not isinstance(fp8_flag, bool) else None
 
     def _trim_blockwise_fp8_scale_inv_padding(
         self,
