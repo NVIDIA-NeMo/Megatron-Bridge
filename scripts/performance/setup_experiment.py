@@ -483,7 +483,7 @@ def main(
         )
 
     # Disable PCT binding for certain models on specific hardware/precision combos
-    if (
+    pct_auto_disabled = (
         (
             model_family_name == "nemotronh"
             and model_recipe_name == "nemotron_3_super"
@@ -497,8 +497,27 @@ def main(
             and config_variant != "large_scale"
         )
         or (model_family_name == "llama" and task == "pretrain" and gpu == "b300")
-    ):
-        enable_pct_binding = False
+    )
+    if pct_auto_disabled:
+        # These combos are disabled deliberately; FORCE_PCT_BINDING exists so they can still
+        # be measured. Without it the request is dropped, so say so rather than doing it silently.
+        if os.environ.get("FORCE_PCT_BINDING", "").lower() in ("1", "true"):
+            if enable_pct_binding:
+                logger.warning(
+                    "PCT binding is auto-disabled for %s/%s on %s, but FORCE_PCT_BINDING is set - keeping it ENABLED.",
+                    model_family_name,
+                    model_recipe_name,
+                    gpu,
+                )
+        else:
+            if enable_pct_binding:
+                logger.warning(
+                    "PCT binding was requested but is auto-disabled for %s/%s on %s - ignoring the request.",
+                    model_family_name,
+                    model_recipe_name,
+                    gpu,
+                )
+            enable_pct_binding = False
 
     if wandb_key is not None:
         assert wandb_project_name is not None and wandb_experiment_name is not None, (
