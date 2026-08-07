@@ -226,7 +226,6 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
-
     cfg.model.seq_length = 131072
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
@@ -330,7 +329,6 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
-
     cfg.model.seq_length = 2048
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6

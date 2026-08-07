@@ -20,6 +20,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
@@ -158,5 +159,30 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 8× VR200, NVFP4 (same layout as GB300).
+
+    NVFP4's fp4_param_gather path is incompatible with TP comm overlap, so it
+    is disabled here.
+    """
+    cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config()
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_USE_FAST_MATH": 1,
     }
     return cfg

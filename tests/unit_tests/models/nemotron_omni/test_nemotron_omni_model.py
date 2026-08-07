@@ -32,12 +32,14 @@ from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
     _pixel_shuffle_dynamic_resolution,
 )
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
     NEMOTRON_OMNI_LLAVA_CONTRACT,
     NemotronOmniLlavaModelProvider,
     NemotronOmniModelProvider,
 )
+from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 
 
 class _FakeLanguageModel(nn.Module):
@@ -58,19 +60,46 @@ class _FakeLanguageModel(nn.Module):
 class _BoundaryModel(NemotronOmniModel):
     """CPU-only shell that exercises the real expanded-sequence forward."""
 
-    def __init__(self, image_features):
+    def __init__(self, image_features, sound_features=None):
         nn.Module.__init__(self)
         self.pre_process = True
         self.image_token_index = 18
+        self.sound_token_index = 19
         self.context_parallel_lm = 1
         self.sequence_parallel_lm = False
         self.config = SimpleNamespace(mtp_num_layers=None)
         self.language_model = _FakeLanguageModel()
         self.image_features = image_features
+        self.sound_features = torch.empty(0, 3) if sound_features is None else sound_features
 
     def _encode_images(self, images, imgs_sizes, vision_packed_seq_params, num_frames):
         del images, imgs_sizes, vision_packed_seq_params, num_frames
         return self.image_features
+
+    def _encode_sound(self, sound_clips, sound_length):
+        del sound_clips, sound_length
+        return self.sound_features
+
+
+class _FakeSoundModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(1))
+        self.config = SimpleNamespace(sound_pad_to_clip_duration=False)
+
+    def forward(self, sound_clips, sound_length):
+        del sound_clips, sound_length
+        embeddings = torch.arange(12, dtype=torch.float32).reshape(2, 3, 2)
+        return embeddings, torch.tensor([2, 1])
+
+
+class _SoundEncoderBoundaryModel(NemotronOmniModel):
+    def __init__(self):
+        nn.Module.__init__(self)
+        self.sound_model = _FakeSoundModel()
+        self.sound_projection = nn.Linear(2, 2, bias=False, dtype=torch.bfloat16)
+        with torch.no_grad():
+            self.sound_projection.weight.copy_(torch.eye(2, dtype=torch.bfloat16))
 
 
 @dataclass
@@ -234,6 +263,22 @@ def test_llava_provider_preserves_existing_radio_cpe_default():
     assert provider.radio_interpolate_only_cpe is True
 
 
+def test_llava_model_emits_deprecation_notice(monkeypatch):
+    monkeypatch.setattr(NemotronVLModel, "__init__", lambda *_args, **_kwargs: None)
+
+    with pytest.warns(FutureWarning, match="NemotronOmniLlavaModel is deprecated"):
+        NemotronOmniLlavaModel()
+
+
+def test_llava_provider_emits_deprecation_notice(monkeypatch):
+    provider = NemotronOmniLlavaModelProvider(nemotron_omni_contract=NEMOTRON_OMNI_LLAVA_CONTRACT)
+    legacy_model = object()
+    monkeypatch.setattr(provider, "_provide_llava", lambda **_: legacy_model)
+
+    with pytest.warns(FutureWarning, match="NemotronOmniLlavaModelProvider is deprecated"):
+        assert provider.provide() is legacy_model
+
+
 def test_dynamic_resolution_pixel_shuffle_groups_spatial_2x2_blocks():
     features = torch.arange(2 * 4 * 2, dtype=torch.float32).reshape(1, 8, 2)
 
@@ -269,6 +314,71 @@ def test_image_forward_replaces_expanded_placeholders_without_changing_length():
     assert torch.equal(output[1, 0], image_features[0])
     assert torch.equal(output[2, 0], image_features[1])
     assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
+
+
+def test_audio_forward_replaces_expanded_placeholders_without_changing_length():
+    sound_features = torch.tensor([[101.0, 102.0, 103.0], [201.0, 202.0, 203.0]])
+    model = _BoundaryModel(torch.empty(0, 3), sound_features)
+    input_ids = torch.tensor([[7, 19, 19, 9]])
+
+    output = model(
+        input_ids=input_ids,
+        attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+        sound_clips=torch.ones(1, 8, 2),
+        sound_length=torch.tensor([8]),
+    )
+
+    assert output.shape == (4, 1, 3)
+    assert torch.equal(output[0, 0], torch.tensor([7.0, 7.0, 7.0]))
+    assert torch.equal(output[1, 0], sound_features[0])
+    assert torch.equal(output[2, 0], sound_features[1])
+    assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
+
+
+def test_sound_encoder_drops_padded_rows_and_preserves_sample_order():
+    model = _SoundEncoderBoundaryModel()
+
+    encoded = model._encode_sound(
+        torch.ones(2, 8, 2),
+        torch.tensor([8, 4]),
+    )
+    assert torch.equal(
+        encoded,
+        torch.tensor(
+            [
+                [0.0, 1.0],
+                [2.0, 3.0],
+                [6.0, 7.0],
+            ],
+            dtype=torch.bfloat16,
+        ),
+    )
+
+
+def test_real_parakeet_sound_encoder_matches_subsampled_placeholder_count():
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
+
+    config = SimpleNamespace(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        intermediate_size=64,
+        num_mel_bins=8,
+        subsampling_factor=8,
+        conv_kernel_size=9,
+        use_bias=False,
+        sound_pad_to_clip_duration=False,
+    )
+    model = _SoundEncoderBoundaryModel()
+    model.sound_model = BridgeSoundEncoder(config)
+    model.sound_projection = nn.Linear(config.hidden_size, 3, bias=False)
+    sound_length = torch.tensor([64, 40])
+
+    encoded = model._encode_sound(torch.randn(2, 64, config.num_mel_bins), sound_length)
+
+    expected_lengths = model.sound_model.encoder._get_subsampling_output_length(sound_length)
+    assert encoded.shape == (int(expected_lengths.sum().item()), 3)
+    assert torch.isfinite(encoded).all()
 
 
 def test_text_only_control_preserves_language_embeddings():
@@ -370,6 +480,7 @@ def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkey
     position_ids = torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]])
     labels = input_ids.clone()
     loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]])
+    padding_mask = torch.tensor([[False, False, False, True, False, False, False, True]])
     cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
     cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
     packed_seq_params = PackedSeqParams(
@@ -388,6 +499,7 @@ def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkey
         position_ids=position_ids,
         labels=labels,
         loss_mask=loss_mask,
+        padding_mask=padding_mask,
         packed_seq_params=packed_seq_params,
         images=torch.ones(1),
     )
@@ -404,6 +516,7 @@ def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkey
     assert torch.equal(local_loss_mask, loss_mask.index_select(1, cp_index))
     assert model.language_model.last_kwargs["packed_seq_params"] is packed_seq_params
     assert torch.equal(model.language_model.last_kwargs["labels"], labels.index_select(1, cp_index))
+    assert "padding_mask" not in model.language_model.last_kwargs
     assert model.language_model.last_kwargs["attention_mask"] is None
 
 
@@ -465,6 +578,7 @@ def test_real_radio_image_forward_with_collator_owned_cp1_packing(
     with torch.no_grad():
         output = model(
             input_ids=input_ids,
+            padding_mask=torch.zeros_like(input_ids, dtype=torch.bool),
             packed_seq_params=caller_packed_seq_params,
             pixel_values=torch.randn(1, 3, 32, 32, device="cuda"),
             imgs_sizes=torch.tensor([[32, 32]], dtype=torch.int32, device="cuda"),
@@ -486,6 +600,7 @@ def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
     input_ids = torch.tensor([[7, 18, 9, 0, 11, 18, 12, 0]], device="cuda")
     labels = torch.tensor([[18, 9, -100, -100, 18, 12, -100, -100]], device="cuda")
     loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]], device="cuda")
+    padding_mask = torch.tensor([[False, False, False, True, False, False, False, True]], device="cuda")
     cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32, device="cuda")
     cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
     packed_seq_params = PackedSeqParams(
@@ -504,6 +619,7 @@ def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
         input_ids=input_ids,
         labels=labels,
         loss_mask=loss_mask,
+        padding_mask=padding_mask,
         packed_seq_params=packed_seq_params,
         pixel_values=torch.randn(2, 3, 32, 32, device="cuda"),
         imgs_sizes=torch.tensor([[32, 32], [32, 32]], dtype=torch.int32, device="cuda"),
@@ -524,13 +640,34 @@ def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
 
 
 @pytest.mark.run_only_on("GPU")
+def test_real_radio_multiframe_video_forward(single_rank_model_parallel):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider()
+    provider.finalize()
+    model = provider.provide().cuda().eval()
+    input_ids = torch.tensor([[7, 18, 9, 10]], device="cuda")
+
+    with torch.no_grad():
+        output = model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            pixel_values=torch.randn(2, 3, 32, 32, device="cuda"),
+            imgs_sizes=torch.tensor([[32, 32], [32, 32]], dtype=torch.int32, device="cuda"),
+            num_frames=torch.tensor([2], dtype=torch.int32, device="cuda"),
+        )
+
+    assert output.shape == (1, 4, 128)
+    assert torch.isfinite(output).all()
+
+
+@pytest.mark.run_only_on("GPU")
 def test_packed_mamba_resets_state_between_samples(single_rank_model_parallel):
     del single_rank_model_parallel
     provider = _TinyOmniProvider()
     provider.finalize()
     model = provider.provide().cuda().eval()
 
-    def forward(input_ids, cu_seqlens, cu_seqlens_padded):
+    def forward(input_ids, padding_mask, cu_seqlens, cu_seqlens_padded):
         caller_packed_seq_params = PackedSeqParams(
             qkv_format="thd",
             cu_seqlens_q=cu_seqlens,
@@ -543,22 +680,26 @@ def test_packed_mamba_resets_state_between_samples(single_rank_model_parallel):
         )
         return model(
             input_ids=input_ids,
+            padding_mask=padding_mask,
             packed_seq_params=caller_packed_seq_params,
         )
 
     input_ids = torch.tensor([[7, 8, 9, 0, 11, 12, 0, 0]], device="cuda")
+    padding_mask = torch.tensor([[False, False, False, True, False, False, True, True]], device="cuda")
     cu_seqlens = torch.tensor([0, 3, 5], dtype=torch.int32, device="cuda")
     cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
 
     with torch.no_grad():
-        packed_output = forward(input_ids, cu_seqlens, cu_seqlens_padded)
+        packed_output = forward(input_ids, padding_mask, cu_seqlens, cu_seqlens_padded)
         first_output = forward(
             input_ids[:, :4],
+            padding_mask[:, :4],
             torch.tensor([0, 3], dtype=torch.int32, device="cuda"),
             torch.tensor([0, 4], dtype=torch.int32, device="cuda"),
         )
         second_output = forward(
             input_ids[:, 4:],
+            padding_mask[:, 4:],
             torch.tensor([0, 2], dtype=torch.int32, device="cuda"),
             torch.tensor([0, 4], dtype=torch.int32, device="cuda"),
         )

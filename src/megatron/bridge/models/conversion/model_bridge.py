@@ -15,6 +15,7 @@
 import abc
 import contextlib
 import fnmatch
+import gc
 import itertools
 import logging
 import math
@@ -1093,7 +1094,23 @@ class MegatronModelBridge(
             if len(grouped_buffers[group_key]) != num_experts:
                 continue
 
-            merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
+            grouped_tensors = [grouped_buffers[group_key][i] for i in range(num_experts)]
+            try:
+                merged = torch.stack(grouped_tensors, dim=0)
+            except torch.OutOfMemoryError:
+                if not any(getattr(tensor, "is_cuda", False) for tensor in grouped_tensors):
+                    raise
+                logger.warning(
+                    "Grouped expert export ran out of CUDA memory while stacking %d experts; retrying on CPU.",
+                    num_experts,
+                )
+                cpu_tensors = [tensor.cpu() for tensor in grouped_tensors]
+                del grouped_tensors
+                del grouped_buffers[group_key]
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                merged = torch.stack(cpu_tensors, dim=0)
 
             if getattr(task.mapping, "transpose_on_export", False):
                 if group_key in hf_state_dict:
@@ -1108,7 +1125,7 @@ class MegatronModelBridge(
                 else:
                     merged = merged.transpose(-1, -2).contiguous()
 
-            del grouped_buffers[group_key]
+            grouped_buffers.pop(group_key, None)
             merged_result[group_key] = merged
 
         return merged_result or None

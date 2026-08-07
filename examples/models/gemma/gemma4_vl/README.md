@@ -111,24 +111,10 @@ We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw
 
 ## Evaluation
 
-After training, use [eval_sft_cord_v2.py](eval_sft_cord_v2.py) to verify the fine-tuned checkpoint on CORD-v2. It feeds the full conversation (image + prompt + ground-truth response) through the model in a single forward pass and reports per-example cross-entropy loss, token accuracy, and GT vs. predicted text.
-
-Example invocation (single node, 8 GPUs). Replace `<JOB_ID>` with your training job ID:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 \
-  examples/models/gemma/gemma4_vl/eval_sft_cord_v2.py \
-    --hf_model_path google/gemma-4-26B-A4B-it \
-    --megatron_model_path ${WORKSPACE}/results/gemma4_vl_sft_tp2_pp1_ep8_<JOB_ID> \
-    --tp 2 --pp 1 --ep 4 \
-    --num_examples 20
-```
-
-For batch evaluation on Slurm, see [slurm_eval_sft.sh](slurm_eval_sft.sh).
-
-After 100 SFT iterations on CORD-v2, expected teacher-forced token accuracy is ~98%.
-
-> **These scripts run one sample at a time and are intended only as sanity checks of the trained checkpoint.** For production inference, re-export the checkpoint to HF format using the export step in [conversion.sh](conversion.sh) and run with vLLM.
+Use the [Gemma 4 26B-A4B-it model verification
+card](../../../model_verification_cards/gemma-4-26b-a4b-it/card.yaml) as the canonical source for checked-in training,
+export, and deterministic inference evidence. Run only items marked `verified`; an item without a checked-in command is
+not a supported evaluation workflow.
 
 ## LoRA Merge
 

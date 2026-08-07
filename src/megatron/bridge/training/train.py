@@ -928,8 +928,9 @@ def train_step(
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
     log_max_attention_logit = None
-    if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
-        log_max_attention_logit = clip_qk(model)
+    qk_clip_enabled = getattr(cfg.model, "qk_clip", False)
+    if qk_clip_enabled or getattr(cfg.model, "log_max_attention_logit", False):
+        log_max_attention_logit = clip_qk(model, log_max_only=not qk_clip_enabled)
 
     timers("optimizer").stop()
     nvtx_range_pop(suffix="optimizer_step")

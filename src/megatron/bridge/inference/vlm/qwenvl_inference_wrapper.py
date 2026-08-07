@@ -156,6 +156,7 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
             "pixel_values": inference_input.get("pixel_values"),
             "image_grid_thw": inference_input.get("image_grid_thw"),
             "mm_token_type_ids": inference_input.get("mm_token_type_ids"),
+            "_context_window_length": context_end_position - context_start_position,
         }
         if out["mm_token_type_ids"] is not None:
             out["mm_token_type_ids"] = out["mm_token_type_ids"][:, :context_end_position]
@@ -174,10 +175,15 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         Returns:
             torch.Tensor: The output logits of shape [batch_size, seq_len, padded_vocab_size]
         """
+        model_input = dict(inference_input)
+        context_window_length = model_input.pop("_context_window_length", None)
         logits = self.model(
-            **inference_input,
+            **model_input,
             inference_context=self.inference_context,
             runtime_gather_output=True,
         )
+
+        if context_window_length is not None:
+            logits = logits[:, -context_window_length:, :]
 
         return logits

@@ -50,9 +50,6 @@ NEMO_DATASETS_CACHE = Path(os.getenv("NEMO_DATASETS_CACHE", DEFAULT_NEMO_DATASET
 DEFAULT_NEMO_MODELS_CACHE = NEMO_CACHE_HOME / "models"
 NEMO_MODELS_CACHE = Path(os.getenv("NEMO_MODELS_CACHE", DEFAULT_NEMO_MODELS_CACHE))
 
-if os.getenv("TOKENIZERS_PARALLELISM") is None:
-    os.putenv("TOKENIZERS_PARALLELISM", "True")
-
 logger = logging.getLogger(__name__)
 
 # hack to avoid the "not enough disk space" error in some slurm cluster
