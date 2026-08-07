@@ -5006,7 +5006,7 @@ class TestMaybeLoadDataloaderState:
         with pytest.raises(RuntimeError, match="data-parallel size"):
             maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
-    @patch("megatron.bridge.training.checkpointing.torch.load")
+    @patch("megatron.bridge.training.checkpointing.energon_torch_load")
     def test_restores_on_every_cp_tp_pp_rank(self, mock_load, tmp_path):
         """Unlike save, restore must run on every cp/tp/pp because
         each rank pulls from its own data iterator. Keyed by the pure DP rank."""
@@ -5026,7 +5026,7 @@ class TestMaybeLoadDataloaderState:
 
         train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
 
-    @patch("megatron.bridge.training.checkpointing.torch.load")
+    @patch("megatron.bridge.training.checkpointing.energon_torch_load")
     def test_restores_from_file(self, mock_load, tmp_path):
         """Happy path: the per-DP-rank file is loaded and restore_state is called with the saved dict."""
         train_iterator = Mock()
@@ -5098,7 +5098,7 @@ class TestMaybeLoadDataloaderState:
         torch.save({"dataloader_state_dict": _MaliciousDataloaderState(marker_path)}, state_path)
 
         assert not marker_path.exists()
-        with pytest.raises(pickle.UnpicklingError, match="Weights only load failed"):
+        with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused to load"):
             maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
         assert not marker_path.exists()

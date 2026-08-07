@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 import io
 import pickle
 import zipfile
@@ -127,32 +126,6 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
     )
 
 
-def _build_energon_safe_globals() -> list:
-    """Resolve :attr:`_EnergonUnpickler._SAFE_MODULES` into the list of objects required by
-    ``torch.serialization.safe_globals``.
-
-    Builtins, ``collections``, and ``torch._utils`` are already permitted by
-    ``weights_only=True`` and are excluded from the returned list to keep it minimal.
-    Modules that are not importable in the current environment (e.g. Energon absent) are
-    silently skipped — the ``weights_only=True`` call will then raise on the missing type,
-    and the caller decides how to proceed.
-    """
-    _ALREADY_ALLOWED = frozenset({"builtins", "collections", "torch._utils"})
-    safe: list = []
-    for module_name, names in _EnergonUnpickler._SAFE_MODULES.items():
-        if module_name in _ALREADY_ALLOWED:
-            continue
-        try:
-            mod = importlib.import_module(module_name)
-        except ImportError:
-            continue
-        for name in names:
-            obj = getattr(mod, name, None)
-            if obj is not None:
-                safe.append(obj)
-    return safe
-
-
 def _load_energon_zip(path: str, *, map_location: str) -> object:
     """Parse a torch zip-format ``.pt`` file and deserialize it through :class:`_EnergonUnpickler`.
 
@@ -210,45 +183,27 @@ def _load_energon_zip(path: str, *, map_location: str) -> object:
 
 
 def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
-    """Load an Energon dataloader state ``.pt`` file with the tightest available restrictions.
+    """Load an Energon dataloader state ``.pt`` file through a restricted unpickler.
 
-    Primary path — ``weights_only=True`` with an explicit allowlist derived from
-    :class:`_EnergonUnpickler`: PyTorch's restricted unpickler blocks every GLOBAL opcode not
-    in the allowlist, preventing ``__reduce__``-based code execution from attacker-controlled
-    checkpoint files.
+    Parses the torch zip format directly via :func:`_load_energon_zip` rather than delegating
+    to ``torch.load``.  Security is enforced by :class:`_EnergonUnpickler`: any GLOBAL opcode
+    whose ``(module, name)`` is not in the explicit allowlist raises ``pickle.UnpicklingError``,
+    blocking ``__reduce__``-based code execution from attacker-controlled checkpoint files.
 
-    Fallback path — PyTorch ≥ 2.13 restricts SETITEM/SETITEMS to the exact types ``dict``,
-    ``collections.OrderedDict``, and ``collections.Counter``, rejecting dict subclasses such as
-    Energon's ``FlexState``.  When that specific error is detected for a known Energon dict
-    subclass, the loader retries via :func:`_load_energon_zip`, which parses the torch zip
-    format directly and runs :class:`_EnergonUnpickler` on the pickle stream without invoking
-    ``torch.load`` at all.  The ``find_class`` allowlist is identical to the primary path.
+    ``torch.load(weights_only=True)`` is not used because PyTorch ≥ 2.13 restricts
+    SETITEM/SETITEMS to exact ``dict``, ``OrderedDict``, and ``Counter`` types, rejecting dict
+    subclasses such as Energon's ``FlexState`` — which is always present in real Energon
+    checkpoints (``SavableDatasetState.dataset_state`` is typed ``FlexState``, not Optional).
 
     Args:
         path: Path to the ``.pt`` file written by
             :func:`~megatron.bridge.training.checkpointing.maybe_save_dataloader_state`.
-        map_location: Passed to ``torch.load`` / ``_load_energon_zip``; defaults to ``"cpu"``
-            to avoid GPU allocation during restore.
+        map_location: Device to map tensor storages to; defaults to ``"cpu"`` to avoid GPU
+            allocation during restore.
 
     Returns:
         The deserialized object (a ``dict`` containing ``"dataloader_state_dict"``).
     """
-    import torch  # local import — keeps safe_pickle importable without torch on the test path
-
-    # Primary: weights_only=True with an explicit allowlist.
-    try:
-        with torch.serialization.safe_globals(_build_energon_safe_globals()):
-            return torch.load(path, map_location=map_location, weights_only=True)
-    except pickle.UnpicklingError as exc:
-        # Re-raise unless this is specifically the PyTorch ≥ 2.13 SETITEM restriction on a
-        # known Energon dict subclass (currently FlexState).  Checking the class name ensures
-        # an unexpected dict subclass surfaces a clear error rather than silently falling back.
-        _exc_str = str(exc)
-        _known_dict_subclasses = _EnergonUnpickler._SAFE_MODULES.get("megatron.energon.state", frozenset())
-        if "Can only SETITEM" not in _exc_str or not any(name in _exc_str for name in _known_dict_subclasses):
-            raise
-
-    # Fallback: parse the torch zip directly — no torch.load, no weights_only= argument.
     return _load_energon_zip(path, map_location=map_location)
 
 
