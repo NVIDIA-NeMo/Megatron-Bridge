@@ -14,10 +14,12 @@
 """Unit tests for megatron.bridge.training.checkpointing module."""
 
 import os
+import pickle
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
+import numpy as np
 import pytest
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -72,6 +74,21 @@ class _DummyClass:
 
 
 _dummy_obj = _DummyClass()
+
+
+def _write_dataloader_state_marker(path: str) -> None:
+    """Write a marker if an unsafe deserializer executes a test payload."""
+    Path(path).write_text("dataloader state payload executed")
+
+
+class _MaliciousDataloaderState:
+    """Pickle payload used to verify that dataloader restore blocks arbitrary globals."""
+
+    def __init__(self, marker_path: Path):
+        self.marker_path = marker_path
+
+    def __reduce__(self):
+        return _write_dataloader_state_marker, (str(self.marker_path),)
 
 
 class TestCheckpointUtilities:
@@ -5022,6 +5039,70 @@ class TestMaybeLoadDataloaderState:
         maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
         train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
+
+    def test_restores_energon_state_with_weights_only(self, tmp_path):
+        """Existing Energon dataclass and NumPy state remains loadable through the restricted loader."""
+        from megatron.energon.flavors.webdataset.sample_loader import SliceState
+        from megatron.energon.rng import SystemRngState
+        from megatron.energon.savable_loader import (
+            SavableDataLoaderState,
+            SavableDatasetCheckpoint,
+            SavableDatasetState,
+        )
+        from megatron.energon.state import FlexState
+
+        train_iterator = Mock()
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        state_path = iter_dir / "train_dataloader_dprank000.pt"
+        rng_state = SystemRngState(
+            torch=torch.arange(3),
+            numpy=np.arange(3, dtype=np.uint32),
+            random=(3, (1, 2, 3), None),
+        )
+        loader_state = SavableDataLoaderState(
+            worker_states=[
+                SavableDatasetCheckpoint(
+                    state=SavableDatasetState(
+                        rng=rng_state,
+                        dataset_state=FlexState(active_slices=[SliceState(index=2, current=17)]),
+                        sample_index=5,
+                    ),
+                    offset=1,
+                )
+            ],
+            next_worker_id=0,
+            micro_batch_size=2,
+        )
+        torch.save({"dataloader_state_dict": loader_state}, state_path)
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        restored = train_iterator.iterable.restore_state.call_args.args[0]
+        assert isinstance(restored, SavableDataLoaderState)
+        assert restored.next_worker_id == loader_state.next_worker_id
+        assert restored.micro_batch_size == loader_state.micro_batch_size
+        restored_dataset_state = restored.worker_states[0].state
+        assert restored_dataset_state is not None
+        assert restored_dataset_state.sample_index == 5
+        np.testing.assert_array_equal(restored_dataset_state.rng.numpy, rng_state.numpy)
+        assert restored_dataset_state.dataset_state["active_slices"] == [SliceState(index=2, current=17)]
+
+    def test_rejects_reduce_payload_without_executing_it(self, tmp_path):
+        """A checkpoint cannot execute an arbitrary callable through pickle ``__reduce__``."""
+        train_iterator = Mock()
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        marker_path = tmp_path / "dataloader-state-payload-executed"
+        state_path = iter_dir / "train_dataloader_dprank000.pt"
+        torch.save({"dataloader_state_dict": _MaliciousDataloaderState(marker_path)}, state_path)
+
+        assert not marker_path.exists()
+        with pytest.raises(pickle.UnpicklingError, match="Weights only load failed"):
+            maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        assert not marker_path.exists()
+        train_iterator.iterable.restore_state.assert_not_called()
 
 
 class TestMaybeSaveDataloaderState:
