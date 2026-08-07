@@ -149,15 +149,17 @@ def evaluate(
             "Multimodule (MegatronMIMO) evaluation requires an explicit MultiModulePipelineCommunicator as p2p_communicator."
         )
 
-    if not state.cfg.dist.use_decentralized_pg:
+    default_seq_length = state.cfg.dataset.seq_length if is_multimodule else state.cfg.model.seq_length
+
+    if is_multimodule or state.cfg.dist.use_decentralized_pg:
+        adjust_tensor_shapes_fn = None
+    else:
         adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
             model,
-            seq_length=state.cfg.model.seq_length,
+            seq_length=default_seq_length,
             micro_batch_size=eval_micro_batch_size,
-            decoder_seq_length=state.cfg.model.seq_length,
+            decoder_seq_length=default_seq_length,
         )
-    else:
-        adjust_tensor_shapes_fn = None
 
     with torch.no_grad():
         if verbose:
@@ -187,7 +189,7 @@ def evaluate(
             )
         # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
         # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
-        if HAS_PAGED_STASHING and state.cfg.model.moe_expert_rank_capacity_factor is not None:
+        if not is_multimodule and HAS_PAGED_STASHING and state.cfg.model.moe_expert_rank_capacity_factor is not None:
             copy_main_params = (
                 state.cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag and state.cfg.ddp.overlap_param_gather
             )
@@ -202,7 +204,7 @@ def evaluate(
                 print_rank_0(f"Evaluating iter {iteration}/{state.cfg.validation.eval_iters}")
 
             # Handle finetuning vs pretraining data consumption
-            seq_length = state.cfg.model.seq_length  # Default for pretraining
+            seq_length = default_seq_length  # Default for pretraining
             eval_data_iterator = data_iterator  # Default for pretraining
 
             if state.cfg.dataset.dataloader_type == "batch":
@@ -210,7 +212,7 @@ def evaluate(
                 eval_data_iterator, seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
                     num_microbatches=eval_num_microbatches,
-                    default_seq_length=state.cfg.model.seq_length,
+                    default_seq_length=default_seq_length,
                     seq_key="tokens",
                 )
 
@@ -256,7 +258,7 @@ def evaluate(
             fault_tolerance.on_eval_step_end(state)
 
             # Workaround: for FullIteration CG only. TODO: Filed #2569 to fix this.
-            if is_full_iteration_cuda_graph(state.cfg.model):
+            if not is_multimodule and is_full_iteration_cuda_graph(state.cfg.model):
                 torch.cuda.synchronize()
 
             if should_fire(callback_manager, step_end_event):
@@ -326,14 +328,14 @@ def evaluate(
         elif process_non_loss_data_func is not None and is_last_rank():
             # Handle finetuning vs pretraining for non-loss data collection
             non_loss_data_iterator = data_iterator
-            non_loss_seq_length = state.cfg.model.seq_length
+            non_loss_seq_length = default_seq_length
 
             if state.cfg.dataset.dataloader_type == "batch":
                 # Finetuning path: prepare batch and wrap for VPP
                 non_loss_microbatch_iterator, non_loss_seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
                     num_microbatches=eval_num_microbatches,
-                    default_seq_length=state.cfg.model.seq_length,
+                    default_seq_length=default_seq_length,
                     seq_key="tokens",
                 )
                 non_loss_data_iterator = make_data_iterator_list(
