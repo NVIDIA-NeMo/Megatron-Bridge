@@ -71,6 +71,12 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
         config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
 
 
+_HYBRIDEP_PADDING_FIELDS = (
+    "moe_hybridep_pad_uneven_dispatch_inputs",
+    "moe_hybridep_pad_variable_tokens",
+)
+
+
 def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> None:
     """Default expert tensor parallelism to one when expert parallelism is enabled.
 
@@ -116,14 +122,7 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
     ):
         return
 
-    padding_fields = tuple(
-        field_name
-        for field_name in (
-            "moe_hybridep_pad_uneven_dispatch_inputs",
-            "moe_hybridep_pad_variable_tokens",
-        )
-        if hasattr(config, field_name)
-    )
+    padding_fields = tuple(field_name for field_name in _HYBRIDEP_PADDING_FIELDS if hasattr(config, field_name))
     if not padding_fields:
         raise AttributeError("Megatron Core TransformerConfig does not expose a HybridEP uneven-input padding field")
     for padding_field in padding_fields:

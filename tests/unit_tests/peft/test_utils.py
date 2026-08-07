@@ -1663,6 +1663,65 @@ class TestGroupedExpertLinearAdapter:
 
             @staticmethod
             def forward(ctx, inp, non_tensor_args, *weights_and_biases):
+                (
+                    m_splits,
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    module,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
+                assert ctx is None
+                calls.append((inp, None, non_tensor_args, weights_and_biases))
+                return expected
+
+        class TE216GroupedLinear:
+            @staticmethod
+            def apply(inp, non_tensor_args, *weights_and_biases):
+                calls.append((inp, None, non_tensor_args, weights_and_biases))
+                return expected
+
+            @staticmethod
+            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
+                (
+                    m_splits,
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
                 assert ctx is None
                 calls.append((inp, None, non_tensor_args, weights_and_biases))
                 return expected
@@ -1697,7 +1756,7 @@ class TestGroupedExpertLinearAdapter:
 
         autograd_functions = {
             "2.14": TE214GroupedLinear,
-            "2.16": TE214GroupedLinear,
+            "2.16": TE216GroupedLinear,
             "2.17": TE217GroupedLinear,
             "2.18": TE218GroupedLinear,
         }
