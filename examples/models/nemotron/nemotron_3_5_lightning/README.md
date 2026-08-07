@@ -186,10 +186,16 @@ preferable to maintaining a Lightning-only copy of adapter merge logic.
 The exact 26.06.01 image bundles PEFT 0.19.1 with Transformers 5.8.1. For this
 model, PEFT reconstructs Transformers `WeightConverter` objects with
 `distributed_operation` and `quantization_operation`, but that Transformers
-constructor does not accept those arguments. Consequently, direct loading of
-the exported PEFT package in this exact image is not a supported verification
-path. The export remains a standard PEFT artifact for use with a compatible
-PEFT/Transformers environment; no model-local monkeypatch is installed.
+constructor does not accept those arguments. Consequently, a direct PEFT check
+may stop before reaching the logit comparison in this exact image. This is a
+known dependency limitation and is not treated as a completed PEFT check.
+`adapter.sh` intentionally has no `verify` action, and this example does not add
+`--min-cosine-similarity` or `--max-relative-l2` options to loosen the shared
+verifier's acceptance criterion. The export remains a standard PEFT artifact
+for use with a compatible PEFT/Transformers environment; no model-local
+monkeypatch is installed. The supported 26.06.01 validation is the common
+Megatron-checkpoint merge, exact tensor-schema/value audit, and distributed
+inference documented below.
 
 ## Manual 26.06.01 verification
 
