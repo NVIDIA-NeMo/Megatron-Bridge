@@ -44,6 +44,7 @@ _import_stubs["megatron.core.pipeline_parallel.schedules"].get_forward_backward_
 _import_stubs["megatron.bridge"].AutoBridge = MagicMock()
 _import_stubs["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].get_last_rank = MagicMock()
+_import_stubs["megatron.bridge.utils.common_utils"].maybe_initialize_distributed = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_0 = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_last = MagicMock()
 for name in ("AutoConfig", "AutoProcessor", "AutoTokenizer", "GenerationConfig"):
@@ -61,6 +62,47 @@ for name in (
 with patch.dict(sys.modules, _import_stubs):
     _SCRIPT_GLOBALS = runpy.run_path(_SCRIPT)
 _main = _SCRIPT_GLOBALS["main"]
+
+
+@pytest.mark.unit
+def test_checkpoint_inference_aligns_parameter_dtype_with_pipeline_dtype() -> None:
+    """Checkpoint inference must not mix bf16 pipeline inputs with fp32 parameters."""
+    args = SimpleNamespace(
+        ep=1,
+        etp=1,
+        hf_model_path="org/gemma4-vl",
+        hf_revision="revision",
+        megatron_model_path="/checkpoint",
+        pp=2,
+        pp_layout=None,
+        tp=1,
+        trust_remote_code=False,
+    )
+
+    class StopAfterCheckpointLoad(Exception):
+        pass
+
+    provider = MagicMock()
+    bridge = MagicMock()
+    bridge.to_megatron_provider.return_value = provider
+    bridge.load_megatron_model.side_effect = StopAfterCheckpointLoad
+
+    script_globals = {
+        "AutoBridge": SimpleNamespace(from_hf_pretrained=MagicMock(return_value=bridge)),
+        "AutoConfig": SimpleNamespace(from_pretrained=MagicMock(return_value=SimpleNamespace(model_type="gemma4"))),
+        "is_safe_repo": MagicMock(return_value=False),
+        "maybe_initialize_distributed": MagicMock(),
+        "print_rank_0": MagicMock(),
+    }
+
+    with patch.dict(_main.__globals__, script_globals), pytest.raises(StopAfterCheckpointLoad):
+        _main(args)
+
+    mp_overrides = bridge.load_megatron_model.call_args.kwargs["mp_overrides"]
+    assert mp_overrides["pipeline_dtype"] == torch.bfloat16
+    assert mp_overrides["params_dtype"] == mp_overrides["pipeline_dtype"]
+    assert mp_overrides["bf16"] is True
+    assert mp_overrides["fp16"] is False
 
 
 @pytest.mark.unit
