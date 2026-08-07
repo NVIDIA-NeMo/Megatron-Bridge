@@ -23,6 +23,8 @@ import megatron.bridge.training.setup as training_setup
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.checkpointing import load_checkpoint
@@ -31,6 +33,7 @@ from megatron.bridge.training.setup import (
     _build_distributed_model,
     _register_pre_wrap_hook,
     _register_setup_pre_wrap_hook,
+    _resolve_embedding_ranks_fn,
     _should_load_checkpoint,
     _update_model_config_funcs,
     _validate_and_set_vocab_size,
@@ -50,6 +53,30 @@ def _make_gpt_model_config(**kwargs):
     defaults = dict(transformer=_make_transformer(**tc_kwargs), vocab_size=32000)
     defaults.update(kwargs)
     return GPTModelConfig(**defaults)
+
+
+def _make_mtp_model_config(model_config_cls, *, share_embeddings_and_output_weights=False):
+    transformer_kwargs = {
+        "hidden_size": 128,
+        "mtp_num_layers": 1,
+        "num_attention_heads": 1,
+        "num_layers": 1,
+        "pipeline_model_parallel_layout": "Et|m|L",
+        "pipeline_model_parallel_size": 3,
+    }
+    if model_config_cls in (GPTModelProvider, HybridModelProvider):
+        model_config = model_config_cls(
+            share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+            **transformer_kwargs,
+        )
+    else:
+        model_config = model_config_cls(
+            share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+            transformer=_make_transformer(**transformer_kwargs),
+            vocab_size=128,
+        )
+    model_config.finalize()
+    return model_config
 
 
 def _make_checkpoint_source_config(
@@ -72,6 +99,64 @@ def _make_checkpoint_source_config(
         peft=peft,
         _checkpoint_load_required=required,
     )
+
+
+@pytest.mark.parametrize(
+    ("share_embeddings_and_output_weights", "expected_ranks"),
+    [(False, [0, 1]), (True, [0, 1, 2])],
+)
+@pytest.mark.parametrize(
+    "model_config_cls",
+    [GPTModelConfig, GPTModelProvider, HybridModelConfig, HybridModelProvider],
+)
+def test_mtp_embedding_group_includes_standalone_mtp_stage(
+    model_config_cls,
+    share_embeddings_and_output_weights,
+    expected_ranks,
+):
+    model_config = _make_mtp_model_config(
+        model_config_cls,
+        share_embeddings_and_output_weights=share_embeddings_and_output_weights,
+    )
+
+    get_embedding_ranks = _resolve_embedding_ranks_fn(model_config, None)
+    explicit_callback = Mock()
+
+    assert get_embedding_ranks is not None
+    assert get_embedding_ranks([0, 1, 2]) == expected_ranks
+    assert _resolve_embedding_ranks_fn(model_config, explicit_callback) is explicit_callback
+
+
+def test_setup_forwards_model_aware_embedding_ranks_to_parallel_initialization():
+    model_config = _make_mtp_model_config(GPTModelProvider)
+    cfg = SimpleNamespace(
+        dist=SimpleNamespace(disable_jit_fuser=False, enable_megatron_core_experimental=False),
+        logger=SimpleNamespace(
+            filter_warnings=False,
+            logging_level="INFO",
+            modules_to_filter=[],
+            set_level_for_all_loggers=False,
+        ),
+        model=model_config,
+    )
+    state = SimpleNamespace(cfg=cfg, initialize_async_checkpoint_worker=Mock())
+    initialize_megatron = Mock(side_effect=RuntimeError("stop after process-group initialization"))
+
+    with (
+        patch.multiple(
+            training_setup,
+            initialize_megatron=initialize_megatron,
+            maybe_log_and_save_config=Mock(),
+            set_experimental_flag=Mock(),
+            setup_logging=Mock(),
+        ),
+        pytest.raises(RuntimeError, match="stop after process-group initialization"),
+    ):
+        training_setup.setup(state, Mock())
+
+    get_embedding_ranks = initialize_megatron.call_args.kwargs["get_embedding_ranks"]
+    assert get_embedding_ranks([0, 1, 2]) == [0, 1]
+    assert get_embedding_ranks([0, 1, 2], 3) == [0, 1]
 
 
 def test_gpt_sft_config_receives_tokenizer_through_builder_binding_without_mutation():

@@ -1498,24 +1498,32 @@ class MegatronModelBridge(
                 continue
 
             # --- Standard export path ---
+            # Merge LoRA delta into the base weight *before* quantization
+            # (``maybe_modify_converted_hf_weight``). Adding a bf16 LoRA delta to an
+            # already-quantized base (e.g. MXFP4, where the packed weight shape
+            # changes and values leave the 4-bit range) both breaks the LoRA delta
+            # shape match and produces an invalid quantized tensor, so vLLM reads
+            # back wrong weights. Merging first keeps the whole weight in the bf16
+            # domain until quantization acts on the merged result. The non-quantization
+            # work ``maybe_modify`` does (e.g. key renames) does not depend on the
+            # merge state, so the swap is safe for bridges that don't quantize.
+            if merge_adapter_weights and adapter_tasks:
+                adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
+                if adapter_weights is None:
+                    adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                    materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
+                converted_weights_dict = self._merge_lora_adapter_weights(
+                    megatron_model,
+                    converted_weights_dict,
+                    adapter_weights,
+                )
+
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,
                 converted_weights_dict,
                 hf_state_dict,
             )  # dict will be none except for one expert;
             # All ranks get the full tensor
-
-            if merge_adapter_weights and adapter_tasks:
-                adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
-                if adapter_weights is None:
-                    adapter_weights = self.materialize_adapter_weights(adapter_tasks)
-                    materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
-                # Merge LoRA adapter weights back into the base tensor for HF export
-                converted_weights_dict = self._merge_lora_adapter_weights(
-                    megatron_model,
-                    converted_weights_dict,
-                    adapter_weights,
-                )
 
             converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
