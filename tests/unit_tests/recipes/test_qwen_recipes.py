@@ -30,6 +30,9 @@ import torch
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
+pytestmark = pytest.mark.unit
+
+
 _qwen_module = importlib.import_module("megatron.bridge.recipes.qwen")
 _QWEN_RECIPE_FUNCS = [
     getattr(_qwen_module, name)
@@ -816,6 +819,29 @@ def test_qwen35_h100_fused_gated_rms_norm_requires_exact_fla_version(
         qwen35_runtime._load_fused_gated_rms_norm()
 
 
+def test_qwen35_h100_fused_gated_rms_norm_reports_missing_package(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test the actionable error when FLA package metadata is unavailable."""
+    import sys
+    from importlib import metadata
+    from types import ModuleType
+
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    fused_norm_gate = ModuleType("fla.modules.fused_norm_gate")
+    fused_norm_gate.rms_norm_gated = object()
+    monkeypatch.setitem(sys.modules, "fla.modules.fused_norm_gate", fused_norm_gate)
+
+    def missing_package(_package: str) -> str:
+        raise metadata.PackageNotFoundError
+
+    monkeypatch.setattr(qwen35_runtime.metadata, "version", missing_package)
+
+    with pytest.raises(ImportError, match="requires flash-linear-attention==0.4.2"):
+        qwen35_runtime._load_fused_gated_rms_norm()
+
+
 def test_qwen35_h100_fused_gated_rms_norm_loads_pinned_fla_version(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -988,6 +1014,185 @@ def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
     assert manager.routing_map.shape == (3, 16)
     assert manager.token_probs.shape == (3, 16)
     assert manager.num_permuted_tokens == 32
+
+
+@pytest.mark.parametrize(
+    ("fp8", "fp4", "drop_and_pad", "capacity_factor", "match"),
+    [
+        (True, None, False, 1.05, "BF16-only"),
+        (None, True, False, 1.05, "BF16-only"),
+        (None, None, True, 1.05, "does not support per-expert drop-and-pad"),
+        (None, None, False, None, "requires static rank capacity"),
+    ],
+)
+def test_qwen35_h100_static_hybridep_metadata_rejects_unsupported_configs(
+    fp8: bool | None,
+    fp4: bool | None,
+    drop_and_pad: bool,
+    capacity_factor: float | None,
+    match: str,
+):
+    """Test that static HybridEP metadata fails closed outside its measured contract."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    manager = SimpleNamespace(
+        config=SimpleNamespace(fp8=fp8, fp4=fp4, moe_router_topk=8),
+        drop_and_pad=drop_and_pad,
+        moe_expert_rank_capacity_factor=capacity_factor,
+        num_experts=16,
+    )
+
+    with pytest.raises(RuntimeError, match=match):
+        qwen35_runtime._setup_h100_static_hybridep_metadata(
+            manager,
+            torch.zeros((3, 2, 8), dtype=torch.bool),
+            torch.zeros((3, 2, 8), dtype=torch.float32),
+        )
+
+
+def test_qwen35_h100_grouped_mm_selects_supported_torch_entry_point(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test the public grouped-MM API and the pinned private-API fallback."""
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    lhs, rhs, offsets = object(), object(), object()
+    calls: list[tuple[object, object, object]] = []
+
+    def grouped_mm(left: object, right: object, *, offs: object) -> object:
+        calls.append((left, right, offs))
+        return calls
+
+    monkeypatch.setattr(qwen35_runtime.F, "grouped_mm", grouped_mm, raising=False)
+    assert qwen35_runtime._grouped_mm(lhs, rhs, offsets) is calls
+    assert calls == [(lhs, rhs, offsets)]
+
+    monkeypatch.delattr(qwen35_runtime.F, "grouped_mm", raising=False)
+    monkeypatch.setattr(qwen35_runtime.torch, "_grouped_mm", grouped_mm, raising=False)
+    assert qwen35_runtime._grouped_mm(lhs, rhs, offsets) is calls
+    assert calls[-1] == (lhs, rhs, offsets)
+
+    monkeypatch.delattr(qwen35_runtime.torch, "_grouped_mm", raising=False)
+    with pytest.raises(RuntimeError, match="requires PyTorch grouped_mm support"):
+        qwen35_runtime._grouped_mm(lhs, rhs, offsets)
+
+
+def test_qwen35_h100_consolidates_discrete_expert_weights():
+    """Test conversion of discrete BF16 expert weights into one grouped parameter."""
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    linear = torch.nn.Module()
+    linear.num_gemms = 2
+    linear.single_grouped_weight = False
+    weight0 = torch.nn.Parameter(torch.ones((2, 3), dtype=torch.bfloat16))
+    weight0.expert_parallel = True
+    weight1 = torch.nn.Parameter(torch.zeros((2, 3), dtype=torch.bfloat16), requires_grad=False)
+    linear.register_parameter("weight0", weight0)
+    linear.register_parameter("weight1", weight1)
+
+    result = qwen35_runtime._consolidate_expert_weights(linear, label="experts")
+
+    assert result is linear._torch_grouped_weight
+    assert result.shape == (2, 2, 3)
+    assert result.requires_grad is True
+    assert result.expert_parallel is True
+    assert linear.weight0 is None
+    assert linear.weight1 is None
+    torch.testing.assert_close(result[0], weight0)
+    torch.testing.assert_close(result[1], weight1)
+
+
+@pytest.mark.parametrize(
+    ("single_grouped_weight", "weights", "match"),
+    [
+        (True, [], "single_grouped_weight is not supported"),
+        (False, [], "requires BF16 weights"),
+        (False, [torch.ones((2, 3), dtype=torch.float32)], "requires BF16 weights"),
+    ],
+)
+def test_qwen35_h100_consolidate_expert_weights_rejects_unsupported_inputs(
+    single_grouped_weight: bool,
+    weights: list[torch.Tensor],
+    match: str,
+):
+    """Test that grouped expert consolidation rejects unsupported layouts and dtypes."""
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    linear = torch.nn.Module()
+    linear.num_gemms = len(weights)
+    linear.single_grouped_weight = single_grouped_weight
+    for index, weight in enumerate(weights):
+        linear.register_parameter(f"weight{index}", torch.nn.Parameter(weight))
+
+    with pytest.raises(RuntimeError, match=match):
+        qwen35_runtime._consolidate_expert_weights(linear, label="experts")
+
+
+def test_qwen35_h100_runtime_replacement_rejects_unexpected_builders():
+    """Test fail-closed handling of unexpected MCore builder structures."""
+    from functools import partial
+    from types import SimpleNamespace
+
+    from megatron.core.transformer.moe.moe_layer import MoELayer
+
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    with pytest.raises(RuntimeError, match="Unexpected Qwen3.5 MoE layer builder"):
+        qwen35_runtime._replace_moe_runtime(object())
+
+    unexpected_experts = partial(MoELayer, submodules=SimpleNamespace(experts=object()))
+    with pytest.raises(RuntimeError, match="Unexpected Qwen3.5 grouped expert builder"):
+        qwen35_runtime._replace_moe_runtime(unexpected_experts)
+
+    attention_spec = object()
+    assert qwen35_runtime._replace_gdn_runtime(attention_spec) is attention_spec
+
+
+def test_qwen35_h100_grouped_expert_requires_config_and_gpu_counts():
+    """Test early validation that does not require constructing GPU expert modules."""
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    with pytest.raises(RuntimeError, match="Could not resolve the Qwen3.5 grouped expert config"):
+        qwen35_runtime._Qwen35H100TorchGroupedMLP()
+
+    grouped_mlp = qwen35_runtime._Qwen35H100TorchGroupedMLP.__new__(qwen35_runtime._Qwen35H100TorchGroupedMLP)
+    with pytest.raises(RuntimeError, match="requires GPU-resident expert counts"):
+        grouped_mlp.forward(
+            torch.zeros((2, 3), dtype=torch.bfloat16),
+            torch.ones(2, dtype=torch.int32),
+            torch.ones(2, dtype=torch.bfloat16),
+        )
+
+    class FakeCudaCounts:
+        is_cuda = True
+        dtype = torch.float32
+
+    with pytest.raises(RuntimeError, match="requires integer expert counts"):
+        grouped_mlp.forward(
+            torch.zeros((2, 3), dtype=torch.bfloat16),
+            FakeCudaCounts(),
+            torch.ones(2, dtype=torch.bfloat16),
+        )
+
+
+def test_qwen35_h100_gdn_method_delegates_to_fused_norm(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test the GDN override delegates to the measured fused norm helper."""
+    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
+
+    module, x, gate, result = object(), object(), object(), object()
+    monkeypatch.setattr(
+        qwen35_runtime,
+        "_apply_fused_gated_rms_norm",
+        lambda actual_module, actual_x, actual_gate: result
+        if (actual_module, actual_x, actual_gate) == (module, x, gate)
+        else None,
+    )
+
+    assert qwen35_runtime._Qwen35H100GatedDeltaNet._apply_gated_norm(module, x, gate) is result
 
 
 def test_qwen3_30b_a3b_h100_fp8cs_perf_recipe_uses_te_partial_cuda_graph(
