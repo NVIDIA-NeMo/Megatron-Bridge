@@ -21,7 +21,6 @@ from pathlib import Path
 import torch
 import yaml
 from rich.console import Console
-from rich.table import Table
 from utils import parse_dtype, prepare_output_directory, validate_output_path
 
 from megatron.bridge import AutoBridge
@@ -207,21 +206,15 @@ def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.
     """Verify exported Megatron weights against the original Hugging Face state."""
     is_rank_0 = torch.distributed.get_rank() == 0
     all_match = True
+    verified_count = 0
+    mismatch_count = 0
+    mismatch_samples: list[str] = []
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
-    table = None
-    if is_rank_0:
-        table = Table(title="Hugging Face Weights Verification")
-        table.add_column("Weight Name", style="cyan")
-        table.add_column("Shape")
-        table.add_column("DType")
-        table.add_column("Device")
-        table.add_column("Matches Original", justify="center")
 
     for name, exported in bridge.export_hf_weights(megatron_model, show_progress=False):
         if not is_rank_0:
             continue
-        assert table is not None
         original = bridge.hf_pretrained.state[name]
         match, skipped_fp8 = _roundtrip_weights_match(name, exported, original)
         if skipped_fp8:
@@ -229,16 +222,24 @@ def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.
             if len(fp8_skip_samples) < 20:
                 fp8_skip_samples.append(f"{name}: exported {exported.dtype} vs original {original.dtype}")
         all_match = all_match and match
-        table.add_row(
-            name,
-            str(tuple(exported.shape)),
-            str(exported.dtype).replace("torch.", ""),
-            str(exported.device),
-            "✅" if match else "❌",
-        )
+        verified_count += 1
+        if not match:
+            mismatch_count += 1
+            if len(mismatch_samples) < 20:
+                mismatch_samples.append(name)
+
+    mismatch = torch.tensor(not all_match, dtype=torch.int32, device=torch.cuda.current_device())
+    torch.distributed.broadcast(mismatch, src=0)
 
     if is_rank_0:
-        assert table is not None
+        compared_count = verified_count - fp8_skip_count
+        matched_count = compared_count - mismatch_count
+        color = "green" if mismatch_count == 0 else "red"
+        _CONSOLE.print(f"[{color}]Weight verification: {matched_count}/{compared_count} compared weights matched[/]")
+        if mismatch_count:
+            _CONSOLE.print(f"[red]{mismatch_count} weight mismatches (showing up to 20):[/red]")
+            for entry in mismatch_samples:
+                _CONSOLE.print(f"  [red]{entry}[/red]")
         if fp8_skip_count:
             _CONSOLE.print(
                 f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
@@ -247,10 +248,6 @@ def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.
                 _CONSOLE.print(f"  [yellow]{entry}[/yellow]")
             if fp8_skip_count > len(fp8_skip_samples):
                 _CONSOLE.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
-        _CONSOLE.print(table)
-
-    mismatch = torch.tensor(not all_match, dtype=torch.int32, device=torch.cuda.current_device())
-    torch.distributed.broadcast(mismatch, src=0)
     if mismatch.item():
         raise ValueError("Weight mismatch detected")
 

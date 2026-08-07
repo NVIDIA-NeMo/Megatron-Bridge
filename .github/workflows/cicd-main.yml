@@ -262,7 +262,7 @@ jobs:
           echo "📍 MCore repo: $MCORE_REPO"
           echo "🎯 Triggered by: $TRIGGERED_BY"
 
-          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF"; then
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"; then
             echo "MCore revision is not an approved NVIDIA branch head: $MCORE_REF" >&2
             exit 1
           fi
@@ -391,7 +391,7 @@ jobs:
           echo "📍 MCore repo: $MCORE_REPO"
           echo "🎯 Triggered by: $TRIGGERED_BY"
 
-          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF"; then
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"; then
             echo "MCore revision is not an approved NVIDIA branch head: $MCORE_REF" >&2
             exit 1
           fi
