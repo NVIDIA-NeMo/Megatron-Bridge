@@ -87,11 +87,11 @@ def main() -> int:
     )
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_model,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map=device_map,
         trust_remote_code=args.trust_remote_code,
         local_files_only=is_local,
-    ).eval()
+    ).to(dtype).eval()
     formatted_prompt = _format_prompt(
         tokenizer,
         args.prompt,
@@ -118,7 +118,7 @@ def main() -> int:
 
     completion_ids = output[0, prompt_length:].tolist()
     completion = tokenizer.decode(completion_ids, skip_special_tokens=True)
-    LOG.info("HF completion (%d tokens): %s", args.max_new_tokens, json.dumps(completion, ensure_ascii=False))
+    print(f"INFO: HF completion ({args.max_new_tokens} tokens): {json.dumps(completion, ensure_ascii=False)}", flush=True)
     return 0
 
 

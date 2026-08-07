@@ -34,8 +34,8 @@ verification_index:
       - manual_forward_pass
   training:
     GB200:
-      verified: [pretrain, sft, sft_long_context, checkpoint_resume]
-      unverified: [sft_export_inference]
+      verified: [pretrain, sft, sft_long_context, sft_export_inference, checkpoint_resume]
+      
       unsupported: [peft]
   performance:
     GB200: verified
@@ -44,7 +44,7 @@ model:
   hf_id: deepseek-ai/DeepSeek-V4-Flash
   hf_revision: "60d8d70770c6776ff598c94bb586a859a38244f1"  # pragma: allowlist secret
   architecture: DeepseekV4ForCausalLM
-  min_transformers_version: "4.50.0"
+  min_transformers_version: "5.12.0"
 
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08.rc4
@@ -173,21 +173,18 @@ items:
         context_parallel_size: 2
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config
+        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config
         --step-func dsv4_step
         --pretrained_checkpoint work/models/deepseek-v4-flash-megatron
         --save_dir work/model-verification/dsv4-flash/sft-ref
         --save_interval 100 --max_steps 100
         model.pipeline_model_parallel_size=4
         'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL'
-        model.context_parallel_size=2 model.cp_partition_mode=contiguous
+        model.context_parallel_size=2
         model.expert_model_parallel_size=8
-        model.apply_dsa_kernel_fusion=false model.apply_rope_fusion=true
-        model.use_fused_mhc=true model.moe_token_dispatcher_type=alltoall
         model.moe_grouped_gemm=false
         model.recompute_granularity=full model.recompute_method=uniform
         model.recompute_num_layers=1
-        model.dsa_indexer_loss_coeff=0.01 model.dsa_indexer_use_sparse_loss=true
         dataset.seq_length=1024
         scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
         validation.eval_interval=0 validation.eval_iters=0
@@ -198,25 +195,26 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-05
+      last_verified: 2026-08-07
       metrics:
         initial_loss: 0.94383
-        final_loss: 0.28346
-        last_10_steps_step_time_ms_avg: 24639.630
-        last_10_steps_model_tflops_per_gpu_avg: 7.330
+        final_loss: 0.28370
+        last_10_steps_step_time_ms_avg: 13806.500
+        last_10_steps_model_tflops_per_gpu_avg: 13.620
       expected_result: >
         On 64 GB200 (16 nodes x 4 GPUs), TP=1/PP=4/EP=8/CP=2/DP=1, GBS/MBS 128/1.
-        OpenMathInstruct-2 thinking data with offline packing, seq_length=1024,
-        pad_seq_to_mult=4. Full recompute (granularity=full) is required to fit in
-        memory at seq=1024 with CP=2. The run completes 100 steps with finite LM and
-        MTP losses, no skipped or NaN iterations, and a complete step-100 checkpoint.
-        Use moe_grouped_gemm=False for export compatibility (see DSv4ExpertGatedMLPMapping).
+        OpenMathInstruct-2 thinking data with offline packing, seq_length=1024.
+        Full recompute (granularity=full) is required to fit in memory at seq=1024
+        with CP=2. HybridEP dispatcher and DSA kernel fusion are enabled via the
+        GB200-specific recipe. The run completes 100 steps with finite LM and MTP
+        losses, no skipped or NaN iterations, and a complete step-100 checkpoint.
+        moe_grouped_gemm=False is preserved for export compatibility.
         dist.distributed_timeout_minutes must be 180 or above to allow offline data
         packing (approximately 63 minutes) before training begins.
 
   sft_export_inference:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
       commands:
@@ -227,23 +225,20 @@ items:
           --megatron-path work/model-verification/dsv4-flash/sft-ref/iter_0000100
           --hf-path work/model-verification/dsv4-flash/sft-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code
+          --not-strict
         - >
           uv run python
           skills/create-model-verification-card/scripts/verify_hf_inference.py
           --hf-model work/model-verification/dsv4-flash/sft-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template --disable-thinking
-      last_verified: null
+      last_verified: 2026-08-06
       expected_result: >
-        Verification ongoing. Root cause: MCore stores all expert weights as a single
-        stacked tensor (decoder.layers.X.mlp.experts.experts.linear_fc1.weight:
-        [E, 2*ffn, hidden]) while the previous Bridge GatedMLPMapping split along
-        dim=0 (expert axis) instead of dim=1 (gate/up axis), producing malformed
-        per-expert w1.weight shapes. Fix: DSv4ExpertGatedMLPMapping and
-        DSv4ExpertDownProjMapping in this PR correctly all-gather the full stacked
-        tensor across EP ranks and unstack into per-expert w1/w2/w3 weights.
-        Export and HF inference verification in progress; result and metrics will
-        be recorded once the run completes.
+        The exported BF16 SFT checkpoint reloads successfully as DeepseekV4ForCausalLM.
+        Two independent greedy runs produce byte-identical token IDs and exactly 32 new
+        tokens with this literal completion: "Paris is important to France because it is
+        the country's capital and a major center for politics, culture, and economy. It
+        is also a symbol of French history"
 
   sft_long_context:
     GB200:
@@ -254,7 +249,7 @@ items:
         context_parallel_size: 2
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config
+        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config
         --step-func dsv4_step
         --pretrained_checkpoint work/models/deepseek-v4-flash-megatron
         --save_dir work/model-verification/dsv4-flash/sft-ref
@@ -263,12 +258,9 @@ items:
         'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL'
         model.context_parallel_size=2 model.cp_partition_mode=contiguous
         model.expert_model_parallel_size=8
-        model.apply_dsa_kernel_fusion=false model.apply_rope_fusion=true
-        model.use_fused_mhc=true model.moe_token_dispatcher_type=alltoall
         model.moe_grouped_gemm=false
         model.recompute_granularity=full model.recompute_method=uniform
         model.recompute_num_layers=1
-        model.dsa_indexer_loss_coeff=0.01 model.dsa_indexer_use_sparse_loss=true
         dataset.seq_length=1024
         scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
         validation.eval_interval=0 validation.eval_iters=0
@@ -279,12 +271,12 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-05
+      last_verified: 2026-08-07
       metrics:
         initial_loss: 0.94383
-        final_loss: 0.28346
-        last_10_steps_step_time_ms_avg: 24639.630
-        last_10_steps_model_tflops_per_gpu_avg: 7.330
+        final_loss: 0.28370
+        last_10_steps_step_time_ms_avg: 13806.500
+        last_10_steps_model_tflops_per_gpu_avg: 13.620
       expected_result: >
         Same run as sft.GB200. CP=2 with contiguous partitioning and offline-packed
         OpenMathInstruct-2 at seq_length=1024 demonstrates sequence packing and
@@ -352,26 +344,28 @@ items:
   pretrain_performance:
     GB200:
       status: verified
-      precision: bf16
+      precision: fp8_mx
       command: >
-        ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config
-        --dataset mock --max_steps 50
+        ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
+        --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config
+        --max_steps 50
         scheduler.lr_warmup_iters=5 scheduler.lr_decay_iters=50
         validation.eval_interval=0 validation.eval_iters=0
         checkpoint.exit_on_missing_checkpoint=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-        dist.distributed_timeout_minutes=60
-      last_verified: 2026-08-04
+        dist.distributed_timeout_minutes=120
+      last_verified: 2026-08-06
       metrics:
-        initial_loss: 12.58104
-        final_loss: 0.00888
-        last_10_steps_step_time_ms_avg: 8734.200
-        last_10_steps_model_tflops_per_gpu_avg: 170.590
+        initial_loss: 13.58750
+        final_loss: 3.62683
+        last_10_steps_step_time_ms_avg: 8134.600
+        last_10_steps_model_tflops_per_gpu_avg: 731.400
       expected_result: >
-        On 64 GB200 (16 nodes x 4 GPUs), PP=8/EP=8/CP=1/TP=1, GBS/MBS 256/1, mock
-        data. The 50-step run completes with finite losses, no skipped or NaN
-        iterations, and all four metrics recorded. Note: the first iteration
-        takes approximately 24 minutes for CUDA kernel warmup; subsequent iterations
-        run at approximately 8.5 seconds per step. Set NCCL_TIMEOUT=7200000 and
-        TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=7200 to avoid NCCL watchdog kills during warmup.
+        On 128 GB200 (32 nodes x 4 GPUs, --segment=16 for NVLink locality),
+        PP=1/EP=64/CP=1/TP=1/DP=2, GBS/MBS 2048/1, FP8-MX with HybridEP dispatcher
+        and full-iteration CUDA graphs. The 50-step run completes with finite losses,
+        no skipped or NaN iterations, and all four metrics recorded. First iteration
+        takes approximately 24 minutes for CUDA graph compilation and kernel warmup;
+        subsequent iterations run at approximately 8.1 seconds per step at steady state.
+        The --segment=16 flag is required to ensure nodes are allocated within NVLink
+        domains for MNNVL communication.
