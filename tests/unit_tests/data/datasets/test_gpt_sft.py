@@ -357,6 +357,31 @@ class TestDataGPTSFTPackedDataset:
         ]
         dataset.collate_fn(batch)
 
+    def test_collate_fn_supports_different_sequence_counts(self, tmp_path):
+        """Packed rows with different logical sequence counts collate into one global batch."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_seq_length_to_mult = 1
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 13, 20, 21, 22, 23]),
+                "seq_boundaries": [0, 4, 8],
+                "loss_mask": np.ones(8, dtype=np.int64),
+            },
+            {
+                "input_ids": np.array([30, 31, 32, 33, 34, 35, 36, 37]),
+                "seq_boundaries": [0, 8],
+                "loss_mask": np.ones(8, dtype=np.int64),
+            },
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 6, 7], [0, 7, 7, 7]]
+        assert processed["cu_seqlens_kv"].tolist() == processed["cu_seqlens_q"].tolist()
+        assert processed["max_seqlen_q"].tolist() == [[3], [7]]
+        assert processed["max_seqlen_kv"].tolist() == [[3], [7]]
+
     def test_utils_func_packed(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
 
