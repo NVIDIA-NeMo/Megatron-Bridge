@@ -255,7 +255,7 @@ class TestGLM5Conversion:
         test_output_dir = tmp_path / f"glm5_moe_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        repo_root = "/opt/Megatron-Bridge"
+        repo_root = Path(__file__).resolve().parents[5]
         cmd = [
             sys.executable,
             "-m",
@@ -328,7 +328,7 @@ class TestGLM5Conversion:
         test_output_dir = tmp_path / "glm52_indexshare"
         test_output_dir.mkdir(exist_ok=True)
 
-        repo_root = "/opt/Megatron-Bridge"
+        repo_root = Path(__file__).resolve().parents[5]
         cmd = [
             sys.executable,
             "-m",
