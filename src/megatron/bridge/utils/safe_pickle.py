@@ -112,10 +112,14 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
             # not execute arbitrary code.
             "torch._utils": frozenset({"_rebuild_tensor_v2", "_rebuild_tensor"}),
             # Energon dataloader state types — the explicit allowlist for this load site.
+            # If a real Energon checkpoint references a type not listed here the load will
+            # raise an UnpicklingError that names the missing ``module.name``; file a bug
+            # against Megatron Bridge so the allowlist can be extended.
             "megatron.energon.state": frozenset({"FlexState"}),
             "megatron.energon.rng": frozenset({"SystemRngState"}),
             "megatron.energon.savable_loader": frozenset(
                 {
+                    "SavableCheckpoint",
                     "SavableDataLoaderState",
                     "SavableDatasetCheckpoint",
                     "SavableDatasetState",
@@ -124,6 +128,15 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
             "megatron.energon.flavors.webdataset.sample_loader": frozenset({"SliceState"}),
         }
     )
+
+    def find_class(self, module: str, name: str) -> type:
+        if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
+            return pickle.Unpickler.find_class(self, module, name)
+        raise pickle.UnpicklingError(
+            f"Restricted unpickler refused to load '{module}.{name}'. "
+            "This Energon checkpoint contains a type not in the dataloader-state allowlist. "
+            "Please file a bug against Megatron Bridge so it can be added."
+        )
 
 
 def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
