@@ -7,9 +7,9 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. GPT-OSS 20B H100 support verification has completed GPU
   HF-to-Megatron conversion, GPU Megatron-to-HF export, manual forward-pass
-  correlation, deterministic Megatron inference, and bounded pretraining; CPU
-  conversion, full SFT, long-context SFT, PEFT, and checkpoint resume remain
-  pending.
+  correlation, deterministic Megatron inference, bounded pretraining, and
+  direct checkpoint resume; CPU conversion, full SFT, SFT export/inference,
+  long-context SFT, and PEFT remain pending.
 verification_index:
   model_level:
     verified:
@@ -22,8 +22,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      verified: [pretrain]
-      unverified: [sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, checkpoint_resume]
+      unverified: [sft, sft_export_inference, sft_long_context, peft]
 model:
   hf_id: openai/gpt-oss-20b
   hf_revision: 6cee5e81ee83917806bbde320786a8fb61efebee  # pragma: allowlist secret
@@ -332,7 +332,7 @@ items:
 
   checkpoint_resume:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: pretrain
       command: >
@@ -353,21 +353,26 @@ items:
         --save_dir work/model-verification/gpt-oss-20b/pretrain-resume-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-06
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 6.496337
+        final_loss: 5.749735
+        last_10_steps_step_time_ms_avg: 21729.870
+        last_10_steps_model_tflops_per_gpu_avg: 120.620
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
-        loss_relative_tolerance: 0.01
-        loss_absolute_tolerance: 0.000001
-        sentinels_match: false
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: true
       expected_result: >
-        Future verification must resume directly from the pretrain step-50
-        checkpoint into a distinct output root, load optimizer and RNG state,
-        finish through step 100, record all four resume metrics, and compare
-        step-51 and step-100 losses against the uninterrupted reference within
-        the recorded tolerances.
+        The direct 16-GPU continuation restores optimizer, scheduler,
+        data-order, and RNG state from iter_0000050, begins at step 51, and
+        finishes exactly at step 100 in a distinct resumed root. All 50 resumed
+        optimizer-step rows are present with finite loss, zero skipped
+        iterations, and zero NaN iterations. Step-51 loss 6.496337 matches the
+        uninterrupted reference exactly; step-100 loss 5.749735 differs from
+        reference 5.750363 by 0.010921%, within the declared one-percent gate,
+        so both sentinels match. A complete 16-shard iter_0000100 checkpoint is
+        saved with metadata, train state, tokenizer artifacts, run_config.yaml,
+        and latest-checkpoint markers.
