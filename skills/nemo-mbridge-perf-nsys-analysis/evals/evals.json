@@ -1,0 +1,39 @@
+[
+  {
+    "id": "nsys-analysis-single-trace-critical-path",
+    "question": "Use the nemo-mbridge-perf-nsys-analysis skill to explain how you would analyze one Megatron Bridge .nsys-rep where NCCL occupies 38% of summed kernel time and memcpy occupies 20%. Rank likely fixes and estimate the possible gain without inventing numbers.",
+    "expected_skill": "nemo-mbridge-perf-nsys-analysis",
+    "expected_script": null,
+    "ground_truth": "The response must not call NCCL or memcpy bottlenecks from summed duration. It must establish a steady-state iteration window, use interval unions, split compute-absent time into launch-starved/blocking/dependency-stalled, report exposed and dependency-proven blocking communication together, verify copy direction/bandwidth/dependency, and estimate gain only from recoverable critical-path time. It should map proven launch starvation to CUDA graphs, blocking communication to overlap, and blocking copies to offload scheduling, while stating that no numeric gain is justified from the supplied percentages.",
+    "expected_behavior": [
+      "Read the nsys analysis skill before answering.",
+      "Use interval-union and critical-path accounting.",
+      "Distinguish exposed from blocking communication and copies.",
+      "Avoid a fabricated gain estimate.",
+      "Map verified findings to MBridge tuning skills."
+    ]
+  },
+  {
+    "id": "nsys-analysis-multi-rank-pipeline",
+    "question": "Use the nemo-mbridge-perf-nsys-analysis skill. I have rank 0, 17, and 71 traces from a PP=8 distributed training run. Which rank should be analyzed and how should NCCL time be interpreted?",
+    "expected_skill": "nemo-mbridge-perf-nsys-analysis",
+    "expected_script": null,
+    "ground_truth": "The response must not silently select rank 0. It should request or derive a rank-to-stage map, survey all supplied ranks, identify the slowest trainer-step rank, cover distinct pipeline stages or fingerprints, and compare only like model parts. For matched collective participants it should separate shortest-participant transfer proxy from rank jitter wait, distinguish total/exposed/blocking communication, and state alignment limitations across hosts.",
+    "expected_behavior": [
+      "Read the nsys analysis skill before answering.",
+      "Survey ranks before choosing representatives.",
+      "Respect pipeline-stage differences.",
+      "Separate transfer proxy, jitter wait, exposed communication, and blocking communication."
+    ]
+  },
+  {
+    "id": "nsys-analysis-negative-ncu",
+    "question": "Use Nsight Compute counters to determine why one GEMM reaches only 42% tensor-core SOL and rewrite the kernel.",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "The nsys analysis skill should not trigger because this is a kernel-level Nsight Compute and implementation task rather than an Nsight Systems trace analysis.",
+    "expected_behavior": [
+      "Do not use the nsys analysis skill as a substitute for Nsight Compute analysis."
+    ]
+  }
+]
