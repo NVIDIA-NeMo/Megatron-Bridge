@@ -1069,6 +1069,7 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.fsdp_double_buffer = True
+    cfg.ddp.megatron_fsdp_max_pool_double_buffer = True
     cfg.ddp.nccl_ub = False
     cfg.ddp.fsdp_db_use_persist_buf_on_alloc_fail = True
     cfg.ddp.overlap_grad_reduce = True
