@@ -192,6 +192,7 @@ def test_resource_validation_rejects_invalid_values(options, message):
         (("--task", "model-comparison", "--staged-model-comparison"), "comparison-artifact-path"),
         (("--comparison-artifact-path", "/shared/result.pt"), "staged-model-comparison"),
         (("--comparison-hf-partition", "interactive"), "staged-model-comparison"),
+        (("--comparison-hf-max-gpu-memory", "60GiB"), "staged-model-comparison"),
         (
             (
                 "--task",
@@ -239,7 +240,10 @@ def test_staged_comparison_artifact_requires_explicit_containing_mount():
         module._validate_staged_comparison_mount(args, ["/host:/other"])
 
 
-@pytest.mark.parametrize("option", ["--hf-output-path", "--hf-input-path", "--hf-device-map=auto"])
+@pytest.mark.parametrize(
+    "option",
+    ["--hf-output-path", "--hf-input-path", "--hf-device-map=auto", "--hf-max-gpu-memory=60GiB"],
+)
 def test_staged_comparison_rejects_internal_entry_point_options(option):
     module = _load_setup_inference_module()
 
@@ -494,6 +498,8 @@ def test_main_builds_dependent_hf_and_megatron_comparison_jobs(monkeypatch):
             "/shared/results/hf.pt",
             "--comparison-hf-partition",
             "interactive",
+            "--comparison-hf-max-gpu-memory",
+            "60GiB",
             "--mount",
             "/shared",
             "--experiment-name",
@@ -508,7 +514,14 @@ def test_main_builds_dependent_hf_and_megatron_comparison_jobs(monkeypatch):
 
     assert executor_calls == [{}, {"nodes": 1, "ntasks_per_node": 1, "partition": "interactive"}]
     assert task_calls[0][0] == "model-comparison"
-    assert task_calls[0][1][-4:] == ["--hf-output-path", "/shared/results/hf.pt", "--hf-device-map", "auto"]
+    assert task_calls[0][1][-6:] == [
+        "--hf-output-path",
+        "/shared/results/hf.pt",
+        "--hf-device-map",
+        "auto",
+        "--hf-max-gpu-memory",
+        "60GiB",
+    ]
     assert task_calls[1][1][-2:] == ["--hf-input-path", "/shared/results/hf.pt"]
     assert add_calls[0][1:] == ("executor-2", "model-comparison-hf", None)
     assert add_calls[1][1:] == (

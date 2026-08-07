@@ -38,6 +38,7 @@ INFERENCE_TASKS = {
 _STAGED_COMPARISON_INTERNAL_OPTIONS = {
     "--hf-device-map",
     "--hf-input-path",
+    "--hf-max-gpu-memory",
     "--hf-output-path",
 }
 
@@ -80,6 +81,14 @@ launcher are forwarded unchanged to the selected repository entry point.
     execution.add_argument(
         "--comparison-hf-partition",
         help="Optional Slurm partition override for the one-node Hugging Face comparison stage.",
+    )
+    execution.add_argument(
+        "--comparison-hf-max-gpu-memory",
+        metavar="SIZE",
+        help=(
+            "Optional per-GPU Transformers memory limit for the staged Hugging Face job; "
+            "reserves workspace and offloads excess weights to host memory."
+        ),
     )
     execution.add_argument("--nodes", type=int, default=1, help="Number of Slurm nodes (default: 1).")
     execution.add_argument(
@@ -198,6 +207,10 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--comparison-artifact-path requires --staged-model-comparison.")
     if not args.staged_model_comparison and args.comparison_hf_partition:
         raise ValueError("--comparison-hf-partition requires --staged-model-comparison.")
+    if not args.staged_model_comparison and args.comparison_hf_max_gpu_memory:
+        raise ValueError("--comparison-hf-max-gpu-memory requires --staged-model-comparison.")
+    if args.comparison_hf_max_gpu_memory is not None and not args.comparison_hf_max_gpu_memory.strip():
+        raise ValueError("--comparison-hf-max-gpu-memory must not be empty.")
     if args.comparison_artifact_path and not PurePosixPath(args.comparison_artifact_path).is_absolute():
         raise ValueError("--comparison-artifact-path must be an absolute container path.")
 
@@ -318,16 +331,16 @@ def main(argv: list[str] | None = None) -> None:
                 ntasks_per_node=1,
                 partition=args.comparison_hf_partition,
             )
-            hf_task = _build_task(
-                args.task,
-                [
-                    *inference_args,
-                    "--hf-output-path",
-                    args.comparison_artifact_path,
-                    "--hf-device-map",
-                    "auto",
-                ],
-            )
+            hf_inference_args = [
+                *inference_args,
+                "--hf-output-path",
+                args.comparison_artifact_path,
+                "--hf-device-map",
+                "auto",
+            ]
+            if args.comparison_hf_max_gpu_memory is not None:
+                hf_inference_args.extend(["--hf-max-gpu-memory", args.comparison_hf_max_gpu_memory])
+            hf_task = _build_task(args.task, hf_inference_args)
             megatron_task = _build_task(
                 args.task,
                 [*inference_args, "--hf-input-path", args.comparison_artifact_path],

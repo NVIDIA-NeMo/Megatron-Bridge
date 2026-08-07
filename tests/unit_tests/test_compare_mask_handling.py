@@ -359,6 +359,8 @@ class TestCompareMaskHandling:
                 "auto",
                 "--hf-offload-folder",
                 str(tmp_path),
+                "--hf-max-gpu-memory",
+                "60GiB",
             ]
         )
         model = MagicMock()
@@ -370,8 +372,10 @@ class TestCompareMaskHandling:
         with (
             patch.object(compare, "_is_rank_0", return_value=True),
             patch.object(compare, "get_model_class", return_value=FakeModelClass),
+            patch.object(compare, "get_max_memory", return_value={0: 1, "cpu": 2}),
             patch.object(compare, "is_safe_repo", return_value=False),
             patch.object(compare, "print_rank_0"),
+            patch.object(compare.torch.cuda, "device_count", return_value=2),
         ):
             actual = compare._load_hf_model(args, is_vl_model=False)
 
@@ -380,6 +384,32 @@ class TestCompareMaskHandling:
         assert FakeModelClass.from_pretrained.call_args.kwargs["device_map"] == "auto"
         assert FakeModelClass.from_pretrained.call_args.kwargs["offload_folder"] == str(tmp_path)
         assert FakeModelClass.from_pretrained.call_args.kwargs["offload_state_dict"] is True
+        assert FakeModelClass.from_pretrained.call_args.kwargs["max_memory"] == {
+            0: "60GiB",
+            1: "60GiB",
+            "cpu": 2,
+        }
+
+    def test_hf_gpu_memory_limit_requires_auto_device_map(self):
+        """A per-GPU memory limit cannot silently do nothing with the single-device map."""
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+                "--hf-max-gpu-memory",
+                "60GiB",
+            ]
+        )
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "get_model_class"),
+            patch.object(compare, "print_rank_0"),
+            pytest.raises(ValueError, match="requires --hf-device-map auto"),
+        ):
+            compare._load_hf_model(args, is_vl_model=False)
 
     def test_staged_hf_artifact_round_trip_validates_exact_inputs(self, tmp_path):
         """Saved logits are accepted only with the same model revision, prompt, and tokenized inputs."""

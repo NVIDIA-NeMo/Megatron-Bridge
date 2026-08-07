@@ -101,6 +101,7 @@ from typing import Optional
 
 import torch
 import torch.distributed as dist
+from accelerate.utils import get_max_memory
 from megatron.core import parallel_state
 from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.inference.utils import InferenceMode
@@ -509,6 +510,13 @@ def _load_hf_model(args, is_vl_model: bool):
         ),
         **_hf_revision_kwargs(args.hf_revision),
     }
+    if args.hf_max_gpu_memory is not None:
+        if args.hf_device_map != "auto":
+            raise ValueError("--hf-max-gpu-memory requires --hf-device-map auto.")
+        max_memory = get_max_memory()
+        for device_index in range(torch.cuda.device_count()):
+            max_memory[device_index] = args.hf_max_gpu_memory
+        load_kwargs["max_memory"] = max_memory
     if args.hf_offload_folder is not None:
         load_kwargs["offload_folder"] = args.hf_offload_folder
         load_kwargs["offload_state_dict"] = True
@@ -1169,6 +1177,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hf-offload-folder",
         help="Optional Transformers disk-offload folder used with a distributed Hugging Face device map.",
+    )
+    parser.add_argument(
+        "--hf-max-gpu-memory",
+        help=(
+            "Optional per-GPU Transformers max_memory limit used with --hf-device-map auto "
+            "to reserve loading and inference workspace (for example, 60GiB)."
+        ),
     )
     parser.add_argument(
         "--prompt",

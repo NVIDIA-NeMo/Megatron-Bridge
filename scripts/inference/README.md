@@ -73,6 +73,7 @@ inputs still match before comparing outputs.
   --staged-model-comparison \
   --comparison-artifact-path /shared/comparisons/model-hf.pt \
   --comparison-hf-partition INTERACTIVE_PARTITION \
+  --comparison-hf-max-gpu-memory 60GiB \
   --nodes 3 --gpus-per-node 8 --exclusive \
   --account ACCOUNT --partition PARTITION --time 04:00:00 \
   --container-image /path/to/megatron-bridge.sqsh \
@@ -91,7 +92,11 @@ destination that is shared by every requested node. `--nodes` controls the
 Megatron stage; the Hugging Face stage always requests one node, one task, and
 the same `--gpus-per-node` value. By default both stages use `--partition`;
 `--comparison-hf-partition` can place only the one-node Hugging Face stage on a
-cluster's model-verification or interactive partition.
+cluster's model-verification or interactive partition. For checkpoints whose
+load-time conversion needs additional GPU workspace,
+`--comparison-hf-max-gpu-memory` caps every GPU in Transformers' automatic
+device map and permits the remaining weights to spill into available host
+memory.
 
 ## Model and checkpoint inputs
 
