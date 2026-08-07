@@ -1,5 +1,16 @@
 # Nemotron 3 Examples
 
+## Nemotron 3.5 Lightning
+
+Day-0 support for Nemotron 3.5 Lightning is available through the
+`nvcr.io/nvidia/nemo:26.06.01` container plus the
+[custom Megatron Bridge 0.5.1 branch and release README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron-3.5-lightning-mb-0.5.1/examples/models/nemotron/nemotron_3_5_lightning/README.md).
+The model will also be supported in the `nvcr.io/nvidia/nemo:26.08` container.
+
+See the
+[Nemotron 3.5 Lightning model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/nemotron-3.5-lightning/card.yaml)
+for verification scripts and results.
+
 This directory contains example scripts for Nemotron 3 language models:
 
 | Model | Parameters | Active Parameters | Subdirectory |
