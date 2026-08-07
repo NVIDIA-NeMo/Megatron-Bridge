@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import io
 import pickle
 import types
@@ -126,14 +127,48 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
     )
 
 
-def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
-    """Load an Energon dataloader state ``.pt`` file through a restricted unpickler.
+def _build_energon_safe_globals() -> list:
+    """Resolve :attr:`_EnergonUnpickler._SAFE_MODULES` into the list of objects required by
+    ``torch.serialization.safe_globals``.
 
-    Replaces ``torch.load(..., weights_only=True)`` + ``safe_globals`` for Energon checkpoint
-    files.  Security is provided by :class:`_EnergonUnpickler`: any GLOBAL opcode not in its
-    allowlist raises ``pickle.UnpicklingError``, blocking ``__reduce__``-based code execution.
-    Using a custom ``pickle_module`` rather than ``weights_only=True`` avoids PyTorch's internal
-    SETITEM restriction, which rejects dict subclasses such as ``FlexState`` in PyTorch ≥ 2.13.
+    Builtins, ``collections``, and ``torch._utils`` are already permitted by
+    ``weights_only=True`` and are excluded from the returned list to keep it minimal.
+    Modules that are not importable in the current environment (e.g. Energon absent) are
+    silently skipped — the ``weights_only=True`` call will then raise on the missing type,
+    and the caller decides how to proceed.
+    """
+    _ALREADY_ALLOWED = frozenset({"builtins", "collections", "torch._utils"})
+    safe: list = []
+    for module_name, names in _EnergonUnpickler._SAFE_MODULES.items():
+        if module_name in _ALREADY_ALLOWED:
+            continue
+        try:
+            mod = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        for name in names:
+            obj = getattr(mod, name, None)
+            if obj is not None:
+                safe.append(obj)
+    return safe
+
+
+def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
+    """Load an Energon dataloader state ``.pt`` file with the tightest available restrictions.
+
+    Primary path — ``weights_only=True`` with an explicit allowlist derived from
+    :class:`_EnergonUnpickler`: PyTorch's restricted unpickler blocks every GLOBAL opcode not
+    in the allowlist, preventing ``__reduce__``-based code execution from attacker-controlled
+    checkpoint files.
+
+    Fallback path — PyTorch ≥ 2.13 restricts SETITEM/SETITEMS to the exact types ``dict``,
+    ``collections.OrderedDict``, and ``collections.Counter``, rejecting dict subclasses such as
+    Energon's ``FlexState``.  When that specific error is detected, the loader retries with
+    :class:`_EnergonUnpickler` as a custom ``pickle_module``.  ``_EnergonUnpickler.find_class``
+    enforces the same allowlist as the primary path, so the security guarantee is identical; the
+    only difference is that standard ``pickle.Unpickler`` does not impose the dict-subclass
+    SETITEM restriction.  The fallback is removed automatically once an upstream PyTorch version
+    extends the SETITEM allowlist to include safe dict subclasses.
 
     Args:
         path: Path to the ``.pt`` file written by
@@ -146,6 +181,17 @@ def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
     """
     import torch  # local import — keeps safe_pickle importable without torch on the test path
 
+    # Primary: weights_only=True with explicit allowlist — PyTorch's own restricted unpickler.
+    try:
+        with torch.serialization.safe_globals(_build_energon_safe_globals()):
+            return torch.load(path, map_location=map_location, weights_only=True)
+    except pickle.UnpicklingError as exc:
+        # Re-raise anything that is not the known PyTorch ≥ 2.13 dict-subclass SETITEM error.
+        if "Can only SETITEM" not in str(exc):
+            raise
+
+    # Fallback: _EnergonUnpickler enforces the same find_class allowlist; standard pickle
+    # SETITEM has no dict-subclass restriction so FlexState deserializes correctly.
     _energon_pickle = types.ModuleType("_energon_pickle")
     for _k in dir(pickle):
         setattr(_energon_pickle, _k, getattr(pickle, _k))
