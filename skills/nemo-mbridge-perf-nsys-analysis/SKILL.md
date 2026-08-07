@@ -13,6 +13,8 @@ Use these principles throughout:
 
 - Use the performance model as the ceiling and the profiler as the agenda.
 - Compute wall time with interval unions, never summed stream or kernel time.
+- Inventory the active communication backend; distributed work is not
+  necessarily NCCL-only.
 - Treat visible communication and copies as coincident work until a dependency
   proves that they blocked compute.
 - Separate a measured phenomenon from its source-level root cause.
@@ -28,8 +30,11 @@ Record before calculating:
 2. Model, precision, sequence length, micro/global batch sizes, task, and the
    measured step definition.
 3. TP, PP, VPP, CP, EP, ETP, and DP sizes plus the rank-to-stage mapping.
-4. The steady-state iteration range and the number of analyzed iterations.
-5. Whether source for the exact profiled revision is available.
+4. The steady-state iteration range, number of analyzed iterations, and
+   same-run unprofiled reference steps when available.
+5. Capture diagnostics, hardware- versus software-instrumented mode, and any
+   warning that events may be incomplete.
+6. Whether source for the exact profiled revision is available.
 
 Never infer a rank id or pipeline stage from a filename. Never compare ranks
 that hold different model parts as if they performed identical work.
@@ -73,10 +78,22 @@ select a recurring anchor whose count is stable per iteration:
 3. optimizer kernels;
 4. a stable recurring kernel sequence.
 
-Drop capture warmup, graph capture, and cooldown iterations. Report median,
+Drop capture warmup, graph capture, and cooldown. Do not use the outer trace
+span as a step. When CUDA profiler APIs define the capture boundary, clip the
+device ROI after profiler-start and before profiler-stop or buffer flush, and
+state that exclusion. Do not use a trainer step containing profiler stop/flush
+as a steady reference; it can be extended by trace flushing. Report median,
 minimum, maximum, and `n`. Cross-check with a second anchor when possible. Stop
 and state the ambiguity when candidate anchors imply materially different step
 times.
+
+Measure capture perturbation from trainer logs, not from the
+`PROFILER_OVERHEAD` table. Compare the profiled step or median against same-run
+unprofiled steady steps with identical workload and topology. Report both
+values, the reference range and `n`, and the percentage slowdown. The overhead
+table accounts for profiler activity recorded in the trace; it is not total
+end-to-end profiler slowdown. If slowdown is material relative to the natural
+step spread, label absolute trace budgets and gain ceilings perturbed.
 
 For a comparison, require matching iteration semantics, model inputs, batch
 shape, precision, topology, and capture mode. Describe mismatches before
@@ -98,9 +115,14 @@ same rank is repeatedly slow or the straggler rotates.
 
 Relate timestamps from different exports only after rebasing with
 `TARGET_INFO_SESSION_START_TIME`. Same-host clocks can be compared after this
-rebase. Across hosts, refine only with matched collective end timestamps and
-state the remaining alignment error. Duration-based spread remains usable when
-cross-host arrival time cannot be established.
+rebase. Across hosts, refine a constant offset with many matched collective end
+timestamps and report a robust center plus residual error or percentiles.
+Duration-based spread remains usable when cross-host arrival time cannot be
+established, but it does not prove late completion. After alignment, compare
+both iteration starts and ends: a longer window that starts earlier and ends
+with its peer is start skew, not a straggler. If only a subset of ranks was
+captured, limit the verdict to those ranks and do not rule out an unsampled
+straggler.
 
 ### 3. Build the per-iteration device budget
 
@@ -111,12 +133,13 @@ all streams:
 |---|---|
 | Device busy | Union of kernels, memcpy, and memset |
 | Device idle | Iteration minus device busy |
-| Non-transfer busy | Union after removing NCCL and HtoD/DtoH copies |
+| Non-communication/dispatcher busy | Union after removing copies and the complete declared communication/dispatcher taxonomy |
+| Communication/dispatcher busy | Union of NCCL plus backend-specific transport, synchronization, dispatch, and combine kernels; overlaps other semantic categories unless explicitly partitioned |
 | Compute busy | Union of compute kernels only |
 | Compute-absent | Iteration minus compute busy |
 | Occupied-not-computing | Device busy minus compute busy |
 
-Require `compute busy <= non-transfer busy <= device busy <= iteration`.
+Require `compute busy <= non-communication/dispatcher busy <= device busy <= iteration`.
 Reconcile `device busy + device idle` to iteration time. Show kernel-duration
 sums only as work volume and label them explicitly; never present them as wall
 time.
@@ -151,16 +174,30 @@ the largest bucket.
 
 ### 5. Analyze communication and overlap
 
-Report three different quantities:
+Inventory the active dispatcher and transport before calculating. Do not assume
+that communication is NCCL-only. Flex/HybridEP, DeepEP, NVSHMEM, and similar
+backends may expose dispatch, combine, RDMA, or device-synchronization kernels.
+Inspect exact material names and source when available. Keep packing, routing,
+and control work labeled as dispatcher work unless evidence proves it is pure
+transport. Report NCCL and backend-specific components separately plus their
+interval union. Never rename the complete dispatcher union as network time.
 
-1. **Communication volume:** collective count and total device work.
-2. **Exposed communication:** NCCL interval union not overlapped by any
-   non-NCCL device operation. Treat it as an upper bound.
+Report three different quantities over the complete communication/dispatcher
+taxonomy:
+
+1. **Communication/dispatcher volume:** operation count and total device work,
+   split into NCCL, transport/synchronization, and packing/routing/control when
+   distinguishable.
+2. **Exposed communication/dispatcher:** its interval union not overlapped by
+   any device operation outside that taxonomy. Treat it as an upper bound.
 3. **Blocking communication:** compute-absent time whose resolved dependency
-   producer is a collective. Use this as the recoverable critical-path bound.
+   producer is a collective or verified dispatcher transport/sync operation.
+   Use this as the recoverable critical-path bound.
 
-Never call a collective a bottleneck from NCCL duration or exposed time alone.
-Report exposed and blocking values together.
+Never call a collective or dispatcher a bottleneck from duration or exposed
+time alone. Report exposed and blocking values together. Include NCCL-only
+figures for comparability when useful, but never present them as total
+distributed cost when material backend kernels exist.
 
 When all collective participants are available, match instances and split a
 rank's collective residence into:
@@ -175,8 +212,8 @@ bandwidth. If only one participant is present, do not make a bandwidth claim.
 Calculate overlap as an observed timeline property, not as proof of causality:
 
 ```text
-overlapped_comm = total_comm_union - exposed_comm
-overlap_pct = overlapped_comm / total_comm_union
+overlapped_comm_dispatcher = total_comm_dispatcher_union - exposed_comm_dispatcher
+overlap_pct = overlapped_comm_dispatcher / total_comm_dispatcher_union
 ```
 
 Use blocking communication, available independent compute, and matched A/B
@@ -223,6 +260,10 @@ Prefer source evidence from the exact revision. Nsight Runtime API correlation
 can connect a kernel to a CUDA API launch but often not to a Python or framework
 call site.
 
+Report kernel-to-CUDA-runtime correlation coverage separately from source
+call-stack link coverage. A correlation-id join can be 100% while source
+call-stack coverage is zero; never describe the former as call-stack coverage.
+
 If a separate CUDA call-stack capture is available, correlate launches by
 `(rank, thread, launch ordinal)` against the same workload, configuration, ROI,
 and declared ranks. Do not capture call stacks under Nsight Systems. Report the
@@ -261,7 +302,10 @@ Use the MFU formula only when the algorithmic numerator and precision are
 unchanged. Call these ceilings, not forecasts. Give a likely gain only when a
 comparable measured implementation supports it, and cite that measurement.
 Do not add opportunity bounds unless their intervals are disjoint and their
-fixes are independent.
+fixes are independent. When profiling materially perturbs step time, calculate
+trace-derived ceilings against the profiled `T` and label them perturbed. Do
+not transplant a trace-derived `R` onto the unprofiled reference step or use
+the `PROFILER_OVERHEAD` table to correct it.
 
 ## Map findings to MBridge actions
 
@@ -284,11 +328,15 @@ Return sections in this order:
 
 1. **Verdict:** one paragraph naming the dominant cost and trace limitations.
 2. **Capture quality:** inputs, ranks/stages, iteration anchor, `n`, CUDA graph
-   state, source availability, metric availability, and call-stack link rate.
+   state, source availability, diagnostics/event completeness, instrumentation
+   mode, same-run profiler slowdown, metric availability, runtime-correlation
+   rate, and source call-stack link rate.
 3. **Per-step budget:** iteration, device busy/idle, compute busy/absent, and
    launch-starved/blocking/dependency-stalled reconciliation.
-4. **Rank and communication findings:** transfer proxy, jitter wait, exposed
-   comm, blocking comm, overlap, and straggler verdict where supported.
+4. **Rank and communication findings:** backend taxonomy, transfer proxy,
+   jitter wait, exposed communication/dispatcher, blocking communication,
+   overlap, sampled-rank coverage, alignment residual, and straggler verdict
+   where supported.
 5. **Ranked opportunities:** evidence, recoverable bound, throughput/MFU
    ceiling, confidence, action, and verification step.
 6. **Claim status:** distinguish source-verified facts from trace inference.

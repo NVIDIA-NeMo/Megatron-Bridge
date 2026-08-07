@@ -4,6 +4,21 @@ Use these as inspection starting points. Inspect `.schema <table>` first and
 adapt column names to the installed Nsight Systems version. Durations are
 nanoseconds unless the schema says otherwise.
 
+## Contents
+
+- [Export a report](#export-a-report)
+- [Discover tables and metadata](#discover-tables-and-metadata)
+- [Capture diagnostics and recorded profiler activity](#capture-diagnostics-and-recorded-profiler-activity)
+- [Top kernels by work volume](#top-kernels-by-work-volume)
+- [Distributed backend kernel inventory](#distributed-backend-kernel-inventory)
+- [Per-stream work volume and span](#per-stream-work-volume-and-span)
+- [Runtime API and launch correlation](#runtime-api-summary)
+- [Synchronization and dependencies](#synchronization-and-device-dependency-edges)
+- [Memcpy volume and bandwidth](#memcpy-volume-and-bandwidth)
+- [Recurring collective anchors](#recurring-collective-anchors)
+- [Cross-rank timestamp alignment](#rebase-two-rank-exports)
+- [Metric inventory](#metric-inventory)
+
 ## Export a report
 
 ```bash
@@ -18,6 +33,43 @@ SELECT sqlite_version();
 SELECT value FROM TARGET_INFO_SYSTEM_ENV WHERE name = 'Hostname';
 SELECT utcEpochNs FROM TARGET_INFO_SESSION_START_TIME;
 ```
+
+## Capture diagnostics and recorded profiler activity
+
+Inspect warnings before trusting absence, scheduling, or source attribution.
+These tables are version-dependent; query `sqlite_master` before using them.
+
+```sql
+SELECT
+  severity.label AS severity,
+  source.label AS source,
+  d.text
+FROM DIAGNOSTIC_EVENT AS d
+LEFT JOIN ENUM_DIAGNOSTIC_SEVERITY_LEVEL AS severity
+  ON severity.id = d.severity
+LEFT JOIN ENUM_DIAGNOSTIC_SOURCE_TYPE AS source
+  ON source.id = d.source
+WHERE d.severity > 1
+ORDER BY d.timestamp;
+```
+
+Summarize activity that Nsight recorded as profiler overhead:
+
+```sql
+SELECT
+  COALESCE(s.value, '<unknown>') AS activity,
+  e.label AS overhead_type,
+  COUNT(*) AS events,
+  SUM(p.end - p.start) / 1e6 AS work_ms
+FROM PROFILER_OVERHEAD AS p
+LEFT JOIN StringIds AS s ON s.id = p.nameId
+LEFT JOIN ENUM_CUPTI_OVERHEAD_TYPE AS e ON e.id = p.overheadType
+GROUP BY activity, overhead_type
+ORDER BY work_ms DESC;
+```
+
+This is recorded profiler activity, not total training slowdown. Calculate
+end-to-end perturbation from same-run profiled and unprofiled trainer steps.
 
 ## Top kernels by work volume
 
@@ -34,6 +86,36 @@ GROUP BY kernel
 ORDER BY work_ms DESC
 LIMIT 40;
 ```
+
+## Distributed backend kernel inventory
+
+Do not stop at NCCL. Inventory exact material names from the configured
+dispatcher or transport before defining a communication union.
+
+```sql
+SELECT
+  COALESCE(s.value, '<unknown>') AS kernel,
+  COUNT(*) AS launches,
+  SUM(k.end - k.start) / 1e6 AS work_ms
+FROM CUPTI_ACTIVITY_KIND_KERNEL AS k
+LEFT JOIN StringIds AS s ON s.id = k.demangledName
+WHERE LOWER(s.value) LIKE '%nccl%'
+   OR LOWER(s.value) LIKE '%hybrid_ep%'
+   OR LOWER(s.value) LIKE '%hybridep%'
+   OR LOWER(s.value) LIKE '%deepep%'
+   OR LOWER(s.value) LIKE '%nvshmem%'
+   OR LOWER(s.value) LIKE '%dispatch%'
+   OR LOWER(s.value) LIKE '%combine%'
+   OR LOWER(s.value) LIKE '%rdma%'
+   OR LOWER(s.value) LIKE '%device_sync%'
+GROUP BY kernel
+ORDER BY work_ms DESC;
+```
+
+Inspect every material match and material unclassified kernel. Split NCCL,
+backend transport/synchronization, and packing/routing/control where evidence
+allows. A dispatch/combine union is dispatcher occupancy, not automatically
+network transfer.
 
 ## Per-stream work volume and span
 
@@ -82,6 +164,23 @@ ORDER BY launch_to_start_us;
 
 Validate that the join is one-to-one. CUDA graph nodes commonly share a launch
 and cannot be interpreted as independent host dispatches.
+
+Measure kernel-to-CUDA-runtime correlation separately:
+
+```sql
+WITH runtime_correlations AS (
+  SELECT DISTINCT correlationId
+  FROM CUPTI_ACTIVITY_KIND_RUNTIME
+)
+SELECT
+  COUNT(*) AS kernel_launches,
+  COUNT(r.correlationId) AS runtime_correlated_launches
+FROM CUPTI_ACTIVITY_KIND_KERNEL AS k
+LEFT JOIN runtime_correlations AS r USING (correlationId);
+```
+
+This join does not measure source call-stack coverage. Report source links only
+from an independently captured and validated call-stack dataset.
 
 ## Synchronization and device dependency edges
 
@@ -196,8 +295,13 @@ JOIN rank1_ops USING (seq)
 ORDER BY rank0_ops.seq;
 ```
 
-Across hosts, use matched collective ends to estimate residual clock offset and
-report its error. Do not claim exact arrival lateness when alignment is weak.
+Across hosts, match collective name, order, and participant group—not just a
+single global ordinal. Use many matched collective end deltas to estimate a
+constant clock offset with a robust center such as the median, then report
+residual p05/p95 or another error interval after correction. Compare aligned
+starts and ends separately. Do not call a longer window a straggler when it
+started earlier and ended with its peer, and do not claim exact arrival lateness
+when alignment is weak.
 
 ## Metric inventory
 
