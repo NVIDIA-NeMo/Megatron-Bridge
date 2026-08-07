@@ -183,60 +183,6 @@ distributed checkpoints, and asks the Bridge conversion path to fuse adapter
 weights while exporting every supported model tensor, including MTP. This is
 preferable to maintaining a Lightning-only copy of adapter merge logic.
 
-The exact 26.06.01 image bundles PEFT 0.19.1 with Transformers 5.8.1. For this
-model, PEFT reconstructs Transformers `WeightConverter` objects with
-`distributed_operation` and `quantization_operation`, but that Transformers
-constructor does not accept those arguments. Consequently, a direct PEFT check
-may stop before reaching the logit comparison in this exact image. This is a
-known dependency limitation and is not treated as a completed PEFT check.
-`adapter.sh` intentionally has no `verify` action, and this example does not add
-`--min-cosine-similarity` or `--max-relative-l2` options to loosen the shared
-verifier's acceptance criterion. The export remains a standard PEFT artifact
-for use with a compatible PEFT/Transformers environment; no model-local
-monkeypatch is installed. The supported 26.06.01 validation is the common
-Megatron-checkpoint merge, exact tensor-schema/value audit, and distributed
-inference documented below.
-
-## Manual 26.06.01 verification
-
-These are two-step correctness runs, not performance benchmarks. They used
-the pinned public BF16 checkpoint and the unmodified 26.06.01 runtime with this
-branch mounted over the bundled Bridge source.
-
-| Workflow | Hardware and configuration | Iteration 1: LM / MTP-1 / MTP-2 | Iteration 2: LM / MTP-1 / MTP-2 | Result |
-|---|---|---|---|---|
-| Pretrain | 2 nodes, 16 H100 80 GB; 8K, TP1/CP2/EP8 | 12.13518 / 12.19819 / 12.17519 | 12.13271 / 12.19786 / 12.17710 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
-| Full SFT | 2 nodes, 16 H100 80 GB; packed OpenMath 4K, TP2/EP8 | 0.4134090 / 0.6536090 / 0.7314808 | 0.4127115 / 0.6384317 / 0.7196919 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
-| LoRA | 1 node, 8 H100 80 GB; packed SQuAD, TP1/EP8, DeepEP | 0.2351837 / 2.486913 / 2.843087 | 0.1531711 / 2.473096 / 2.837737 | Passed; reloadable adapter checkpoint, skipped 0, NaN 0 |
-| Full SFT | 2 nodes, 8 GB200; packed OpenMath 4K, TP1/EP8, `alltoall` fallback | 0.4482034 / 0.6759753 / 0.7569838 | 0.3785085 / 0.5998533 / 0.6831521 | Passed; reloadable checkpoint, skipped 0, NaN 0 |
-| LoRA | 2 nodes, 8 GB200; packed SQuAD, TP1/EP8, `alltoall` fallback | 0.2281463 / 2.485532 / 2.841834 | 0.1542726 / 2.476500 / 2.838086 | Passed; reloadable adapter checkpoint, skipped 0, NaN 0 |
-
-The GB200 recipe still selects HybridEP. The GB200 validation rows use plain
-`alltoall` only as a correctness fallback: HybridEP was installed and selected,
-but the 26.06.01 build first rejected its default 128-token chunk because the
-4,080-token per-rank capacity is not divisible by 128. With a 16-token chunk,
-two separate same-NVLink-block runs completed iteration 1 and then timed out in
-HybridEP's all-gather during iteration 2. DeepEP is the H100 backend used above,
-not a supported substitute for HybridEP on GB200 NVL72. The fallback results
-therefore validate the model, data, checkpoint, and non-HybridEP recipe path;
-they do not establish HybridEP stability in this container.
-
-Import/export on eight H100s round-tripped all 6,513 tensors and
-32,913,266,240 parameters exactly (`max_abs_diff=0.0`). The imported Megatron
-checkpoint and the exported HF checkpoint both generated `The capital of
-France is Paris.`. Exporting the full-SFT checkpoint also produced a complete
-6,513-tensor HF artifact and the same continuation.
-
-The H100 and GB200 LoRA checkpoints each exported to a standard PEFT package
-containing 12,532 adapter tensors, including 524 MTP tensors (262 A/B pairs).
-The public-revision GB200 LoRA checkpoint was also merged through the common
-Megatron-checkpoint path. The standalone artifact preserved all 6,513 base
-tensors by name, shape, and native dtype; 6,266 LoRA-targeted tensors changed,
-including all 262 MTP tensors with adapter pairs, while the other eight MTP
-tensors remained unchanged. Distributed inference from that artifact generated
-`The capital of France is Paris.  `.
-Full-SFT export and inference generated `The capital of France is Paris.`.
-
 When operating offline, set `HF_MODEL` to a mounted local snapshot for import,
 export, inference, and merge. A Hub ID alone cannot resolve
 weight shards unless the snapshot is stored in the standard Hugging Face cache
