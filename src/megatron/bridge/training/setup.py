@@ -110,7 +110,12 @@ def _resolve_embedding_ranks_fn(
 
 
 try:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1 as megatron_FSDP
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+        FullyShardedDataParallelV1,
+        FullyShardedDataParallelV2,
+    )
+
+    megatron_FSDP = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
 except ImportError:
     from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 
