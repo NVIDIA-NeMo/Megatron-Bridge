@@ -267,8 +267,32 @@ class NemotronHBridge(MegatronModelBridge):
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
     ]
 
+    # HF top-level prefix used for the transformer backbone. Vanilla NemotronH
+    # weights live under `backbone.*`; the NemotronHPuzzle checkpoints instead
+    # use `model.*`. Subclasses override this to reuse the shared mapping list.
+    HF_PREFIX = "backbone"
+
     # Additional files to copy during HF export (reasoning parser utilities)
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
+
+    def _apply_hf_prefix(self, mapping_list: list) -> list:
+        """Rewrite `backbone.` in each mapping's HF pattern to `self.HF_PREFIX + "."`.
+
+        No-op when HF_PREFIX == "backbone". Handles both string `hf_param` (most
+        mappings) and dict `hf_param` (QKVMapping). MTP mappings that store
+        `hf_param` as a dict of q/k/v keys are also covered.
+        """
+        if self.HF_PREFIX == "backbone":
+            return mapping_list
+        old = "backbone."
+        new = f"{self.HF_PREFIX}."
+        for m in mapping_list:
+            hf = getattr(m, "hf_param", None)
+            if isinstance(hf, str):
+                m.hf_param = hf.replace(old, new)
+            elif isinstance(hf, dict):
+                m.hf_param = {k: v.replace(old, new) if isinstance(v, str) else v for k, v in hf.items()}
+        return mapping_list
 
     @staticmethod
     def _hf_mtp_config(hf_config) -> tuple[int, Optional[str]]:
@@ -573,4 +597,4 @@ class NemotronHBridge(MegatronModelBridge):
                 ]
             )
 
-        return MegatronMappingRegistry(*mapping_list)
+        return MegatronMappingRegistry(*self._apply_hf_prefix(mapping_list))

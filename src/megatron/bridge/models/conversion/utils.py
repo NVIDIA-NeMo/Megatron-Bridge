@@ -46,13 +46,26 @@ def unwrap_model(model, module_instances=None):
     if module_instances is None:
         from megatron.core.distributed import DistributedDataParallel as DDP
         from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
-        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-            FullyShardedDataParallel as megatron_FSDP,
-        )
         from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
         from megatron.core.transformer.module import Float16Module
 
-        module_instances = (DDP, torch_FSDP, megatron_FSDP, Float16Module, MegatronFSDP)
+        # `mcore_fsdp_adapter.FullyShardedDataParallel` is a V1/V2 factory function on
+        # newer mcore (PR #5865) and a class on older mcore — accept both shapes by
+        # preferring the concrete V1/V2 classes and falling back to the symbol itself
+        # if the split hasn't landed yet.
+        try:
+            from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+                FullyShardedDataParallelV1,
+                FullyShardedDataParallelV2,
+            )
+            megatron_FSDP: tuple = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
+        except ImportError:
+            from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+                FullyShardedDataParallel as _mfsdp_symbol,
+            )
+            megatron_FSDP = (_mfsdp_symbol,)
+
+        module_instances = (DDP, torch_FSDP, *megatron_FSDP, Float16Module, MegatronFSDP)
 
     return_list = True
     if not isinstance(model, list):
