@@ -95,7 +95,7 @@ dependencies = [
     "flash-linear-attention",
     "timm",
     "open-clip-torch>=3.2.0",
-    "mlflow>=3.15.0",   # To address CVE-2025-15031
+    "mlflow>=3.15.1",   # To address CVE-2025-15031
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
     "flashinfer-python==0.6.8.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
@@ -130,7 +130,7 @@ override-dependencies = [
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
     "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@cfda38340769c432c12db3c0df574f8e6ce46c8c",
-    "mlflow>=3.15.0",                                       # To address CVE-2025-15031
+    "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt==0.46.0rc1",
