@@ -5104,6 +5104,97 @@ class TestMaybeLoadDataloaderState:
         assert not marker_path.exists()
         train_iterator.iterable.restore_state.assert_not_called()
 
+    def test_restores_multi_worker_state_with_savable_checkpoint(self, tmp_path):
+        """Multi-worker state and SavableCheckpoint nested inside FlexState round-trip correctly.
+
+        SavableCheckpoint (checkpoint_time + sample_index) is distinct from
+        SavableDatasetCheckpoint and can appear as a FlexState value when a
+        SavableDatasetWrapper is used inside a blending dataset.  Two worker
+        states are used to confirm the loader handles the list correctly.
+        """
+        from megatron.energon.flavors.webdataset.sample_loader import SliceState
+        from megatron.energon.rng import SystemRngState
+        from megatron.energon.savable_loader import (
+            SavableCheckpoint,
+            SavableDataLoaderState,
+            SavableDatasetCheckpoint,
+            SavableDatasetState,
+        )
+        from megatron.energon.state import FlexState
+
+        def _rng(seed: int) -> SystemRngState:
+            return SystemRngState(
+                torch=torch.arange(seed, seed + 3),
+                numpy=np.arange(seed, seed + 3, dtype=np.uint32),
+                random=(seed, tuple(range(seed, seed + 3)), None),
+            )
+
+        # Worker 0: simple blending state with two active slices.
+        worker0 = SavableDatasetCheckpoint(
+            state=SavableDatasetState(
+                rng=_rng(0),
+                dataset_state=FlexState(
+                    active_slices=[SliceState(index=0, current=11), SliceState(index=1, current=22)]
+                ),
+                sample_index=100,
+            ),
+            offset=0,
+        )
+        # Worker 1: FlexState contains a nested SavableCheckpoint, simulating a
+        # SavableDatasetWrapper used as an inner dataset.
+        nested_ckpt = SavableCheckpoint(
+            state=SavableDatasetState(
+                rng=_rng(10),
+                dataset_state=FlexState(active_slices=[SliceState(index=5, current=99)]),
+                sample_index=50,
+            ),
+            checkpoint_time=1.0,
+            sample_index=50,
+        )
+        worker1 = SavableDatasetCheckpoint(
+            state=SavableDatasetState(
+                rng=_rng(20),
+                dataset_state=FlexState(inner=nested_ckpt),
+                sample_index=200,
+            ),
+            offset=2,
+        )
+
+        loader_state = SavableDataLoaderState(
+            worker_states=[worker0, worker1],
+            next_worker_id=1,
+            micro_batch_size=8,
+        )
+
+        train_iterator = Mock()
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        state_path = iter_dir / "train_dataloader_dprank000.pt"
+        torch.save({"dataloader_state_dict": loader_state}, state_path)
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        restored = train_iterator.iterable.restore_state.call_args.args[0]
+        assert isinstance(restored, SavableDataLoaderState)
+        assert restored.next_worker_id == 1
+        assert restored.micro_batch_size == 8
+        assert len(restored.worker_states) == 2
+
+        r0 = restored.worker_states[0].state
+        assert r0.sample_index == 100
+        assert r0.dataset_state["active_slices"] == [
+            SliceState(index=0, current=11),
+            SliceState(index=1, current=22),
+        ]
+        np.testing.assert_array_equal(r0.rng.numpy, _rng(0).numpy)
+
+        r1 = restored.worker_states[1].state
+        assert r1.sample_index == 200
+        assert isinstance(r1.dataset_state["inner"], SavableCheckpoint)
+        assert r1.dataset_state["inner"].sample_index == 50
+        assert r1.dataset_state["inner"].checkpoint_time == 1.0
+        np.testing.assert_array_equal(r1.rng.numpy, _rng(20).numpy)
+
 
 class TestMaybeSaveDataloaderState:
     """Tests for gating which rank writes the Energon dataloader stream-position state."""
