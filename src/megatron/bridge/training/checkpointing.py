@@ -91,6 +91,7 @@ from megatron.bridge.utils.common_utils import (
 )
 from megatron.bridge.utils.import_utils import safe_import
 from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
+from megatron.bridge.utils.safe_pickle import energon_torch_load
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -1753,53 +1754,6 @@ def maybe_save_dataloader_state(
     torch.save(dataloader_save_dict, data_state_save_path)
 
 
-def _get_dataloader_state_safe_globals() -> list[Any]:
-    """Return the trusted globals required to restore an Energon dataloader state.
-
-    Energon persists a small set of dataclass wrappers around tensors, NumPy RNG state, and plain
-    containers. Keeping this allowlist local to the dataloader restore prevents a checkpoint from
-    importing arbitrary globals while retaining compatibility with existing Energon ``.pt`` files.
-    """
-    from megatron.energon.flavors.webdataset.sample_loader import SliceState
-    from megatron.energon.rng import SystemRngState
-    from megatron.energon.savable_loader import (
-        SavableDataLoaderState,
-        SavableDatasetCheckpoint,
-        SavableDatasetState,
-    )
-    from megatron.energon.state import FlexState
-
-    # NumPy arrays are not in torch.load's default weights-only allowlist. Energon's RNG state uses
-    # uint32 arrays, and dataset state may contain other NumPy dtypes, so permit array reconstruction
-    # and dtype classes without permitting arbitrary NumPy callables.
-    numpy_reconstruct = np.empty(0).__reduce__()[0]
-    numpy_scalar = np.uint32(0).__reduce__()[0]
-    numpy_dtype_types = {type(np.dtype(scalar_type)) for scalar_type in np.sctypeDict.values()}
-
-    safe_globals: list[Any] = [
-        FlexState,
-        SystemRngState,
-        SavableDataLoaderState,
-        SavableDatasetCheckpoint,
-        SavableDatasetState,
-        SliceState,
-        np.ndarray,
-        np.dtype,
-        numpy_reconstruct,
-        numpy_scalar,
-        *numpy_dtype_types,
-    ]
-
-    # NumPy 2 moved these globals from numpy.core to numpy._core. Accept the legacy pickle names so
-    # checkpoints written with NumPy 1 remain loadable after upgrading NumPy.
-    if numpy_reconstruct.__module__ != "numpy.core.multiarray":
-        safe_globals.append((numpy_reconstruct, "numpy.core.multiarray._reconstruct"))
-    if numpy_scalar.__module__ != "numpy.core.multiarray":
-        safe_globals.append((numpy_scalar, "numpy.core.multiarray.scalar"))
-
-    return safe_globals
-
-
 def maybe_load_dataloader_state(
     train_iterator: Any,
     iteration: int,
@@ -1864,8 +1818,7 @@ def maybe_load_dataloader_state(
         )
 
     print_rank_0(f"restoring dataloader state at iteration {iteration} from {data_state_load_path}")
-    with torch.serialization.safe_globals(_get_dataloader_state_safe_globals()):
-        loaded = torch.load(data_state_load_path, map_location="cpu", weights_only=True)
+    loaded = energon_torch_load(data_state_load_path)
     iterable.restore_state(loaded["dataloader_state_dict"])
 
 

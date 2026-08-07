@@ -5098,7 +5098,7 @@ class TestMaybeLoadDataloaderState:
         torch.save({"dataloader_state_dict": _MaliciousDataloaderState(marker_path)}, state_path)
 
         assert not marker_path.exists()
-        with pytest.raises(pickle.UnpicklingError, match="Weights only load failed"):
+        with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused to load"):
             maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
         assert not marker_path.exists()

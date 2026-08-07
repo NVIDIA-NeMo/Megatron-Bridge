@@ -14,6 +14,7 @@
 
 import io
 import pickle
+import types
 from types import MappingProxyType
 
 
@@ -78,6 +79,8 @@ class _NumpyRestrictedUnpickler(pickle.Unpickler):
             "numpy.core.multiarray": frozenset({"_reconstruct", "scalar"}),
             # numpy ≥ 2.0 moved internals under ``numpy._core``
             "numpy._core.multiarray": frozenset({"_reconstruct", "scalar"}),
+            # _codecs.encode is used by NumPy to encode raw array bytes into the pickle stream
+            "_codecs": frozenset({"encode"}),
         }
     )
 
@@ -88,6 +91,66 @@ class _NumpyRestrictedUnpickler(pickle.Unpickler):
             f"Restricted unpickler refused to load '{module}.{name}'. "
             "Only safe built-in and numpy array types are allowed."
         )
+
+
+class _EnergonUnpickler(_NumpyRestrictedUnpickler):
+    """Unpickler for Energon dataloader state files (``.pt``).
+
+    Extends the NumPy-safe unpickler with the exact Energon dataclass types that Energon serialises
+    into dataloader checkpoint files.  All other globals — including ``os``, ``subprocess``, and any
+    ``__reduce__`` payload callable outside this allowlist — are blocked, preventing arbitrary code
+    execution from attacker-controlled checkpoint files.
+
+    Use via :func:`energon_pickle_load` rather than instantiating directly.
+    """
+
+    _SAFE_MODULES: MappingProxyType = MappingProxyType(
+        {
+            **_NumpyRestrictedUnpickler._SAFE_MODULES,
+            # PyTorch tensor reconstruction — required for any .pt file containing tensors.
+            # These functions only rebuild tensor objects from pre-loaded storage; they do
+            # not execute arbitrary code.
+            "torch._utils": frozenset({"_rebuild_tensor_v2", "_rebuild_tensor"}),
+            # Energon dataloader state types — the explicit allowlist for this load site.
+            "megatron.energon.state": frozenset({"FlexState"}),
+            "megatron.energon.rng": frozenset({"SystemRngState"}),
+            "megatron.energon.savable_loader": frozenset(
+                {
+                    "SavableDataLoaderState",
+                    "SavableDatasetCheckpoint",
+                    "SavableDatasetState",
+                }
+            ),
+            "megatron.energon.flavors.webdataset.sample_loader": frozenset({"SliceState"}),
+        }
+    )
+
+
+def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
+    """Load an Energon dataloader state ``.pt`` file through a restricted unpickler.
+
+    Replaces ``torch.load(..., weights_only=True)`` + ``safe_globals`` for Energon checkpoint
+    files.  Security is provided by :class:`_EnergonUnpickler`: any GLOBAL opcode not in its
+    allowlist raises ``pickle.UnpicklingError``, blocking ``__reduce__``-based code execution.
+    Using a custom ``pickle_module`` rather than ``weights_only=True`` avoids PyTorch's internal
+    SETITEM restriction, which rejects dict subclasses such as ``FlexState`` in PyTorch ≥ 2.13.
+
+    Args:
+        path: Path to the ``.pt`` file written by
+            :func:`~megatron.bridge.training.checkpointing.maybe_save_dataloader_state`.
+        map_location: Passed to ``torch.load``; defaults to ``"cpu"`` to avoid GPU allocation
+            during restore.
+
+    Returns:
+        The deserialized object (a ``dict`` containing ``"dataloader_state_dict"``).
+    """
+    import torch  # local import — keeps safe_pickle importable without torch on the test path
+
+    _energon_pickle = types.ModuleType("_energon_pickle")
+    for _k in dir(pickle):
+        setattr(_energon_pickle, _k, getattr(pickle, _k))
+    _energon_pickle.Unpickler = _EnergonUnpickler  # type: ignore[attr-defined]
+    return torch.load(path, map_location=map_location, pickle_module=_energon_pickle, weights_only=False)
 
 
 def safe_pickle_load(fp) -> object:
