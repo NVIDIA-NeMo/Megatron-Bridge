@@ -152,7 +152,7 @@ if "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"; then
 fi
 cat >"$temporary_dir/revision-bin/gh" <<'EOF'
 #!/usr/bin/env bash
-[[ "$1" == "api" && "$2" == "repos/NVIDIA/Megatron-LM/actions/runs/123456" ]] || exit 1
+[[ "$1" == "api" && "$2" == "repos/NVIDIA/Megatron-LM/actions/runs/$TEST_RUN_ID" ]] || exit 1
 printf '%s\t%s\t%s\t%s\n' \
   "${RUN_REPO:-NVIDIA/Megatron-LM}" \
   "${RUN_EVENT:-merge_group}" \
@@ -160,12 +160,15 @@ printf '%s\t%s\t%s\t%s\n' \
   "${RUN_BRANCH:-gh-readonly-queue/main/pr-123-0000000000000000000000000000000000000000}"
 EOF
 chmod +x "$temporary_dir/revision-bin/gh"
-trigger_url=https://github.com/NVIDIA/Megatron-LM/actions/runs/123456
+TEST_RUN_ID=123456
+trigger_url="https://github.com/NVIDIA/Megatron-LM/actions/runs/$TEST_RUN_ID"
 PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
   RUN_SHA="$queue_sha" \
   RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
   "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"
 if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
   RUN_SHA="$unapproved_sha" \
   RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
   "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
@@ -173,6 +176,7 @@ if PATH="$temporary_dir/revision-bin:$PATH" \
   exit 1
 fi
 if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
   RUN_SHA="$queue_sha" \
   RUN_BRANCH="pull-request/123" \
   "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
@@ -180,6 +184,7 @@ if PATH="$temporary_dir/revision-bin:$PATH" \
   exit 1
 fi
 if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
   RUN_REPO="example/Megatron-LM" \
   RUN_SHA="$queue_sha" \
   RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
@@ -188,6 +193,7 @@ if PATH="$temporary_dir/revision-bin:$PATH" \
   exit 1
 fi
 if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
   RUN_EVENT="push" \
   RUN_SHA="$queue_sha" \
   RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
