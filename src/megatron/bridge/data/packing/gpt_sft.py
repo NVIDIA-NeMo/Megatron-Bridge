@@ -275,8 +275,18 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         }
 
         if self.return_cu_seqlen:
-            # Offline packed SFT requires micro-batch size 1, so no sentinel padding is
-            # needed to batch variable-length metadata. Emit MCore/TE field names directly.
+            # The DataLoader collates every row assigned to this data-parallel rank before
+            # the training loop splits that global batch into MBS1 microbatches. Extend the
+            # boundary arrays with zero-length sequences so ragged rows form tensors while
+            # retaining the direct MCore/TE cumulative-offset contract.
+            boundary_batches = [cu_seqlens]
+            if cu_seqlens_padded is not None:
+                boundary_batches.append(cu_seqlens_padded)
+            max_num_boundaries = max(len(boundaries) for rows in boundary_batches for boundaries in rows)
+            for rows in boundary_batches:
+                for boundaries in rows:
+                    boundaries.extend([boundaries[-1]] * (max_num_boundaries - len(boundaries)))
+
             seqlens = torch.IntTensor(cu_seqlens_padded if cu_seqlens_padded is not None else cu_seqlens)
             seqlens = seqlens[:, 1:] - seqlens[:, :-1]
             max_seqlen, _ = seqlens.max(dim=1, keepdim=True)

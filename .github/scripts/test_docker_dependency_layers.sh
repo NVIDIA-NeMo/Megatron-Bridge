@@ -52,7 +52,7 @@ if grep -q 'MCORE_REF="${{ github.event.inputs.mcore_ref }}"' "$workflow"; then
   echo "Dispatch inputs must enter shell steps through env" >&2
   exit 1
 fi
-test "$(grep -c 'validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
+test "$(grep -c 'validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"' "$workflow")" = 2
 test "$(grep -c 'git fetch "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'git checkout "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'test "$(git rev-parse HEAD)" = "$MCORE_REF"' "$workflow")" = 1
@@ -143,6 +143,64 @@ chmod +x "$temporary_dir/revision-validator"
 "$temporary_dir/revision-validator" "$revision_repo" "$mirror_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$merge_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"
+git -C "$revision_worktree" push -q \
+  "$revision_repo" \
+  ":refs/heads/gh-readonly-queue/main/pr-123-$main_sha"
+if "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"; then
+  echo "MCore revision validation accepted a deleted queue ref without source-run evidence" >&2
+  exit 1
+fi
+cat >"$temporary_dir/revision-bin/gh" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == "api" && "$2" == "repos/NVIDIA/Megatron-LM/actions/runs/$TEST_RUN_ID" ]] || exit 1
+printf '%s\t%s\t%s\t%s\n' \
+  "${RUN_REPO:-NVIDIA/Megatron-LM}" \
+  "${RUN_EVENT:-merge_group}" \
+  "${RUN_SHA:-}" \
+  "${RUN_BRANCH:-gh-readonly-queue/main/pr-123-0000000000000000000000000000000000000000}"
+EOF
+chmod +x "$temporary_dir/revision-bin/gh"
+TEST_RUN_ID=123456
+trigger_url="https://github.com/NVIDIA/Megatron-LM/actions/runs/$TEST_RUN_ID"
+PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_SHA="$unapproved_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted source-run metadata for a different SHA" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="pull-request/123" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted a non-queue source run" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_REPO="example/Megatron-LM" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted an untrusted source-run repository" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_EVENT="push" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted a non-merge-group source run" >&2
+  exit 1
+fi
 if "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"x; then
   echo "MCore revision validation accepted a malformed queue SHA" >&2
   exit 1
