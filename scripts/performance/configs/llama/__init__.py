@@ -5,11 +5,22 @@ try:
 except ModuleNotFoundError:
     HAVE_MEGATRON_BRIDGE = False
 
+HAVE_LLAMA2_FINETUNE = False
+
 if HAVE_MEGATRON_BRIDGE:
-    from .llama2_llm_finetune import (
-        llama2_70b_lora_config_gb200,
-        llama2_70b_lora_config_gb300,
-    )
+    # llama2_llm_finetune needs llama2_70b_peft_config, which only exists in
+    # megatron.bridge >= the commit that added the MLPerf LoRA script. Older
+    # container images ship a bridge without it, and a hard import here would
+    # take down every llama pretrain config in this package too.
+    try:
+        from .llama2_llm_finetune import (
+            llama2_70b_lora_config_gb200,
+            llama2_70b_lora_config_gb300,
+        )
+
+        HAVE_LLAMA2_FINETUNE = True
+    except ImportError:
+        pass
     from .llama3_llm_finetune import (
         llama3_8b_sft_config_gb200,
         llama3_8b_sft_config_h100,
@@ -365,8 +376,6 @@ __all__ = [
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
-            "llama2_70b_lora_config_gb200",
-            "llama2_70b_lora_config_gb300",
             "llama3_8b_pretrain_config_gb300",
             "llama3_8b_pretrain_config_gb200",
             "llama3_8b_pretrain_config_b300",
@@ -398,5 +407,13 @@ if HAVE_MEGATRON_BRIDGE:
             "llama31_405b_pretrain_config_b200",
             "llama31_405b_pretrain_config_h100",
             "llama31_405b_pretrain_config_vr200",
+        ]
+    )
+
+if HAVE_LLAMA2_FINETUNE:
+    __all__.extend(
+        [
+            "llama2_70b_lora_config_gb200",
+            "llama2_70b_lora_config_gb300",
         ]
     )
