@@ -23,4 +23,5 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # This script tests recipe configurations with their default settings to ensure
 # they can run basic training without crashes
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/recipes/test_gemma3_recipes_pretrain.py
+uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/unit_tests/models/gemma/test_gemma4_ple_sequence_parallel_distributed.py
 coverage combine -q
