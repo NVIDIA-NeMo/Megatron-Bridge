@@ -31,22 +31,26 @@ _QWEN35_35B_A3B_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  # pragma:
 
 
 def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Qwen3.5 text 35B-A3B pretrain: 16× H100, BF16, EP=16."""
+    """Qwen3.5 text 35B-A3B pretrain: 16× H100, BF16, EP=8."""
     cfg = qwen35_text_35b_a3b_pretrain_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_35B_A3B
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN35_35B_A3B_REVISION}
     cfg.mixed_precision = _perf_precision("bf16")
+    # FP16 main parameters avoid the BF16 remainder buffer so the no-recompute
+    # path fits on 80 GB H100s; compute, gradients, and moments remain BF16.
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.store_param_remainders = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.seq_length = 4096
@@ -71,6 +75,9 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_router_force_load_balancing = True
+    # Keep auxiliary balancing local to each microbatch. The global variant
+    # all-reduces expert counts across DP ranks for every MoE layer and microbatch.
+    cfg.model.moe_router_load_balancing_type = "aux_loss"
     cfg.model.moe_shared_expert_overlap = True
     cfg.model.moe_expert_rank_capacity_factor = 1.05
     cfg.model.moe_permute_fusion_into_hybridep = True

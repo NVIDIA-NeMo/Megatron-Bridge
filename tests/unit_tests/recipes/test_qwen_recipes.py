@@ -54,11 +54,12 @@ def _safe_overrides_for(name: str) -> dict:
 class _FakeModelCfg:
     # Minimal provider to accept attribute assignments used in recipes
 
-    def __init__(self):
+    def __init__(self, *, moe_aux_loss_coeff: float = 0.0):
         self.cross_entropy_fusion_impl = "native"
         self.context_parallel_size = 1
         self.gdn_pre_gated_delta_rule_fusion = False
         self.gated_delta_rule_backend = "fla"
+        self.moe_aux_loss_coeff = moe_aux_loss_coeff
 
     def finalize(self):
         # qwen3 recipe may call finalize(); make it a no-op
@@ -66,11 +67,11 @@ class _FakeModelCfg:
 
 
 class _FakeBridge:
-    def __init__(self):
-        pass
+    def __init__(self, *, moe_aux_loss_coeff: float = 0.0):
+        self.moe_aux_loss_coeff = moe_aux_loss_coeff
 
     def to_megatron_provider(self, load_weights: bool = False):
-        return _FakeModelCfg()
+        return _FakeModelCfg(moe_aux_loss_coeff=self.moe_aux_loss_coeff)
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
@@ -84,12 +85,15 @@ class _FakeBridge:
 
     @staticmethod
     def from_hf_config(hf_config):
-        # Ignore hf_config; return a bridge that yields a fake provider
-        return _FakeBridge()
+        text_config = getattr(hf_config, "text_config", hf_config)
+        return _FakeBridge(
+            moe_aux_loss_coeff=getattr(text_config, "router_aux_loss_coef", 0.0),
+        )
 
 
 class _FakeTextConfig:
     architectures = None
+    router_aux_loss_coef = 0.001
 
 
 class _FakeRootConfig:
@@ -722,7 +726,7 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.train.global_batch_size == 1024
@@ -738,6 +742,8 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
     assert cfg.model.moe_router_force_load_balancing is True
+    assert cfg.model.moe_router_load_balancing_type == "aux_loss"
+    assert cfg.model.moe_aux_loss_coeff == 0.001
     assert cfg.model.moe_shared_expert_overlap is True
     assert cfg.model.moe_expert_rank_capacity_factor == 1.05
     assert cfg.model.moe_permute_fusion_into_hybridep is True
@@ -746,8 +752,10 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.comm_overlap.delay_wgrad_compute is False
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.main_params_dtype == torch.float16
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.store_param_remainders is False
     assert cfg.mixed_precision.bf16 is True
     assert cfg.train.train_iters == 50
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
