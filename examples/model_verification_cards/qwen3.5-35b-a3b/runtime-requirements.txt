@@ -1,0 +1,5 @@
+# Public H100 kernel runtime for qwen35_text_35b_a3b.
+# Install into the selected NeMo container without replacing its torch stack.
+flash-qla==0.1.2 --hash=sha256:fb9dfa8607df9c545cd583dd8c0248ac9b0b673a8fb0af042ba9ef07bbc30446
+tilelang==0.1.9 --hash=sha256:4bbccfe9035aed775ffafb6dc25a5994504b24e2c5d95d0f39643edfafa7bf12
+apache-tvm-ffi==0.1.9 --hash=sha256:f45eb43499acac45ff6c93564f0ff2d3ca27b69656d540fd56ce59d51c0b4c65
