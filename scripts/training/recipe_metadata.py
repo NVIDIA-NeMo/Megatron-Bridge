@@ -40,7 +40,7 @@ BENCHMARK_RECIPE_FAMILY_PREFIXES = (
 BENCHMARK_RECIPE_PATTERN = re.compile(
     r"_(?P<task>pretrain|sft|peft)_(?P<num_gpus>[1-9][0-9]*)gpu_"
     r"(?P<hardware>[a-z0-9]+)_"
-    r"(?P<precision>bf16|fp8cs|fp8mx|fp8sc|nvfp4)"
+    r"(?P<precision>bf16|fp8cs|fp8ds|fp8mx|fp8sc|nvfp4)"
     r"(?:_[a-z0-9_]+)?_config$"
 )
 
@@ -52,9 +52,12 @@ BENCHMARK_RECIPE_ROOT = Path(__file__).resolve().parents[2] / "src" / "megatron"
 BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
     {
         "deepseek_v3_pretrain_1024gpu_h100_bf16_config",
+        "glm52_sft_192gpu_gb200_bf16_config",
+        "glm52_sft_416gpu_h100_bf16_config",
         "gpt_oss_120b_pretrain_64gpu_h100_bf16_config",
         "llama3_70b_peft_8gpu_h100_bf16_config",
         "llama3_70b_sft_32gpu_h100_bf16_config",
+        "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
         "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",
         "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     }

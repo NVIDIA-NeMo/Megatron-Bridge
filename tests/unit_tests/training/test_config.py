@@ -1147,6 +1147,38 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_native_energon_packing_marks_builder_transformer_config(self, monkeypatch):
+        """Test native Energon packing marks the nested builder transformer config."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                calculate_per_token_loss=True,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert model_cfg.transformer._enable_in_batch_packing is True
+            assert "_enable_in_batch_packing" not in model_cfg.__dict__
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_enable_in_batch_packing_sets_collate_padding_multiple(self, monkeypatch):
         """Test in-batch packing forwards CP/SP divisibility requirements to collate-time packers."""
         gpt_model_cfg = create_test_gpt_config(
