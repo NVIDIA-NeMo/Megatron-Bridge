@@ -1132,6 +1132,38 @@ class ConfigContainer(Container):
             "an HF model id."
         )
 
+    def _disable_native_energon_packing_moe_overlap(self) -> None:
+        """Disable unsupported MoE overlap settings for native Energon packing."""
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
+        if not enable_energon_packing:
+            return
+
+        overlap_configs: list[object] = [self.model]
+        if self.comm_overlap is not None:
+            overlap_configs.append(self.comm_overlap)
+            resolved_overlap = getattr(self.comm_overlap, "user_comm_overlap_cfg", None)
+            if resolved_overlap is not None:
+                overlap_configs.append(resolved_overlap)
+
+        overlap_fields = ("overlap_moe_expert_parallel_comm", "delay_wgrad_compute")
+        overlap_requested = any(
+            getattr(config, field_name, False) is True for config in overlap_configs for field_name in overlap_fields
+        )
+        if not overlap_requested:
+            return
+
+        warnings.warn(
+            "Disabling MoE expert-parallel communication overlap and delayed weight-gradient compute because "
+            "Energon native sequence packing does not yet implement the combined-1F1B VLM schedule-plan path.",
+            stacklevel=3,
+        )
+        for config in overlap_configs:
+            for field_name in overlap_fields:
+                if hasattr(config, field_name):
+                    setattr(config, field_name, False)
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1147,6 +1179,9 @@ class ConfigContainer(Container):
             raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
 
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
 
@@ -1201,6 +1236,26 @@ class ConfigContainer(Container):
                 f"({self.dataset.micro_batch_size} != {self.train.micro_batch_size})."
             )
 
+        if enable_energon_packing:
+            if self.train.micro_batch_size != 1:
+                raise ValueError("Energon native sequence packing requires train.micro_batch_size=1.")
+            if not self.model.calculate_per_token_loss:
+                raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
+            if self.ddp.average_in_collective:
+                raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
+            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
+                raise ValueError("Energon native sequence packing does not support MTP.")
+            if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
+                self.model, "vision_cuda_graph_impl", None
+            ) not in (None, "none"):
+                raise ValueError("Energon native sequence packing does not support CUDA graphs.")
+            dist_train = getattr(self.model, "dist_train", None)
+            if dist_train is not None and getattr(dist_train, "use_dist_train", False):
+                raise ValueError("Energon native sequence packing does not support Qwen3-VL DistTrain.")
+            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+                raise ValueError("Energon native sequence packing does not yet support pipeline parallelism.")
+            self._disable_native_energon_packing_moe_overlap()
+
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
                 getattr(self.model, "pipeline_model_parallel_size", 1) > 1
@@ -1230,7 +1285,7 @@ class ConfigContainer(Container):
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if enable_in_batch_packing:
+        if enable_in_batch_packing or enable_energon_packing:
             self.model._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
@@ -1873,6 +1928,10 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Calculate data parallel size (needed for comm overlap methods)
     cfg.set_data_parallel_size()
+
+    # Native Energon packing cannot use MoE EP overlap. Normalize every user-facing
+    # representation before CommOverlapConfig performs its stricter setup validation.
+    cfg._disable_native_energon_packing_moe_overlap()
 
     # Apply communication overlap configuration if provided
     if cfg.comm_overlap is not None:

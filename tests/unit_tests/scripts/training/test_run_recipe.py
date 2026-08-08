@@ -310,6 +310,8 @@ def test_kimi_supported_pp_vp_override_refreshes_pipeline_layout():
     [
         ("qwen25_vl_7b_sft_config", "sft", "vlm_step"),
         ("qwen3_vl_8b_sft_config", "sft", "qwen3_vl_step"),
+        ("qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config", "lora", "vlm_step"),
+        ("qwen3_vl_8b_peft_energon_config", "lora", "vlm_step"),
         ("qwen2_audio_7b_sft_config", "sft", "audio_lm_step"),
         ("flux_12b_pretrain_config", "pretrain", "flux_step"),
     ],

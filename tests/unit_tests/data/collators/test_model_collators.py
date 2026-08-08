@@ -66,6 +66,21 @@ def test_vlm_collate_keeps_qwen_vl_registration():
     assert resolve_model_collate("Qwen2_5_VLProcessor") is collate.qwen2_5_collate_fn
 
 
+def test_resolver_cache_clear_refreshes_registered_module_symbol():
+    original = qwen_vl_collate.qwen2_5_collate_fn
+
+    def replacement(*args, **kwargs):  # noqa: ARG001
+        return {}
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(qwen_vl_collate, "qwen2_5_collate_fn", replacement)
+        resolve_model_collate.cache_clear()
+        assert resolve_model_collate("Qwen3VLProcessor") is replacement
+
+    resolve_model_collate.cache_clear()
+    assert resolve_model_collate("Qwen3VLProcessor") is original
+
+
 class _DummyProcessor:
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
