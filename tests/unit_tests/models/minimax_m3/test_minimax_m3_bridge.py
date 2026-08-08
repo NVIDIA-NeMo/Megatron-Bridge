@@ -31,6 +31,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
     MiniMaxM3Bridge,
     MiniMaxM3ModelProvider,
+    MiniMaxM3MoELayer,
     MiniMaxM3TopKRouter,
     MiniMaxM3VLModelProvider,
     TopKRouter,
@@ -480,9 +481,56 @@ class TestMiniMaxM3Bridge:
             )
         ]
         assert dense_layer_spec.submodules.mlp is dense_mlp_spec
-        assert moe_layer_spec.submodules.mlp.func is MoELayer
+        assert moe_layer_spec.submodules.mlp.func is MiniMaxM3MoELayer
         assert moe_layer_spec.submodules.mlp.keywords["submodules"].router is MiniMaxM3TopKRouter
         assert moe_submodules.router is TopKRouter
+
+    def test_moe_layer_uses_fp32_ep_transport_during_distributed_inference(self):
+        layer = object.__new__(MiniMaxM3MoELayer)
+        torch.nn.Module.__init__(layer)
+        layer.config = SimpleNamespace(overlap_dispatch_backward_with_experts_wgrad=False)
+        layer.token_dispatcher = Mock()
+        layer.token_dispatcher.ep_size = 32
+        layer.token_dispatcher.token_dispatch.side_effect = lambda hidden_states, probs: (hidden_states, probs)
+        layer.token_dispatcher.token_combine.side_effect = lambda tensor: tensor
+        expert_output = torch.randn(8, 16, dtype=torch.bfloat16)
+        router_probs = torch.rand(8, dtype=torch.float32)
+
+        with torch.no_grad():
+            dispatched_output, dispatched_probs = layer.dispatch(expert_output, router_probs)
+            combined_output = layer.combine(expert_output)
+
+        dispatched_transport = layer.token_dispatcher.token_dispatch.call_args.args[0]
+        combined_transport = layer.token_dispatcher.token_combine.call_args.args[0]
+        assert dispatched_transport.dtype == torch.float32
+        assert combined_transport.dtype == torch.float32
+        assert dispatched_output.dtype == torch.bfloat16
+        assert combined_output.dtype == torch.bfloat16
+        assert dispatched_probs is router_probs
+        torch.testing.assert_close(dispatched_output, expert_output)
+        torch.testing.assert_close(combined_output, expert_output)
+
+    def test_moe_layer_preserves_bf16_ep_transport_during_training(self):
+        layer = object.__new__(MiniMaxM3MoELayer)
+        torch.nn.Module.__init__(layer)
+        layer.config = SimpleNamespace(overlap_dispatch_backward_with_experts_wgrad=False)
+        layer.token_dispatcher = Mock()
+        layer.token_dispatcher.ep_size = 32
+        layer.token_dispatcher.token_dispatch.side_effect = lambda hidden_states, probs: (hidden_states, probs)
+        layer.token_dispatcher.token_combine.side_effect = lambda tensor: tensor
+        expert_output = torch.randn(8, 16, dtype=torch.bfloat16)
+        router_probs = torch.rand(8, dtype=torch.float32)
+
+        dispatched_output, dispatched_probs = layer.dispatch(expert_output, router_probs)
+        combined_output = layer.combine(expert_output)
+
+        dispatched_transport = layer.token_dispatcher.token_dispatch.call_args.args[0]
+        combined_transport = layer.token_dispatcher.token_combine.call_args.args[0]
+        assert dispatched_transport.dtype == torch.bfloat16
+        assert combined_transport.dtype == torch.bfloat16
+        assert dispatched_output is expert_output
+        assert dispatched_probs is router_probs
+        assert combined_output is expert_output
 
     def test_minimax_router_is_registered_as_replicated(self):
         assert "MiniMaxM3TopKRouter" in AutoMapping._MODULE_TYPE_REGISTRY["replicated"]

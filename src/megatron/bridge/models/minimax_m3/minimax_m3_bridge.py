@@ -60,6 +60,30 @@ class MiniMaxM3TopKRouter(TopKRouter):
         return super().gating(input.to(dtype=self.weight.dtype))
 
 
+class MiniMaxM3MoELayer(MoELayer):
+    """MiniMax-M3 MoE layer with reliable expert-parallel inference communication."""
+
+    def dispatch(self, hidden_states: torch.Tensor, probs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Dispatch tokens without BF16 all-to-all data corruption."""
+        if not torch.is_grad_enabled() and hidden_states.dtype == torch.bfloat16 and self.token_dispatcher.ep_size > 1:
+            # Widening BF16 values to FP32 is exact and avoids silent corruption seen in
+            # large variable-split EP all-to-all payloads in the affected release runtime.
+            hidden_states_dtype = hidden_states.dtype
+            hidden_states, probs = super().dispatch(hidden_states.float(), probs)
+            return hidden_states.to(dtype=hidden_states_dtype), probs
+        return super().dispatch(hidden_states, probs)
+
+    def combine(self, output: torch.Tensor) -> torch.Tensor:
+        """Combine expert outputs without BF16 all-to-all data corruption."""
+        if not torch.is_grad_enabled() and output.dtype == torch.bfloat16 and self.token_dispatcher.ep_size > 1:
+            # Widening BF16 values to FP32 is exact and avoids silent corruption seen in
+            # large variable-split EP all-to-all payloads in the affected release runtime.
+            output_dtype = output.dtype
+            output = self.token_dispatcher.token_combine(output.float()).to(dtype=output_dtype)
+            return output
+        return super().combine(output)
+
+
 def minimax_m3_block_spec(
     config: TransformerConfig,
     use_transformer_engine: bool = True,
@@ -88,7 +112,7 @@ def minimax_m3_block_spec(
             if mlp_submodules.router is not TopKRouter:
                 continue
             mlp_kwargs["submodules"] = replace(mlp_submodules, router=MiniMaxM3TopKRouter)
-            layer_spec.submodules.mlp = partial(mlp_spec.func, *mlp_spec.args, **mlp_kwargs)
+            layer_spec.submodules.mlp = partial(MiniMaxM3MoELayer, *mlp_spec.args, **mlp_kwargs)
 
     return block_spec
 
