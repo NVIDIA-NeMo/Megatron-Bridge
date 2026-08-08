@@ -165,6 +165,7 @@ def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
 def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
     executor = SimpleNamespace(
         nodes=2,
+        ntasks_per_node=4,
         tunnel=SimpleNamespace(job_dir="/job/dir"),
         setup_lines="existing setup\n",
     )
@@ -182,7 +183,7 @@ def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
     assert "sudo nvidia-smi -lgc 1200" in executor.setup_lines
     assert "srun --ntasks=2 --ntasks-per-node=1 --output /job/dir/peak_mem_clock.out" in executor.setup_lines
     assert "--error /job/dir/peak_mem_clock.err" in executor.setup_lines
-    assert "sudo nvidia-smi -lmc 2600,2600" in executor.setup_lines
+    assert 'for idx in {0..3}; do sudo nvidia-smi -lmc 2600,2600 -i "$idx"; done' in executor.setup_lines
 
 
 def test_run_script_main_runs_training_once(monkeypatch):
