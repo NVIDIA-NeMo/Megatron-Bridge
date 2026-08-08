@@ -389,13 +389,20 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_config() -> ConfigContainer:
     cfg.dataset.seq_length = 32768
     cfg.train.global_batch_size = 2
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False, batch_p2p_comm=False)
-    # Keep PP sends/receives ordered for the long-context PP8 schedule.
-    cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = 1
     cfg.ddp.average_in_collective = False
     # With uneven PP stages, asynchronous DDP collectives can race the
     # cross-stage tied-embedding reduction and PP send/recv operations.
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    # Keep the complete process environment visible on the recipe and PP
+    # sends/receives ordered for the long-context PP8 schedule.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -532,7 +539,12 @@ def nemotron_3_super_peft_16gpu_h100_bf16_config(
     # Keep checkpoint saves ordered after all DDP collectives.
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
-    cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = 8
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 

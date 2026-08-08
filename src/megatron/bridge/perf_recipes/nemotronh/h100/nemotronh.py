@@ -84,9 +84,23 @@ def nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_hybridep_num_sms = None
     cfg.checkpoint.async_save = False
 
-    # Keep the process settings inherited from the convergence recipe. In
+    # Keep the process settings aligned with the convergence recipe. In
     # particular, do not silently change CUDA stream scheduling between the
     # natural-routing and forced-routing measurements.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
     return cfg
 
 
