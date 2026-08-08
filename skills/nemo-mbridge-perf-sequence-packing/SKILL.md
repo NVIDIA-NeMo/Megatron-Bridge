@@ -251,3 +251,5 @@ Success criteria:
 - offline and in-batch configuration validation remains mutually exclusive
 - packed metadata reaches the training step in MCore THD form
 - mapped padding rows do not contribute to loss
+
+_Last signature refresh: 2026-08-03._
