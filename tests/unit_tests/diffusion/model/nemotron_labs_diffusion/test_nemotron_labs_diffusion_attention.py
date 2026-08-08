@@ -98,7 +98,7 @@ def _make_attention(
     apply_llama4: bool = True,
     apply_qk_scaling: bool = False,
 ):
-    """Instantiate NemotronLabsDiffusionAttention with compute_block_mask mocked."""
+    """Instantiate NemotronLabsDiffusionAttention with compute_block_bias mocked."""
     cfg = _make_config(
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
@@ -113,7 +113,7 @@ def _make_attention(
     )
 
     with patch(
-        "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_mask",
+        "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_bias",
         return_value=MagicMock(),
     ):
         return NemotronLabsDiffusionAttention(
@@ -305,12 +305,12 @@ class TestNemotronLabsDiffusionAttentionInit:
         attn = _make_attention(head_dim=head_dim)
         assert abs(attn.softmax_scale - 1.0 / math.sqrt(head_dim)) < 1e-6
 
-    def test_layer_scaling_divides_softmax_scale(self):
-        head_dim = 8
-        layer_number = 3
-        attn = _make_attention(head_dim=head_dim, layer_number=layer_number, apply_qk_scaling=True)
-        expected = (1.0 / math.sqrt(head_dim)) / layer_number
-        assert abs(attn.softmax_scale - expected) < 1e-6
+    def test_apply_qk_scaling_is_rejected(self):
+        # The model uses Llama-4 style query scaling and passes softmax_scale to the TE
+        # core directly, so apply_query_key_layer_scaling must be False. Enabling it must
+        # raise rather than silently divide softmax_scale by the layer number.
+        with pytest.raises(AssertionError, match="apply_query_key_layer_scaling"):
+            _make_attention(head_dim=8, layer_number=3, apply_qk_scaling=True)
 
     def test_inference_mode_defaults(self):
         attn = _make_attention()
@@ -524,3 +524,93 @@ class TestRotaryEmbeddingNonDefault:
         cos, sin = rope(x, pos)
         assert cos.shape == (1, 16, 8)
         assert sin.shape == (1, 16, 8)
+
+
+# ---------------------------------------------------------------------------
+# Main sbd_block_diff training forward (inference_mode=False), cp=1.
+#
+# The TE core (`core_attention`) and `compute_block_bias` are stubbed so the
+# RoPE-per-half + Llama-4 scaling + dense-bias caching orchestration runs on CPU
+# without CUDA/TE. The cp>1 gather/scatter branches need a real process group
+# and are covered by the distributed round-trip tests in test_cp_logic.py.
+# ---------------------------------------------------------------------------
+class TestNemotronLabsDiffusionTrainingForward:
+    NUM_HEADS = 4
+    NUM_KV_HEADS = 2
+    HEAD_DIM = 8
+    SEQ_LEN = 16  # already the doubled [xt | x0] sequence
+    BATCH = 2
+
+    def _attn(self, **kw):
+        defaults = dict(
+            num_heads=self.NUM_HEADS,
+            num_kv_heads=self.NUM_KV_HEADS,
+            head_dim=self.HEAD_DIM,
+            seq_len=self.SEQ_LEN,
+        )
+        defaults.update(kw)
+        attn = _make_attention(**defaults)
+        hp = self.NUM_HEADS * self.HEAD_DIM
+        # Stub the TE core: return a shape-correct [seq, b, hp] tensor.
+        attn.core_attention = MagicMock(
+            side_effect=lambda q, k, v, **kwargs: torch.zeros(q.shape[0], q.shape[1], hp, dtype=q.dtype)
+        )
+        return attn
+
+    def _qkv(self, sq: int = None):
+        sq = sq or self.SEQ_LEN
+        q = torch.randn(sq, self.BATCH, self.NUM_HEADS, self.HEAD_DIM)
+        k = torch.randn(sq, self.BATCH, self.NUM_KV_HEADS, self.HEAD_DIM)
+        v = torch.randn(sq, self.BATCH, self.NUM_KV_HEADS, self.HEAD_DIM)
+        return q, k, v
+
+    def _fwd(self, attn, q, k, v):
+        bias = torch.zeros(1, 1, self.SEQ_LEN, self.SEQ_LEN)
+        with patch(
+            "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_bias",
+            return_value=bias,
+        ) as cbb:
+            out = attn(q, k, v)
+        return out, cbb
+
+    def test_forward_output_shape(self):
+        attn = self._attn()
+        q, k, v = self._qkv()
+        out, _ = self._fwd(attn, q, k, v)
+        assert out.shape == (self.SEQ_LEN, self.BATCH, self.NUM_HEADS * self.HEAD_DIM)
+
+    def test_forward_passes_dense_bias_and_no_mask_to_core(self):
+        attn = self._attn()
+        q, k, v = self._qkv()
+        self._fwd(attn, q, k, v)
+        assert attn.core_attention.call_count == 1
+        _, kwargs = attn.core_attention.call_args
+        assert kwargs["attention_bias"] is not None
+        assert kwargs["attn_mask_type"] == AttnMaskType.no_mask
+        assert kwargs["attention_mask"] is None
+
+    def test_forward_rejects_packed_seq_params(self):
+        attn = self._attn()
+        q, k, v = self._qkv()
+        with pytest.raises(AssertionError, match="Packed sequence is not supported"):
+            attn(q, k, v, packed_seq_params=MagicMock())
+
+    def test_forward_without_llama4_scaling(self):
+        attn = self._attn(apply_llama4=False)
+        assert attn.beta is None
+        q, k, v = self._qkv()
+        out, _ = self._fwd(attn, q, k, v)
+        assert out.shape[0] == self.SEQ_LEN
+
+    def test_sbd_bias_built_once_and_cached(self):
+        attn = self._attn()
+        q, k, v = self._qkv()
+        bias = torch.zeros(1, 1, self.SEQ_LEN, self.SEQ_LEN)
+        with patch(
+            "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_bias",
+            return_value=bias,
+        ) as cbb:
+            attn(q, k, v)
+            attn(q, k, v)
+        # Same shape/device/dtype on the second call -> bias reused, not rebuilt.
+        assert cbb.call_count == 1

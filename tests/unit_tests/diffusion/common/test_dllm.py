@@ -24,12 +24,42 @@ import torch
 
 from megatron.bridge.diffusion.common.dllm import (
     add_gumbel_noise,
+    compute_block_bias,
     get_num_transfer_tokens,
     get_transfer_index,
 )
 
 
 pytestmark = [pytest.mark.unit]
+
+
+class TestComputeBlockBias:
+    def test_shape_and_dtype(self):
+        n = 4
+        bias = compute_block_bias(block_size=2, max_seq_length=n, dtype=torch.float32, device="cpu")
+        assert bias.shape == (1, 1, 2 * n, 2 * n)
+        assert bias.dtype == torch.float32
+
+    def test_allowed_zero_disallowed_neg_inf(self):
+        bias = compute_block_bias(block_size=2, max_seq_length=4, dtype=torch.float32, device="cpu")
+        vals = torch.unique(bias)
+        # exactly two levels: 0 (allowed) and finfo.min (disallowed)
+        assert torch.tensor(0.0) in vals
+        assert torch.finfo(torch.float32).min in vals
+        assert set(v.item() for v in vals) <= {0.0, torch.finfo(torch.float32).min}
+
+    def test_no_fully_masked_query_row(self):
+        # every query row must have at least one allowed (0) key -- else softmax is NaN
+        bias = compute_block_bias(block_size=2, max_seq_length=4, dtype=torch.float32, device="cpu")[0, 0]
+        allowed = bias == 0.0
+        assert bool(allowed.any(dim=1).all())
+
+    def test_x0_half_is_causal(self):
+        # bottom-right n×n quadrant (x0 attending x0) must be lower-triangular allowed
+        n = 4
+        bias = compute_block_bias(block_size=2, max_seq_length=n, dtype=torch.float32, device="cpu")[0, 0]
+        x0 = bias[n:, n:] == 0.0
+        assert torch.equal(x0, torch.tril(torch.ones(n, n, dtype=torch.bool)))
 
 
 class TestAddGumbelNoise:
