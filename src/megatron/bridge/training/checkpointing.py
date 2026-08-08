@@ -91,6 +91,7 @@ from megatron.bridge.utils.common_utils import (
 )
 from megatron.bridge.utils.import_utils import safe_import
 from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
+from megatron.bridge.utils.safe_pickle import energon_torch_load
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -1817,7 +1818,7 @@ def maybe_load_dataloader_state(
         )
 
     print_rank_0(f"restoring dataloader state at iteration {iteration} from {data_state_load_path}")
-    loaded = torch.load(data_state_load_path, map_location="cpu", weights_only=False)
+    loaded = energon_torch_load(data_state_load_path)
     iterable.restore_state(loaded["dataloader_state_dict"])
 
 
