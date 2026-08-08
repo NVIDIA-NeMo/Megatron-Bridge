@@ -688,3 +688,77 @@ def test_stream_weights_megatron_to_hf_does_not_invent_tied_output_alias(monkeyp
     )
 
     assert [weight.param_name for weight in weights] == [embedding_name]
+
+
+def test_stream_weights_hf_to_megatron_skips_unmapped_task_slots():
+    """build_conversion_tasks leaves a None slot per unmapped parameter; consumers must skip them."""
+    bridge = DummyBridge()
+
+    mapped_task = WeightConversionTask(
+        param_name="decoder.weight",
+        global_param_name="decoder.weight",
+        mapping=SimpleNamespace(
+            hf_param="hf.weight",
+            hf_to_megatron=lambda weights, module: weights,
+        ),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=Mock(),
+        param_weight=torch.ones(2),
+    )
+    hf_pretrained = SimpleNamespace(state={"hf.weight": torch.ones(2)})
+
+    weights = list(
+        bridge.stream_weights_hf_to_megatron(
+            hf_pretrained,
+            [Mock()],
+            conversion_tasks=[None, mapped_task],
+        )
+    )
+
+    assert [weight.param_name for weight in weights] == ["decoder.weight"]
+
+
+def test_stream_weights_megatron_to_hf_skips_unmapped_task_slots(monkeypatch):
+    """The export loop shares the same task list, so it must skip None slots too."""
+    bridge = DummyBridge()
+
+    class TrackingTensor:
+        def detach(self):
+            return self
+
+    source = TrackingTensor()
+
+    class DummyMapping:
+        def megatron_to_hf(self, weight, module):
+            return {"hf.weight": weight}
+
+    mapped_task = WeightConversionTask(
+        param_name="decoder.weight",
+        global_param_name="decoder.weight",
+        mapping=DummyMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=source,
+    )
+
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=False,
+            show_progress=False,
+            conversion_tasks=[None, mapped_task],
+            merge_adapter_weights=False,
+        )
+    )
+
+    assert weights == [("hf.weight", source)]
