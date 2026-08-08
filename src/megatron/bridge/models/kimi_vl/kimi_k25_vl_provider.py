@@ -68,6 +68,9 @@ class KimiK25VLModelProvider(MLAModelProvider):
     # Generation configuration
     generation_config: Any | None = None
 
+    # Bound routed-expert activation lifetime when generation recomputes the full prefix.
+    legacy_prefix_moe_chunks: int = 1
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """Provide a KimiK25VL model instance with vision and language components."""
         from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel

@@ -15,6 +15,7 @@
 import runpy
 import sys
 import types
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -44,6 +45,7 @@ _import_stubs["megatron.core.pipeline_parallel.schedules"].get_forward_backward_
 _import_stubs["megatron.bridge"].AutoBridge = MagicMock()
 _import_stubs["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].get_last_rank = MagicMock()
+_import_stubs["megatron.bridge.utils.common_utils"].maybe_initialize_distributed = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_0 = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_last = MagicMock()
 for name in ("AutoConfig", "AutoProcessor", "AutoTokenizer", "GenerationConfig"):
@@ -60,7 +62,11 @@ for name in (
 
 with patch.dict(sys.modules, _import_stubs):
     _SCRIPT_GLOBALS = runpy.run_path(_SCRIPT)
+_checkpoint_load_overrides = _SCRIPT_GLOBALS["_checkpoint_load_overrides"]
+_configure_legacy_prefix_generation = _SCRIPT_GLOBALS["_configure_legacy_prefix_generation"]
+_gather_last_token_logits = _SCRIPT_GLOBALS["_gather_last_token_logits"]
 _main = _SCRIPT_GLOBALS["main"]
+_vlm_forward_step = _SCRIPT_GLOBALS["vlm_forward_step"]
 
 
 @pytest.mark.unit
@@ -145,3 +151,107 @@ def test_generation_stops_on_any_configured_eos_token() -> None:
         _main(args)
 
     assert forward.call_count == 1
+
+
+@pytest.mark.unit
+def test_kimi_checkpoint_load_preserves_legacy_prefix_chunk_config() -> None:
+    transformer_layer_spec = object()
+    provider = SimpleNamespace(
+        legacy_prefix_moe_chunks=1,
+        transformer_layer_spec=transformer_layer_spec,
+    )
+    _configure_legacy_prefix_generation(provider, is_kimi=True)
+
+    overrides = _checkpoint_load_overrides(
+        provider,
+        tp=2,
+        pp=1,
+        ep=48,
+        etp=1,
+        pp_layout=None,
+        is_kimi=True,
+    )
+
+    assert overrides["legacy_prefix_moe_chunks"] == 4
+    assert overrides["transformer_layer_spec"] is transformer_layer_spec
+    assert overrides["tensor_model_parallel_size"] == 2
+    assert overrides["expert_model_parallel_size"] == 48
+    assert "legacy_prefix_moe_chunks" not in _checkpoint_load_overrides(
+        provider,
+        tp=1,
+        pp=1,
+        ep=1,
+        etp=1,
+        pp_layout=None,
+        is_kimi=False,
+    )
+    assert "transformer_layer_spec" not in _checkpoint_load_overrides(
+        provider,
+        tp=1,
+        pp=1,
+        ep=1,
+        etp=1,
+        pp_layout=None,
+        is_kimi=False,
+    )
+
+
+@pytest.mark.unit
+def test_non_kimi_generation_does_not_change_moe_chunk_config() -> None:
+    provider = SimpleNamespace(legacy_prefix_moe_chunks=1)
+
+    _configure_legacy_prefix_generation(provider, is_kimi=False)
+
+    assert provider.legacy_prefix_moe_chunks == 1
+
+
+@pytest.mark.unit
+def test_vlm_forward_step_keeps_legacy_prefix_context_free() -> None:
+    batch = {
+        "tokens": torch.tensor([[1, 2, 3]]),
+        "position_ids": torch.arange(3).unsqueeze(0),
+        "attention_mask": None,
+    }
+    model = MagicMock(return_value=torch.randn(1, 3, 16))
+
+    _vlm_forward_step(iter([batch]), model)
+
+    assert "inference_context" not in model.call_args.kwargs
+
+
+@pytest.mark.unit
+def test_generation_gathers_only_last_token_and_releases_full_prefix() -> None:
+    """TP gathering must not retain or replicate full-prefix logits between steps."""
+    output = torch.arange(1 * 3 * 4, dtype=torch.float32).view(1, 3, 4)
+    output_ref = weakref.ref(output)
+    gathered_refs: list[weakref.ReferenceType[torch.Tensor]] = []
+    gathered_shapes: list[torch.Size] = []
+
+    def fake_all_gather(gathered, local_logits, group):
+        gathered_shapes.append(local_logits.shape)
+        gathered_refs.extend(weakref.ref(tensor) for tensor in gathered)
+        gathered[0].copy_(local_logits)
+        gathered[1].copy_(local_logits + 100)
+
+    with (
+        patch.object(torch.distributed, "all_gather", new=fake_all_gather),
+        patch.object(
+            _gather_last_token_logits.__globals__["parallel_state"],
+            "get_tensor_model_parallel_group",
+            return_value=None,
+        ),
+        patch.object(
+            _gather_last_token_logits.__globals__["parallel_state"],
+            "get_tensor_model_parallel_world_size",
+            return_value=2,
+        ),
+    ):
+        last_token_logits = _gather_last_token_logits(output, real_seq_len=3)
+
+    assert gathered_shapes == [torch.Size([1, 4])]
+    assert torch.equal(last_token_logits, torch.tensor([[8, 9, 10, 11, 108, 109, 110, 111]]))
+    assert all(ref() is None for ref in gathered_refs)
+
+    del output
+    assert output_ref() is None
+    assert torch.equal(last_token_logits[:, :4], torch.tensor([[8, 9, 10, 11]]))
