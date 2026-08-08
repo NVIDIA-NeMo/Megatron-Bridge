@@ -205,6 +205,9 @@ def main(args) -> None:
             "expert_tensor_parallel_size": etp,
             "pipeline_dtype": torch.bfloat16,
         }
+        mp_overrides["params_dtype"] = mp_overrides["pipeline_dtype"]
+        mp_overrides["bf16"] = mp_overrides["pipeline_dtype"] == torch.bfloat16
+        mp_overrides["fp16"] = mp_overrides["pipeline_dtype"] == torch.float16
         if args.pp_layout:
             mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout
         model = bridge.load_megatron_model(
