@@ -445,7 +445,7 @@ calling a recipe reproducible. The pinned public-stack control after native
 H100 HybridEP alignment averaged 24.70215 seconds / about 238.43 model
 TFLOP/s/GPU over exact-2-node steps 5--8. The first reviewable FlashQLA 0.1.2
 GDN sample reduced that mean to 23.205475 seconds / about 253.808 model
-TFLOP/s/GPU, but its Slurm step exited 0:0 while the enclosing batch exited 9:0
+TFLOP/s/GPU, but its distributed step exited 0:0 while the enclosing process exited 9:0
 after one rank missed the shutdown window. A pinned-version rerun with the
 longer shutdown window completed the config dry-run, all eight training steps,
 and focused runtime tests with an overall 0:0 exit. Its steps 5--8 averaged
@@ -486,8 +486,8 @@ a 50-step verification allocation until a shorter exact-topology run crosses
 the threshold with terminal exit 0:0.
 
 Separate an implementation gap from ordinary node and time-window variance
-with a back-to-back run on the same allocation. Job 5719416 used the same
-eos0046/eos0066 pair and candidate MCore for both sides. The reviewable Bridge
+with a back-to-back run on the same allocation. A paired run used the same two
+nodes and candidate MCore for both sides. The reviewable Bridge
 runtime averaged 22.4990 seconds / about 261.8 model TFLOP/s/GPU over steps
 5--8; the development winner averaged 22.4832 seconds / about 262.0 model
 TFLOP/s/GPU. The 15.8-millisecond difference was 0.070%. Both sides completed
@@ -499,7 +499,7 @@ remaining acceptance gap is a model/runtime optimization gap: 261.8 remains
 invent another Bridge port solely from unmatched historical logs.
 
 Verify the retained dependency contract through the exact recipe, not hidden
-command-line fields or package injection. EOS job 5733823 ran the public
+command-line fields or package injection. A clean verification run used the public
 50-step command from clean Bridge commit
 `4ea8a2d075cc7b88f351df0f5519d3de8874e56b` and main-line MCore pin
 `cd4afffa648426a959dc7cb1e24b5ce7d0c3ff54`. It used the existing locked FLA
@@ -534,7 +534,7 @@ recipe, candidate MCore, nodes, container, and caches fixed. Over steps 5--8,
 the reviewable fused-GDN control averaged 23.4425 seconds / 251.30 model
 TFLOP/s/GPU, while adding fused gated-RMSNorm averaged 23.1225 seconds /
 254.75 model TFLOP/s/GPU. That is a 1.365% step-time reduction and 1.373%
-throughput gain. Both distributed runs and both Slurm tasks exited 0:0, with no
+throughput gain. Both distributed runs and both launcher tasks exited 0:0, with no
 OOM, NCCL error, or CUDA error. Retain this fusion as an attributable Bridge
 win. A second same-allocation A/B on a normal-speed node pair established the
 new absolute short-run point: the retained fused gated-RMSNorm control averaged
@@ -562,7 +562,7 @@ Bridge configuration A/B. Stop before training until the exact topology
 passes window registration, dispatch, and combine.
 
 Bracket sub-percent launch-environment candidates with repeated controls.
-Job 5720911 used one exact two-node allocation for margin-20 control, backward
+A same-allocation bracket used one exact two-node allocation for margin-20 control, backward
 margin 16, and a repeated margin-20 control. Over steps 5--8 their means were
 22.199950, 22.180425, and 22.178600 seconds. Margin 16 was 0.040% faster than
 the two-control mean, while the controls themselves drifted 0.096%. Every
@@ -571,14 +571,14 @@ exit 0:0. Keep forward/backward LayerNorm margins at 20 and reject the
 candidate as noise.
 
 Probe memory and layout ideas at the production expert shape before spending
-a two-node allocation. Corrected job 5720895 compared the existing transposed
+a two-node allocation. A corrected primitive probe compared the existing transposed
 grouped-weight view with a contiguous KxN layout. Output and gradients had
 cosine 1.0; contiguous KxN changed forward from 0.622466 to 0.618936
 milliseconds but regressed forward+backward from 1.797403 to 1.800661
 milliseconds, so the training-critical path was 0.181% slower. Keep the
 existing layout.
 
-Job 5720897 tested FP8 storage for the weighted-SwiGLU activation. It preserved
+An FP8 activation-storage probe tested the weighted-SwiGLU activation. It preserved
 output and gradient cosines of at least 0.999288082 and reduced retained
 memory from 236.438 to 202.438 MiB per expert call, but forward+backward grew
 from 1.240563 to 1.419549 milliseconds, a 14.428% regression. Do not enable it
@@ -586,14 +586,14 @@ at microbatch one. Its only plausible value is enabling microbatch two, which
 must fit and win in an exact end-to-end run after accounting for the
 quantize/dequantize cost.
 
-The exact end-to-end feasibility run did not pass. Job 5720901 kept the
+The exact end-to-end feasibility run did not pass. It kept the
 reviewable Bridge commit, candidate MCore, TP1/EP16 topology, GBS1024, and all
 retained recipe settings fixed, then set microbatch size 2 and enabled
 `activation_func_fp8_input_store`. It built the model and entered iteration 0,
 but every H100 reached roughly 80.7--81.0 GiB. Repeated telemetry showed a
 stable split where half the ranks remained in 100%-busy persistent kernels and
 their peers waited. The log stopped immediately after GDN kernel compilation,
-no first iteration or loss completed, and Slurm ended the job as `TIMEOUT`
+no first iteration or loss completed, and the launcher ended the run as `TIMEOUT`
 after 15:13. This is neither an OOM claim nor a valid timing sample; it is a
 failed progress/feasibility gate. Reject MBS2 with FP8 activation storage and
 retain microbatch size 1.
@@ -609,7 +609,7 @@ both logits. The Qwen3.5 265.925 result is therefore not missing an 8% FLOPs
 accounting correction. Keep 287.305 as an explicit cross-model acceptance
 target only; do not describe it as a previously reproduced Qwen3.5 result.
 
-Job 5721613 tested whether shared-expert overlap could repair the pathological
+A shared-expert-overlap probe tested whether that overlap could repair the pathological
 combined EP-overlap schedule. The owner-stream-release/connections=1 EP
 control averaged 45.48935 seconds over iterations 2--3. Forcing shared-expert
 overlap inside the same combined schedule reduced the mean to 23.3590 seconds
@@ -620,7 +620,7 @@ control, but it remained 5.44% slower than the accepted 22.152850-second
 no-EP-overlap winner. Rank-0 iteration-2 peak allocated/reserved memory was
 70.401/77.146 GiB. Reject the combined schedule despite the causal recovery.
 
-Job 5721913 bracketed ordinary DDP overlap with no-overlap controls on one
+A same-allocation experiment bracketed ordinary DDP overlap with no-overlap controls on one
 exact two-node allocation. The controls averaged 22.25945 and 22.23195
 seconds over iterations 2--3. Gradient-reduce overlap averaged 22.25170
 seconds, 0.027% slower than the two-control mean; gradient-reduce plus
@@ -628,7 +628,7 @@ parameter-gather overlap averaged 22.31050 seconds, 0.291% slower. Every case
 completed with finite numerics and exit 0:0. Do not promote either
 noise-level result.
 
-The same job made microbatch two progress by combining selective GDN recompute
+The same bracketed experiment made microbatch two progress by combining selective GDN recompute
 with FP8 activation-function input storage. It completed three finite steps,
 but iterations 2--3 averaged 39.89815 seconds and about 147.65 model
 TFLOP/s/GPU. Rank-0 iteration-2 peak allocated/reserved memory reached
@@ -636,7 +636,7 @@ TFLOP/s/GPU. Rank-0 iteration-2 peak allocated/reserved memory reached
 22.23195-second repeated control. Passing the first-iteration feasibility gate
 did not create a throughput candidate.
 
-Job 5722042 then isolated shared-plus-combined-EP overlap with delayed wgrad
+A follow-up experiment then isolated shared-plus-combined-EP overlap with delayed wgrad
 and GDN recompute. Its shared+EP control averaged 23.02380 seconds. Selective
 GDN recompute reduced rank-0 iteration-2 peak allocation from 70.401 to
 58.895 GiB but averaged 25.29230 seconds, a 9.85% regression. Delayed wgrad
