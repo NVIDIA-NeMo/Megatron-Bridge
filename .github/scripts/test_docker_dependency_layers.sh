@@ -99,6 +99,10 @@ ancestor_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 printf 'main\n' >>"$revision_worktree/file"
 git -C "$revision_worktree" commit -qam main
 main_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" switch -q -c dev
+printf 'dev\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam dev
+dev_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" branch contributor "$ancestor_sha"
 git -C "$revision_worktree" switch -q contributor
 printf 'approved\n' >>"$revision_worktree/file"
@@ -122,6 +126,7 @@ git -C "$revision_worktree" add unapproved
 git -C "$revision_worktree" commit -q -m unapproved
 unapproved_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" push -q "$revision_repo" "$main_sha:refs/heads/main"
+git -C "$revision_worktree" push -q "$revision_repo" "$dev_sha:refs/heads/dev"
 git -C "$revision_worktree" push -q "$revision_repo" "$mirror_sha:refs/heads/pull-request/123"
 git -C "$revision_worktree" push -q "$revision_repo" "$merge_sha:refs/pull/123/merge"
 git -C "$revision_worktree" push -q \
@@ -140,6 +145,7 @@ sed "s#\.github/scripts/validate_mcore_repo\.sh#$temporary_dir/revision-bin/repo
   "$revision_validator" >"$temporary_dir/revision-validator"
 chmod +x "$temporary_dir/revision-validator"
 "$temporary_dir/revision-validator" "$revision_repo" "$ancestor_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$dev_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$mirror_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$merge_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"
@@ -219,6 +225,12 @@ if "$temporary_dir/revision-validator" "$revision_repo" 000000000000000000000000
 fi
 if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
   echo "MCore revision validation accepted a malformed SHA" >&2
+  exit 1
+fi
+
+if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
+  grep -q '^name = "transformer-engine"$' pyproject.toml; then
+  echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
   exit 1
 fi
 

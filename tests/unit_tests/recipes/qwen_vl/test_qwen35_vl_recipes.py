@@ -503,6 +503,7 @@ def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.moe_router_fusion is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.fsdp_double_buffer is True
+    assert cfg.ddp.megatron_fsdp_max_pool_double_buffer is True
     assert cfg.ddp.nccl_ub is False
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.overlap_param_gather is True

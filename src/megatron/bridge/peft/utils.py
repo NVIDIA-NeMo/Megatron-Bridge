@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
 import inspect
 import logging
 import math
 import re
+import textwrap
 from contextlib import nullcontext
 from dataclasses import dataclass, fields
 from functools import cache
@@ -112,6 +114,31 @@ def _te_grouped_linear_uses_output_buffers(
 
     parameters = inspect.signature(autograd_function.forward).parameters
     return "out" in parameters and "dgrad_out" in parameters
+
+
+@cache
+def _te_grouped_linear_non_tensor_arg_names(
+    autograd_function: type[torch.autograd.Function],
+) -> tuple[str, ...]:
+    """Return the names unpacked from TE's grouped-linear ``non_tensor_args`` tuple."""
+
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(autograd_function.forward)))
+    except (OSError, SyntaxError, TypeError):
+        return ()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "non_tensor_args"
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Tuple)
+        ):
+            continue
+        names = node.targets[0].elts
+        if all(isinstance(name, ast.Name) for name in names):
+            return tuple(name.id for name in names)
+    return ()
 
 
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
@@ -1067,6 +1094,7 @@ class ParallelLinearAdapter(nn.Module):
             self.half()
 
         if self._uses_grouped_expert_sharding():
+            self._synchronize_shared_expert_parameters()
             self._register_shared_expert_grad_sync_hooks()
 
         # revert config change in case it is read elsewhere
@@ -1280,6 +1308,37 @@ class ParallelLinearAdapter(nn.Module):
         # EP x expert-DP data-parallel world, not just expert-DP.
         torch.distributed.all_reduce(grad, group=self.ep_group)
         return grad
+
+    def _synchronize_shared_expert_parameters(self) -> None:
+        """Broadcast shared expert adapter parameters from EP group rank zero."""
+
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return
+        if self.ep_group is None or _process_group_size(self.ep_group) <= 1:
+            return
+
+        weights = [
+            weight
+            for module in (self.linear_in, self.linear_out)
+            if isinstance(weight := getattr(module, "weight", None), torch.Tensor)
+        ]
+        if not weights:
+            return
+
+        src_rank = torch.distributed.get_global_rank(self.ep_group, 0)
+        with torch.no_grad():
+            for weight in weights:
+                if weight.is_meta:
+                    raise RuntimeError(
+                        "Shared expert adapter parameters must be materialized before EP synchronization"
+                    )
+                if weight.is_cuda or torch.distributed.get_backend(self.ep_group) != "nccl":
+                    torch.distributed.broadcast(weight, src=src_rank, group=self.ep_group)
+                    continue
+
+                staged_weight = weight.to(torch.device("cuda", torch.cuda.current_device()))
+                torch.distributed.broadcast(staged_weight, src=src_rank, group=self.ep_group)
+                weight.copy_(staged_weight.cpu())
 
     def _register_shared_expert_grad_sync_hooks(self) -> None:
         """Keep shared grouped-expert adapters synchronized across EP ranks."""
@@ -2082,22 +2141,40 @@ class GroupedExpertLinearAdapter(nn.Module):
                     *weights_and_biases,
                 )
             else:
-                if "_fp8_workspaces" in vars(helper):
-                    cache_weight = False
-                    workspace_args = (
-                        [None] * weight.shape[0],
-                        cache_weight,
-                        None,
+                non_tensor_arg_names = _te_grouped_linear_non_tensor_arg_names(TEPytorchGroupedLinearAutograd)
+                if not non_tensor_arg_names:
+                    raise RuntimeError("Unable to determine Transformer Engine grouped-linear argument layout")
+                te_non_tensor_values = {
+                    "m_splits": m_splits,
+                    "use_bias": helper.apply_bias,
+                    "is_first_microbatch": None,
+                    "fp8": helper.fp8,
+                    "fp8_calibration": helper.fp8_calibration,
+                    "wgrad_store": helper.wgrad_store,
+                    "input_quantizers": input_quantizers,
+                    "weight_quantizers": weight_quantizers,
+                    "output_quantizers": output_quantizers,
+                    "grad_input_quantizers": grad_input_quantizers,
+                    "grad_weight_quantizers": grad_weight_quantizers,
+                    "grad_output_quantizers": grad_output_quantizers,
+                    "fuse_wgrad_accumulation": helper.fuse_wgrad_accumulation,
+                    "cpu_offloading": TEPytorchIsCPUOffloadEnabled(),
+                    "sequence_parallel": helper.sequence_parallel,
+                    "activation_dtype": helper.activation_dtype,
+                    "is_grad_enabled": torch.is_grad_enabled(),
+                    "module": helper,
+                    "weight_workspaces": [None] * weight.shape[0],
+                    "cache_weight": False,
+                    "skip_fp8_weight_update": None,
+                    "save_original_input": helper.save_original_input,
+                    "debug": False,
+                }
+                unknown_arg_names = set(non_tensor_arg_names) - te_non_tensor_values.keys()
+                if unknown_arg_names:
+                    raise RuntimeError(
+                        f"Unsupported Transformer Engine grouped-linear arguments: {sorted(unknown_arg_names)}"
                     )
-                else:
-                    workspace_args = (helper, None)
-                te_non_tensor_args = (
-                    m_splits,
-                    *common_non_tensor_args,
-                    *workspace_args,
-                    helper.save_original_input,
-                    False,
-                )
+                te_non_tensor_args = tuple(te_non_tensor_values[name] for name in non_tensor_arg_names)
                 autograd_args = (x, te_non_tensor_args, *weights_and_biases)
 
             if torch.is_grad_enabled():

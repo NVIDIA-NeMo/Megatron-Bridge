@@ -15,6 +15,7 @@ fi
 refs=$(git ls-remote \
   "$repo" \
   "refs/heads/main" \
+  "refs/heads/dev" \
   "refs/heads/pull-request/*" \
   "refs/heads/gh-readonly-queue/*/pr-*" \
   "refs/pull/*/merge")
@@ -34,7 +35,8 @@ while IFS=$'\t' read -r sha ref; do
   if [[ "$sha" != "$revision" ]]; then
     continue
   fi
-  if [[ "$ref" =~ ^refs/heads/pull-request/[0-9]+$ ]] || \
+  if [[ "$ref" == "refs/heads/dev" ]] || \
+    [[ "$ref" =~ ^refs/heads/pull-request/[0-9]+$ ]] || \
     [[ "$ref" =~ ^refs/heads/gh-readonly-queue/(main|dev)/pr-[0-9]+-[0-9a-f]{40}$ ]]; then
     exit 0
   fi
