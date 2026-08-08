@@ -43,6 +43,9 @@ class DataloaderConfig:
     drop_last: bool = True
     """Whether dataloaders drop the last incomplete batch."""
 
+    shuffle: bool = True
+    """Whether the global-batch sampler used by ``dataloader_type="batch"`` reshuffles samples each epoch."""
+
     persistent_workers: bool = True
     """Whether dataloader workers persist between iterations."""
 
