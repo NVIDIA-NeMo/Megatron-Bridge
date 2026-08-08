@@ -3,13 +3,12 @@
 
 title: nemotron_3_ultra_550b_a55b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. Standalone pretrain_fsdp.GB200 and pretrain_fsdp.H100 recipes use
-  the same sequence-length-8192, GBS/MBS 512/1, TP4/PP1/EP64 benchmark
-  workload where the hardware permits; both remain unverified. Nemotron 3
-  Ultra 550B-A55B has public BF16 H100 pretraining, packed full-SFT, and packed
-  PEFT recipes. Its pinned 24-GPU BF16
+  Nemotron 3 Ultra 550B-A55B has public BF16
+  pretrain_performance.GB200 and pretrain_fsdp.GB200 verification recipes
+  based on the same sequence-length-8192, GBS/MBS 256/1 workload; both remain
+  unverified pending topology-valid screens and a final 50-step run. It also
+  has public BF16 H100 pretraining, packed full-SFT, and packed PEFT recipes.
+  Its pinned 24-GPU BF16
   Hugging Face-to-Megatron-to-Hugging Face round trip and deterministic
   Megatron inference are verified. CPU conversion, manual forward parity,
   functional training, checkpoint resume, and the GB200 and H100 FSDP
@@ -29,6 +28,8 @@ verification_index:
     H100:
       unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
       unsupported: [sft_long_context]
+  performance:
+    GB200: unverified
   fsdp:
     GB200: unverified
     H100: unverified
@@ -39,7 +40,7 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 782c48c3bf3aa1066a1564f1206b3866495e9439  # pragma: allowlist secret
+  bridge_commit: 64b8a3085012a431101b624cf307ed4d7ecdbbb5  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -62,6 +63,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 782c48c3bf3aa1066a1564f1206b3866495e9439  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 3 --gpus-per-node 8
@@ -99,6 +101,7 @@ items:
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 782c48c3bf3aa1066a1564f1206b3866495e9439  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 3 --gpus-per-node 8
@@ -128,12 +131,14 @@ items:
       Verification requires the pinned Hugging Face and imported Megatron
       models to agree on the prompt's next token with cosine similarity of at
       least 0.99; maximum and mean absolute logit differences must also be
-      reported. The comparison helper must first support distributing both
-      approximately 550-billion-parameter paths across enough accelerators.
+      reported. The staged comparison path must complete its single-node,
+      automatically partitioned Hugging Face stage and dependent distributed
+      Megatron stage without a load, conversion, or forward-pass failure.
 
   inference:
     status: verified
     precision: bf16
+    bridge_commit: 782c48c3bf3aa1066a1564f1206b3866495e9439  # pragma: allowlist secret
     command: >
       uv run python examples/conversion/hf_to_megatron_generate_text.py
       --hf_model_path nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
@@ -356,16 +361,40 @@ items:
         uninterrupted reference. It must record all four metrics and persist a
         complete reloadable final checkpoint.
 
+  pretrain_performance:
+    GB200:
+      status: unverified
+      precision: bf16
+      command: >
+        ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config
+        --max_steps 50 --wait
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        On 256 GB200 GPUs, the exact canonical BF16 distributed-optimizer
+        recipe must complete all 50 optimizer steps at
+        TP2/PP4/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length 8192 with
+        finite loss, no skipped or NaN iterations, and all four training
+        metrics. HybridEP, natural expert routing, FP32 gradient reduction,
+        targeted fused expert-MLP activation offload, and selective moe_act
+        recompute must remain active. Forced expert balancing, MXFP8, and
+        disabled numerical checks are not part of this verification workload.
+
   pretrain_fsdp:
     GB200:
       status: unverified
-      precision: fp8_mx
+      precision: bf16
       enabled_features:
         moe_dispatcher: hybridep
         megatron_fsdp: optim_grads_params
       command: >
         ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
-        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_tp4_config
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config
         --max_steps 50 --wait
       last_verified: null
       metrics:
@@ -376,13 +405,17 @@ items:
         peak_allocated_memory_gib: null
         peak_reserved_memory_gib: null
       expected_result: >
-        On 256 GB200 GPUs, the exact canonical mock-data FSDP recipe must
-        complete all 50 optimizer steps at TP4/PP1/CP1/EP64/ETP1,
-        GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
+        On 256 GB200 GPUs, the exact canonical BF16 Megatron-FSDP HSDP recipe
+        must complete all 50 optimizer steps at TP2/PP1/CP1/EP64/ETP1,
+        GBS/MBS 256/1, and sequence length 8192 with finite loss, no skipped or
         NaN iterations, all four training metrics, and peak allocated and
-        reserved memory. MXFP8, HybridEP, the fused grouped MLP path, selective
-        MoE-activation recompute, fine-grained parameter gather, and
-        Megatron-FSDP must remain active without CPU activation offload.
+        reserved memory. HybridEP, natural expert routing, FP32 gradient
+        reduction, FP32 main gradients and optimizer state, targeted fused
+        expert-MLP activation offload, selective moe_act recompute,
+        and Megatron-FSDP must remain active. Fine-grained parameter gather
+        remains disabled in this BF16 HSDP verification profile.
+        Forced expert balancing, MXFP8, and disabled numerical checks are not
+        part of this verification workload.
 
     H100:
       status: unverified
