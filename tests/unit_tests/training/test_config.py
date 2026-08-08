@@ -28,9 +28,11 @@ from megatron.bridge.data.builders import (
     HFEnergonTaskEncoderConfig,
     MockVLMSFTDatasetConfig,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -1084,6 +1086,37 @@ class TestConfigContainerValidation:
 
         try:
             container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_in_batch_packing_enables_variable_pp_shapes_for_builder_model(self, monkeypatch):
+        """Test builder-backed GPT configs use dynamic PP shapes for packed batches."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                pipeline_model_parallel_size=2,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert model_cfg.transformer.variable_seq_lengths is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
