@@ -1067,6 +1067,7 @@ class ParallelLinearAdapter(nn.Module):
             self.half()
 
         if self._uses_grouped_expert_sharding():
+            self._synchronize_shared_expert_parameters()
             self._register_shared_expert_grad_sync_hooks()
 
         # revert config change in case it is read elsewhere
@@ -1280,6 +1281,37 @@ class ParallelLinearAdapter(nn.Module):
         # EP x expert-DP data-parallel world, not just expert-DP.
         torch.distributed.all_reduce(grad, group=self.ep_group)
         return grad
+
+    def _synchronize_shared_expert_parameters(self) -> None:
+        """Broadcast shared expert adapter parameters from EP group rank zero."""
+
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return
+        if self.ep_group is None or _process_group_size(self.ep_group) <= 1:
+            return
+
+        weights = [
+            weight
+            for module in (self.linear_in, self.linear_out)
+            if isinstance(weight := getattr(module, "weight", None), torch.Tensor)
+        ]
+        if not weights:
+            return
+
+        src_rank = torch.distributed.get_global_rank(self.ep_group, 0)
+        with torch.no_grad():
+            for weight in weights:
+                if weight.is_meta:
+                    raise RuntimeError(
+                        "Shared expert adapter parameters must be materialized before EP synchronization"
+                    )
+                if weight.is_cuda or torch.distributed.get_backend(self.ep_group) != "nccl":
+                    torch.distributed.broadcast(weight, src=src_rank, group=self.ep_group)
+                    continue
+
+                staged_weight = weight.to(torch.device("cuda", torch.cuda.current_device()))
+                torch.distributed.broadcast(staged_weight, src=src_rank, group=self.ep_group)
+                weight.copy_(staged_weight.cpu())
 
     def _register_shared_expert_grad_sync_hooks(self) -> None:
         """Keep shared grouped-expert adapters synchronized across EP ranks."""
