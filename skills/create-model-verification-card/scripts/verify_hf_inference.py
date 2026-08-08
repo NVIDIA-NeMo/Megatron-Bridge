@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import logging
 from typing import Any
@@ -127,24 +128,32 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
     import torch
 
     dtype = getattr(torch, args.dtype)
+    is_local = os.path.isdir(args.hf_model)
     if args.image:
         from transformers import AutoModelForMultimodalLM, AutoProcessor
 
-        processor = AutoProcessor.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
+        processor = AutoProcessor.from_pretrained(
+            args.hf_model, trust_remote_code=args.trust_remote_code, local_files_only=is_local
+        )
         model_cls = AutoModelForMultimodalLM
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        processor = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
+        processor = AutoTokenizer.from_pretrained(
+            args.hf_model, trust_remote_code=args.trust_remote_code, local_files_only=is_local
+        )
         model_cls = AutoModelForCausalLM
+    extra_kwargs = {"device_map": "auto"} if is_local else {}
     model, loading_info = model_cls.from_pretrained(
         args.hf_model,
         dtype=dtype,
         trust_remote_code=args.trust_remote_code,
+        local_files_only=is_local,
         output_loading_info=True,
+        **extra_kwargs,
     )
     _validate_loading_info(loading_info)
-    model = model.to(args.device).eval()
+    model = (model.to(dtype) if is_local else model.to(args.device)).eval()
     return torch, model, processor
 
 
@@ -158,24 +167,21 @@ def main() -> int:
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
     with torch.inference_mode():
+        generate_kwargs = {"min_new_tokens": args.max_new_tokens} if os.path.isdir(args.hf_model) else {}
         output = model.generate(
             **inputs,
             do_sample=False,
             max_new_tokens=args.max_new_tokens,
             pad_token_id=pad_token_id,
+            **generate_kwargs,
         )
 
     completion_ids = output[0, prompt_length:].tolist()
     completion = processor.decode(completion_ids, skip_special_tokens=True)
-    LOG.info(
-        "HF completion (%d generated tokens; maximum %d): %s",
-        len(completion_ids),
-        args.max_new_tokens,
-        json.dumps(completion, ensure_ascii=False),
-    )
+    LOG.info("HF completion (%d tokens): %s", args.max_new_tokens, json.dumps(completion, ensure_ascii=False))
     return 0
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", force=True)
     raise SystemExit(main())

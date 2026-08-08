@@ -530,6 +530,28 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
         hf_cfg = super(DeepSeekV4Bridge, cls).megatron_to_hf_config(provider)
 
+        # max_position_embeddings comes from CONFIG_MAPPING as provider.seq_length, which
+        # reflects the training sequence length (e.g. 1024 for SFT), not the model's full
+        # context window.  Recompute from YARN RoPE: factor * original_max_position_embeddings.
+        rope_scaling = hf_cfg.get("rope_scaling") or {}
+        yarn_factor = rope_scaling.get("factor", None)
+        yarn_orig = rope_scaling.get("original_max_position_embeddings", None)
+        if yarn_factor is not None and yarn_orig is not None:
+            hf_cfg["max_position_embeddings"] = int(yarn_factor * yarn_orig)
+
+        # qk_rope_head_dim must be preserved from the original model architecture (64 for DSv4).
+        # MCore may recompute qk_pos_emb_head_dim during training based on internal attention
+        # parameters, resulting in an incorrect value being exported.  Restore from the stored
+        # provider attribute that was explicitly set during import.
+        qk_pos_emb_head_dim = getattr(provider, "qk_pos_emb_head_dim", None)
+        if qk_pos_emb_head_dim is not None:
+            hf_cfg["qk_rope_head_dim"] = qk_pos_emb_head_dim
+
+        # partial_rotary_factor must not be exported: training sets it to 1.0, which
+        # causes transformers to compute qk_rope_head_dim = head_dim = 512 (wrong).
+        # Omitting it lets transformers recompute it from qk_rope_head_dim correctly.
+        hf_cfg.pop("partial_rotary_factor", None)
+
         hf_cfg["num_nextn_predict_layers"] = getattr(provider, "mtp_num_layers", None) or 0
         num_hidden_layers = hf_cfg.get("num_hidden_layers", getattr(provider, "num_layers", 0))
         num_hash_layers = getattr(provider, "moe_n_hash_layers", 0)
@@ -878,12 +900,12 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             # MTP gated MLP (routed experts + shared expert)
             mappings += [
                 GatedMLPMapping(
-                    megatron_param=f"{mg_pfx}.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                    megatron_param=f"{mg_pfx}.mtp_model_layer.mlp.experts.local_experts.*.linear_fc1.weight",
                     gate=f"{ck_pfx}.ffn.experts.*.w1.weight",
                     up=f"{ck_pfx}.ffn.experts.*.w3.weight",
                 ),
                 AutoMapping(
-                    f"{mg_pfx}.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                    f"{mg_pfx}.mtp_model_layer.mlp.experts.local_experts.*.linear_fc2.weight",
                     f"{ck_pfx}.ffn.experts.*.w2.weight",
                 ),
                 GatedMLPMapping(
@@ -944,8 +966,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         When ``task.weight_dtype`` is set, skip requantization and return the weights
         unchanged — the generic export path casts the dtype.
         """
-        if task.weight_dtype is not None:
-            return converted_weights_dict
+        # Rename indexer scorer key before any early return so it is always applied,
+        # including the BF16 export path (task.weight_dtype is not None).
         native_scorer_key = next(
             (
                 key
@@ -959,6 +981,9 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             if legacy_key in hf_state_dict:
                 converted_weights_dict = dict(converted_weights_dict)
                 converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
+
+        if task.weight_dtype is not None:
+            return converted_weights_dict
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,
