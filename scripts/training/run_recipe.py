@@ -81,6 +81,7 @@ logger = logging.getLogger(__name__)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
@@ -453,6 +454,10 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
 def main(argv: list[str] | None = None) -> None:
     """Load, configure, and execute one library or benchmark recipe."""
+    # NeMo-Run executes container tasks from its private /nemo_run/code
+    # directory. Resolve user-facing relative dataset, checkpoint, cache, and
+    # logger paths from the mounted Bridge checkout instead.
+    os.chdir(REPO_ROOT)
     logging.basicConfig(level=logging.INFO)
     args, cli_overrides = parse_args(argv)
 
