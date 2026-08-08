@@ -35,6 +35,7 @@ from megatron.bridge.recipes.deepseek import (
 )
 from megatron.bridge.recipes.deepseek.deepseek_v3 import _build_standalone_mtp_layout
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
 _deepseek_module = importlib.import_module("megatron.bridge.recipes.deepseek")
@@ -344,6 +345,28 @@ def test_deepseek_v3_pipeline_layout_keeps_default_mtp_with_loss():
     set_deepseek_v3_pipeline_model_parallel_layout(model_cfg)
 
     assert model_cfg.pipeline_model_parallel_layout[-1][-2:] == ["mtp", "loss"]
+
+
+def test_deepseek_v3_pipeline_layout_tracks_supported_cli_topology(monkeypatch: pytest.MonkeyPatch):
+    recipe_module = importlib.import_module("megatron.bridge.recipes.deepseek.h100.deepseek_v3")
+    patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", _FakeBridge)
+    cfg = recipe_module.deepseek_v3_pretrain_1024gpu_h100_bf16_config()
+    recipe_runner, _ = _load_recipe_runner_module()
+
+    cfg.model.num_layers = 61
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 1
+    recipe_runner.sync_model_pipeline_layout(
+        cfg,
+        cli_overrides=[
+            "model.pipeline_model_parallel_size=8",
+            "model.virtual_pipeline_model_parallel_size=1",
+        ],
+    )
+
+    layout = PipelineParallelLayerLayout(cfg.model.pipeline_model_parallel_layout, pipeline_model_parallel_size=8)
+    assert layout.virtual_pipeline_model_parallel_size == 1
+    assert layout.validate_layer_layout(cfg.model.num_layers, cfg.model.mtp_num_layers) is False
 
 
 def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
