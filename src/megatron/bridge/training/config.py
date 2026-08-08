@@ -1231,7 +1231,8 @@ class ConfigContainer(Container):
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
         if enable_in_batch_packing:
-            self.model._enable_in_batch_packing = True
+            transformer_config = getattr(self.model, "transformer", self.model)
+            transformer_config._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
         elif isinstance(
@@ -1925,6 +1926,18 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.train.finalize()
     cfg.scheduler.finalize()
     cfg.checkpoint.finalize()
+
+    if cfg.validation.eval_global_batch_size is None:
+        assert cfg.train.global_batch_size is not None, (
+            "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
+        )
+        cfg.validation.eval_global_batch_size = cfg.train.global_batch_size
+    if cfg.validation.eval_micro_batch_size is None:
+        assert cfg.train.micro_batch_size is not None, (
+            "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
+        )
+        cfg.validation.eval_micro_batch_size = cfg.train.micro_batch_size
+
     if cfg.profiling is not None:
         cfg.profiling.finalize()
         if cfg.profiling.nvtx_ranges:

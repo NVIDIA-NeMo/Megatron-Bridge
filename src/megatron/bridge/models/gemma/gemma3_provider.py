@@ -351,4 +351,5 @@ def _is_local_attn_layer(
     layer_pattern: Tuple[int, int],
 ) -> bool:
     pattern_size = sum(layer_pattern)
-    return layer_number % pattern_size != 0
+    local_layer_count = layer_pattern[0]
+    return (layer_number - 1) % pattern_size < local_layer_count
