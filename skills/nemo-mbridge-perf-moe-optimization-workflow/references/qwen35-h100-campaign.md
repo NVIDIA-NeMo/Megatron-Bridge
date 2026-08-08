@@ -645,3 +645,35 @@ without recompute OOMed during the first iteration when ranks needed another
 on all 16 ranks while requesting another 970 MiB or 1.89 GiB. The memory saved
 by architecture-specific recompute was insufficient for deferred expert
 wgrad storage, and its standalone compute cost was already negative.
+
+The accepted final candidate recovered the EP8 memory headroom without
+recompute by using FP16 precision-aware optimizer main parameters, BF16 main
+gradients and moments, and no BF16 remainder buffer. EP8 kept each HybridEP
+group within one eight-GPU node, while local auxiliary balancing removed the
+per-layer, per-microbatch global expert-count reduction. The retained
+execution contract used MBS1/GBS1024, 64-token HybridEP chunks, 16 dispatcher
+SMs, 108 preprocessing SMs, shared-expert overlap, eager execution, and no
+combined EP, DP, or parameter-gather overlap.
+
+A benchmark-only, mock-data, force-balanced 50-step stability repeat from
+clean public Bridge commit `5c2ea293baa8616c69dbe479d357dec124be954d`
+completed all 50 keyed rows with finite loss and gradients, zero skipped or
+NaN iterations, and exit 0:0. Steps 41--50 averaged 20,656.45 milliseconds and
+285.18 model TFLOP/s/GPU; LM loss moved from 12.83067 to 0.008005831. Treat
+that loss only as a health signal, not convergence evidence. Rank-0 peak
+allocated/reserved memory was 73.14/76.104 GiB with zero allocator retries.
+Relative to the prior public 24,561.870-millisecond / 239.820-TFLOP/s/GPU
+result, this is 15.90% lower step time and 18.91% higher throughput.
+
+Keep this result candidate-only. The active GDN runtime depended on the merged
+Megatron-Core GDN/GDN2 refactor in NVIDIA/Megatron-LM#5843 plus candidate
+integration from NVIDIA/Megatron-LM#5765, NVIDIA/Megatron-LM#5564, and
+NVIDIA/Megatron-LM#5532 for the GDN2 stack, FlashQLA backend, and pre-GDR
+fusion. NVIDIA/Megatron-LM#5982 was evaluated but is inactive because the
+winner uses no GDN recompute; the separate Q/K-normalization path from
+NVIDIA/Megatron-LM#5396 was bypassed by pre-GDR fusion. Until the active PRs
+land in a public MCore pin and the exact public card command persists its
+post-setup configuration, the model-card performance item must remain
+unverified. The integrated MCore commit used by this repeat was not publicly
+reachable, so treat the measurement as stability evidence, not a
+reproducibility claim.

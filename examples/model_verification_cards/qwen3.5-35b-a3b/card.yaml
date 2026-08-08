@@ -203,6 +203,7 @@ items:
         --nodes 2 --gpus-per-node 8
         --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
         --mode pretrain --max_steps 50
+        logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/h100-performance/resolved-config.yaml
       last_verified: null
       metrics:
         initial_loss: null
@@ -211,7 +212,7 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
         The exact command must complete all 50 steps with finite loss,
-        skipped=0, NaN=0, and exit 0:0. Steps 41-50 must average at least
-        280.000 model TFLOP/s/GPU. The current EP8 and FP16-main-parameter
-        recipe has not completed this gate against a public MCore pin, so this
-        item remains unverified.
+        skipped=0, NaN=0, exit 0:0, and a persisted post-setup configuration.
+        Steps 41-50 must average at least 280.000 model TFLOP/s/GPU. The
+        current EP8 and FP16-main-parameter recipe has not completed this gate
+        against a public MCore pin, so this item remains unverified.
