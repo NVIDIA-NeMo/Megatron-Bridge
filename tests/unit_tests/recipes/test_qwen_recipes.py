@@ -768,6 +768,7 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 64
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["HYBRID_EP_CACHE_DIR"] == "/tmp/qwen35-test-cache/rank-7"
     assert cfg.env_vars["TILELANG_CACHE_DIR"] == "/tmp/qwen35-test-cache/rank-7/tilelang"
     assert cfg.env_vars["TORCHINDUCTOR_CACHE_DIR"] == "/tmp/qwen35-test-cache/rank-7/torchinductor"
     assert cfg.env_vars["TRITON_CACHE_DIR"] == "/tmp/qwen35-test-cache/rank-7/triton"

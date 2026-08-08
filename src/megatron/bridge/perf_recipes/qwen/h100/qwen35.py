@@ -41,6 +41,9 @@ def _qwen35_rank_local_kernel_cache_env() -> dict[str, str]:
     rank = os.environ.get("SLURM_PROCID") or os.environ.get("RANK") or "0"
     rank_cache = os.path.join(cache_root, f"rank-{rank}")
     return {
+        # HybridEP treats this value as a cache root and appends its own
+        # .deepep/hybrid_ep/jit hierarchy.
+        "HYBRID_EP_CACHE_DIR": rank_cache,
         "TILELANG_CACHE_DIR": os.path.join(rank_cache, "tilelang"),
         "TORCHINDUCTOR_CACHE_DIR": os.path.join(rank_cache, "torchinductor"),
         "TRITON_CACHE_DIR": os.path.join(rank_cache, "triton"),
