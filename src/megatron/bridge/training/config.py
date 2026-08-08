@@ -1098,9 +1098,6 @@ class ConfigContainer(Container):
             assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
                 "Megatron-FSDP requires the fsdp_dtensor checkpointing format!"
             )
-        assert os.getenv("CUDA_DEVICE_MAX_CONNECTIONS") != "1", (
-            "FSDP requires CUDA_DEVICE_MAX_CONNECTIONS > 1 or unset."
-        )
         if self.ddp.nccl_ub:
             # Without manual registration, UBR is really slow.
             self.ddp.fsdp_manual_registration = True
