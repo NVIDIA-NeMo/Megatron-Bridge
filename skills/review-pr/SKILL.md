@@ -1,7 +1,6 @@
 ---
 name: review-pr
 description: Structured single-agent code review workflow for PRs, commits, and local diffs. Use when asked to review code, understand a PR, rubber duck a change, prepare GitHub review comments, compare a change against Megatron Bridge conventions, or produce high-signal findings without subagents or tmux.
-when_to_use: Reviewing a GitHub PR, commit, local diff, or code change; preparing review comments; checking a change against Megatron Bridge conventions; assessing whether a PR is safe to merge; summarizing review findings and test gaps.
 ---
 
 # Review PR
@@ -117,6 +116,19 @@ without copying model-specific glue.
 Do not approve an abstraction solely because it reduces lines of code. It must
 also reduce user or developer complexity without obscuring runtime behavior.
 
+Audit configuration names semantically, not only syntactically. Trace each new
+or changed value to its declaration, documentation, consumers, serialized form,
+logs, and generated paths. Flag values that repurpose a business/config field as
+a cache version, migration marker, experiment tag, feature switch, or unrelated
+namespace even when the workaround functions correctly.
+
+For model- or recipe-specific cache invalidation, require the cache fingerprint
+to derive from the actual semantic inputs. Do not accept a fabricated tokenizer,
+model, or dataset name merely to avoid reusing an old artifact. Prefer a general
+mechanism that fingerprints the effective tokenizer or processor identity,
+template, preprocessing policy, and other output-affecting settings, with tests
+for both stability and invalidation.
+
 ### Performance And Scalability
 
 Identify whether the change touches a hot path or changes communication,
@@ -153,6 +165,9 @@ For each candidate:
 - Check whether existing tests already cover it.
 - Check it against the repository principles: correctness, measured or reasoned
   performance impact, and user/developer clarity.
+- Ask whether every changed config value would be truthful and unsurprising when
+  persisted, logged, or used in an artifact path. If understanding it requires
+  knowing a hidden workaround, keep the semantic-naming finding.
 - Merge duplicates that point to the same root cause.
 - Assign a verdict: `CONFIRMED`, `DOWNGRADED`, `QUESTION`, or `DROP`.
 

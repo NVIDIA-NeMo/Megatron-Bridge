@@ -224,8 +224,7 @@ class TestChatPreprocess:
         assert result["loss_mask"].tolist() == [False, False, False, False, False, True, True, True, True]
         assert result["answer_ids"].tolist() == [21, 22, 102, 103]
 
-    def test_chat_preprocess_trusts_template_eos(self):
-        """Test that _chat_preprocess does not append eos_id when template uses a different end token."""
+    def test_chat_preprocess_appends_requested_eos_after_different_template_end(self):
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
         mock_tokenizer = mock_hf_tokenizer
@@ -245,9 +244,75 @@ class TestChatPreprocess:
             ]
         }
 
-        result = _chat_preprocess(source, mock_tokenizer)
+        result = _chat_preprocess(source, mock_tokenizer, add_eos=True)
+
+        assert result["input_ids"].tolist() == [1, 10, 20, 888, 999]
+        assert result["loss_mask"].tolist() == [False, False, True, True, True]
+        assert result["answer_ids"].tolist() == [20, 888, 999]
+
+    def test_chat_preprocess_does_not_duplicate_existing_eos(self):
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 999
+        mock_tokenizer.legacy = False
+        mock_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        mock_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 999],
+            "assistant_masks": [0, 0, 1, 0],
+        }
+        source = {
+            "conversations": [
+                {"from": "User", "value": "Test"},
+                {"from": "Assistant", "value": "Answer"},
+            ]
+        }
+
+        result = _chat_preprocess(source, mock_tokenizer, add_eos=True)
+
+        assert result["input_ids"].tolist() == [1, 10, 20, 999]
+        assert result["loss_mask"].tolist() == [False, False, True, True]
+
+    def test_chat_preprocess_does_not_append_eos_when_disabled(self):
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 999
+        mock_tokenizer.legacy = False
+        mock_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        mock_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 888],
+            "assistant_masks": [0, 0, 1, 1],
+        }
+        source = {
+            "conversations": [
+                {"from": "User", "value": "Test"},
+                {"from": "Assistant", "value": "Answer"},
+            ]
+        }
+
+        result = _chat_preprocess(source, mock_tokenizer, add_eos=False)
 
         assert result["input_ids"].tolist() == [1, 10, 20, 888]
+
+    def test_chat_preprocess_does_not_supervise_eos_after_trailing_user(self):
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 999
+        mock_tokenizer.legacy = False
+        mock_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        mock_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 888],
+            "assistant_masks": [0, 1, 0, 0],
+        }
+        source = {
+            "messages": [
+                {"role": "assistant", "content": "Answer"},
+                {"role": "user", "content": "Follow-up"},
+            ]
+        }
+
+        result = _chat_preprocess(source, mock_tokenizer, add_eos=True)
+
+        assert result["input_ids"].tolist() == [1, 10, 20, 888, 999]
+        assert result["loss_mask"].tolist() == [False, True, False, False, False]
+        assert result["context_ids"].tolist() == [1, 10, 20, 888, 999]
+        assert result["answer_ids"].tolist() == []
 
     @pytest.mark.parametrize(
         "tool_schemas",
@@ -451,6 +516,8 @@ class TestGPTSFTChatDataset:
         assert result["metadata"]["metadata_key"] == "test_value"
         # Verify conversations not in metadata by default
         assert "conversations" not in result["metadata"]
+        assert result["input_ids"].tolist().count(mock_tokenizer.eos_id) == 1
+        assert any(call.kwargs.get("max_length") == dataset.max_seq_length for call in mock_hf_tokenizer.mock_calls)
 
     @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_collate_fn_handles_loss_mask(self, mock_dataset_class):

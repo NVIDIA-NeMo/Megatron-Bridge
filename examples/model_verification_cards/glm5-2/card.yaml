@@ -276,7 +276,6 @@ items:
         --pretrained_checkpoint
         work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88
         --max_steps 100
-        tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja
         --save_dir work/model-verification/glm5-2/sft-gb200-cudnn/checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
@@ -384,7 +383,6 @@ items:
         --pretrained_checkpoint
         work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88
         --max_steps 20
-        tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja
         dataset.dataset_root=work/data/glm5-2/synthetic-long-sft-128k
         dataset.max_train_samples=1120
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null

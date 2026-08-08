@@ -1,6 +1,6 @@
 ---
 name: nemo-mbridge-perf-sequence-packing
-description: Validate and use packed sequences and long-context training in Megatron-Bridge, including equal-token offline pack-length sizing for LLM SFT and PEFT, the distinction from VLM in-batch packing, and CP constraints.
+description: Validate and use packed sequences and long-context training in Megatron-Bridge, including equal-token offline pack-length sizing for LLM SFT and PEFT, the distinction from VLM in-batch packing, CP constraints, and packed-artifact cache identity. Use when investigating stale or misleading packed-data paths as well as runtime packing behavior.
 license: Apache-2.0
 ---
 
@@ -219,6 +219,28 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
     raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
 ```
 
+## Packed Artifact Identity
+
+Treat the readable packed-path prefix and the cache fingerprint as separate
+concepts:
+
+- Keep `offline_packing_specs.tokenizer_model_name` truthful. It is an optional
+  readable tokenizer namespace, not a cache version, template label, run tag,
+  or migration escape hatch.
+- Derive builder-managed cache invalidation from every semantic input that can
+  change packed rows. Include tokenizer identity or immutable revision/path,
+  the effective chat-template hash, EOS/BOS/PAD IDs and EOS policy,
+  preprocessing settings, sequence limits, and packing/alignment settings.
+- When template or preprocessing behavior changes, update the general
+  fingerprint policy. Do not add a model-specific fake tokenizer name to force
+  a new directory.
+- Add paired regression tests: equivalent effective inputs must produce the
+  same path, while a changed tokenizer template or preprocessing policy must
+  produce a different path.
+- Review generated paths and metadata as user-facing diagnostics. A name that
+  is technically unique but semantically false obscures provenance and invites
+  more recipe-specific aliases.
+
 ## Pitfalls
 
 1. Offline packed SFT and VLM in-batch packing are different features with opposite micro-batch rules.
@@ -231,6 +253,7 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
 8. `global_batch_size` must be divisible by and no smaller than data parallel size when offline packing uses MBS1.
 9. Derive `pad_seq_to_mult` from CP/TP/SP for both SFT and PEFT; do not hardcode different values by workload type.
 10. `pad_to_max_length` controls final pack width and is conditional on fixed-shape execution requirements.
+11. A recipe-specific `tokenizer_model_name` used only to invalidate stale packs hides missing fingerprint inputs; fix the generic fingerprint instead.
 
 ## Verification
 
@@ -242,7 +265,8 @@ uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequ
 uv run python -m pytest tests/unit_tests/data/packing/test_in_batch.py -v && \
 uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "deferred_in_batch_packing or packed_metadata" -v && \
 uv run python -m pytest tests/unit_tests/data/datasets/test_packed_parquet.py -k "negative_index_zeroes_loss_mask" -v && \
-uv run python -m pytest tests/unit_tests/data/datasets/test_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v
+uv run python -m pytest tests/unit_tests/data/datasets/test_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v && \
+uv run python -m pytest tests/unit_tests/data/builders/test_gpt_sft_builder.py -k "pack_path" -v
 ```
 
 Success criteria:
@@ -251,3 +275,4 @@ Success criteria:
 - offline and in-batch configuration validation remains mutually exclusive
 - packed metadata reaches the training step in MCore THD form
 - mapped padding rows do not contribute to loss
+- equivalent packing inputs reuse one cache path, while changed semantic inputs invalidate it

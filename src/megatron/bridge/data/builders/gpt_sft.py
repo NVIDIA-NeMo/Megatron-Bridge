@@ -80,7 +80,60 @@ def _default_gpt_sft_preprocessing() -> PromptCompletionSFTPreprocessingConfig:
     )
 
 
-def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str, Any] | None) -> str:
+def _huggingface_snapshot_identity(tokenizer_path: str) -> tuple[str, str] | None:
+    """Extract the repository cache name and revision from a Hugging Face snapshot path."""
+    match = re.search(
+        r"(?:^|[/\\])models--(?P<repository>[^/\\]+)[/\\]snapshots[/\\](?P<revision>[^/\\]+)",
+        tokenizer_path,
+    )
+    if match is None:
+        return None
+    return match.group("repository"), match.group("revision")
+
+
+def _tokenizer_packing_identity(tokenizer: MegatronTokenizer) -> dict[str, Any]:
+    """Return stable tokenizer properties that can change packed token IDs."""
+    identifiers = getattr(tokenizer, "unique_identifiers", None)
+    if isinstance(identifiers, dict):
+        normalized_identifiers = dict(identifiers)
+        tokenizer_path = normalized_identifiers.get("tokenizer_path")
+        if isinstance(tokenizer_path, str):
+            snapshot_identity = _huggingface_snapshot_identity(tokenizer_path)
+            if snapshot_identity is not None:
+                repository, revision = snapshot_identity
+                normalized_identifiers["tokenizer_path"] = f"hf-cache://{repository}@{revision}"
+        template_identifier = normalized_identifiers.pop("chat_template", None)
+        if isinstance(template_identifier, str):
+            normalized_identifiers["chat_template_sha256"] = hashlib.sha256(
+                template_identifier.encode("utf-8")
+            ).hexdigest()
+        identity: dict[str, Any] = {"unique_identifiers": normalized_identifiers}
+    else:
+        identity = {"class": f"{type(tokenizer).__module__}.{type(tokenizer).__qualname__}"}
+
+    chat_template = getattr(tokenizer, "chat_template", None)
+    if not isinstance(chat_template, str):
+        tokenizer_instance = getattr(tokenizer, "_tokenizer", None)
+        chat_template = getattr(tokenizer_instance, "chat_template", None)
+    if isinstance(chat_template, str):
+        identity["chat_template_sha256"] = hashlib.sha256(chat_template.encode("utf-8")).hexdigest()
+
+    for attribute in ("bos_id", "eos_id", "pad_id"):
+        try:
+            token_id = getattr(tokenizer, attribute, None)
+        except (AttributeError, NotImplementedError):
+            continue
+        if isinstance(token_id, int) and not isinstance(token_id, bool):
+            identity[attribute] = token_id
+
+    return identity
+
+
+def _packing_fingerprint(
+    config: "GPTSFTDatasetConfig",
+    dataset_kwargs: dict[str, Any] | None,
+    tokenizer: MegatronTokenizer,
+) -> str:
     """Fingerprint every setting that can change builder-managed packed rows."""
     preprocessing = resolve_gpt_sft_preprocessing(config)
     packing_identity = {
@@ -90,7 +143,10 @@ def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str
         "preprocessing_type": type(preprocessing).__name__,
         "preprocessing": asdict(preprocessing),
         "dataset_kwargs": dataset_kwargs,
+        "tokenizer": _tokenizer_packing_identity(tokenizer),
     }
+    if isinstance(preprocessing, ChatSFTPreprocessingConfig):
+        packing_identity["chat_eos_policy"] = "append_if_missing_v1"
     if (
         config.offline_packing_specs is not None
         and config.offline_packing_specs.max_single_sequence_length is not None
@@ -579,7 +635,7 @@ class GPTSFTDatasetBuilder:
             -1 if config.offline_packing_specs is None else config.offline_packing_specs.num_tokenizer_workers
         )
         self._rewrite_packed_data = config.hf_dataset is not None and config.hf_rewrite
-        self._packing_fingerprint = _packing_fingerprint(config, config.dataset_kwargs)
+        self._packing_fingerprint = _packing_fingerprint(config, config.dataset_kwargs, tokenizer)
 
         self.do_validation = config.do_validation
         self.do_test = config.do_test
@@ -903,7 +959,11 @@ class GPTSFTDatasetBuilder:
         if self.offline_packing_specs and self.offline_packing_specs.tokenizer_model_name is not None:
             return self.offline_packing_specs.tokenizer_model_name
         elif isinstance(tokenizer_instance, tokenizer_cls):
-            name = self.tokenizer.path
+            name = str(self.tokenizer.path)
+            snapshot_identity = _huggingface_snapshot_identity(name)
+            if snapshot_identity is not None:
+                tokenizer_model_name, _ = snapshot_identity
+                return tokenizer_model_name
 
             if name.endswith("context/nemo_tokenizer"):
                 # NEMO_HOME/hf_org/hf_model/context/nemo_tokenizer => hf_org--hf_model
