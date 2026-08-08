@@ -1,6 +1,10 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
+conflicts = [[
+    { package = "megatron-bridge", extra = "qwen35-h100-perf" },
+    { package = "megatron-bridge", extra = "ssm" },
+]]
 
 [options]
 prerelease-mode = "allow"
@@ -52,7 +56,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8d/75/94cd5d389649578aca399e5aa822637eec18319a1dadc400ffe2f9a7493f/accelerate-1.14.0.tar.gz", hash = "sha256:41b9c4377a54e0b460a959b0defa1b736e4ca0a2373252d9a539964c2afe3c8d", size = 412167, upload-time = "2026-06-11T13:45:52.326Z" }
 wheels = [
@@ -327,6 +331,17 @@ name = "av"
 version = "18.0.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ae/a4/570a5a35c8638aba01e739925846c35fdd6b0756a15526766d0a4dd3b7df/av-18.0.0.tar.gz", hash = "sha256:4ef7e72c3d3a872584a1215173b16e0226811037f40dcdbf75992631098df1ba", size = 4340222, upload-time = "2026-07-02T06:37:58.907Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/4a/9e3463df030e063d757fa12f0f39be6541b45b06b5bad48c2ce361b924bf/av-18.0.0-cp311-abi3-macosx_11_0_x86_64.whl", hash = "sha256:149289d40e732a6e49c9530bc245b49d9964cfd1c8c9e06778703b7d5bba6b25", size = 22499354, upload-time = "2026-07-02T06:36:58.751Z" },
+    { url = "https://files.pythonhosted.org/packages/77/b3/2576a44b4f39c7462ced4c17fec04c756f7b0f3c5cb940d124173e417d6a/av-18.0.0-cp311-abi3-macosx_14_0_arm64.whl", hash = "sha256:35274c20d2ad3b4774fe632bcef2e34af79858ddf899352339cc3babbc13a484", size = 18175248, upload-time = "2026-07-02T06:37:01.741Z" },
+    { url = "https://files.pythonhosted.org/packages/84/74/6732f17b96dc23fd23b876b2805435855abdc8a3b397142be4e581165de8/av-18.0.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:4d683b7747a0ba9222b8a5f81e41db5f796e7f64473454ec4fe2548e083c2fa0", size = 33387843, upload-time = "2026-07-02T06:37:05.097Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/b9/7708c43fed7ae28b4a1bad060b4221e3334cd827cec24f7165902a6ac1f4/av-18.0.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:ae56b40b6f8b067a8ad2dac664fbfbabac7f7a55b9a7bb031eb99289252bc017", size = 35536910, upload-time = "2026-07-02T06:37:08.806Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/94/eba99691d184f6a395a242d54dc370e2fd2265e95bbc98e2963a0fdbdd6c/av-18.0.0-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:ea2e8ebbce521f21b55df9400e00d721623c9020ef158f5a188a96130be0743f", size = 38984619, upload-time = "2026-07-02T06:37:11.861Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/cf/0d7aee07fe16aa9ffdf96043c14bed5485a52c0dea4259de87aa306ecab4/av-18.0.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:ef96dabb3e50dac249913145dff5424b302b257fd95dcb64be3c7b7a8aef16d1", size = 34451176, upload-time = "2026-07-02T06:37:15.154Z" },
+    { url = "https://files.pythonhosted.org/packages/76/92/810da80b12680d4c4fe235bd1b4003289be9213ac7f114b77b8ecf0e3b3e/av-18.0.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:0f65518a184613e41536f29e8758c8e3d8293e46bf5bef108f04f925bbfa3f44", size = 36619869, upload-time = "2026-07-02T06:37:18.495Z" },
+    { url = "https://files.pythonhosted.org/packages/11/85/0f121ff43dc5a70696676c98a8f1674e2fa787614c2abaacb15fa1a9bc99/av-18.0.0-cp311-abi3-win_amd64.whl", hash = "sha256:aaf4d354d2beaa6651e4f92e54409a578bde64f79c0beef9a30b388d06f7c629", size = 27556236, upload-time = "2026-07-02T06:37:21.388Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/f6/2509754d4d2356abc6fc0ea3d57c12ade29bac23a1fb7fc215a53ca518fb/av-18.0.0-cp311-abi3-win_arm64.whl", hash = "sha256:adac2b3833b6cb9bd6cb52664a522b94db453615b3675b1dbb26e13fe1c80da6", size = 20221133, upload-time = "2026-07-02T06:37:23.88Z" },
+]
 
 [[package]]
 name = "babel"
@@ -472,7 +487,7 @@ name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z" }
 wheels = [
@@ -526,7 +541,7 @@ name = "click"
 version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
@@ -637,7 +652,7 @@ name = "cryptography"
 version = "46.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/47/93/ac8f3d5ff04d54bc814e961a43ae5b0b146154c89c61b47bb07557679b18/cryptography-46.0.7.tar.gz", hash = "sha256:e4cfd68c5f3e0bfdad0d38e023239b96a2fe84146481852dffbcca442c245aa5", size = 750652, upload-time = "2026-04-08T01:57:54.692Z" }
 wheels = [
@@ -678,6 +693,11 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-pathfinder" },
 ]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/67/5e7dba1ba576dd73da5dee894ca076ca5e959450dfff66d6d510a255d1f7/cuda_bindings-13.3.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c7855c4868aabc0cfae28abbe83d56734bdfbd08f08fc234ac1912a12858bf49", size = 6025351, upload-time = "2026-05-29T23:11:49.685Z" },
+    { url = "https://files.pythonhosted.org/packages/39/2a/6d2e9047d1fb243dbaa364b01e0297534b9ed7fd27dba1c9f361519cf69b/cuda_bindings-13.3.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e32d08f71ebcdf00f0f41eab2eb37e8da94c8ed411cc9f7f7a019ce6b34abe3a", size = 6657965, upload-time = "2026-05-29T23:11:52.227Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/95/872a0392122f1fb43fcb06869790ef3171f37beee9f7db8f441739113570/cuda_bindings-13.3.1-cp312-cp312-win_amd64.whl", hash = "sha256:b134dd8c5c66ae4c4ad814f7aee88fd215353c077010cbc47e3b55ed35ec9eff", size = 5875099, upload-time = "2026-05-29T23:11:54.635Z" },
+]
 
 [[package]]
 name = "cuda-core"
@@ -686,6 +706,11 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-pathfinder" },
     { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/a0/1daeae599cadd612689dbbf70d7da1c01883964fc2fbc7386f3c630a68cf/cuda_core-1.0.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6816dc020aee6103d8071bc02d8e4e1d91f2b49596f666896d608d92224d79d1", size = 4789856, upload-time = "2026-05-12T20:11:30.862Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/4d/603557ab3cb171cc2a61d3678a39cb4dae3fd21275078bfbd1c0b0b5230b/cuda_core-1.0.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:be7b65311bf78964b7905adbf3c0f8f717d432f2854dc45169277729bf60f1e2", size = 5106023, upload-time = "2026-05-12T20:11:33.509Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/1a/ae079963c9df7f4274227eb63cf8f6083a532a6443adb340d951fd21c626/cuda_core-1.0.1-cp312-cp312-win_amd64.whl", hash = "sha256:1a5c1aa3b738a7599ea289498d038fe625d259fd7ab795394541eee58a8e29bc", size = 4663076, upload-time = "2026-05-12T20:11:35.784Z" },
 ]
 
 [[package]]
@@ -720,6 +745,55 @@ wheels = [
     { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc5-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:2e2e5ff86992a0f4f481e17c820c1c13543817390900d5041c495eb599580f21" },
     { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc5-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:b74c20348210d2182cd998a0ecb60c518989a79b28592d72eb8294b38ddb93d7" },
     { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.6.0rc5-cp312-cp312-win_amd64.whl", hash = "sha256:cbd9d24f578cac325d1bd8b3fc309d55af2cfffe9874517d7e90ba9eb385dea1" },
+]
+
+[[package]]
+name = "cuda-toolkit"
+version = "13.0.3.0"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/cuda-toolkit/cuda_toolkit-13.0.3.0-py2.py3-none-any.whl", hash = "sha256:d693caaa261214ddd7dbb60d68e71cbed884e68c2be7509778f3051da0b91c3f" },
+]
+
+[package.optional-dependencies]
+cublas = [
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+cudart = [
+    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+cufft = [
+    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+cufile = [
+    { name = "nvidia-cufile", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+cupti = [
+    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+curand = [
+    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+cusolver = [
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+cusparse = [
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+nvjitlink = [
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+nvrtc = [
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+nvtx = [
+    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'linux' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm') or (sys_platform == 'win32' and extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 
 [[package]]
@@ -887,7 +961,7 @@ name = "docker"
 version = "7.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "requests" },
     { name = "urllib3" },
 ]
@@ -947,7 +1021,7 @@ version = "0.2.0"
 source = { git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.2.0#1effa026ff096b7fa1063ca2fba19d98be6e6cdf" }
 dependencies = [
     { name = "absl-py" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 
 [[package]]
@@ -986,7 +1060,7 @@ source = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v
 dependencies = [
     { name = "ninja" },
     { name = "packaging" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 
 [[package]]
@@ -1044,7 +1118,7 @@ version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "einops" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/53/f9/9e05c48f92b1388a8a357141eb557ed0dd6d4bb936e1d05d35f01976657f/fla_core-0.4.2.tar.gz", hash = "sha256:e9fef6fcdf122029f9feb7dccfeb85eb9650e6aabc72d2a65b36558e9c590edd", size = 377722, upload-time = "2026-03-12T14:45:46.101Z" }
 wheels = [
@@ -1084,6 +1158,19 @@ version = "1.0.0+b7643bd"
 source = { git = "https://github.com/deepseek-ai/FlashMLA?rev=nv_dev#b7643bd54521f563b839b98289b5cd048c062ba2" }
 
 [[package]]
+name = "flash-qla"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "apache-tvm-ffi" },
+    { name = "tilelang", version = "0.1.9", source = { registry = "https://pypi.org/simple" } },
+    { name = "torch", marker = "sys_platform == 'never'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/a6/07ddef0a8073ee721f3cc67fc0ee0d2bf91bc5637659d9e9ff4d1943249c/flash_qla-0.1.2-py3-none-any.whl", hash = "sha256:fb9dfa8607df9c545cd583dd8c0248ac9b0b673a8fb0af042ba9ef07bbc30446", size = 85860, upload-time = "2026-07-09T07:03:49.343Z" },
+]
+
+[[package]]
 name = "flashinfer-cubin"
 version = "0.6.8.post1"
 source = { registry = "https://pypi.org/simple" }
@@ -1103,12 +1190,12 @@ dependencies = [
     { name = "ninja" },
     { name = "numpy" },
     { name = "nvidia-cudnn-frontend" },
-    { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "sys_platform == 'never'" },
+    { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "nvidia-ml-py" },
     { name = "packaging" },
     { name = "requests" },
     { name = "tabulate" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/53/1e/2760fef9e74abc4480961048e5790b4c9e955872fb4d7d97900cfddced5a/flashinfer_python-0.6.8.post1.tar.gz", hash = "sha256:b18e4121baf9b93fa9a9f368ba9b981a0342895f50ab9dddc224aeb964ed346f", size = 6675885, upload-time = "2026-04-18T18:28:13.299Z" }
@@ -1472,7 +1559,7 @@ dependencies = [
     { name = "click" },
     { name = "filelock" },
     { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
+    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "httpx" },
     { name = "packaging" },
     { name = "pyyaml" },
@@ -1558,6 +1645,14 @@ name = "imageio-ffmpeg"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz", hash = "sha256:e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755", size = 25210, upload-time = "2025-01-16T21:34:32.747Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/58/87ef68ac83f4c7690961bce288fd8e382bc5f1513860fc7f90a9c1c1c6bf/imageio_ffmpeg-0.6.0-py3-none-macosx_10_9_intel.macosx_10_9_x86_64.whl", hash = "sha256:9d2baaf867088508d4a3458e61eeb30e945c4ad8016025545f66c4b5aaef0a61", size = 24932969, upload-time = "2025-01-16T21:34:20.464Z" },
+    { url = "https://files.pythonhosted.org/packages/40/5c/f3d8a657d362cc93b81aab8feda487317da5b5d31c0e1fdfd5e986e55d17/imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b1ae3173414b5fc5f538a726c4e48ea97edc0d2cdc11f103afee655c463fa742", size = 21113891, upload-time = "2025-01-16T21:34:00.277Z" },
+    { url = "https://files.pythonhosted.org/packages/33/e7/1925bfbc563c39c1d2e82501d8372734a5c725e53ac3b31b4c2d081e895b/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:1d47bebd83d2c5fc770720d211855f208af8a596c82d17730aa51e815cdee6dc", size = 25632706, upload-time = "2025-01-16T21:33:53.475Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/2d/43c8522a2038e9d0e7dbdf3a61195ecc31ca576fb1527a528c877e87d973/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl", hash = "sha256:c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282", size = 29498237, upload-time = "2025-01-16T21:34:13.726Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/13/59da54728351883c3c1d9fca1710ab8eee82c7beba585df8f25ca925f08f/imageio_ffmpeg-0.6.0-py3-none-win32.whl", hash = "sha256:196faa79366b4a82f95c0f4053191d2013f4714a715780f0ad2a68ff37483cc2", size = 19652251, upload-time = "2025-01-16T21:34:06.812Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl", hash = "sha256:02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a", size = 31246824, upload-time = "2025-01-16T21:34:28.6Z" },
+]
 
 [[package]]
 name = "imagesize"
@@ -1860,7 +1955,7 @@ dependencies = [
     { name = "packaging" },
     { name = "quack-kernels" },
     { name = "setuptools" },
-    { name = "tilelang" },
+    { name = "tilelang", version = "0.1.8", source = { registry = "https://pypi.org/simple" } },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "transformers" },
     { name = "triton", marker = "sys_platform == 'never'" },
@@ -1990,7 +2085,7 @@ dependencies = [
     { name = "six" },
     { name = "tensorboard" },
     { name = "timm" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "typing-extensions" },
@@ -2003,6 +2098,9 @@ audio = [
 ]
 parquet = [
     { name = "pyarrow" },
+]
+qwen35-h100-perf = [
+    { name = "megatron-core", extra = ["qwen35-h100-perf"], marker = "extra == 'extra-15-megatron-bridge-qwen35-h100-perf'" },
 ]
 recipes = [
     { name = "nemo-run" },
@@ -2027,7 +2125,7 @@ build = [
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 dev = [
     { name = "mypy" },
@@ -2035,9 +2133,9 @@ dev = [
     { name = "ruff" },
 ]
 diffusion = [
-    { name = "av", marker = "sys_platform == 'never'" },
-    { name = "imageio", marker = "sys_platform == 'never'" },
-    { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
+    { name = "av", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "imageio", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "imageio-ffmpeg", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 docs = [
     { name = "myst-parser" },
@@ -2078,6 +2176,7 @@ requires-dist = [
     { name = "librosa", marker = "extra == 'audio'" },
     { name = "mamba-ssm", marker = "extra == 'ssm'" },
     { name = "megatron-core", extras = ["dev", "mlm"], editable = "3rdparty/Megatron-LM" },
+    { name = "megatron-core", extras = ["qwen35-h100-perf"], marker = "extra == 'qwen35-h100-perf'", editable = "3rdparty/Megatron-LM" },
     { name = "mistral-common", specifier = ">=1.10.0" },
     { name = "mlflow", specifier = ">=3.15.1" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
@@ -2102,7 +2201,7 @@ requires-dist = [
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.25.0" },
 ]
-provides-extras = ["recipes", "parquet", "tensor-inspect", "te", "ssm", "audio"]
+provides-extras = ["recipes", "parquet", "tensor-inspect", "te", "ssm", "qwen35-h100-perf", "audio"]
 
 [package.metadata.requires-dev]
 build = [
@@ -2153,12 +2252,12 @@ source = { editable = "3rdparty/Megatron-LM" }
 dependencies = [
     { name = "numpy" },
     { name = "packaging" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 
 [package.optional-dependencies]
 dev = [
-    { name = "av", marker = "sys_platform == 'never'" },
+    { name = "av", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "datasets" },
     { name = "einops" },
     { name = "emerging-optimizers" },
@@ -2191,6 +2290,10 @@ mlm = [
     { name = "transformers" },
     { name = "wandb" },
 ]
+qwen35-h100-perf = [
+    { name = "flash-linear-attention" },
+    { name = "flash-qla" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2203,7 +2306,9 @@ requires-dist = [
     { name = "emerging-optimizers", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=v0.2.0" },
     { name = "fast-hadamard-transform", marker = "extra == 'dev'", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = "~=0.50" },
-    { name = "flash-linear-attention", marker = "extra == 'dev'", specifier = "~=0.4.0" },
+    { name = "flash-linear-attention", marker = "extra == 'dev'", specifier = "==0.4.2" },
+    { name = "flash-linear-attention", marker = "extra == 'qwen35-h100-perf'", specifier = "==0.4.2" },
+    { name = "flash-qla", marker = "extra == 'qwen35-h100-perf'", specifier = "==0.1.2" },
     { name = "flashinfer-python", marker = "extra == 'dev'", specifier = ">=0.5.0,<0.7.0" },
     { name = "flask-restful", marker = "extra == 'mlm'" },
     { name = "flask-restful", marker = "extra == 'training'" },
@@ -2238,7 +2343,7 @@ requires-dist = [
     { name = "wget", marker = "extra == 'dev'" },
     { name = "zstandard", marker = "extra == 'dev'" },
 ]
-provides-extras = ["training", "mlm", "dev", "lts", "te", "ssm"]
+provides-extras = ["training", "mlm", "dev", "lts", "te", "ssm", "qwen35-h100-perf"]
 
 [package.metadata.requires-dev]
 batch-invariant = [{ name = "deep-gemm", git = "https://github.com/deepseek-ai/DeepGEMM.git?rev=714dd1a4a980f7937a74343d19a8eba4fe321480" }]
@@ -2309,7 +2414,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rapidyaml" },
     { name = "s3fs" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "tqdm" },
     { name = "webdataset" },
 ]
@@ -2320,7 +2425,7 @@ wheels = [
 
 [package.optional-dependencies]
 av-decode = [
-    { name = "av", marker = "sys_platform == 'never'" },
+    { name = "av", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 
 [[package]]
@@ -2379,7 +2484,7 @@ dependencies = [
     { name = "flask" },
     { name = "flask-cors" },
     { name = "graphene" },
-    { name = "gunicorn", marker = "sys_platform != 'win32'" },
+    { name = "gunicorn", marker = "sys_platform != 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "huey" },
     { name = "matplotlib" },
     { name = "mlflow-skinny" },
@@ -2391,7 +2496,7 @@ dependencies = [
     { name = "scipy" },
     { name = "skops" },
     { name = "sqlalchemy" },
-    { name = "waitress", marker = "sys_platform == 'win32'" },
+    { name = "waitress", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/51/01/aff6c6e1ee571769688e926d2cf55ae9ddd300f95541905a0a82ea1599c7/mlflow-3.15.1.tar.gz", hash = "sha256:6177b02c442d7d6ab3ad752daa826db9cf993e255450fb4b00ea8b7b5539c01d", size = 10396741, upload-time = "2026-08-03T09:29:20.073Z" }
 wheels = [
@@ -2549,7 +2654,7 @@ version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ast-serialize" },
-    { name = "librt", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "mypy-extensions" },
     { name = "pathspec" },
     { name = "typing-extensions" },
@@ -2707,16 +2812,78 @@ source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
     { name = "numpy" },
     { name = "pyyaml" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvdlfw-inspect/nvdlfw_inspect-0.2.1-py3-none-any.whl", hash = "sha256:14d12fd90f0851e011bd7b20c87010c6b5d33c9ee2c77dbb56c60f87aafcdcfd" },
 ]
 
 [[package]]
+name = "nvidia-cublas"
+version = "13.1.1.3"
+source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "nvidia-cuda-nvrtc" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cublas/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:b7a210458267ac818974c53038fbec2e969d5c99f305ab15c72522fa9f001dd5" },
+    { url = "https://pypi.nvidia.com/nvidia-cublas/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:37936a16db8fe4ac1f065c2139360608a543a09275cb1a1af612e08cfa065436" },
+    { url = "https://pypi.nvidia.com/nvidia-cublas/nvidia_cublas-13.1.1.3-py3-none-win_amd64.whl", hash = "sha256:b6cdce694e47ff6aadf0a69df1cab6628d696f5ff56e8d16af50309d855fa20f" },
+]
+
+[[package]]
+name = "nvidia-cuda-cupti"
+version = "13.0.85"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cuda-cupti/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_aarch64.whl", hash = "sha256:796bd679890ee55fb14a94629b698b6db54bcfd833d391d5e94017dd9d7d3151" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-cupti/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_x86_64.whl", hash = "sha256:4eb01c08e859bf924d222250d2e8f8b8ff6d3db4721288cf35d14252a4d933c8" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-cupti/nvidia_cuda_cupti-13.0.85-py3-none-win_amd64.whl", hash = "sha256:683f58d301548deeefcb8f6fac1b8d907691b9d8b18eccab417f51e362102f00" },
+]
+
+[[package]]
 name = "nvidia-cuda-nvdisasm"
 version = "13.4.46rc1"
 source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cuda-nvdisasm/nvidia_cuda_nvdisasm-13.4.46rc1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:6c8d8b7919ae7ac0072ad8c78100e3eda3f850aeecaa1063cccf7a50d8ceec56" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-nvdisasm/nvidia_cuda_nvdisasm-13.4.46rc1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:913c4ff9a43b9e6fac54454769b1d42d77f15a258d6ed2fb127b78e4285dc896" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-nvdisasm/nvidia_cuda_nvdisasm-13.4.46rc1-py3-none-win_amd64.whl", hash = "sha256:b7a6c753d5c69802f55ea0a7f9e0367b0f3e99e413dfea1e637a4757b5bf075e" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-nvdisasm/nvidia_cuda_nvdisasm-13.4.46rc1-py3-none-win_arm64.whl", hash = "sha256:45a0809faacc8d5625adde18658fb7e5fcff0190e43daf19ca0717d431f54c36" },
+]
+
+[[package]]
+name = "nvidia-cuda-nvrtc"
+version = "13.0.88"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cuda-nvrtc/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:ad9b6d2ead2435f11cbb6868809d2adeeee302e9bb94bcf0539c7a40d80e8575" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-nvrtc/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d27f20a0ca67a4bb34268a5e951033496c5b74870b868bacd046b1b8e0c3267b" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-nvrtc/nvidia_cuda_nvrtc-13.0.88-py3-none-win_amd64.whl", hash = "sha256:6bcd4e7f8e205cbe644f5a98f2f799bef9556fefc89dd786e79a16312ce49872" },
+]
+
+[[package]]
+name = "nvidia-cuda-runtime"
+version = "13.0.96"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cuda-runtime/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ef9bcbe90493a2b9d810e43d249adb3d02e98dd30200d86607d8d02687c43f55" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-runtime/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7f82250d7782aa23b6cfe765ecc7db554bd3c2870c43f3d1821f1d18aebf0548" },
+    { url = "https://pypi.nvidia.com/nvidia-cuda-runtime/nvidia_cuda_runtime-13.0.96-py3-none-win_amd64.whl", hash = "sha256:f79298c8a098cec150a597c8eba58ecdab96e3bdc4b9bc4f9983635031740492" },
+]
+
+[[package]]
+name = "nvidia-cudnn-cu13"
+version = "9.20.0.48"
+source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "nvidia-cublas" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-cu13/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:e31454ae00094b0c55319d9d15b6fa2fc50a9e1c0f5c8c80fb75258234e731e1" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-cu13/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:0c45dd8eeb50b603f07995b1b300c62ffe6a1980482b82b3bcf94a4ca9d49304" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-cu13/nvidia_cudnn_cu13-9.20.0.48-py3-none-win_amd64.whl", hash = "sha256:af8139732b99c0118be65ea5aac97f0d46018f8c552889e49d2fb0c6261a4a24" },
+]
 
 [[package]]
 name = "nvidia-cudnn-frontend"
@@ -2726,6 +2893,76 @@ wheels = [
     { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.26.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ee50df3468f672aa31402fde4c911ad545d08e1d5e133e15bc55c3679d9fd9ca" },
     { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.26.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1a1223c4e2e8bbe6f620148d6848f4eb773dd94bef534d5b748e91232b5be618" },
     { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.26.0-cp312-cp312-win_amd64.whl", hash = "sha256:7f104a40cb6f25cf01b7d7e84cb99af7dedd32b1cb8264384c2f363b7a3f7fb6" },
+]
+
+[[package]]
+name = "nvidia-cufft"
+version = "12.0.0.61"
+source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "nvidia-nvjitlink" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cufft/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5" },
+    { url = "https://pypi.nvidia.com/nvidia-cufft/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6c44f692dce8fd5ffd3e3df134b6cdb9c2f72d99cf40b62c32dde45eea9ddad3" },
+    { url = "https://pypi.nvidia.com/nvidia-cufft/nvidia_cufft-12.0.0.61-py3-none-win_amd64.whl", hash = "sha256:2abce5b39d2f5ae12730fb7e5db6696533e36c26e2d3e8fd1750bdd2853364eb" },
+]
+
+[[package]]
+name = "nvidia-cufile"
+version = "1.15.1.6"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cufile/nvidia_cufile-1.15.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:08a3ecefae5a01c7f5117351c64f17c7c62efa5fffdbe24fc7d298da19cd0b44" },
+    { url = "https://pypi.nvidia.com/nvidia-cufile/nvidia_cufile-1.15.1.6-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:bdc0deedc61f548bddf7733bdc216456c2fdb101d020e1ab4b88d232d5e2f6d1" },
+]
+
+[[package]]
+name = "nvidia-curand"
+version = "10.4.0.35"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-curand/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:133df5a7509c3e292aaa2b477afd0194f06ce4ea24d714d616ff36439cee349a" },
+    { url = "https://pypi.nvidia.com/nvidia-curand/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:1aee33a5da6e1db083fe2b90082def8915f30f3248d5896bcec36a579d941bfc" },
+    { url = "https://pypi.nvidia.com/nvidia-curand/nvidia_curand-10.4.0.35-py3-none-win_amd64.whl", hash = "sha256:65b1710aa6961d326b411e314b374290904c5ddf41dc3f766ebc3f1d7d4ca69f" },
+]
+
+[[package]]
+name = "nvidia-cusolver"
+version = "12.0.4.66"
+source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "nvidia-cublas" },
+    { name = "nvidia-cusparse" },
+    { name = "nvidia-nvjitlink" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cusolver/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2" },
+    { url = "https://pypi.nvidia.com/nvidia-cusolver/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:0a759da5dea5c0ea10fd307de75cdeb59e7ea4fcb8add0924859b944babf1112" },
+    { url = "https://pypi.nvidia.com/nvidia-cusolver/nvidia_cusolver-12.0.4.66-py3-none-win_amd64.whl", hash = "sha256:16515bd33a8e76bb54d024cfa068fa68d30e80fc34b9e1090813ea9362e0cb65" },
+]
+
+[[package]]
+name = "nvidia-cusparse"
+version = "12.6.3.3"
+source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "nvidia-nvjitlink" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cusparse/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c" },
+    { url = "https://pypi.nvidia.com/nvidia-cusparse/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:2b3c89c88d01ee0e477cb7f82ef60a11a4bcd57b6b87c33f789350b59759360b" },
+    { url = "https://pypi.nvidia.com/nvidia-cusparse/nvidia_cusparse-12.6.3.3-py3-none-win_amd64.whl", hash = "sha256:cbcf42feb737bd7ec15b4c0a63e62351886bd3f975027b8815d7f720a2b5ea79" },
+]
+
+[[package]]
+name = "nvidia-cusparselt-cu13"
+version = "0.8.1"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cusparselt-cu13/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_aarch64.whl", hash = "sha256:4dca476c50bf4780d46cd0bfbd82e2bc10a08e4fef7950917ce8d7578d22a23f" },
+    { url = "https://pypi.nvidia.com/nvidia-cusparselt-cu13/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:786ce87568c303fadb5afcc7102d454cd3040d75f6f8626f5db460d1871f4dd0" },
+    { url = "https://pypi.nvidia.com/nvidia-cusparselt-cu13/nvidia_cusparselt_cu13-0.8.1-py3-none-win_amd64.whl", hash = "sha256:dccbd362f91a7b9024d1f55ee9f548ac065027ff15d8c8b0db889ab3a8f31215" },
 ]
 
 [[package]]
@@ -2757,6 +2994,10 @@ dependencies = [
     { name = "protobuf" },
     { name = "typing-extensions" },
 ]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-base/nvidia_cutlass_dsl_libs_base-4.7.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:c8dfdce6e55cd856fd3ace47b881c41e8f71fbed396ccdeb7870d19356f16af7" },
+    { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-base/nvidia_cutlass_dsl_libs_base-4.7.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:0ee3ca427a43bd3190fc4ac06fba15fa7a923241a1cc928d3e2b4a6f480dbd39" },
+]
 
 [[package]]
 name = "nvidia-cutlass-dsl-libs-core"
@@ -2785,6 +3026,10 @@ dependencies = [
     { name = "protobuf" },
     { name = "typing-extensions" },
 ]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-cu12/nvidia_cutlass_dsl_libs_cu12-4.7.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:eb88f7d19727df3d789e757db2b386f8b52baf82d3eb3c0c51f61e80834f5e87" },
+    { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-cu12/nvidia_cutlass_dsl_libs_cu12-4.7.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:eaf85bd605f41f968c483dcee1ae9e13ffd765b623f976869401f77e7255b5e1" },
+]
 
 [[package]]
 name = "nvidia-cutlass-dsl-libs-cu13"
@@ -2797,6 +3042,10 @@ dependencies = [
     { name = "nvidia-cutlass-dsl-libs-base" },
     { name = "protobuf" },
     { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-cu13/nvidia_cutlass_dsl_libs_cu13-4.7.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:b037afbba54ba3a1d96502ea70048bee57ab598c63df5158ebc9f0d5b1c0790a" },
+    { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-cu13/nvidia_cutlass_dsl_libs_cu13-4.7.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:66dda9dd19729836b919174bb33d70aef895d785f3320dafceca695513408cef" },
 ]
 
 [[package]]
@@ -2834,11 +3083,50 @@ dependencies = [
     { name = "safetensors" },
     { name = "scipy" },
     { name = "setuptools" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "tqdm" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-modelopt/nvidia_modelopt-0.46.0rc1-py3-none-any.whl", hash = "sha256:9eb5393812462674283d1919626d8ef23e17f15530b6626a6aaa32c5b810c5ad" },
+]
+
+[[package]]
+name = "nvidia-nccl-cu13"
+version = "2.29.7"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-nccl-cu13/nvidia_nccl_cu13-2.29.7-py3-none-manylinux_2_18_aarch64.whl", hash = "sha256:674a12383e3c38a1bcccae7d4f3633b37852230b6047883cb2f4c2d1b36d9bf5" },
+    { url = "https://pypi.nvidia.com/nvidia-nccl-cu13/nvidia_nccl_cu13-2.29.7-py3-none-manylinux_2_18_x86_64.whl", hash = "sha256:edd81538446786ec3b73972543e53bb43bcaf0bfc8ef76cb679fcc390ffe136d" },
+]
+
+[[package]]
+name = "nvidia-nvjitlink"
+version = "13.4.46rc1"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-nvjitlink/nvidia_nvjitlink-13.4.46rc1-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:41c8cbff18b30c76ee2db21cb9fd084e9390019e7b40a22979939998e1def939" },
+    { url = "https://pypi.nvidia.com/nvidia-nvjitlink/nvidia_nvjitlink-13.4.46rc1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:1f57c6e18959452f7e3e6411ee963c666d97160a02822f0896bcac68ed0a00ab" },
+    { url = "https://pypi.nvidia.com/nvidia-nvjitlink/nvidia_nvjitlink-13.4.46rc1-py3-none-win_amd64.whl", hash = "sha256:6a8af294f735463a7249c390c445d8a87ee41e4af199a2826116f420f184bced" },
+    { url = "https://pypi.nvidia.com/nvidia-nvjitlink/nvidia_nvjitlink-13.4.46rc1-py3-none-win_arm64.whl", hash = "sha256:0ddd6b9451a025a56f6751c2e513391a3c97b21d8abb489914d17d255f6b9aeb" },
+]
+
+[[package]]
+name = "nvidia-nvshmem-cu13"
+version = "3.4.5"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-nvshmem-cu13/nvidia_nvshmem_cu13-3.4.5-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:6dc2a197f38e5d0376ad52cd1a2a3617d3cdc150fd5966f4aee9bcebb1d68fe9" },
+    { url = "https://pypi.nvidia.com/nvidia-nvshmem-cu13/nvidia_nvshmem_cu13-3.4.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:290f0a2ee94c9f3687a02502f3b9299a9f9fe826e6d0287ee18482e78d495b80" },
+]
+
+[[package]]
+name = "nvidia-nvtx"
+version = "13.0.85"
+source = { registry = "https://pypi.nvidia.com/" }
+wheels = [
+    { url = "https://pypi.nvidia.com/nvidia-nvtx/nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:4936d1d6780fbe68db454f5e72a42ff64d1fd6397df9f363ae786930fd5c1cd4" },
+    { url = "https://pypi.nvidia.com/nvidia-nvtx/nvidia_nvtx-13.0.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:cb7780edb6b14107373c835bf8b72e7a178bac7367e23da7acb108f973f157a6" },
+    { url = "https://pypi.nvidia.com/nvidia-nvtx/nvidia_nvtx-13.0.85-py3-none-win_amd64.whl", hash = "sha256:d66ea44254dd3c6eacc300047af6e1288d2269dd072b417e0adffbf479e18519" },
 ]
 
 [[package]]
@@ -2856,7 +3144,7 @@ dependencies = [
     { name = "protobuf" },
     { name = "psutil" },
     { name = "pyyaml" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-resiliency-ext/nvidia_resiliency_ext-0.6.0-cp312-cp312-manylinux_2_39_aarch64.whl", hash = "sha256:a71c1a1650b32c72f7fdf7d6f73b4d275961ce5d68bd68efaff9e0d7099031cb" },
@@ -2952,8 +3240,8 @@ dependencies = [
     { name = "regex" },
     { name = "safetensors" },
     { name = "timm" },
-    { name = "torch", marker = "sys_platform == 'never'" },
-    { name = "torchvision", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "torchvision", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4a/1f/2bc9795047fa2c1ad2567ef78ce6dfc9a7b763fa534acee09a94da2a5b8f/open_clip_torch-3.3.0.tar.gz", hash = "sha256:904b1a9f909df8281bb3de60ab95491cd2994a509177ea4f9d6292a84fe24d6d", size = 1503380, upload-time = "2026-02-27T00:32:46.74Z" }
@@ -3127,7 +3415,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "tqdm" },
     { name = "transformers" },
 ]
@@ -3517,7 +3805,7 @@ version = "3.3.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astroid" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "dill" },
     { name = "isort" },
     { name = "mccabe" },
@@ -3534,7 +3822,7 @@ name = "pynacl"
 version = "1.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d9/9a/4019b524b03a13438637b11538c82781a5eda427394380381af8f04f467a/pynacl-1.6.2.tar.gz", hash = "sha256:018494d6d696ae03c7e656e5e74cdfd8ea1326962cc401bcf018f1ed8436811c", size = 3511692, upload-time = "2026-01-01T17:48:10.851Z" }
 wheels = [
@@ -3579,7 +3867,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -3709,7 +3997,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi" },
     { name = "einops" },
-    { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "sys_platform == 'never'" },
+    { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "(sys_platform == 'never' and extra == 'extra-15-megatron-bridge-ssm') or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torch-c-dlpack-ext" },
 ]
@@ -3743,7 +4031,7 @@ name = "qwen-vl-utils"
 version = "0.0.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "av", marker = "sys_platform == 'never'" },
+    { name = "av", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "packaging" },
     { name = "pillow" },
     { name = "requests" },
@@ -4169,7 +4457,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alabaster" },
     { name = "babel" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "docutils" },
     { name = "imagesize" },
     { name = "jinja2" },
@@ -4465,6 +4753,30 @@ wheels = [
 ]
 
 [[package]]
+name = "tilelang"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "apache-tvm-ffi" },
+    { name = "cloudpickle" },
+    { name = "ml-dtypes" },
+    { name = "numpy" },
+    { name = "psutil" },
+    { name = "setuptools", marker = "sys_platform == 'darwin'" },
+    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch-c-dlpack-ext" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+    { name = "z3-solver" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/70/5051f65821baa30a3d61fc48f8ba10c776490315e8c90f82559b92089756/tilelang-0.1.9.tar.gz", hash = "sha256:287f727c913bb648fcf6c1968809ba3390e55eeed257a5c6bb9a80bc05966af4", size = 93395292, upload-time = "2026-04-22T09:19:11.988Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/90/db/4dd76da8c8585c605639a21bc098d504e317fe324a72f01ce3c7370250b4/tilelang-0.1.9-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:00ed594fdeb229c5505b9ffa895c3c5daeb28641c78f783fa1f724cf1e08cecd", size = 36599020, upload-time = "2026-04-22T09:14:39.366Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/8a/1cbeee79d62abaa02441c2d00621554e41aa62dbf3b94a4feb3867184b01/tilelang-0.1.9-cp38-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4bbccfe9035aed775ffafb6dc25a5994504b24e2c5d95d0f39643edfafa7bf12", size = 45419374, upload-time = "2026-04-22T09:15:56.014Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/a7/f4bfb86f87e107703146e703204cec2c0eae2492b633e0052b0ace3febb6/tilelang-0.1.9-cp38-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:77ab0ee2f40f66ea015b6b21426d482751e28cbc635ef9d1198cbd6502454a7c", size = 42110365, upload-time = "2026-04-22T09:17:18.292Z" },
+]
+
+[[package]]
 name = "timm"
 version = "1.0.28"
 source = { registry = "https://pypi.org/simple" }
@@ -4472,8 +4784,8 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", marker = "sys_platform == 'never'" },
-    { name = "torchvision", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "torchvision", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/35/03/e41389ac641747bfec48d016fde8be1eade1901e6f2c1aedcb0c8cb4b5d9/timm-1.0.28.tar.gz", hash = "sha256:3789d313fdd5541a327b60180d70dbb4bdec73db8ff0655e413db3c3d134a9a4", size = 2451413, upload-time = "2026-07-11T17:24:32.615Z" }
 wheels = [
@@ -4520,15 +4832,26 @@ name = "torch"
 version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform == 'linux'" },
+    { name = "cuda-bindings", marker = "sys_platform == 'linux' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "sys_platform == 'linux' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
     { name = "networkx" },
+    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-cusparselt-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+    { name = "nvidia-nvshmem-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "setuptools" },
     { name = "sympy" },
-    { name = "triton", marker = "sys_platform == 'never'" },
+    { name = "triton", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/3a/ed0f4d4d1dcde03bced7aac9a28e800abcdc0cbd06b6775044c9fbd877b7/torch-2.13.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:2fe228aba290d14b9f31b049be550dbd469c3fd3013d7a19705b30454da97027", size = 111213045, upload-time = "2026-07-08T16:05:22.997Z" },
+    { url = "https://files.pythonhosted.org/packages/df/a9/f6a2a4d763ff1df02e9a64c477029db614295bc9367f4131223791ccc243/torch-2.13.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:572df8be8ffb4599c88cbd6a0726f1f854f4da65d2e3c09f0e2c2283333cd6d4", size = 427210998, upload-time = "2026-07-08T16:04:37.708Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/82/fea946351658e6534db52d2cc12bc53087cbf87f9440c5f180f367c1950b/torch-2.13.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:796633c4cdf0fe2cdced72d8f88f22e73dbcfce83132763162f6d4bff13b820b", size = 526605292, upload-time = "2026-07-08T16:04:22.81Z" },
+    { url = "https://files.pythonhosted.org/packages/21/d6/e8f3c6f7e01f626f77259de9860d2a78bc84c40539e28e79b7e98b0bb659/torch-2.13.0-cp312-cp312-win_amd64.whl", hash = "sha256:024c6cc0c1b085f2f91f20a3dc27b0471d021c31ce84b81be3afdc39f791fd9d", size = 122057313, upload-time = "2026-07-08T16:03:53.43Z" },
 ]
 
 [[package]]
@@ -4553,7 +4876,13 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pillow" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/49/c1cab1ecbb3ff1a380a3f99283db1dee61b8afe354f6352c643b65937130/torchvision-0.28.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:e9f54c30cd52e3ef7fd034cc69b7bb7e0964e1c8f8743e018ab92e95b40f9eee", size = 1856020, upload-time = "2026-07-08T16:07:52.182Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/4c/95233776e2def960e5abb7a07931230a545f43717a56a1e1140162033598/torchvision-0.28.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:5cf78ebc401ce64ae19b8c55de866bb836797d559a4de9c25ccbe74cfa642d3a", size = 7842127, upload-time = "2026-07-08T16:07:53.446Z" },
+    { url = "https://files.pythonhosted.org/packages/93/e4/e9b2495d0d57b9f60d63c57d0a910410a81b4b073bf70917bef815291119/torchvision-0.28.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:028a3d481b37d785605620d7cdad897064c5a55bae2aa1f2658766333e291940", size = 7675040, upload-time = "2026-07-08T16:07:58.017Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/9c/55ed9cb6dfe3ee9c837df5cd0e758372e5829aa38b8dd71343aa632cc4e2/torchvision-0.28.0-cp312-cp312-win_amd64.whl", hash = "sha256:87dc16b2df427c1318ad335f1e2be2b3b15b2cf20f7934c83b0505a48425ee5d", size = 4085785, upload-time = "2026-07-08T16:07:50.928Z" },
 ]
 
 [[package]]
@@ -4581,7 +4910,7 @@ name = "tqdm"
 version = "4.70.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/21/3b/6c24bec5be5e743ffd99576daa5cc077722fc7d5bbc00bd133fa0c698dc6/tqdm-4.70.0.tar.gz", hash = "sha256:55b0b0dbd97462d06ebee91e4dac24ed4d4702be82b24f07e6c1d27e08cea220", size = 795438, upload-time = "2026-07-27T11:33:15.271Z" }
 wheels = [
@@ -4629,7 +4958,7 @@ dependencies = [
     { name = "onnxscript" },
     { name = "packaging" },
     { name = "pydantic" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch", marker = "sys_platform == 'never' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "transformer-engine-cu13" },
 ]
 sdist = { url = "https://pypi.nvidia.com/transformer-engine-torch/transformer_engine_torch-2.17.1.tar.gz", hash = "sha256:5891479407be643c2c6df3b68b25a6b9497a996efe577eb88899c27c04dad9e2" }
@@ -4658,6 +4987,10 @@ wheels = [
 name = "triton"
 version = "3.7.1"
 source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/fa/f856e24deb462d5f18bd4b5a746957862ab9b6ee5834bda60605ec348366/triton-3.7.1-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9497f2e696ee368862a181a90b2dcc03ca978cc4f602abd67c7d81022a6988e1", size = 184692359, upload-time = "2026-06-17T20:03:48.288Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/6f/fb96d15db6f36d6eae4cafb998c2e0353bf59d7c4ea1662d7497f269134a/triton-3.7.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7e40869937a68206ec70d7f25bb7ec6433cb083f9135e1f36dbd318dc449a728", size = 197719725, upload-time = "2026-06-17T19:53:20.419Z" },
+]
 
 [[package]]
 name = "typer"
@@ -4665,7 +4998,7 @@ version = "0.27.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-15-megatron-bridge-qwen35-h100-perf' and extra == 'extra-15-megatron-bridge-ssm')" },
     { name = "rich" },
     { name = "shellingham" },
 ]

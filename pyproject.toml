@@ -108,6 +108,12 @@ version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
 managed = true
+conflicts = [
+    [
+        { extra = "qwen35-h100-perf" },
+        { extra = "ssm" },
+    ],
+]
 # Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
 # mamba-ssm, causal-conv1d, and transformer-engine are optional extras ([ssm], [te])
 # but kept here so they build correctly when installed.
@@ -177,6 +183,9 @@ te = [
 ssm = [
     "mamba-ssm",
     "causal-conv1d",
+]
+qwen35-h100-perf = [
+    "megatron-core[qwen35-h100-perf]",
 ]
 audio = [
     "librosa",
