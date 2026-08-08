@@ -487,7 +487,7 @@ def test_moonlight_16b_legacy_sft_contract_remains_available(monkeypatch: pytest
 def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     """Test the exact 4-GPU LoRA convergence contract and frozen base."""
     from megatron.bridge.peft.lora import LoRA
-    from megatron.bridge.peft.lora_layers import LinearAdapter
+    from megatron.bridge.peft.lora_layers import LoRALinear
     from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
     patch_recipe_module_global(monkeypatch, moonlight_16b_peft_config, "AutoBridge", _FakeBridge)
@@ -534,7 +534,7 @@ def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch
     for target in expected_targets + ["linear_qkv"]:
         setattr(base_model, target, torch.nn.Linear(2, 2))
     cfg.peft(base_model)
-    assert all(isinstance(getattr(base_model, target), LinearAdapter) for target in expected_targets)
+    assert all(isinstance(getattr(base_model, target), LoRALinear) for target in expected_targets)
     assert isinstance(base_model.linear_qkv, torch.nn.Linear)
     assert all(not parameter.requires_grad for parameter in base_model.linear_qkv.parameters())
     assert cfg.model.recompute_granularity is None
