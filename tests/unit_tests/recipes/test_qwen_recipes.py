@@ -716,6 +716,8 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     mod = importlib.import_module("megatron.bridge.recipes.qwen.gb200.qwen35")
     patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
     patch_recipe_module_global(monkeypatch, mod, "AutoConfig", _FakeAutoConfig)
+    monkeypatch.setenv("MBRIDGE_KERNEL_CACHE_DIR", "/tmp/qwen35-test-cache")
+    monkeypatch.setenv("SLURM_PROCID", "7")
 
     cfg = qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config()
 
@@ -733,6 +735,8 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules == []
+    assert cfg.model.gated_delta_rule_backend == "flash_qla"
+    assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
     assert cfg.model.cuda_graph_impl == "none"
     assert cuda_graph_module_names(cfg.model) == []
     assert cfg.model.transformer_layer_spec is qwen35_h100_transformer_block_spec
@@ -764,6 +768,10 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 64
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["TILELANG_CACHE_DIR"] == "/tmp/qwen35-test-cache/rank-7/tilelang"
+    assert cfg.env_vars["TORCHINDUCTOR_CACHE_DIR"] == "/tmp/qwen35-test-cache/rank-7/torchinductor"
+    assert cfg.env_vars["TRITON_CACHE_DIR"] == "/tmp/qwen35-test-cache/rank-7/triton"
+    assert cfg.env_vars["TORCH_EXTENSIONS_DIR"] == "/tmp/qwen35-test-cache/torch-extensions"
 
 
 def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(

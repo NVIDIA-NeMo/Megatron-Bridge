@@ -13,6 +13,8 @@
 # limitations under the License.
 """H100 performance recipes for text-only Qwen3.5 MoE."""
 
+import os
+
 import torch
 
 from megatron.bridge.models.qwen.modeling_qwen35 import qwen35_h100_transformer_block_spec
@@ -28,6 +30,22 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 _QWEN35_35B_A3B = "Qwen/Qwen3.5-35B-A3B"
 _QWEN35_35B_A3B_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  # pragma: allowlist secret
+
+
+def _qwen35_rank_local_kernel_cache_env() -> dict[str, str]:
+    """Return portable, isolated compile-cache paths for the current rank."""
+    cache_root = os.environ.get("MBRIDGE_KERNEL_CACHE_DIR")
+    if cache_root is None:
+        cache_base = os.environ.get("NEMO_HOME") or os.environ.get("XDG_CACHE_HOME") or "/tmp"
+        cache_root = os.path.join(cache_base, "megatron-bridge", "qwen35-h100")
+    rank = os.environ.get("SLURM_PROCID") or os.environ.get("RANK") or "0"
+    rank_cache = os.path.join(cache_root, f"rank-{rank}")
+    return {
+        "TILELANG_CACHE_DIR": os.path.join(rank_cache, "tilelang"),
+        "TORCHINDUCTOR_CACHE_DIR": os.path.join(rank_cache, "torchinductor"),
+        "TRITON_CACHE_DIR": os.path.join(rank_cache, "triton"),
+        "TORCH_EXTENSIONS_DIR": os.path.join(cache_root, "torch-extensions"),
+    }
 
 
 def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
@@ -62,6 +80,11 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.recompute_modules = []
+
+    # Freeze the measured GDN path in the recipe so the model-card command
+    # does not depend on hidden command-line overrides.
+    cfg.model.gated_delta_rule_backend = "flash_qla"
+    cfg.model.gdn_pre_gated_delta_rule_fusion = True
 
     # Static dispatcher metadata removes the synchronization wall that the
     # scoped graphs targeted. The matched final-stack A/B favored eager.
@@ -103,6 +126,7 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
+        **_qwen35_rank_local_kernel_cache_env(),
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
