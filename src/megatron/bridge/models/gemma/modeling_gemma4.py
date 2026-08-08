@@ -894,12 +894,14 @@ def _attach_ple_modules(
     ple_vocab = provider.per_layer_embed_vocab_size
     if ple_dim <= 0 or ple_vocab <= 0:
         return
+    tp_group = model.pg_collection.tp
 
     model.per_layer_embedding = tp.VocabParallelEmbedding(
         ple_vocab,
         n_layers * ple_dim,
         config=config,
         init_method=config.init_method,
+        tp_group=tp_group,
     )
     model.per_layer_model_proj = tp.ColumnParallelLinear(
         provider.hidden_size,
@@ -908,6 +910,7 @@ def _attach_ple_modules(
         init_method=config.init_method,
         bias=False,
         gather_output=True,
+        tp_group=tp_group,
     )
     model.per_layer_proj_norm = Gemma4RMSNorm(config, ple_dim, eps=provider.layernorm_epsilon)
 
@@ -929,15 +932,23 @@ def _compute_per_layer_inputs(
 
     tok_emb = model.per_layer_embedding(input_ids) * (ple_dim**0.5)
 
-    if getattr(model.config, "sequence_parallel", False):
-        from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region as _scatter
-
-        tok_emb = _scatter(tok_emb.transpose(0, 1)).transpose(0, 1)
+    sequence_parallel = getattr(model.config, "sequence_parallel", False)
+    if sequence_parallel:
+        tok_emb = tensor_parallel.scatter_to_sequence_parallel_region(
+            tok_emb.transpose(0, 1), group=model.pg_collection.tp
+        ).transpose(0, 1)
 
     s_local: int = tok_emb.shape[1]
     tok_emb = tok_emb.view(b, s_local, n_layers, ple_dim)
 
-    mdl_proj, _ = model.per_layer_model_proj(decoder_input.transpose(0, 1))
+    if sequence_parallel:
+        # ColumnParallelLinear's sequence-parallel contract gathers and reduce-scatters
+        # dimension 0, so keep the input sequence-major through the projection.
+        mdl_proj, _ = model.per_layer_model_proj(decoder_input)
+        mdl_proj = tensor_parallel.scatter_to_sequence_parallel_region(mdl_proj, group=model.pg_collection.tp)
+        mdl_proj = mdl_proj.transpose(0, 1).contiguous()
+    else:
+        mdl_proj, _ = model.per_layer_model_proj(decoder_input.transpose(0, 1))
     mdl_proj = mdl_proj * (model.config.hidden_size**-0.5)
     mdl_proj = mdl_proj.view(b, s_local, n_layers, ple_dim)
     mdl_proj = model.per_layer_proj_norm(mdl_proj)
