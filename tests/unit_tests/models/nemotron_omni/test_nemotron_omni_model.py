@@ -437,6 +437,24 @@ def test_padded_placeholder_is_not_treated_as_media():
     assert torch.equal(output[3, 0], torch.zeros(3))
 
 
+def test_media_merge_accepts_dense_decoder_attention_mask():
+    language_embeddings = torch.zeros(4, 2, 3)
+    input_ids = torch.tensor([[7, 18, 9, 0], [8, 18, 10, 0]])
+    attention_mask = torch.tril(torch.ones(2, 1, 4, 4, dtype=torch.bool))
+    media_embeddings = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+
+    output = NemotronOmniModel._merge_projected_media(
+        language_embeddings,
+        input_ids,
+        media_embeddings,
+        media_token_id=18,
+        attention_mask=attention_mask,
+    )
+
+    assert torch.equal(output[1, 0], media_embeddings[0])
+    assert torch.equal(output[1, 1], media_embeddings[1])
+
+
 def test_media_merge_supports_backward_for_batch_size_one():
     language_embeddings = torch.randn(4, 1, 3, requires_grad=True)
     media_embeddings = torch.randn(2, 3, requires_grad=True)
