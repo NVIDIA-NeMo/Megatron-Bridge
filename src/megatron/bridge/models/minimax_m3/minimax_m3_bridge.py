@@ -79,7 +79,7 @@ class MiniMaxM3MoELayer(MoELayer):
             # Widening BF16 values to FP32 is exact and avoids silent corruption seen in
             # large variable-split EP all-to-all payloads in the affected release runtime.
             output_dtype = output.dtype
-            output = self.token_dispatcher.token_combine(output.float()).to(dtype=output_dtype)
+            output = super().combine(output.float()).to(dtype=output_dtype)
             return output
         return super().combine(output)
 
