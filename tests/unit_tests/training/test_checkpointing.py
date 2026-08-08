@@ -14,10 +14,12 @@
 """Unit tests for megatron.bridge.training.checkpointing module."""
 
 import os
+import pickle
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
+import numpy as np
 import pytest
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -72,6 +74,21 @@ class _DummyClass:
 
 
 _dummy_obj = _DummyClass()
+
+
+def _write_dataloader_state_marker(path: str) -> None:
+    """Write a marker if an unsafe deserializer executes a test payload."""
+    Path(path).write_text("dataloader state payload executed")
+
+
+class _MaliciousDataloaderState:
+    """Pickle payload used to verify that dataloader restore blocks arbitrary globals."""
+
+    def __init__(self, marker_path: Path):
+        self.marker_path = marker_path
+
+    def __reduce__(self):
+        return _write_dataloader_state_marker, (str(self.marker_path),)
 
 
 class TestCheckpointUtilities:
@@ -4989,7 +5006,7 @@ class TestMaybeLoadDataloaderState:
         with pytest.raises(RuntimeError, match="data-parallel size"):
             maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
-    @patch("megatron.bridge.training.checkpointing.torch.load")
+    @patch("megatron.bridge.training.checkpointing.energon_torch_load")
     def test_restores_on_every_cp_tp_pp_rank(self, mock_load, tmp_path):
         """Unlike save, restore must run on every cp/tp/pp because
         each rank pulls from its own data iterator. Keyed by the pure DP rank."""
@@ -5009,7 +5026,7 @@ class TestMaybeLoadDataloaderState:
 
         train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
 
-    @patch("megatron.bridge.training.checkpointing.torch.load")
+    @patch("megatron.bridge.training.checkpointing.energon_torch_load")
     def test_restores_from_file(self, mock_load, tmp_path):
         """Happy path: the per-DP-rank file is loaded and restore_state is called with the saved dict."""
         train_iterator = Mock()
@@ -5022,6 +5039,161 @@ class TestMaybeLoadDataloaderState:
         maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
         train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
+
+    def test_restores_energon_state_via_restricted_unpickler(self, tmp_path):
+        """Energon dataclass and NumPy state round-trips correctly through the restricted zip loader."""
+        from megatron.energon.flavors.webdataset.sample_loader import SliceState
+        from megatron.energon.rng import SystemRngState
+        from megatron.energon.savable_loader import (
+            SavableDataLoaderState,
+            SavableDatasetCheckpoint,
+            SavableDatasetState,
+        )
+        from megatron.energon.state import FlexState
+
+        train_iterator = Mock()
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        state_path = iter_dir / "train_dataloader_dprank000.pt"
+        rng_state = SystemRngState(
+            torch=torch.arange(3),
+            numpy=np.arange(3, dtype=np.uint32),
+            random=(3, (1, 2, 3), None),
+        )
+        loader_state = SavableDataLoaderState(
+            worker_states=[
+                SavableDatasetCheckpoint(
+                    state=SavableDatasetState(
+                        rng=rng_state,
+                        dataset_state=FlexState(active_slices=[SliceState(index=2, current=17)]),
+                        sample_index=5,
+                    ),
+                    offset=1,
+                )
+            ],
+            next_worker_id=0,
+            micro_batch_size=2,
+        )
+        torch.save({"dataloader_state_dict": loader_state}, state_path)
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        restored = train_iterator.iterable.restore_state.call_args.args[0]
+        assert isinstance(restored, SavableDataLoaderState)
+        assert restored.next_worker_id == loader_state.next_worker_id
+        assert restored.micro_batch_size == loader_state.micro_batch_size
+        restored_dataset_state = restored.worker_states[0].state
+        assert restored_dataset_state is not None
+        assert restored_dataset_state.sample_index == 5
+        np.testing.assert_array_equal(restored_dataset_state.rng.numpy, rng_state.numpy)
+        assert restored_dataset_state.dataset_state["active_slices"] == [SliceState(index=2, current=17)]
+
+    def test_rejects_reduce_payload_without_executing_it(self, tmp_path):
+        """A checkpoint cannot execute an arbitrary callable through pickle ``__reduce__``."""
+        train_iterator = Mock()
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        marker_path = tmp_path / "dataloader-state-payload-executed"
+        state_path = iter_dir / "train_dataloader_dprank000.pt"
+        torch.save({"dataloader_state_dict": _MaliciousDataloaderState(marker_path)}, state_path)
+
+        assert not marker_path.exists()
+        with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused to load"):
+            maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        assert not marker_path.exists()
+        train_iterator.iterable.restore_state.assert_not_called()
+
+    def test_restores_multi_worker_state_with_savable_checkpoint(self, tmp_path):
+        """Multi-worker state and SavableCheckpoint nested inside FlexState round-trip correctly.
+
+        SavableCheckpoint (checkpoint_time + sample_index) is distinct from
+        SavableDatasetCheckpoint and can appear as a FlexState value when a
+        SavableDatasetWrapper is used inside a blending dataset.  Two worker
+        states are used to confirm the loader handles the list correctly.
+        """
+        from megatron.energon.flavors.webdataset.sample_loader import SliceState
+        from megatron.energon.rng import SystemRngState
+        from megatron.energon.savable_loader import (
+            SavableCheckpoint,
+            SavableDataLoaderState,
+            SavableDatasetCheckpoint,
+            SavableDatasetState,
+        )
+        from megatron.energon.state import FlexState
+
+        def _rng(seed: int) -> SystemRngState:
+            return SystemRngState(
+                torch=torch.arange(seed, seed + 3),
+                numpy=np.arange(seed, seed + 3, dtype=np.uint32),
+                random=(seed, tuple(range(seed, seed + 3)), None),
+            )
+
+        # Worker 0: simple blending state with two active slices.
+        worker0 = SavableDatasetCheckpoint(
+            state=SavableDatasetState(
+                rng=_rng(0),
+                dataset_state=FlexState(
+                    active_slices=[SliceState(index=0, current=11), SliceState(index=1, current=22)]
+                ),
+                sample_index=100,
+            ),
+            offset=0,
+        )
+        # Worker 1: FlexState contains a nested SavableCheckpoint, simulating a
+        # SavableDatasetWrapper used as an inner dataset.
+        nested_ckpt = SavableCheckpoint(
+            state=SavableDatasetState(
+                rng=_rng(10),
+                dataset_state=FlexState(active_slices=[SliceState(index=5, current=99)]),
+                sample_index=50,
+            ),
+            checkpoint_time=1.0,
+            sample_index=50,
+        )
+        worker1 = SavableDatasetCheckpoint(
+            state=SavableDatasetState(
+                rng=_rng(20),
+                dataset_state=FlexState(inner=nested_ckpt),
+                sample_index=200,
+            ),
+            offset=2,
+        )
+
+        loader_state = SavableDataLoaderState(
+            worker_states=[worker0, worker1],
+            next_worker_id=1,
+            micro_batch_size=8,
+        )
+
+        train_iterator = Mock()
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        state_path = iter_dir / "train_dataloader_dprank000.pt"
+        torch.save({"dataloader_state_dict": loader_state}, state_path)
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        restored = train_iterator.iterable.restore_state.call_args.args[0]
+        assert isinstance(restored, SavableDataLoaderState)
+        assert restored.next_worker_id == 1
+        assert restored.micro_batch_size == 8
+        assert len(restored.worker_states) == 2
+
+        r0 = restored.worker_states[0].state
+        assert r0.sample_index == 100
+        assert r0.dataset_state["active_slices"] == [
+            SliceState(index=0, current=11),
+            SliceState(index=1, current=22),
+        ]
+        np.testing.assert_array_equal(r0.rng.numpy, _rng(0).numpy)
+
+        r1 = restored.worker_states[1].state
+        assert r1.sample_index == 200
+        assert isinstance(r1.dataset_state["inner"], SavableCheckpoint)
+        assert r1.dataset_state["inner"].sample_index == 50
+        assert r1.dataset_state["inner"].checkpoint_time == 1.0
+        np.testing.assert_array_equal(r1.rng.numpy, _rng(20).numpy)
 
 
 class TestMaybeSaveDataloaderState:
