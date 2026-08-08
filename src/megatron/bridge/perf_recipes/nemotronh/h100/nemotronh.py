@@ -133,16 +133,16 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    set_cuda_graph_modules(cfg.model, ["mamba"])
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba"])
 
-    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act"]
+    cfg.model.recompute_modules = ["layernorm"]
 
     cfg.comm_overlap.tp_comm_overlap = True
 
@@ -232,6 +232,7 @@ def nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 def nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 16× H100, FP8 current-scaling."""
     cfg = nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config()
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
