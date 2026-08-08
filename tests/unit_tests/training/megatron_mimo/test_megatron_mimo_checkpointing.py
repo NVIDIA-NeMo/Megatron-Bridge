@@ -43,6 +43,26 @@ def _make_megatron_mimo_infra(*, num_active_pgs: int = 1) -> Mock:
     return infra
 
 
+def test_megatron_mimo_runtime_config_update_resolves_eval_batch_size_defaults():
+    from megatron.bridge.training.config import megatron_mimo_runtime_config_update
+
+    cfg = MagicMock()
+    cfg.env_vars = {}
+    cfg.train.num_epochs = None
+    cfg.train.global_batch_size = 8
+    cfg.train.micro_batch_size = 2
+    cfg.validation.eval_global_batch_size = None
+    cfg.validation.eval_micro_batch_size = None
+    cfg.profiling = None
+
+    megatron_mimo_runtime_config_update(cfg)
+
+    eval_num_microbatches = cfg.validation.eval_global_batch_size // (
+        cfg.validation.eval_micro_batch_size * cfg.data_parallel_size
+    )
+    assert eval_num_microbatches == 4
+
+
 def _make_global_state(
     *,
     save_interval: int | None = 10,
