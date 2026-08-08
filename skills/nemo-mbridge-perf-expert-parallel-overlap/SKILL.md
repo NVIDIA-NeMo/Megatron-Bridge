@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-expert-parallel-overlap
-description: Validate and use MoE expert-parallel communication overlap in Megatron-Bridge, including overlap_moe_expert_parallel_comm, delay_wgrad_compute, and flex dispatcher backends such as DeepEP and HybridEP.
+description: Validate and use MoE expert-parallel communication overlap in Megatron-Bridge, including overlap_moe_expert_parallel_comm, delay_wgrad_compute, and flex dispatcher backends such as DeepEP and HybridEP. Use for hiding dispatch/combine latency, EP-overlap throughput-regression investigation, overlap_moe_expert_parallel_comm, delay_wgrad_compute, flex dispatchers, DeepEP overlap, or HybridEP overlap.
 license: Apache-2.0
-when_to_use: Enabling EP overlap to hide dispatch/combine latency, or tracing a throughput regression to an EP overlap config change; 'overlap_moe_expert_parallel_comm', 'delay_wgrad_compute', 'flex dispatcher', 'DeepEP overlap', 'HybridEP overlap'.
 ---
 
 # MoE Expert-Parallel Overlap Skill
@@ -124,6 +123,17 @@ GPU-active interval union fell from 22.821s to 21.221s.
 Use this as evidence for the mechanism, not as a universal speedup promise.
 The dispatcher, graph scopes, routing, parallelism, batch shape, and runtime
 were held fixed while only plain EP overlap changed.
+
+### Qwen3.5 measured counterexamples
+
+Read
+[references/qwen35-h100-overlap.md](references/qwen35-h100-overlap.md)
+when applying overlap to a GDN-MoE schedule or comparing plain EP overlap,
+shared-expert overlap, delayed expert wgrad, and early attention release. On
+the measured Qwen3.5 H100 shape, plain EP overlap regressed decisively,
+normal-priority shared-expert overlap improved step time 0.44%, delayed wgrad
+regressed 0.664%, and early attention release did not preserve a steady memory
+benefit. Treat each mechanism as an independent exact A/B.
 
 ## Enablement
 
@@ -277,6 +287,75 @@ matched profile to explain the mechanism:
    longer under SM or bandwidth contention even when exposed time decreases.
 5. Corroborate interval results with dispatch/combine NVTX ranges, final step
    time, loss finiteness, skipped/NaN counts, and peak memory.
+6. If kernel count is unchanged but the active union, idle gaps, NCCL duration,
+   and `cudaEventSynchronize` time all grow, inspect all-rank utilization and
+   allocator runtime APIs. This pattern is rank-skew/rendezvous inflation, not
+   duplicated model work.
+7. Treat large `cuMem*` totals as a hypothesis. Toggle only the allocator before
+   blaming expandable segments; native allocation can worsen fragmentation and
+   rank skew in the same fine-grained schedule.
+8. If retaining inputs OOMs, preserve early reclamation and isolate retirement
+   ordering. On one Qwen3.5 control, waiting on the communication completion
+   event and retiring storage on the compute/owner stream preserved peak memory
+   and reduced the first steady step from 82.70 to 67.98 seconds. Profile before
+   generalizing: the schedule still substantially regressed versus no overlap.
+9. Use the matched profile to confirm whether retirement ordering changed the
+   distributed critical path. In that Qwen3.5 control, owner-stream retirement
+   reduced the capture span from 85.453 to 73.024 seconds, dispatch from 38.912
+   to 30.196 seconds, NCCL from 16.500 to 14.061 seconds, and
+   `cudaEventSynchronize` from 8,952 calls / 12.513 seconds to 4,524 calls /
+   4.346 seconds. Kernel count stayed exactly 401,776. This establishes a
+   scheduler/allocator interaction, but dispatch and NCCL still remained about
+   10.8x and 35.4x above the no-overlap profile.
+10. Isolate launch ordering after the release path is stable. On the same
+    Qwen3.5 owner-release control, changing only
+    `CUDA_DEVICE_MAX_CONNECTIONS` from 32 to 1 reduced the steps 2-3 mean from
+    66.322 to 44.465 seconds (about 88.9 to 132.45 model TFLOP/s/GPU), while
+    iteration-2 peak allocation stayed 72.028 GiB. The improvement reproduced
+    over both finite steps, but the schedule remained 1.89x slower than
+    no-overlap. Connection count changes the sign and magnitude of scheduler
+    overhead; it does not make overlap automatically beneficial.
+11. Test the nearest upward connection count before a broad sweep. On the same
+    exact 2-node Qwen3.5 control, changing only 1 to 2 regressed the steady
+    mean from 44.465 to 50.356 seconds (about 132.45 to 117.0 model
+    TFLOP/s/GPU), with 64 allocator retries at iteration 2. Finite numerical
+    checks showed a scheduler regression, not a failed step. Stop there rather
+    than assuming 4/8 will recover overlap.
+12. Profile the connection-count winner before declaring it an overlap win. In
+    this case, connection count 1 reduced NCCL by 95.3%, dispatch by 63.0%, and
+    event-sync calls by 90.6% relative to 32. It simultaneously reduced useful
+    HybridEP/expert intersection by 93.2% to only 0.156 seconds. The schedule
+    became better ordered but nearly serial, leaving 16.588 seconds of idle
+    gaps and an 11.162-second dispatch wall.
+13. Re-test the winning launch-order setting on the no-overlap control. On the
+    same exact 2-node Qwen3.5 shape with HybridEP `num_sms=16`, changing only
+    `CUDA_DEVICE_MAX_CONNECTIONS` from 32 to 1 improved the steps 5-8 mean from
+    23.228 to 22.451 seconds and throughput from 253.60 to 262.38 model
+    TFLOP/s/GPU. The 3.46% step-time gain shows that launch-order pressure can
+    exist outside the explicit combined-overlap schedule. It does not prove
+    communication hiding; profile the winning no-overlap run before assigning
+    the gain to overlap.
+14. Use that matched no-overlap profile to decide whether the nearest
+    connection count is justified. In the Qwen3.5 trace, connections=1 reduced
+    HybridEP active union 8.77% and expert/linear union 1.58% versus 32, but
+    increased idle gaps 15.02% from 4.204 to 4.836 seconds. Kernel count stayed
+    401,840 and useful HybridEP/expert intersection stayed zero. This is
+    concrete evidence of cheaper but more idle serial execution, so test
+    connections=2 on the no-overlap path even if it previously lost on a
+    different combined-overlap schedule.
+15. Stop when that adjacent no-overlap point also loses. On the measured
+    Qwen3.5 path, connections=2 averaged 22.502 seconds / about 261.78 model
+    TFLOP/s/GPU over steps 5-8, 0.28% slower than connections=1. The added
+    launch concurrency did not recover the profiled idle penalty, so higher
+    connection counts were not justified.
+16. If selective attention/GDN recompute materially contracts an overlap
+    stall, test `ep_overlap_early_attn_memory_release` before accepting the
+    recompute cost. The flag reorders backward to release those activations
+    before the next MLP forward, but it may expose dispatch/combine; require an
+    exact end-to-end A/B and compare memory after optimizer warmup. On the
+    measured Qwen3.5 path it was throughput-neutral versus the broken overlap
+    control, retained the same 72.028-GiB iteration-2 peak, and remained 49.47%
+    below the accepted winner.
 
 ## Code Anchors
 
@@ -299,6 +378,20 @@ if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
     # TE version checks for overlap_grad_reduce and gradient_accumulation_fusion
     # CUDA graph scope validations for delayed wgrad
     assert overlap_moe_expert_parallel_comm, ...
+```
+
+### Early-release output and gradient equivalence
+
+```354:398:3rdparty/Megatron-LM/tests/unit_tests/a2a_overlap/test_schedule_layer_1f1b.py
+def test_transformer_layer_overlap_early_attn_memory_release(self):
+    extra_kwargs = {
+        "moe_token_dispatcher_type": "alltoall",
+        "ep_overlap_early_attn_memory_release": True,
+        "overlap_moe_expert_parallel_comm": True,
+    }
+    microbatches = 4
+    # Run the reference and overlap schedules from identical parameters.
+    # compare_captures(..., True) checks outputs and parameter gradients.
 ```
 
 ### Flex-dispatcher activation
@@ -344,6 +437,17 @@ def _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=False):
 | no throughput gain from flex dispatcher | `apply_flex_dispatcher_backend` not called | Check `moe_token_dispatcher_type` in logs | Call `apply_flex_dispatcher_backend(...)` |
 | DeepEP/HybridEP silently skipped | Unsupported GPU | Check warning logs | Run on Ampere/Hopper/Blackwell |
 | summed kernel time increases after overlap | Expected concurrency contention or a regression | Compare interval unions, comm/compute intersection, and unprofiled step time | Judge overlap from exposed wall time, not summed per-stream duration |
+| step time and live memory both jump after overlap | Combined schedule lengthens the critical path or retains more activations | Compare the first steady sample and peak allocation with an exact no-overlap A/B | Reject the overlap path before adding delayed wgrad or graphs |
+| high-priority A2A stream does not change a large regression | The regression is not simple normal-priority communication starvation | Compare matched normal/high-priority first steady samples | Profile the combined schedule before trying more priority or SM reservations |
+| unchanged kernel count but dispatch/NCCL time and idle gaps grow sharply | Rank skew makes collectives wait even though the model executes the same work | Compare kernel counts, interval unions, runtime APIs, and all-rank GPU utilization | Trace cross-stream tensor lifetime and scheduler event dependencies |
+| overlap profile contains many `cuMem*` calls | Allocator activity may be a symptom rather than the root cause | Run an allocator-only A/B with the exact overlap shape | Keep the better allocator and do not claim causality unless the A/B improves progress |
+| retaining combine inputs avoids immediate storage retirement but step 2 OOMs | The combined schedule needs early reclamation to preserve optimizer-state headroom | Compare first-step peak allocation and the all-rank optimizer allocation failure | Restore release and test dependency-aware retirement, not retention until backward |
+| owner-stream retirement improves overlap but remains far below no-overlap throughput | Retirement bookkeeping was only part of the critical path | Compare a matched profile of dispatch, NCCL, idle gaps, event sync, and allocator APIs | Keep as diagnostic evidence; continue only from profile contraction, not the short timing alone |
+| owner-stream profile reduces event sync and VMM calls but dispatch remains highly inflated | Cross-stream retirement amplified rank skew, while another rendezvous dependency still dominates | Compare against both normal-overlap and no-overlap traces, including useful comm/compute intersection | Preserve the safer release ordering only as an experimental diagnostic; target remaining scheduler dependencies before recipe adoption |
+| `CUDA_DEVICE_MAX_CONNECTIONS=1` improves an H100 overlap stall but remains slower than no overlap | Connection count reduced cross-stream launch drift without eliminating the combined-schedule wall | Verify the live process environment, two steady steps, memory, and exact no-overlap control | Record the launch-order learning; do not adopt overlap until end-to-end throughput wins |
+| connection count 1 removes NCCL inflation but useful overlap collapses | Launch ordering was restored mainly by serializing streams | Compare dispatch/NCCL unions and comm/compute intersection against connection count 32 | Sweep the smallest next connection count rather than jumping back to the high-drift setting |
+| connection count 2 is slower and more variable than connection count 1 | Added launch concurrency restored rank/allocator variability without useful overlap | Require two finite steady steps and compare allocator retries/reserved memory | Stop the connection sweep and optimize the faster no-overlap dispatcher path |
+| overlap peak memory grows because forward allocations outrun backward release | Attention/GDN backward occurs after the next combine forward | Compare with selective attention/GDN recompute and inspect the schedule plan | A/B `ep_overlap_early_attn_memory_release`; reject if exposed dispatch/combine outweighs memory relief |
 
 ## Known Limitations
 

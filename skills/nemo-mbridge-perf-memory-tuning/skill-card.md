@@ -1,5 +1,5 @@
 ## Description: <br>
-Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, PEFT + SP input re-gather, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes. <br>
+Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, optimizer-state precision, PEFT + SP input re-gather, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers diagnosing GPU out-of-memory errors and tuning peak memory consumption during large-model training with Megatron Bridge. <br>
+Developers and engineers diagnosing and resolving GPU out-of-memory errors during Megatron Bridge training by applying memory fragmentation fixes, parallelism tuning, and PEFT activation memory optimizations. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,26 +25,25 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
+- [Parallelisms documentation](docs/parallelisms.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Parallelisms Documentation](docs/parallelisms.md) <br>
-- [Activation Recompute Skill](skills/nemo-mbridge-perf-activation-recompute/SKILL.md) <br>
-- [Megatron FSDP Skill](skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md) <br>
+- [card.yaml (validation metadata)](skills/nemo-mbridge-perf-memory-tuning/card.yaml) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Analysis] <br>
+**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
 **Output Format:** [Markdown with inline bash and Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- `claude-code` <br>
-- `codex` <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 task (1 positive skill-activation case) using NVSkills-Eval external profile in astra-sandbox environment. <br>
+Evaluated against 1 positive skill-activation task in a k8s-sandbox environment with 1 attempt per task and a 50% pass threshold. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -61,21 +60,25 @@ Underlying evaluation signals used in this run: <br>
 - `accuracy`: Grades final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
 - `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
-- `token_efficiency`: Compares token usage with and without the skill. <br>
 
 
 
 ## Evaluation Results: <br>
-| Dimension | Num | `claude-code` | `codex` |
+| Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+72%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+47%) |
-| Effectiveness | 1 | 98% (+86%) | 100% (+90%) |
-| Efficiency | 1 | 94% (+67%) | 96% (+35%) |
+| Correctness | 1 | 100% (+60%) | 100% (+0%) |
+| Discoverability | 1 | 100% (+50%) | 94% (+44%) |
+| Effectiveness | 1 | 100% (+90%) | 90% (+0%) |
+| Efficiency | 1 | 100% (+50%) | 100% (+83%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
-1.0.0+9edee0c (source: pyproject.toml) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

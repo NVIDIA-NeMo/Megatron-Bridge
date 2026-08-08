@@ -4,7 +4,10 @@ summary: >
   Selective activation recompute trades GPU compute for memory by recomputing
   specific module outputs during backward instead of storing them. Megatron
   Bridge exposes recompute_modules (core_attn, mlp, layernorm, moe, moe_act,
-  shared_experts, mla_up_proj) for fine-grained control. Measured on Llama3
+  shared_experts, mla_up_proj, mhc, gdn) for fine-grained control. GDN scope
+  checkpoints the complete GatedDeltaNet module and remains config-compatible
+  with fine-grained MoE EP overlap when full/MoE recompute stays disabled.
+  Measured on Llama3
   70B SFT (32x H100, FP8 CS): mlp recompute saves ~3 GB peak memory but
   costs ~16% GPU utilization; layernorm recompute is nearly free (~0% cost)
   but saves negligible memory; core_attn recompute is the default and is
@@ -18,6 +21,13 @@ validation_status:
     - code_verified  # transformer_config.py
   recompute_modules_enum:
     - code_verified  # transformer_block.py
+  gdn_selective_recompute:
+    - code_verified  # transformer_config.py, ssm/gated_delta_net.py
+  selective_gdn_with_ep_overlap:
+    - code_verified  # Bridge + MCore overlap validation
+    - measured  # Qwen3.5 exact 2-node/16-H100
+  selective_gdn_with_paged_stash:
+    - measured  # Qwen3.5 finite but slower than GDN alone
   llama3_70b_sft_fp8_cs_experiment:
     - measured  # PR #3107, 32x H100, TP4 PP4 VPP5 DP2
 training_dimensions:
@@ -68,6 +78,9 @@ interactions:
     - recompute_granularity=full with uniform method requires recompute_num_layers
     - recompute_granularity=selective requires recompute_modules list
     - mlp recompute combined with core_attn is slightly worse than mlp alone due to double recompute overhead
+    - gdn requires experimental_attention_variant=gated_delta_net
+    - EP overlap permits selective non-MoE scopes such as gdn but rejects full-layer and full-MoE recompute
+    - stacked memory features are not throughput-additive; measured GDN plus paged stash was slower than GDN alone
   incompatible:
     - recompute_granularity=full with cuda_graph_impl=transformer_engine
 feature_meaning:
@@ -76,7 +89,7 @@ feature_meaning:
     (entire transformer layer).
   recompute_modules: >
     List of modules to selectively recompute: core_attn, mlp, layernorm,
-    moe, moe_act, shared_experts, mla_up_proj.
+    moe, moe_act, shared_experts, mla_up_proj, mhc, gdn.
   recompute_method: >
     For full granularity: uniform (divide layers evenly into blocks) or
     block (recompute a fixed number of layers per PP stage).
@@ -140,6 +153,46 @@ measured_results:
         vs_golden_pct: -1.1
         peak_mem_gb: 59.6
         status: OOM_on_rank0
+  - model: Qwen3.5-35B-A3B
+    task: pretrain
+    parallelism: TP1_PP1_CP1_EP16
+    gpus: 16
+    nodes: 2
+    gpu: H100_80GB
+    precision: BF16
+    seq_length: 4096
+    mbs: 1
+    gbs: 1024
+    experiment: gdn_selective_recompute_with_ep_overlap
+    recompute_modules: ["gdn"]
+    control_steps_2_3_mean_s: 44.4646
+    recompute_steps_2_3_mean_s: 25.3615
+    recompute_model_tflops_per_gpu: 232.27
+    step_time_contraction_pct: 42.96
+    accepted_no_overlap_step_time_s: 22.340925
+    vs_accepted_step_time_pct: 13.52
+    control_peak_allocated_gib: 72.028
+    recompute_peak_allocated_gib: 59.516
+    status: "finite, 0 skipped/NaN; rejected because no-overlap remained faster"
+  - model: Qwen3.5-35B-A3B
+    task: pretrain
+    parallelism: TP1_PP1_CP1_EP16
+    gpus: 16
+    nodes: 2
+    gpu: H100_80GB
+    precision: BF16
+    seq_length: 4096
+    mbs: 1
+    gbs: 1024
+    experiment: gdn_selective_recompute_plus_paged_stash
+    recompute_modules: ["gdn"]
+    paged_stash: true
+    steps_2_3_s: [30.1803, 29.7948]
+    steps_2_3_mean_s: 29.98755
+    model_tflops_per_gpu: 196.4
+    iteration_2_peak_allocated_gib: 65.891
+    vs_gdn_recompute_only_step_time_pct: 18.24
+    status: "finite, 0 skipped/NaN; rejected because paged pack/unpack regressed throughput"
 failure_modes:
   - name: mlp_recompute_too_expensive
     symptom: ">15% GPU utilization drop"
@@ -153,11 +206,21 @@ failure_modes:
     symptom: "AssertionError: full recompute is only supported with full iteration CUDA graph"
     likely_cause: recompute_granularity=full with any TE-scoped CUDA graph (attn, mlp, moe_router, etc.). Common on FP8 CS configs that default to cuda_graph_impl=transformer_engine + scope=mlp (e.g. LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1). Enforced in MCore transformer_config.py:2001-2005.
     fix: use recompute_granularity=selective with recompute_modules, or set cuda_graph_impl=none, or switch to cuda_graph_impl=local + cuda_graph_scope=full_iteration
+  - name: gdn_scope_on_non_gdn_model
+    symptom: "ValueError: gdn in recompute_modules is only supported with experimental_attention_variant='gated_delta_net'"
+    likely_cause: architecture does not use the GatedDeltaNet attention variant
+    fix: remove gdn or choose a selective scope implemented by the model
+  - name: ep_overlap_with_incompatible_recompute
+    symptom: assertion while enabling overlap_moe_expert_parallel_comm
+    likely_cause: full-layer recompute, non-null recompute method/count, or full moe recompute is enabled
+    fix: use selective non-MoE scope such as gdn and keep recompute_method/recompute_num_layers null
 known_constraints:
   - recompute_granularity=selective requires a non-empty recompute_modules list
   - recompute_granularity=full requires recompute_method and recompute_num_layers
   - distribute_saved_activations cannot be used with sequence_parallel=True
   - combining mlp+core_attn is slightly worse than mlp alone due to double overhead
+  - gdn requires experimental_attention_variant=gated_delta_net
+  - EP overlap rejects full-layer and full-MoE recompute
 known_limitations:
   - per-module memory savings vary significantly by model architecture
   - no automatic selection of optimal recompute_modules
@@ -165,10 +228,15 @@ known_limitations:
 evidence:
   - docs/training/activation-recomputation.md
   - "PR #3107 (Llama3 70B SFT OOM fix experiment)"
+  - "Qwen3.5 H100 selective GDN recompute plus EP-overlap measurement"
+  - "Qwen3.5 H100 selective GDN recompute plus paged-stash measurement"
   - src/megatron/bridge/recipes/llama/llama3.py
   - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
   - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_block.py
+  - 3rdparty/Megatron-LM/megatron/core/ssm/gated_delta_net.py
+  - src/megatron/bridge/training/comm_overlap.py
 follow_up_validation:
   - Measure selective recompute impact on MoE models (moe, moe_act modules).
   - Measure mla_up_proj recompute impact on DeepSeek-style MLA models.
   - Test selective recompute + TE-scoped CUDA graphs combined perf impact.
+  - Compare GDN recompute with paged expert-activation stashing on the same EP-overlap schedule.

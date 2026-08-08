@@ -40,6 +40,7 @@ timing window fixed during the comparison.
 | DSV3 at large scale | Measured snapshots use HybridEP on GB200/GB300 and DeepEP on H100 | Revalidate against the target container and topology |
 | Qwen3 235B | Current H100 recipe uses `alltoall` plus overlap; measured GB200 snapshots use HybridEP | Do not replace the current recipe from a hardware rule alone |
 | Qwen3 30B | Current canonical 16×H100 recipe uses HybridEP | Direct counterexample to H100 → DeepEP mapping |
+| Qwen3.5 35B-A3B text | HybridEP won the measured 16×H100 campaign | About 20% faster than the matching native-alltoall baseline; revalidate on the target stack |
 | Qwen3-Next | Workload-dependent | Precision, memory, PP layout, and kernels can change the ordering |
 | MoE VLMs | Start simple, then test HybridEP on GB200-class systems | Vision workloads are sensitive to both memory and host overhead |
 
@@ -219,3 +220,9 @@ winner again with natural routing.
 
 8. **Config selection is not backend proof**: require runtime evidence that the
    requested flex backend initialized and completed steady iterations.
+
+## Campaign Reference
+
+For the Qwen3.5 35B-A3B H100 measurements, backend activation checks, and
+failed-candidate history, read
+@skills/nemo-mbridge-perf-moe-dispatcher-selection/references/qwen35-h100-hybridep.md.

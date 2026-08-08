@@ -1,15 +1,17 @@
 title: cpu_offloading
 validated_on: "2026-03-30"
 summary: >
-  Megatron Bridge supports two CPU offloading mechanisms: layer-level activation
-  offloading (cpu_offloading) and fractional optimizer state offloading
-  (optimizer_cpu_offload via HybridDeviceOptimizer). Activation offloading requires
+  Megatron Bridge supports layer-level and fine-grained activation offloading
+  plus fractional optimizer state offloading (optimizer_cpu_offload via
+  HybridDeviceOptimizer). Layer-level activation offloading requires
   PP=1, no recompute, no CUDA graphs — impractical for large MoE models. Optimizer
   offloading works with PP>1 and supports tunable fraction (0-100%) with linear
   memory-speed tradeoff. Verified on Qwen3-30B-A3B MoE pretrain (TP2 PP2 EP4,
   2 nodes H100): 25-100% offload saves 3.8-15.3 GB (-8% to -32%) at 1.9x-4.2x
   slowdown. All variants numerically safe (loss delta < 0.001). D2H/H2D overlap
-  provides ~7% speedup at 100% offload.
+  provides ~7% speedup at 100% offload. Fine-grained offload discovers groups
+  by offloading all eligible boundaries during the first iteration, then
+  applies activation_offload_fraction per cached microbatch/chunk.
 validation_status:
   activation_offload_pp_constraint:
     - code_verified  # transformer_config.py:1303-1306
@@ -19,6 +21,12 @@ validation_status:
     - code_verified  # transformer_config.py:1943-1944
   activation_offload_fine_grained_constraint:
     - code_verified  # transformer_config.py:1427-1430
+  fine_grained_offload_warmup_fraction:
+    - code_verified  # fine_grained_activation_offload.py:566-632, 1085-1093
+  fine_grained_offload_custom_forward_boundary:
+    - code_verified  # experts.py:736-833; custom forwards must preserve scopes and parameter-view markers
+  qwen35_mbs2_memory_bound_inputs:
+    - measured  # MBS1 peak, prior MBS2 OOM phase, optimizer-materialization delta
   optimizer_offload_hybrid_optimizer:
     - code_verified  # optimizer/__init__.py:480-518
   optimizer_offload_config_fields:
@@ -95,6 +103,11 @@ feature_meaning:
     Fraction of optimizer states on CPU. 0.0 = all GPU, 1.0 = all CPU.
   overlap_cpu_optimizer_d2h_h2d: >
     Overlap GPU-CPU transfers with compute during optimizer step.
+  fine_grained_activation_offloading: >
+    Enable saved-activation offload at selected submodule boundaries.
+  activation_offload_fraction: >
+    After the all-eligible discovery warmup, keep the first fraction of
+    eligible groups in each cached microbatch/chunk offloaded.
 config_keys:
   - model.cpu_offloading
   - model.cpu_offloading_num_layers
@@ -103,6 +116,11 @@ config_keys:
   - optimizer.optimizer_cpu_offload
   - optimizer.optimizer_offload_fraction
   - optimizer.overlap_cpu_optimizer_d2h_h2d
+  - model.fine_grained_activation_offloading
+  - model.offload_modules
+  - model.min_offloaded_tensor_size
+  - model.activation_offload_fraction
+  - model.delta_offload_bytes_across_pp_ranks
 recommended_path:
   optimizer.optimizer_cpu_offload: true_when_memory_constrained
   optimizer.optimizer_offload_fraction: 0.5_for_balanced_or_1.0_for_max_savings
@@ -189,6 +207,18 @@ failure_modes:
   - name: large_model_oom
     symptom: OOM with activation offloading even with many nodes
     fix: use optimizer offloading instead
+  - name: fine_grained_custom_forward_bypass
+    symptom: fine-grained activation offload is configured but saves no memory
+    fix: preserve the native off_interface scopes in any replacement module forward
+  - name: fine_grained_parameter_view_offload
+    symptom: a custom offload scope copies grouped weights or other parameters to CPU
+    fix: mark the exact transpose/view tensor passed to the custom autograd op as non-offloadable
+  - name: fine_grained_warmup_cost
+    symptom: first fine-grained-offload iteration is much slower or uses much more host memory
+    fix: treat it as all-eligible discovery warmup and exclude it from steady performance
+  - name: fine_grained_bandwidth_bound
+    symptom: the offload fraction needed to fit a larger MBS implies more ideal transfer time than the throughput target permits
+    fix: reject before allocation after sizing group bytes times groups times microbatches times D2H+H2D
 known_constraints:
   - cpu_offloading requires PP = 1 (transformer_config.py:1303)
   - cpu_offloading requires recompute_granularity = None (transformer_config.py:1308)
@@ -198,12 +228,17 @@ known_limitations:
   - Activation offloading impractical for large MoE models due to PP=1 constraint
   - Optimizer offloading throughput penalty scales linearly with fraction
   - D2H/H2D overlap provides only ~7% improvement
+  - Fine-grained activation_offload_fraction is applied only after a first iteration that offloads all eligible groups
+  - Fit is not a throughput result; calculate full per-step D2H+H2D bytes and compare the ideal host-link time with the target step-time margin
 evidence:
   - docs/training/cpu-offloading.md
   - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
   - 3rdparty/Megatron-LM/megatron/core/optimizer/optimizer_config.py
   - 3rdparty/Megatron-LM/megatron/core/optimizer/__init__.py
   - src/megatron/bridge/models/gpt_full_te_layer_autocast_spec.py
+  - 3rdparty/Megatron-LM/docs/user-guide/features/fine_grained_activation_offloading.md
+  - 3rdparty/Megatron-LM/megatron/core/pipeline_parallel/fine_grained_activation_offload.py
+  - "Qwen3.5 H100 MBS2 expert-offload bandwidth-gate measurement"
 follow_up_validation:
   - Test optimizer offload + CUDA graphs combined
   - Test fine_grained_activation_offloading as alternative

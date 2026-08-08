@@ -236,6 +236,7 @@ Related references:
 - @skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
 - @docs/training/cuda-graphs.md
 - @docs/training/activation-recomputation.md
+- @skills/nemo-mbridge-perf-moe-optimization-workflow/references/qwen35-h100-campaign.md
 
 ## Phase 5: Validate And Package Evidence
 

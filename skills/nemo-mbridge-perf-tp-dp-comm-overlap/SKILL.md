@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-tp-dp-comm-overlap
-description: Operational guide for enabling TP, DP, and PP communication overlap in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification.
+description: Operational guide for enabling TP, DP, and PP communication overlap in Megatron-Bridge, including config knobs, code anchors, pitfalls, and verification. Use for overlap_param_gather, overlap_grad_reduce, optimizer-step parameter-gather overlap, sequence-parallel overlap, TP overlap, DP overlap, PP overlap, or communication-overlap throughput-regression investigation.
 license: Apache-2.0
-when_to_use: Enabling TP/DP/PP comm overlap, or tracing a throughput regression to a comm overlap config change; 'overlap_param_gather', 'overlap_grad_reduce', 'sequence-parallel overlap', 'TP overlap', 'DP overlap', 'comm overlap'.
 ---
 
 # TP / DP / PP Communication Overlap Skill
@@ -82,6 +81,36 @@ if self.data_parallel_size > 1:
     comm_overlap_cfg.overlap_param_gather = True
 ```
 
+Optimizer-step parameter-gather overlap is a separate switch from ordinary
+DDP gradient-reduce and parameter-gather overlap:
+
+```python
+cfg.optimizer.overlap_param_gather_with_optimizer_step = True
+cfg.comm_overlap.overlap_param_gather_with_optimizer_step = True
+```
+
+The Qwen performance helpers set both fields together. Model construction reads
+the optimizer field and disables ordinary DDP bucketing so distributed
+optimizer parameter all-gather can overlap the optimizer step. Do not infer
+that `ddp.overlap_param_gather=True` enables this path. Require the distributed
+optimizer, keep both config fields consistent, and test checkpointing
+separately: some recipes disable optimizer-step gather overlap because of
+async-checkpoint interactions.
+
+Validate the model-chunk topology before benchmarking this path. MCore separates
+the first model chunk, where gather overlaps the optimizer step, from all
+remaining chunks. On the measured Qwen3.5-35B-A3B TP1/PP1/EP16 path with no
+virtual pipeline parallelism, there was only one chunk, so the remaining-chunk
+optimizer group was empty. Construction failed before iteration 1 when
+`DistributedOptimizer` read `self.model_chunks[0].ddp_config`. Treat this as a
+topology compatibility gate, not a throughput regression:
+
+```text
+DistributedOptimizer.__init__
+  self.ddp_config = self.model_chunks[0].ddp_config
+IndexError: list index out of range
+```
+
 Launch-time env tuning:
 
 ```570:609:src/megatron/bridge/recipes/run_plugins.py
@@ -98,6 +127,14 @@ executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(self.layernorm_sm_margin
 3. `bucket_size` is a parameter-count knob, not a byte-size knob.
 4. `grad_reduce_in_fp32` and `fp8_param_gather` should be set through mixed precision, not as standalone DDP tuning first.
 5. `CUDA_DEVICE_MAX_CONNECTIONS` and LayerNorm SM margin are launch-time plugin settings, not `CommOverlapConfig` fields.
+6. Optimizer-step parameter-gather overlap is not the same as
+   `ddp.overlap_param_gather`; enable the optimizer and comm-overlap fields
+   together and verify distributed-optimizer bucketing plus checkpointing.
+7. A single model chunk produces an empty remaining-chunk optimizer group on
+   the tested optimizer-step gather path. Require at least two model chunks,
+   optimizer construction, and one finite iteration before timing; a
+   pre-iteration `model_chunks[0]` failure is an unsupported topology, not a
+   performance sample.
 
 ## Verification
 
