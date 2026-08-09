@@ -1,6 +1,8 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
+import io
 import json
+import pickle
 import runpy
 import struct
 import tarfile
@@ -22,6 +24,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).parents[3]
 HF_MULTIMODAL_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "hf-multimodal"
 ENERGON_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "energon"
+NEMOTRON_IMAGE_V3_TUTORIAL = ENERGON_TUTORIAL / "nemotron-image-v3.md"
 QWEN_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
 QWEN_ENERGON_EXAMPLE = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "peft_energon.sh"
 _QWEN_TEST_SEQUENCE_LENGTHS = {"red": 9, "green": 7, "blue": 6, "yellow": 5, "purple": 9, "orange": 7}
@@ -281,6 +284,127 @@ def test_medpix_training_slice_override_preserves_hydra_brackets():
     result = parse_hydra_overrides(config, ['dataset.source.split="train[:16]"'])
 
     assert result.dataset.source.split == "train[:16]"
+
+
+def test_nemotron_image_v3_preparation_joins_jsonl_and_media_tar(tmp_path: Path):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+    source_dir = tmp_path / "source"
+    subset_dir = source_dir / "turing"
+    media_dir = subset_dir / "media"
+    media_dir.mkdir(parents=True)
+
+    records = []
+    split_counts = {"train": 0, "val": 0}
+    candidate = 0
+    while min(split_counts.values()) < 2:
+        sample_id = f"sample-{candidate}"
+        key = module["_sample_key"]("turing", sample_id)
+        split = module["_sample_split"](key, 0.5)
+        if split_counts[split] < 2:
+            image_name = f"image-{candidate}.png"
+            records.append(
+                {
+                    "id": sample_id,
+                    "image_name": image_name,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [{"type": "image", "image": image_name}, f"Question {candidate}?"],
+                        },
+                        {"role": "assistant", "content": [f"Answer {candidate}."]},
+                    ],
+                }
+            )
+            split_counts[split] += 1
+        candidate += 1
+
+    with tarfile.open(media_dir / "shard_000000.tar", "w") as archive:
+        for record in records:
+            payload = b"\x89PNG\r\n\x1a\n" + record["image_name"].encode()
+            info = tarfile.TarInfo(record["image_name"])
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    (subset_dir / "turing.jsonl").write_text(
+        "".join(json.dumps({"id": record["id"], "messages": record["messages"]}) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    source_files = [subset_dir / "turing.jsonl", media_dir / "shard_000000.tar"]
+    module["PINNED_SUBSET_FILES"]["turing"] = {
+        str(path.relative_to(source_dir)): (path.stat().st_size, module["_sha256"](path)) for path in source_files
+    }
+
+    output_dir = tmp_path / "energon"
+    counts = module["prepare_nemotron_image_v3"](
+        source_dir,
+        output_dir,
+        subsets=("turing",),
+        validation_fraction=0.5,
+        max_samples_per_tar=2,
+        run_prepare=False,
+    )
+
+    assert counts == {"train": 2, "val": 2}
+    assert sorted(path.name for path in output_dir.glob("*-shard-*.tar")) == [
+        "train-shard-000000.tar",
+        "val-shard-000000.tar",
+    ]
+    with tarfile.open(output_dir / "train-shard-000000.tar") as archive:
+        names = archive.getnames()
+        assert len(names) == 4
+        assert names[0].endswith(".jpgs")
+        assert names[1].endswith(".json")
+        images = pickle.loads(archive.extractfile(names[0]).read())
+        conversation = json.load(archive.extractfile(names[1]))
+    assert len(images) == 1 and images[0].startswith(b"\x89PNG\r\n\x1a\n")
+    assert conversation[0]["content"][0] == {"type": "image"}
+    assert conversation[0]["content"][1]["type"] == "text"
+    assert conversation[0]["content"][1]["text"].startswith("Question ")
+    assert conversation[1]["content"][0]["type"] == "text"
+
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest == {
+        "dataset": "nvidia/Nemotron-Image-Training-v3",
+        "revision": "7656391d4d4cb11ec3722b34f10d499435de0460",
+        "subsets": ["turing"],
+        "validation_fraction": 0.5,
+        "max_samples": None,
+        "counts": {"train": 2, "val": 2},
+        "verified_source_files": [
+            {
+                "path": str(path.relative_to(source_dir)),
+                "size": path.stat().st_size,
+                "sha256": module["_sha256"](path),
+            }
+            for path in source_files
+        ],
+    }
+    dataset_yaml = (output_dir / ".nv-meta" / "dataset.yaml").read_text(encoding="utf-8")
+    assert "imgs: jpgs" in dataset_yaml
+    assert "conversation: json" in dataset_yaml
+
+
+def test_nemotron_image_v3_tutorial_wires_pinned_subset_to_qwen_train_sh():
+    tutorial = NEMOTRON_IMAGE_V3_TUTORIAL.read_text(encoding="utf-8")
+
+    assert "nvidia/Nemotron-Image-Training-v3" in tutorial
+    assert "7656391d4d4cb11ec3722b34f10d499435de0460" in tutorial
+    assert '--include "turing/**"' in tutorial
+    assert "prepare_nemotron_image_v3.py" in tutorial
+    assert "SHA-256" in tutorial
+    assert "./scripts/training/train.sh" in tutorial
+    assert "qwen3_vl_8b_peft_energon_config" in tutorial
+    assert "--step-func vlm_step" in tutorial
+    assert "--mode lora --dataset energon" in tutorial
+    assert "--seq_length 16384" in tutorial
+    assert 'dataset.path="$ENERGON_PATH"' in tutorial
+    assert "dataset.packing_buffer_size=16" in tutorial
+    assert 'dataset.task_encoder.hf_processor_revision="$MODEL_REVISION"' in tutorial
+    assert '+tokenizer.hf_tokenizer_kwargs.revision="$MODEL_REVISION"' in tutorial
+    assert "model.recompute_granularity=full" in tutorial
+    assert "model.recompute_method=uniform" in tutorial
+    assert "model.recompute_num_layers=1" in tutorial
+    assert "model.calculate_per_token_loss=True" in tutorial
+    assert "ddp.average_in_collective=False" in tutorial
 
 
 def test_multimodal_tutorials_document_runnable_qwen_paths():
