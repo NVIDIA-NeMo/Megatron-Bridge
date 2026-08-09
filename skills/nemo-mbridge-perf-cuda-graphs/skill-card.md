@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers reducing host-driver overhead via CUDA graphs in Megatron Bridge GPU training workloads, or tracing crashes and regressions to CUDA graph configuration changes. <br>
+Developers and engineers reducing host-driver overhead via CUDA graphs in Megatron Bridge training workloads, or diagnosing crashes and regressions related to CUDA graph configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -26,24 +26,24 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [CUDA Graphs Training Documentation](docs/training/cuda-graphs.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
+- [Performance Tuning Guide](docs/performance-guide.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Analysis, Shell commands] <br>
+**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- `claude-code` <br>
-- `codex` <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 task in the NVSkills-Eval external profile (astra-sandbox environment, 1 attempt per task, 50% pass threshold). Overall verdict: PASS. <br>
+Evaluated against 1 positive skill-activation task testing CUDA graph implementation selection and prerequisite configuration for MoE training workloads. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -60,18 +60,22 @@ Underlying evaluation signals used in this run: <br>
 - `accuracy`: Grades final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
 - `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
-- `token_efficiency`: Compares token usage with and without the skill. <br>
 
 
 
 ## Evaluation Results: <br>
-| Dimension | Num | `claude-code` | `codex` |
+| Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+90%) | 97% (+25%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+60%) |
-| Effectiveness | 1 | 98% (+88%) | 92% (+2%) |
-| Efficiency | 1 | 94% (+67%) | 96% (+53%) |
+| Correctness | 1 | 100% (+100%) | 100% (+0%) |
+| Discoverability | 1 | 100% (+50%) | 94% (+44%) |
+| Effectiveness | 1 | 100% (+100%) | 100% (+60%) |
+| Efficiency | 1 | 100% (+50%) | 100% (+100%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
 1.0.0+b7643bd (source: pyproject.toml) <br>

@@ -133,6 +133,7 @@ best_measured_configs:
 evidence:
   - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
   - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"
+  - "skills/nemo-mbridge-perf-moe-dispatcher-selection/references/qwen35-h100-hybridep.md"
   - "[MoE Perf] MCore Release Performance Tracker - DeepSeek-V3"
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3"
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"

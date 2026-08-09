@@ -1,5 +1,5 @@
 title: parallelism_strategies
-validated_on: "2026-03-15"
+validated_on: "2026-07-27"
 summary: >
   Megatron Bridge supports DP, TP, PP, SP, CP, and EP parallelism strategies
   which can be combined for models from sub-1B to 500B+ parameters. The right
@@ -19,6 +19,9 @@ validation_status:
     - code_verified
   combined_parallelism_init:
     - code_verified
+  folded_moe_ab_equivalence:
+    - code_verified
+    - measured
   sizing_heuristics:
     - doc_only
 feature_meaning:
@@ -47,6 +50,34 @@ recommended_path:
   moe_20b_to_100b: TP=1-2 + PP=2-4 + EP=8-16
   moe_100b_to_500b: TP=2-4 + PP=8-16 + EP=8-32
   moe_500b_plus: TP=2 + PP=16 + EP=32-64
+measured_folded_moe_ab:
+  model: Qwen3.5-35B-A3B
+  hardware: "16×H100"
+  control: "TP1 EP16 ETP1 MBS1 SP-off"
+  candidate: "TP2 EP16 ETP1 MBS2 SP-on, default TP AG/RS overlap"
+  shared_shape: "EDP1, 64 microsteps, ~32768 routed rows/rank, ~2048 rows/local-expert"
+  control_step_time_ms: 22340.925
+  candidate_step_time_ms: 26219.175
+  candidate_tflops: 224.669
+  candidate_step_time_regression_percent: 17.359
+  candidate_rank0_iteration2_max_allocated_gib: 66.504
+  candidate_rank0_iteration2_max_reserved_gib: 68.373
+  disposition: rejected
+measured_pp2_ep8_layout_ab:
+  model: Qwen3.5-35B-A3B
+  hardware: "16×H100, 2 nodes"
+  topology: "TP1 PP2 EP8 ETP1 MBS1, one PP stage and one EP8 group per node"
+  dense_dp: 8
+  expert_dp: 1
+  accumulation_microsteps: 128
+  balanced_layout: "Et*20|t*20mL"
+  balanced_step_time_ms: 27436.850
+  balanced_tflops: 214.697813
+  asymmetric_layout: "Et*21|t*19mL"
+  asymmetric_step_time_ms: 26593.400
+  asymmetric_tflops: 221.507280
+  asymmetric_vs_tp1_pp1_ep16_step_time_regression_percent: 19.034463
+  disposition: rejected
 known_constraints:
   - TP should stay within a single NVLink domain for performance.
   - SP requires tensor_model_parallel_size > 1.
@@ -54,10 +85,15 @@ known_constraints:
   - EP requires num_moe_experts > 0 and expert_model_parallel_size divides num_moe_experts.
   - PP interleaved schedule requires virtual_pipeline_model_parallel_size > 1.
   - Total parallelism dimensions must divide evenly into world_size.
+  - Folded MoE performance A/Bs must account for accumulation microsteps, routed rows per rank, and rows per local expert; equal EDP is not sufficient.
+  - A node-local EP group does not guarantee a throughput win when PP changes dense DP, accumulation count, stage balance, and pipeline communication.
+  - Current HybridEP static rank-capacity code uses the configured top-k after Flex expands routes across ETP, so ETP > 1 requires live overflow validation.
 known_limitations:
   - Model-size-to-parallelism mapping is a heuristic, not a benchmark-proven table.
   - Not every parallelism combination has the same level of in-repo functional test coverage.
   - Memory estimates assume standard Adam optimizer and FP16/BF16 parameters.
+  - Routed-row estimates assume force-balanced routing and should be checked against live dispatcher telemetry for other routing modes.
+  - Matching expert-row shape does not match dense tensor-parallel GEMM shapes or communication; the measured TP2 Qwen3.5 A/B regressed despite equivalent expert rows.
 evidence:
   - docs/parallelisms.md
   - docs/performance-guide.md
@@ -66,7 +102,9 @@ evidence:
   - src/megatron/bridge/training/initialize.py
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/models/common/unimodal.py
+  - 3rdparty/Megatron-LM/megatron/core/transformer/moe/token_dispatcher.py
 follow_up_validation:
   - Add a checked-in combined parallelism functional smoke for TP+PP+CP.
   - Add benchmark-backed sizing guidance for at least one model family.
   - Add explicit EP+TP+PP functional smoke for MoE models.
+  - Add a HybridEP ETP>1 static-capacity test that verifies replicated top-k accounting.

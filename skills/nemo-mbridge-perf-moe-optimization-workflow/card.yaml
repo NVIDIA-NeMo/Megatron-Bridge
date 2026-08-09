@@ -203,3 +203,4 @@ evidence:
   - "DSV3 and Qwen3-235B empirical results"
   - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
   - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"
+  - "skills/nemo-mbridge-perf-moe-optimization-workflow/references/qwen35-h100-campaign.md"
