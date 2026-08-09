@@ -59,7 +59,6 @@ class _FakeModelCfg:
         self.context_parallel_size = 1
         self.gdn_pre_gated_delta_rule_fusion = False
         self.gated_delta_rule_backend = "fla"
-        self.moe_hybridep_assume_equal_dispatch_inputs = False
         self.moe_aux_loss_coeff = moe_aux_loss_coeff
 
     def finalize(self):
@@ -752,7 +751,6 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.model.moe_shared_expert_overlap is True
     assert cfg.model.moe_expert_rank_capacity_factor == 1.05
     assert cfg.model.moe_permute_fusion_into_hybridep is True
-    assert cfg.model.moe_hybridep_assume_equal_dispatch_inputs is True
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
@@ -1016,9 +1014,6 @@ def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
             fp8=None,
             fp4=None,
             moe_router_topk=8,
-            moe_hybridep_assume_equal_dispatch_inputs=True,
-            moe_hybridep_pad_uneven_dispatch_inputs=False,
-            variable_seq_lengths=False,
         ),
         drop_and_pad=False,
         moe_expert_rank_capacity_factor=1.05,
@@ -1027,7 +1022,6 @@ def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
     routing_map = torch.zeros((3, 2, 8), dtype=torch.bool)
     probs = torch.zeros((3, 2, 8), dtype=torch.float32)
 
-    qwen35_runtime._validate_h100_static_hybridep_contract(manager)
     qwen35_runtime._setup_h100_static_hybridep_metadata(
         manager,
         routing_map,
@@ -1073,46 +1067,6 @@ def test_qwen35_h100_static_hybridep_metadata_rejects_unsupported_configs(
             torch.zeros((3, 2, 8), dtype=torch.bool),
             torch.zeros((3, 2, 8), dtype=torch.float32),
         )
-
-
-@pytest.mark.parametrize(
-    ("config_overrides", "match"),
-    [
-        ({"moe_hybridep_assume_equal_dispatch_inputs": False}, "requires equal dispatch inputs"),
-        ({"moe_hybridep_pad_uneven_dispatch_inputs": True}, "cannot enable uneven-input padding"),
-        ({"variable_seq_lengths": True}, "does not support variable sequence lengths"),
-    ],
-)
-def test_qwen35_h100_static_hybridep_metadata_enforces_fixed_shape_contract(
-    config_overrides: dict[str, bool],
-    match: str,
-):
-    """Test that the measured static metadata path fails closed outside fixed-shape input."""
-    from types import SimpleNamespace
-
-    from megatron.bridge.models.qwen.modeling_qwen35 import runtime_patch as qwen35_runtime
-
-    config = SimpleNamespace(
-        fp8=None,
-        fp4=None,
-        moe_router_topk=8,
-        moe_hybridep_assume_equal_dispatch_inputs=True,
-        moe_hybridep_pad_uneven_dispatch_inputs=False,
-        variable_seq_lengths=False,
-    )
-    for key, value in config_overrides.items():
-        if not hasattr(config, key):
-            raise ValueError(f"Unknown config field: {key}")
-        setattr(config, key, value)
-    manager = SimpleNamespace(
-        config=config,
-        drop_and_pad=False,
-        moe_expert_rank_capacity_factor=1.05,
-        num_experts=16,
-    )
-
-    with pytest.raises(RuntimeError, match=match):
-        qwen35_runtime._validate_h100_static_hybridep_contract(manager)
 
 
 def test_qwen35_h100_grouped_mm_selects_supported_torch_entry_point(

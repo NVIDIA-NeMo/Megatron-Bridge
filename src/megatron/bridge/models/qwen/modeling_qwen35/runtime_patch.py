@@ -119,21 +119,6 @@ class _Qwen35H100GatedDeltaNet(GatedDeltaNet):
         return _apply_fused_gated_rms_norm(self, x, gate)
 
 
-def _validate_h100_static_hybridep_contract(manager: Any) -> None:
-    """Validate the fixed-shape H100 HybridEP contract once at layer construction."""
-    config = manager.config
-    if not getattr(config, "moe_hybridep_assume_equal_dispatch_inputs", False):
-        raise RuntimeError("The Qwen3.5 H100 HybridEP path requires equal dispatch inputs across ranks")
-    padding_fields = (
-        "moe_hybridep_pad_uneven_dispatch_inputs",
-        "moe_hybridep_pad_variable_tokens",
-    )
-    if any(getattr(config, field, False) for field in padding_fields):
-        raise RuntimeError("The Qwen3.5 H100 fixed-shape path cannot enable uneven-input padding")
-    if getattr(config, "variable_seq_lengths", False):
-        raise RuntimeError("The Qwen3.5 H100 fixed-shape path does not support variable sequence lengths")
-
-
 def _setup_h100_static_hybridep_metadata(
     manager: Any,
     routing_map: torch.Tensor,
@@ -305,7 +290,6 @@ class _Qwen35H100MoELayer(MoELayer):
         manager = self.token_dispatcher._comm_manager
         if self.config.moe_flex_dispatcher_backend != "hybridep":
             raise RuntimeError("The Qwen3.5 H100 runtime requires the HybridEP dispatcher")
-        _validate_h100_static_hybridep_contract(manager)
         manager.setup_metadata = MethodType(
             _setup_h100_static_hybridep_metadata,
             manager,

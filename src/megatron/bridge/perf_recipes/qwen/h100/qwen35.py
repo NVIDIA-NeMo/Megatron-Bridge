@@ -107,10 +107,6 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = True
     cfg.model.moe_expert_rank_capacity_factor = 1.05
     cfg.model.moe_permute_fusion_into_hybridep = True
-    # This bounded mock-pretrain benchmark has the same fixed MBS×sequence
-    # shape on every rank. Avoid HybridEP's per-layer max-token all-reduce;
-    # the model-specific runtime fails closed outside this contract.
-    cfg.model.moe_hybridep_assume_equal_dispatch_inputs = True
     # MCore uses this flag to validate and align static HybridEP buffers. The
     # layer spec above replaces only the SM100-only fused expert implementation
     # with the measured Hopper torch.grouped_mm implementation.

@@ -125,12 +125,6 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
     padding_fields = tuple(field_name for field_name in _HYBRIDEP_PADDING_FIELDS if hasattr(config, field_name))
     if not padding_fields:
         raise AttributeError("Megatron Core TransformerConfig does not expose a HybridEP uneven-input padding field")
-    if getattr(config, "moe_hybridep_assume_equal_dispatch_inputs", False):
-        if any(getattr(config, padding_field) for padding_field in padding_fields):
-            raise ValueError(
-                "moe_hybridep_assume_equal_dispatch_inputs cannot be combined with HybridEP uneven-input padding"
-            )
-        return
     for padding_field in padding_fields:
         if not getattr(config, padding_field):
             setattr(config, padding_field, True)
@@ -156,11 +150,6 @@ class TransformerConfig(MCoreTransformerConfig):
         # Finalize to compute derived fields
         config.finalize()
     """
-
-    # Performance-only fixed-shape recipes may opt out of HybridEP's per-layer
-    # max-token synchronization. Runtime implementations must fail closed
-    # unless they explicitly support this contract.
-    moe_hybridep_assume_equal_dispatch_inputs: bool = False
 
     _NO_COPY_KEYS = {"_pg_collection"}
 
