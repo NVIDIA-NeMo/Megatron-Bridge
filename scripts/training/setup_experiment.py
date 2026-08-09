@@ -71,6 +71,15 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         dest="gpus_per_node",
         help="GPUs per node.",
     )
+    execution.add_argument(
+        "--launcher",
+        choices=("srun", "torchrun"),
+        default="srun",
+        help=(
+            "Distributed process launcher. 'srun' starts one Slurm task per GPU; "
+            "'torchrun' starts one Slurm task per node and one local process per GPU."
+        ),
+    )
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
@@ -214,6 +223,17 @@ def _task_environment() -> dict[str, str]:
     }
 
 
+def _torchrun_task_environment() -> dict[str, str]:
+    """Build the environment for one torchrun parent task per node."""
+    return {
+        **_task_environment(),
+        # NeMo-Run defines head_node_ip in the generated Slurm script before
+        # exporting task environment variables.
+        "MASTER_ADDR": "$head_node_ip",
+        "MASTER_PORT": "29500",
+    }
+
+
 def _resolve_peak_mem_clk(
     requested_peak_mem_clk: int | None,
     benchmark_metadata: BenchmarkRecipeMetadata | None,
@@ -267,11 +287,12 @@ def _build_executor(
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
     srun_args = list(args.srun_args)
 
+    ntasks_per_node = 1 if args.launcher == "torchrun" else args.gpus_per_node
     executor = run.SlurmExecutor(
         account=args.account,
         partition=args.partition,
         nodes=args.nodes,
-        ntasks_per_node=args.gpus_per_node,
+        ntasks_per_node=ntasks_per_node,
         time=args.time,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
@@ -304,6 +325,39 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     return _build_parser().parse_known_args(argv)
 
 
+def _build_task(
+    args: argparse.Namespace,
+    training_args: list[str],
+    task_environment: dict[str, str],
+) -> object:
+    """Build the direct-srun or per-node torchrun training task."""
+    quoted_training_args = [shlex.quote(argument) for argument in training_args]
+    if args.launcher == "torchrun":
+        return run.Script(
+            path="-m",
+            entrypoint="python",
+            env=task_environment,
+            args=[
+                "torch.distributed.run",
+                f"--nnodes={args.nodes}",
+                f"--nproc-per-node={args.gpus_per_node}",
+                "--node-rank=$SLURM_NODEID",
+                "--master-addr=$MASTER_ADDR",
+                "--master-port=$MASTER_PORT",
+                str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
+                *quoted_training_args,
+            ],
+        )
+    return run.Script(
+        path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
+        entrypoint="python",
+        env=task_environment,
+        # NeMo-Run 0.10 joins Script arguments into an sbatch shell command.
+        # Quote each value here so spaces and metacharacters remain one argument.
+        args=quoted_training_args,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
@@ -314,23 +368,35 @@ def main(argv: list[str] | None = None) -> None:
 
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
-    task_environment = _task_environment()
+    task_environment = _torchrun_task_environment() if args.launcher == "torchrun" else _task_environment()
     executor = _build_executor(args, env_names, mounts, task_environment=task_environment)
     peak_mem_clk = _resolve_peak_mem_clk(args.peak_mem_clk, benchmark_metadata)
     _configure_slurm_peak_mem_clk(executor, peak_mem_clk)
 
-    task = run.Script(
-        path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
-        entrypoint="python",
-        env=task_environment,
-        # NeMo-Run 0.10 joins Script arguments into an sbatch shell command.
-        # Quote each value here so spaces and metacharacters remain one argument.
-        args=[shlex.quote(argument) for argument in training_args],
-    )
+    task = _build_task(args, training_args, task_environment)
     experiment_name = args.experiment_name or "training"
     logger.info(
         "Training command: %s",
-        shlex.join(["python", str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"), *training_args]),
+        shlex.join(
+            [
+                "python",
+                *(
+                    [
+                        "-m",
+                        "torch.distributed.run",
+                        f"--nnodes={args.nodes}",
+                        f"--nproc-per-node={args.gpus_per_node}",
+                        "--node-rank=$SLURM_NODEID",
+                        "--master-addr=$MASTER_ADDR",
+                        "--master-port=$MASTER_PORT",
+                    ]
+                    if args.launcher == "torchrun"
+                    else []
+                ),
+                str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
+                *training_args,
+            ]
+        ),
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
