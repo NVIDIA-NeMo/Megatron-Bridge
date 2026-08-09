@@ -762,6 +762,7 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.optimizer.store_param_remainders is False
     assert cfg.mixed_precision.bf16 is True
     assert cfg.train.train_iters == 50
+    assert cfg.env_vars["OMP_NUM_THREADS"] == 1
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 64
