@@ -170,8 +170,8 @@ items:
       with only the exact quoted term, including capitalization and hyphen."
       The bounded completion remained coherent but did not reach the requested
       OCR target before the maximum; this result does not claim task accuracy
-      or natural EOS. MiniMax-M3 providers and H100 training recipes default
-      to the following model configuration when the runtime provides HybridEP:
+      or natural EOS. Bridge-created MiniMax-M3 providers and H100 training
+      recipes use the following model configuration when the runtime provides HybridEP:
       moe_token_dispatcher_type="flex",
       moe_flex_dispatcher_backend="hybridep",
       moe_flex_dispatcher_num_sms=16, and

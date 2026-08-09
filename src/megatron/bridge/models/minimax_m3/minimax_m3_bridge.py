@@ -115,12 +115,7 @@ def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[tor
 
 @dataclass
 class MiniMaxM3ModelProvider(GPTModelProvider):
-    """GPT provider with MiniMax-M3's FP32 router and HybridEP defaults."""
-
-    moe_token_dispatcher_type: str = "flex"
-    moe_flex_dispatcher_backend: str = "hybridep"
-    moe_flex_dispatcher_num_sms: int | None = 16
-    moe_permute_fusion_into_hybridep: bool = False
+    """GPT provider that preserves MiniMax-M3's FP32 router parameters."""
 
     def __post_init__(self) -> None:
         """Install MiniMax-M3 router behavior on fresh and deserialized providers."""
@@ -351,6 +346,10 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         # MoE settings — sigmoid routing with expert bias correction and
         # normalized top-k weights scaled by routed_scaling_factor (DeepSeek-V3 style)
         provider.moe_grouped_gemm = True
+        provider.moe_token_dispatcher_type = "flex"
+        provider.moe_flex_dispatcher_backend = "hybridep"
+        provider.moe_flex_dispatcher_num_sms = 16
+        provider.moe_permute_fusion_into_hybridep = False
         provider.moe_permute_fusion = True
         provider.moe_router_pre_softmax = False
         provider.moe_router_score_function = "sigmoid"
