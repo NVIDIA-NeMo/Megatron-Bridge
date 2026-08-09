@@ -61,6 +61,7 @@ Megatron-Core prerequisites:
   - Separate MTP e_proj / h_proj modules with hyper-connections
 """
 
+from functools import partial
 from typing import Dict, Mapping
 
 import torch
@@ -122,29 +123,20 @@ def deepseek_v4_supports_fused_dsa_kernels() -> bool:
     return True
 
 
-def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
-    """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
+def _get_deepseek_v4_pipeline_layout(
+    pp_size: int,
+    vp_size: int | None,
+    *,
+    num_layers: int,
+    mtp_layers: int,
+) -> list[list[str]] | None:
+    """Build a DeepSeek-V4 pipeline layout for the requested topology."""
+    effective_vp_size = 1 if vp_size is None else vp_size
+    if effective_vp_size != 1:
+        raise ValueError(f"DeepSeek-V4 pipeline layouts do not support VP={effective_vp_size}.")
+    if pp_size <= 1 or num_layers <= 0:
+        return None
 
-    DeepSeek-V4 uses hash-routed MoE layers that must co-locate with the
-    embedding on the first pipeline stage, so an explicit
-    ``pipeline_model_parallel_layout`` is required whenever
-    ``pipeline_model_parallel_size > 1``. This builds an even decoder split with
-    the embedding on the first stage and the MTP/loss layers on the last stage.
-
-    Args:
-        model_cfg: The DeepSeek-V4 model provider to configure in place.
-    """
-    pp_size = model_cfg.pipeline_model_parallel_size or 1
-    if pp_size <= 1:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
-
-    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
-    if num_layers <= 0:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
-
-    mtp_layers = int(getattr(model_cfg, "mtp_num_layers", 0) or 0)
     base_layers, extra_layers = divmod(num_layers, pp_size)
     layout: list[list[str]] = []
     for pp_rank in range(pp_size):
@@ -159,8 +151,33 @@ def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) 
             stage.extend(["mtp"] * mtp_layers)
             stage.append("loss")
         layout.append(stage)
+    return layout
 
-    model_cfg.pipeline_model_parallel_layout = layout
+
+def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
+    """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
+
+    DeepSeek-V4 uses hash-routed MoE layers that must co-locate with the
+    embedding on the first pipeline stage, so an explicit
+    ``pipeline_model_parallel_layout`` is required whenever
+    ``pipeline_model_parallel_size > 1``. This builds an even decoder split with
+    the embedding on the first stage and the MTP/loss layers on the last stage.
+
+    Args:
+        model_cfg: The DeepSeek-V4 model provider to configure in place.
+    """
+    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
+    mtp_layers = int(getattr(model_cfg, "mtp_num_layers", 0) or 0)
+    layout_builder = partial(
+        _get_deepseek_v4_pipeline_layout,
+        num_layers=num_layers,
+        mtp_layers=mtp_layers,
+    )
+    model_cfg._pipeline_model_parallel_layout_builder = layout_builder
+    model_cfg.pipeline_model_parallel_layout = layout_builder(
+        model_cfg.pipeline_model_parallel_size or 1,
+        getattr(model_cfg, "virtual_pipeline_model_parallel_size", None),
+    )
 
 
 def _dsv4_num_hash_layers(hf_config) -> int:

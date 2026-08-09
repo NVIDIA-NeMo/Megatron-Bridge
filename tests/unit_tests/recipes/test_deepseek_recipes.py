@@ -35,6 +35,7 @@ from megatron.bridge.recipes.deepseek import (
 )
 from megatron.bridge.recipes.deepseek.deepseek_v3 import _build_standalone_mtp_layout
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
 _deepseek_module = importlib.import_module("megatron.bridge.recipes.deepseek")
@@ -71,15 +72,19 @@ class _FakeModelCfg:
 
 
 class _FakeBridge:
-    def __init__(self):
-        pass
+    def __init__(self, hf_path: str | None = None):
+        self.hf_path = hf_path
 
     def to_megatron_provider(self, load_weights: bool = False):
-        return _FakeModelCfg()
+        model_cfg = _FakeModelCfg()
+        if self.hf_path is not None and "DeepSeek-V4" in self.hf_path:
+            model_cfg.num_layers = 61 if "V4-Pro" in self.hf_path else 43
+            model_cfg.mtp_num_layers = 1
+        return model_cfg
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
-        return _FakeBridge()
+        return _FakeBridge(hf_path)
 
 
 class _DSv4ProviderStub(ModelProviderMixin):
@@ -470,3 +475,18 @@ def test_deepseek_v4_flash_no_mtp_sft_recipe_disables_mtp(monkeypatch: pytest.Mo
     assert cfg.model.use_fused_mhc is True
     assert cfg.model.mtp_num_layers is None
     assert cfg.model.mtp_loss_scaling_factor == 0.0
+
+
+def test_deepseek_v4_pipeline_layout_tracks_supported_cli_topology(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_sft_config", monkeypatch)
+    recipe_runner, _ = _load_recipe_runner_module()
+
+    cfg.model.pipeline_model_parallel_size = 8
+    recipe_runner.sync_model_pipeline_layout(
+        cfg,
+        cli_overrides=["model.pipeline_model_parallel_size=8"],
+    )
+
+    layout = PipelineParallelLayerLayout(cfg.model.pipeline_model_parallel_layout, pipeline_model_parallel_size=8)
+    assert layout.virtual_pipeline_model_parallel_size == 1
+    assert layout.validate_layer_layout(cfg.model.num_layers, cfg.model.mtp_num_layers) is False
