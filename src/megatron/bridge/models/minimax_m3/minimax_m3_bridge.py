@@ -60,30 +60,6 @@ class MiniMaxM3TopKRouter(TopKRouter):
         return super().gating(input.to(dtype=self.weight.dtype))
 
 
-class MiniMaxM3MoELayer(MoELayer):
-    """MiniMax-M3 MoE layer with reliable expert-parallel inference communication."""
-
-    def dispatch(self, hidden_states: torch.Tensor, probs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Dispatch tokens without BF16 all-to-all data corruption."""
-        if not torch.is_grad_enabled() and hidden_states.dtype == torch.bfloat16 and self.token_dispatcher.ep_size > 1:
-            # Widening BF16 values to FP32 is exact and avoids silent corruption seen in
-            # large variable-split EP all-to-all payloads in the affected release runtime.
-            hidden_states_dtype = hidden_states.dtype
-            hidden_states, probs = super().dispatch(hidden_states.float(), probs)
-            return hidden_states.to(dtype=hidden_states_dtype), probs
-        return super().dispatch(hidden_states, probs)
-
-    def combine(self, output: torch.Tensor) -> torch.Tensor:
-        """Combine expert outputs without BF16 all-to-all data corruption."""
-        if not torch.is_grad_enabled() and output.dtype == torch.bfloat16 and self.token_dispatcher.ep_size > 1:
-            # Widening BF16 values to FP32 is exact and avoids silent corruption seen in
-            # large variable-split EP all-to-all payloads in the affected release runtime.
-            output_dtype = output.dtype
-            output = super().combine(output.float()).to(dtype=output_dtype)
-            return output
-        return super().combine(output)
-
-
 def minimax_m3_block_spec(
     config: TransformerConfig,
     use_transformer_engine: bool = True,
@@ -112,7 +88,7 @@ def minimax_m3_block_spec(
             if mlp_submodules.router is not TopKRouter:
                 continue
             mlp_kwargs["submodules"] = replace(mlp_submodules, router=MiniMaxM3TopKRouter)
-            layer_spec.submodules.mlp = partial(MiniMaxM3MoELayer, *mlp_spec.args, **mlp_kwargs)
+            layer_spec.submodules.mlp = partial(mlp_spec.func, *mlp_spec.args, **mlp_kwargs)
 
     return block_spec
 
@@ -139,7 +115,12 @@ def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[tor
 
 @dataclass
 class MiniMaxM3ModelProvider(GPTModelProvider):
-    """GPT provider that preserves MiniMax-M3's FP32 router parameters."""
+    """GPT provider with MiniMax-M3's FP32 router and HybridEP defaults."""
+
+    moe_token_dispatcher_type: str = "flex"
+    moe_flex_dispatcher_backend: str = "hybridep"
+    moe_flex_dispatcher_num_sms: int | None = 16
+    moe_permute_fusion_into_hybridep: bool = False
 
     def __post_init__(self) -> None:
         """Install MiniMax-M3 router behavior on fresh and deserialized providers."""
@@ -370,7 +351,6 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         # MoE settings — sigmoid routing with expert bias correction and
         # normalized top-k weights scaled by routed_scaling_factor (DeepSeek-V3 style)
         provider.moe_grouped_gemm = True
-        provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
         provider.moe_router_pre_softmax = False
         provider.moe_router_score_function = "sigmoid"
