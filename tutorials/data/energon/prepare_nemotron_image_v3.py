@@ -41,16 +41,16 @@ from megatron.bridge.data.energon import prepare_webdataset
 
 logger = logging.getLogger(__name__)
 DATASET_ID = "nvidia/Nemotron-Image-Training-v3"
-DATASET_REVISION = "7656391d4d4cb11ec3722b34f10d499435de0460"
+DATASET_REVISION = "7656391d4d4cb11ec3722b34f10d499435de0460"  # pragma: allowlist secret
 PINNED_SUBSET_FILES = {
     "turing": {
         "turing/turing.jsonl": (
             3_357_202,
-            "c7333e5765ba8ac3ad6dd823c97a0366cc682417cc7ebd6d5374d9f9db1ce3d5",
+            "c7333e5765ba8ac3ad6dd823c97a0366cc682417cc7ebd6d5374d9f9db1ce3d5",  # pragma: allowlist secret
         ),
         "turing/media/shard_000000.tar": (
             33_269_760,
-            "d3ee86c9116dce94e7e3a2c2747fda41a8ba74085a4b123d95f104021b2d3196",
+            "d3ee86c9116dce94e7e3a2c2747fda41a8ba74085a4b123d95f104021b2d3196",  # pragma: allowlist secret
         ),
     },
 }

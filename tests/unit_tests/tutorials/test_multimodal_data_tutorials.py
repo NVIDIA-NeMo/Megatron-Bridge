@@ -364,7 +364,7 @@ def test_nemotron_image_v3_preparation_joins_jsonl_and_media_tar(tmp_path: Path)
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest == {
         "dataset": "nvidia/Nemotron-Image-Training-v3",
-        "revision": "7656391d4d4cb11ec3722b34f10d499435de0460",
+        "revision": "7656391d4d4cb11ec3722b34f10d499435de0460",  # pragma: allowlist secret
         "subsets": ["turing"],
         "validation_fraction": 0.5,
         "max_samples": None,
@@ -387,7 +387,7 @@ def test_nemotron_image_v3_tutorial_wires_pinned_subset_to_qwen_train_sh():
     tutorial = NEMOTRON_IMAGE_V3_TUTORIAL.read_text(encoding="utf-8")
 
     assert "nvidia/Nemotron-Image-Training-v3" in tutorial
-    assert "7656391d4d4cb11ec3722b34f10d499435de0460" in tutorial
+    assert "7656391d4d4cb11ec3722b34f10d499435de0460" in tutorial  # pragma: allowlist secret
     assert '--include "turing/**"' in tutorial
     assert "prepare_nemotron_image_v3.py" in tutorial
     assert "SHA-256" in tutorial
