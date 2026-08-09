@@ -31,7 +31,7 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 2061c08a5cdb906ec91ab69509c1cfa6c148dfaf  # pragma: allowlist secret
+  bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -61,7 +61,7 @@ items:
       --megatron-path work/model-verification/gpt-oss-20b/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 2 --ep 2 --etp 1
       --trust-remote-code
-    last_verified: 2026-08-04
+    last_verified: 2026-08-09
     expected_result: >
       The command exits successfully, imports the pinned MXFP4 Hugging Face
       checkpoint on 8 GPUs, and creates iter_0000000 as a distributed
@@ -97,7 +97,7 @@ items:
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 2 --ep 2 --etp 1
       --trust-remote-code
-    last_verified: 2026-08-04
+    last_verified: 2026-08-09
     expected_result: >
       The command exits successfully, exports the distributed Megatron
       checkpoint to the public unquantized BF16 Hugging Face layout, and writes
@@ -118,7 +118,7 @@ items:
       --tp 2 --pp 2 --ep 2 --etp 1
       --prompt "The capital of France is the city of"
       --trust-remote-code
-    last_verified: 2026-08-04
+    last_verified: 2026-08-09
     expected_result: >
       The pinned-revision one-step comparison exits successfully; the Hugging
       Face and Megatron next-token predictions match at token ID 12650
@@ -137,7 +137,7 @@ items:
       --prompt "The capital of France is"
       --max_new_tokens 32 --tp 2 --pp 2 --ep 2 --etp 1
       --use-legacy-generation --attention-backend local --trust-remote-code
-    last_verified: 2026-08-04
+    last_verified: 2026-08-09
     expected_result: |
       The command exits successfully after exactly 32 new tokens and prints this
       literal completion, including its leading space and trailing space:
@@ -168,17 +168,17 @@ items:
         --save_dir work/model-verification/gpt-oss-20b/pretrain-reference-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-04
+      last_verified: 2026-08-09
       metrics:
         initial_loss: 10.90364
-        final_loss: 5.750363
-        last_10_steps_step_time_ms_avg: 21372.220
-        last_10_steps_model_tflops_per_gpu_avg: 122.600
+        final_loss: 5.725391
+        last_10_steps_step_time_ms_avg: 22400.880
+        last_10_steps_model_tflops_per_gpu_avg: 117.010
       expected_result: >
         On 16x H100, the command completes exactly 100 bounded pretraining
         optimizer steps. All 100 optimizer-step rows are present exactly once
         with finite loss, zero skipped iterations, and zero NaN iterations.
-        Loss decreases from 10.90364 to 5.750363, all four metrics are
+        Loss decreases from 10.90364 to 5.725391, all four metrics are
         recorded, the post-setup run_config.yaml persists, and complete
         16-shard iter_0000050 and iter_0000100 checkpoints are saved with
         metadata, train state, tokenizer artifacts, and latest-checkpoint
@@ -353,12 +353,12 @@ items:
         --save_dir work/model-verification/gpt-oss-20b/pretrain-resume-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-06
+      last_verified: 2026-08-09
       metrics:
-        initial_loss: 6.496337
-        final_loss: 5.749735
-        last_10_steps_step_time_ms_avg: 21729.870
-        last_10_steps_model_tflops_per_gpu_avg: 120.620
+        initial_loss: 6.426731
+        final_loss: 5.725306
+        last_10_steps_step_time_ms_avg: 22130.160
+        last_10_steps_model_tflops_per_gpu_avg: 118.420
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -370,9 +370,9 @@ items:
         data-order, and RNG state from iter_0000050, begins at step 51, and
         finishes exactly at step 100 in a distinct resumed root. All 50 resumed
         optimizer-step rows are present with finite loss, zero skipped
-        iterations, and zero NaN iterations. Step-51 loss 6.496337 matches the
-        uninterrupted reference exactly; step-100 loss 5.749735 differs from
-        reference 5.750363 by 0.010921%, within the declared one-percent gate,
+        iterations, and zero NaN iterations. Step-51 loss 6.426731 matches the
+        uninterrupted reference exactly; step-100 loss 5.725306 differs from
+        reference 5.725391 by 0.001484%, within the declared one-percent gate,
         so both sentinels match. A complete 16-shard iter_0000100 checkpoint is
         saved with metadata, train state, tokenizer artifacts, run_config.yaml,
         and latest-checkpoint markers.
