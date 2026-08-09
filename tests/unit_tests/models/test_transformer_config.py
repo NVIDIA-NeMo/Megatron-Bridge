@@ -276,6 +276,25 @@ class TestTransformerConfigFinalize:
 
         assert getattr(cfg, padding_field) is True
 
+    def test_hybridep_fixed_shape_opt_out_preserves_disabled_padding(self):
+        """A declared equal-input contract must avoid the per-layer max-token synchronization."""
+        cfg, padding_field = _make_hybridep_config(moe_hybridep_assume_equal_dispatch_inputs=True)
+
+        with patch(_FINALIZE_PATCH):
+            cfg.finalize()
+
+        assert getattr(cfg, padding_field) is False
+
+    def test_hybridep_fixed_shape_opt_out_rejects_padding(self):
+        """The fixed-shape contract and runtime padding cannot both be enabled."""
+        cfg, padding_field = _make_hybridep_config(moe_hybridep_assume_equal_dispatch_inputs=True)
+        if not hasattr(cfg, padding_field):
+            raise ValueError(f"Unknown TransformerConfig field: {padding_field}")
+        setattr(cfg, padding_field, True)
+
+        with pytest.raises(ValueError, match="cannot be combined"):
+            _enable_safe_hybridep_dispatch(cfg)
+
     def test_non_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         """Other flex backends must retain their configured padding behavior."""
         cfg, padding_field = _make_hybridep_config()

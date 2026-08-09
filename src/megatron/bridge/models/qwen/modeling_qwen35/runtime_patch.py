@@ -124,7 +124,7 @@ def _setup_h100_static_hybridep_metadata(
     routing_map: torch.Tensor,
     probs: torch.Tensor,
 ) -> None:
-    """Set static BF16 HybridEP metadata with its native H100 alignment."""
+    """Set fixed-shape BF16 HybridEP metadata with its native H100 alignment."""
     config = manager.config
     if config.fp8 or config.fp4:
         raise RuntimeError("The Qwen3.5 H100 static HybridEP path is BF16-only")
@@ -132,8 +132,20 @@ def _setup_h100_static_hybridep_metadata(
         raise RuntimeError("The Qwen3.5 H100 rank-capacity path does not support per-expert drop-and-pad")
     if manager.moe_expert_rank_capacity_factor is None:
         raise RuntimeError("The Qwen3.5 H100 HybridEP path requires static rank capacity")
+    if not getattr(config, "moe_hybridep_assume_equal_dispatch_inputs", False):
+        raise RuntimeError("The Qwen3.5 H100 HybridEP path requires equal dispatch inputs across ranks")
+    padding_fields = (
+        "moe_hybridep_pad_uneven_dispatch_inputs",
+        "moe_hybridep_pad_variable_tokens",
+    )
+    if any(getattr(config, field, False) for field in padding_fields):
+        raise RuntimeError("The Qwen3.5 H100 fixed-shape path cannot enable uneven-input padding")
+    if getattr(config, "variable_seq_lengths", False):
+        raise RuntimeError("The Qwen3.5 H100 fixed-shape path does not support variable sequence lengths")
 
     num_tokens = routing_map.shape[0]
+    manager._original_num_tokens = num_tokens
+    manager._padded_num_tokens = num_tokens
     manager.routing_map = routing_map.reshape(num_tokens, manager.num_experts)
     manager.token_probs = probs.reshape(num_tokens, manager.num_experts)
     budget = int(num_tokens * config.moe_router_topk * manager.moe_expert_rank_capacity_factor)

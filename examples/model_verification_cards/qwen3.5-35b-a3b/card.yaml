@@ -20,7 +20,7 @@ verification_index:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
   performance:
-    H100: unverified
+    H100: verified
 model:
   hf_id: Qwen/Qwen3.5-35B-A3B
   hf_revision: 59d61f3ce65a6d9863b86d2e96597125219dc754  # pragma: allowlist secret
@@ -28,7 +28,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 4ea8a2d075cc7b88f351df0f5519d3de8874e56b  # pragma: allowlist secret
+  bridge_commit: fdc1ac339303330c1a73eaa3d1d9d4bab70c776b  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -196,7 +196,7 @@ items:
 
   pretrain_performance:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       command: >
         ./scripts/training/train.sh
@@ -204,15 +204,16 @@ items:
         --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
         --mode pretrain --max_steps 50
         logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/h100-performance/resolved-config.yaml
-      last_verified: null
+      last_verified: 2026-08-08
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 12.830670
+        final_loss: 0.008044560
+        last_10_steps_step_time_ms_avg: 20966.100
+        last_10_steps_model_tflops_per_gpu_avg: 280.970
       expected_result: >
         The exact command must complete all 50 steps with finite loss,
         skipped=0, NaN=0, exit 0:0, and a persisted post-setup configuration.
-        Steps 41-50 must average at least 280.000 model TFLOP/s/GPU. The
-        current EP8 and FP16-main-parameter recipe has not completed this gate
-        against a public MCore pin, so this item remains unverified.
+        The verified run averaged 20966.100 ms and 280.970 model TFLOP/s/GPU
+        over steps 41-50, passing the 280.000 model TFLOP/s/GPU gate. Mock
+        data and forced expert balancing make this performance-stability
+        evidence, not convergence evidence.
