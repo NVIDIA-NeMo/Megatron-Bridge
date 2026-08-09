@@ -130,7 +130,6 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         **_qwen35_rank_local_kernel_cache_env(),
-        "OMP_NUM_THREADS": 1,
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,

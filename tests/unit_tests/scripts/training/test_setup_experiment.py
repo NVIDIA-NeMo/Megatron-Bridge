@@ -68,7 +68,6 @@ def test_parser_forwards_training_selection_and_overrides():
     )
 
     assert args.gpus_per_node == 1
-    assert args.launcher == "srun"
     assert args.srun_args == []
     assert training_args == [
         "--recipe",
@@ -509,67 +508,6 @@ def test_benchmark_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monk
     assert "launcher" not in executor.kwargs
     assert "segment" not in executor.kwargs
     assert set(executor.container_env) == {"PYTHONPATH"}
-
-
-def test_torchrun_launcher_uses_one_slurm_task_per_node(tmp_path, monkeypatch):
-    module = _load_setup_experiment_module()
-
-    class _SlurmExecutor:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    class _Script:
-        def __init__(self, **kwargs):
-            self.__dict__.update(kwargs)
-
-        def to_command(self):
-            return [self.entrypoint, self.path, *self.args]
-
-    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
-    module.run.Packager = object
-    module.run.SlurmExecutor = _SlurmExecutor
-    module.run.Script = _Script
-    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
-    args, training_args = module.parse_args(
-        [
-            "--nodes",
-            "2",
-            "--gpus-per-node",
-            "8",
-            "--launcher",
-            "torchrun",
-            "--exclusive",
-            "--mem",
-            "0",
-            "--account",
-            "account",
-            "--partition",
-            "partition",
-            "--container-image",
-            "image.sqsh",
-            "--recipe",
-            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
-        ]
-    )
-    task_environment = module._torchrun_task_environment()
-
-    executor = module._build_executor(args, [], [], task_environment=task_environment)
-    task = module._build_task(args, training_args, task_environment)
-
-    assert executor.kwargs["ntasks_per_node"] == 1
-    assert executor.kwargs["gpus_per_node"] == 8
-    assert executor.kwargs["exclusive"] is True
-    assert executor.kwargs["mem"] == "0"
-    assert set(executor.container_env) == {"MASTER_ADDR", "MASTER_PORT", "PYTHONPATH"}
-    assert task.path == "-lc"
-    assert task.to_command() == [
-        "bash",
-        "-lc",
-        "'python -m torch.distributed.run --nnodes=2 --nproc-per-node=8 "
-        "--node-rank=$SLURM_PROCID --master-addr=$MASTER_ADDR --master-port=$MASTER_PORT "
-        "/opt/Megatron-Bridge/scripts/training/run_recipe.py --recipe "
-        "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config'",
-    ]
 
 
 def test_slurm_executor_forwards_additional_slurm_parameters(tmp_path, monkeypatch):

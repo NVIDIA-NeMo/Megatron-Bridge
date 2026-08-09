@@ -665,15 +665,24 @@ allocated/reserved memory was 73.14/76.104 GiB with zero allocator retries.
 Relative to the prior public 24,561.870-millisecond / 239.820-TFLOP/s/GPU
 result, this is 15.90% lower step time and 18.91% higher throughput.
 
-Keep this result candidate-only. The active GDN runtime depended on the merged
-Megatron-Core GDN/GDN2 refactor in NVIDIA/Megatron-LM#5843 plus candidate
-integration from NVIDIA/Megatron-LM#5765, NVIDIA/Megatron-LM#5564, and
+The exact 285.18 result remains candidate evidence because that repeat used an
+integration commit that was not publicly reachable. The same retained stack
+was subsequently published in NVIDIA/Megatron-LM#6370 and pinned by
+NVIDIA-NeMo/Megatron-Bridge#5449. A fresh public checkout of Bridge commit
+`fdc1ac339303330c1a73eaa3d1d9d4bab70c776b` and MCore commit
+`606c01046bf411c54e730739844da9e613f84a76` then completed the exact 50-step
+model-card command. Steps 41--50 averaged 20,966.10 milliseconds and 280.97
+model TFLOP/s/GPU; LM loss moved from 12.830670 to 0.008044560, skipped and
+NaN counts stayed zero, the resolved configuration was persisted, and every
+Slurm step exited 0:0. The model card therefore uses a portable 280
+model-TFLOP/s/GPU gate while retaining 285.18 as the best frozen-candidate
+measurement.
+
+The active GDN runtime depends on the merged Megatron-Core GDN/GDN2 refactor
+in NVIDIA/Megatron-LM#5843 plus integration ancestry from
+NVIDIA/Megatron-LM#5765, NVIDIA/Megatron-LM#5564, and
 NVIDIA/Megatron-LM#5532 for the GDN2 stack, FlashQLA backend, and pre-GDR
 fusion. NVIDIA/Megatron-LM#5982 was evaluated but is inactive because the
 winner uses no GDN recompute; the separate Q/K-normalization path from
-NVIDIA/Megatron-LM#5396 was bypassed by pre-GDR fusion. Until the active PRs
-land in a public MCore pin and the exact public card command persists its
-post-setup configuration, the model-card performance item must remain
-unverified. The integrated MCore commit used by this repeat was not publicly
-reachable, so treat the measurement as stability evidence, not a
-reproducibility claim.
+NVIDIA/Megatron-LM#5396 is bypassed by pre-GDR fusion. Do not credit either
+inactive path for the frozen result.
