@@ -12,10 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
+import inspect
 import io
 import pickle
+import sys
 import zipfile
-from types import MappingProxyType
+from collections import OrderedDict
+from dataclasses import fields
+from types import MappingProxyType, ModuleType
+from typing import cast
 
 
 _BUILTIN_SAFE_TYPES = frozenset(
@@ -38,6 +44,173 @@ _BUILTIN_SAFE_TYPES = frozenset(
     }
 )
 
+_ENERGON_SAFE_STATE_GLOBALS = MappingProxyType(
+    {
+        "megatron.energon.state": frozenset({"FlexState"}),
+        "megatron.energon.rng": frozenset({"SystemRngState"}),
+        "megatron.energon.savable_loader": frozenset(
+            {
+                "SavableCheckpoint",
+                "SavableDataLoaderState",
+                "SavableDatasetCheckpoint",
+                "SavableDatasetState",
+            }
+        ),
+        "megatron.energon.flavors.webdataset.sample_loader": frozenset({"SliceState"}),
+    }
+)
+_TRAVERSAL_IN_PROGRESS = object()
+
+
+class _SafeEnumToken:
+    """Hold a validated Enum member until the pickle VM has finished."""
+
+    __slots__ = ("_member",)
+
+    def __init__(self, member: enum.Enum) -> None:
+        object.__setattr__(self, "_member", member)
+
+    def __call__(self, *_args: object) -> None:
+        raise pickle.UnpicklingError("Restricted unpickler refused to call a reconstructed Enum member.")
+
+    def __setstate__(self, _state: object) -> None:
+        raise pickle.UnpicklingError("Restricted unpickler refused to apply state to an Enum member.")
+
+
+class _SafeEnumResolver:
+    """Resolve a validated Enum value to an inert token."""
+
+    __slots__ = ("_members",)
+
+    def __init__(self, members: tuple[tuple[object, enum.Enum], ...]) -> None:
+        self._members = members
+
+    def __call__(self, *args: object) -> _SafeEnumToken:
+        if len(args) != 1:
+            raise pickle.UnpicklingError("Restricted unpickler requires exactly one Enum value.")
+        value = args[0]
+        for member_value, member in self._members:
+            if type(value) is type(member_value) and value == member_value:
+                return _SafeEnumToken(member)
+        raise pickle.UnpicklingError("Restricted unpickler refused to resolve an unknown Enum value.")
+
+    def __setstate__(self, _state: object) -> None:
+        raise pickle.UnpicklingError("Restricted unpickler refused to modify an Enum resolver.")
+
+
+def _find_safe_loaded_enum(module: str, name: str) -> _SafeEnumResolver | None:
+    """Resolve a plain Enum through already-loaded namespaces without importing modules."""
+    modules = sys.modules
+    if type(modules) is not dict:
+        return None
+    value: object | None = dict.get(modules, module)
+    for component in name.split("."):
+        if type(value) is ModuleType:
+            namespace = ModuleType.__getattribute__(value, "__dict__")
+            if type(namespace) is not dict:
+                return None
+            value = dict.get(namespace, component)
+        elif type(value) is type:
+            namespace = type.__getattribute__(value, "__dict__")
+            value = namespace.get(component)
+        else:
+            return None
+
+    if type(value) is not enum.EnumType:
+        return None
+    enum_class = cast(type[enum.Enum], value)
+    namespace = type.__getattribute__(enum_class, "__dict__")
+    if namespace.get("__new__") is not enum.Enum.__new__:
+        return None
+    for base in type.__getattribute__(enum_class, "__mro__"):
+        if base is enum.Enum:
+            break
+        if "_missing_" in type.__getattribute__(base, "__dict__"):
+            return None
+    if inspect.getattr_static(enum_class, "__getattribute__") is not object.__getattribute__:
+        return None
+    safe_hash_methods = (enum.Enum.__hash__, int.__hash__, str.__hash__, float.__hash__, bytes.__hash__)
+    safe_eq_methods = (object.__eq__, int.__eq__, str.__eq__, float.__eq__, bytes.__eq__)
+    if (
+        inspect.getattr_static(enum_class, "__hash__") not in safe_hash_methods
+        or inspect.getattr_static(enum_class, "__eq__") not in safe_eq_methods
+        or inspect.getattr_static(enum_class, "__repr__") is not enum.Enum.__repr__
+    ):
+        return None
+
+    member_map = namespace.get("_member_map_")
+    if type(member_map) is not dict:
+        return None
+    members: list[tuple[object, enum.Enum]] = []
+    for member_name, member in member_map.items():
+        if type(member_name) is not str or type(member) is not enum_class:
+            return None
+        stored_name = object.__getattribute__(member, "_name_")
+        member_value = object.__getattribute__(member, "_value_")
+        if type(stored_name) is not str or type(member_value) not in (bool, bytes, float, int, str, type(None)):
+            return None
+        members.append((member_value, member))
+    return _SafeEnumResolver(tuple(members))
+
+
+def _restore_safe_enum_tokens(value: object, memo: dict[int, object] | None = None) -> object:
+    """Replace inert Enum tokens after all pickle opcodes have completed."""
+    if type(value) is _SafeEnumToken:
+        return object.__getattribute__(value, "_member")
+
+    if memo is None:
+        memo = {}
+    value_id = id(value)
+    if value_id in memo:
+        restored = memo[value_id]
+        if restored is _TRAVERSAL_IN_PROGRESS:
+            raise pickle.UnpicklingError("Restricted unpickler refused a cyclic immutable container.")
+        return restored
+
+    value_type = type(value)
+    if value_type is list:
+        memo[value_id] = value
+        for index in range(list.__len__(value)):
+            list.__setitem__(value, index, _restore_safe_enum_tokens(list.__getitem__(value, index), memo))
+        return value
+    if value_type is tuple:
+        memo[value_id] = _TRAVERSAL_IN_PROGRESS
+        restored_tuple = tuple(_restore_safe_enum_tokens(item, memo) for item in value)
+        memo[value_id] = restored_tuple
+        return restored_tuple
+    if value_type is dict or (
+        type.__getattribute__(value_type, "__module__") == "megatron.energon.state"
+        and type.__getattribute__(value_type, "__name__") == "FlexState"
+    ):
+        memo[value_id] = value
+        restored_items = tuple(
+            (_restore_safe_enum_tokens(key, memo), _restore_safe_enum_tokens(item, memo))
+            for key, item in dict.items(value)
+        )
+        dict.clear(value)
+        for key, item in restored_items:
+            dict.__setitem__(value, key, item)
+        return value
+    if value_type is OrderedDict:
+        memo[value_id] = value
+        restored_items = tuple(
+            (_restore_safe_enum_tokens(key, memo), _restore_safe_enum_tokens(item, memo))
+            for key, item in OrderedDict.items(value)
+        )
+        OrderedDict.clear(value)
+        for key, item in restored_items:
+            OrderedDict.__setitem__(value, key, item)
+        return value
+
+    module = type.__getattribute__(value_type, "__module__")
+    name = type.__getattribute__(value_type, "__name__")
+    if module in _ENERGON_SAFE_STATE_GLOBALS and name in _ENERGON_SAFE_STATE_GLOBALS[module]:
+        memo[value_id] = value
+        for field in fields(value):
+            item = object.__getattribute__(value, field.name)
+            object.__setattr__(value, field.name, _restore_safe_enum_tokens(item, memo))
+    return value
+
 
 class _RestrictedUnpickler(pickle.Unpickler):
     """Unpickler that only allows safe built-in types to prevent arbitrary code execution."""
@@ -49,7 +222,7 @@ class _RestrictedUnpickler(pickle.Unpickler):
         }
     )
 
-    def find_class(self, module: str, name: str) -> type:
+    def find_class(self, module: str, name: str) -> object:
         if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
             return super().find_class(module, name)
         raise pickle.UnpicklingError(
@@ -84,7 +257,7 @@ class _NumpyRestrictedUnpickler(pickle.Unpickler):
         }
     )
 
-    def find_class(self, module: str, name: str) -> type:
+    def find_class(self, module: str, name: str) -> object:
         if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
             return super().find_class(module, name)
         raise pickle.UnpicklingError(
@@ -97,8 +270,9 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
     """Unpickler for Energon dataloader state files (``.pt``).
 
     Extends the NumPy-safe unpickler with the exact Energon dataclass types that Energon serialises
-    into dataloader checkpoint files.  All other globals — including ``os``, ``subprocess``, and any
-    ``__reduce__`` payload callable outside this allowlist — are blocked, preventing arbitrary code
+    into dataloader checkpoint files and inert tokens for narrowly validated, already-loaded Enum
+    members used as grouping keys. All other globals — including ``os``, ``subprocess``, and any
+    ``__reduce__`` payload callable outside these rules — are blocked, preventing arbitrary code
     execution from attacker-controlled checkpoint files.
 
     Use via :func:`energon_torch_load` rather than instantiating directly.
@@ -115,23 +289,15 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
             # If a real Energon checkpoint references a type not listed here the load will
             # raise an UnpicklingError that names the missing ``module.name``; file a bug
             # against Megatron Bridge so the allowlist can be extended.
-            "megatron.energon.state": frozenset({"FlexState"}),
-            "megatron.energon.rng": frozenset({"SystemRngState"}),
-            "megatron.energon.savable_loader": frozenset(
-                {
-                    "SavableCheckpoint",
-                    "SavableDataLoaderState",
-                    "SavableDatasetCheckpoint",
-                    "SavableDatasetState",
-                }
-            ),
-            "megatron.energon.flavors.webdataset.sample_loader": frozenset({"SliceState"}),
+            **_ENERGON_SAFE_STATE_GLOBALS,
         }
     )
 
-    def find_class(self, module: str, name: str) -> type:
+    def find_class(self, module: str, name: str) -> object:
         if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
             return pickle.Unpickler.find_class(self, module, name)
+        if enum_resolver := _find_safe_loaded_enum(module, name):
+            return enum_resolver
         raise pickle.UnpicklingError(
             f"Restricted unpickler refused to load '{module}.{name}'. "
             "This Energon checkpoint contains a type not in the dataloader-state allowlist. "
@@ -143,9 +309,9 @@ def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
     """Load an Energon dataloader state ``.pt`` file through a restricted unpickler.
 
     Parses the torch zip format directly without calling ``torch.load``.  Security is enforced
-    by :class:`_EnergonUnpickler`: any GLOBAL opcode whose ``(module, name)`` is not in the
-    explicit allowlist raises ``pickle.UnpicklingError``, blocking ``__reduce__``-based code
-    execution from attacker-controlled checkpoint files.
+    by :class:`_EnergonUnpickler`: a GLOBAL opcode must resolve to an explicitly allowlisted type
+    or a narrowly validated, already-loaded Enum. Enum members remain inert private tokens until
+    every pickle opcode has completed, blocking application hooks during deserialization.
 
     ``torch.load(weights_only=True)`` is not used because PyTorch ≥ 2.13 restricts
     SETITEM/SETITEMS to exact ``dict``, ``OrderedDict``, and ``Counter`` types, rejecting dict
@@ -212,7 +378,7 @@ def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
             # matching the behaviour of torch.load's own loaded_storages dict.
             self._storage_cache: dict[str, object] = {}
 
-        def find_class(self, module: str, name: str) -> type:
+        def find_class(self, module: str, name: str) -> object:
             # torch.save embeds the storage class in the persistent_id tuple as a GLOBAL opcode.
             # Storage classes hold raw bytes and are not executable; allow the known set here
             # without adding them to the shared _SAFE_MODULES allowlist.
@@ -238,7 +404,7 @@ def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
             self._storage_cache[key] = result
             return result
 
-    return _ZipLoader(io.BytesIO(pkl_bytes)).load()
+    return _restore_safe_enum_tokens(_ZipLoader(io.BytesIO(pkl_bytes)).load())
 
 
 def safe_pickle_load(fp) -> object:
