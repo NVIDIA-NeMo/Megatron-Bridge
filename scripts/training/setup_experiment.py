@@ -84,6 +84,12 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
+    execution.add_argument("--mem", help="Optional Slurm memory request; use 0 to request all node memory.")
+    execution.add_argument(
+        "--exclusive",
+        action="store_true",
+        help="Request exclusive nodes for reproducible performance measurements.",
+    )
     execution.add_argument(
         "--additional-slurm-params",
         "--additional_slurm_params",
@@ -285,6 +291,11 @@ def _build_executor(
 ) -> object:
     """Build a Slurm NeMo-Run executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
+    resource_kwargs: dict[str, Any] = {}
+    if args.mem is not None:
+        resource_kwargs["mem"] = args.mem
+    if args.exclusive:
+        resource_kwargs["exclusive"] = True
     srun_args = list(args.srun_args)
 
     ntasks_per_node = 1 if args.launcher == "torchrun" else args.gpus_per_node
@@ -298,6 +309,7 @@ def _build_executor(
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
         packager=run.Packager(),
         **gpu_kwargs,
+        **resource_kwargs,
     )
     executor.container_image = args.container_image
     executor.container_mounts = mounts
@@ -338,7 +350,7 @@ def _build_task(
                 "python -m torch.distributed.run",
                 f"--nnodes={args.nodes}",
                 f"--nproc-per-node={args.gpus_per_node}",
-                "--node-rank=$SLURM_NODEID",
+                "--node-rank=$SLURM_PROCID",
                 "--master-addr=$MASTER_ADDR",
                 "--master-port=$MASTER_PORT",
                 shlex.quote(str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py")),
@@ -391,7 +403,7 @@ def main(argv: list[str] | None = None) -> None:
                         "torch.distributed.run",
                         f"--nnodes={args.nodes}",
                         f"--nproc-per-node={args.gpus_per_node}",
-                        "--node-rank=$SLURM_NODEID",
+                        "--node-rank=$SLURM_PROCID",
                         "--master-addr=$MASTER_ADDR",
                         "--master-port=$MASTER_PORT",
                     ]

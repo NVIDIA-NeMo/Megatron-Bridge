@@ -201,7 +201,7 @@ items:
       command: >
         ./scripts/training/train.sh
         --nodes 2 --gpus-per-node 8
-        --launcher torchrun
+        --launcher torchrun --exclusive --mem 0
         --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
         --mode pretrain --max_steps 50
         logger.save_config_filepath=work/model-verification/qwen3.5-35b-a3b/h100-performance/resolved-config.yaml

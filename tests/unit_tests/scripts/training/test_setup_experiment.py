@@ -538,6 +538,9 @@ def test_torchrun_launcher_uses_one_slurm_task_per_node(tmp_path, monkeypatch):
             "8",
             "--launcher",
             "torchrun",
+            "--exclusive",
+            "--mem",
+            "0",
             "--account",
             "account",
             "--partition",
@@ -555,13 +558,15 @@ def test_torchrun_launcher_uses_one_slurm_task_per_node(tmp_path, monkeypatch):
 
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 8
+    assert executor.kwargs["exclusive"] is True
+    assert executor.kwargs["mem"] == "0"
     assert set(executor.container_env) == {"MASTER_ADDR", "MASTER_PORT", "PYTHONPATH"}
     assert task.path == "-lc"
     assert task.to_command() == [
         "bash",
         "-lc",
         "'python -m torch.distributed.run --nnodes=2 --nproc-per-node=8 "
-        "--node-rank=$SLURM_NODEID --master-addr=$MASTER_ADDR --master-port=$MASTER_PORT "
+        "--node-rank=$SLURM_PROCID --master-addr=$MASTER_ADDR --master-port=$MASTER_PORT "
         "/opt/Megatron-Bridge/scripts/training/run_recipe.py --recipe "
         "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config'",
     ]
