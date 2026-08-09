@@ -119,16 +119,17 @@ mkdir -p "$OUTPUT_DIR"
   checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
   checkpoint.load=null \
   checkpoint.save="$OUTPUT_DIR/checkpoints" \
-  train.train_iters=10 \
-  train.global_batch_size=2 \
+  checkpoint.save_interval=1 \
+  train.train_iters=1 \
+  train.global_batch_size=1 \
   train.micro_batch_size=1 \
-  validation.eval_interval=5 \
+  validation.eval_interval=1 \
   validation.eval_iters=1 \
   validation.eval_micro_batch_size=1 \
   dataset.path="$ENERGON_PATH" \
   dataset.micro_batch_size=1 \
-  dataset.num_workers=2 \
-  dataset.num_val_workers=2 \
+  dataset.num_workers=0 \
+  dataset.num_val_workers=0 \
   dataset.packing_buffer_size=16 \
   dataset.task_encoder.hf_processor_revision="$MODEL_REVISION" \
   +tokenizer.hf_tokenizer_kwargs.revision="$MODEL_REVISION" \
@@ -144,8 +145,10 @@ mkdir -p "$OUTPUT_DIR"
 The pinned `turing` subset contains long reasoning targets: with the pinned Qwen3-VL processor and default image
 pixel bounds, the longest observed row is 15,608 tokens. The explicit 16,384-token setting keeps every source row
 eligible; the recipe's 4,096-token default would skip overlength rows. Full activation recompute keeps the documented
-one-GPU LoRA smoke within an 80 GiB H100. For longer runs, benchmark recompute against context parallelism on the
-target hardware instead of silently reducing the dataset.
+one-GPU LoRA smoke within an 80 GiB H100. This one-step baseline intentionally uses no worker subprocesses so its
+command matches the validated smoke exactly. After it passes, increase `train.train_iters`, global batch size, and
+`dataset.num_workers`/`dataset.num_val_workers` for the target run. Benchmark recompute against context parallelism on
+the target hardware instead of silently reducing the dataset.
 
 For a local interactive smoke, export the same `ENERGON_PATH` and `PRETRAINED_CHECKPOINT`, then run
 `bash examples/models/qwen/qwen3_vl/peft_energon.sh`.

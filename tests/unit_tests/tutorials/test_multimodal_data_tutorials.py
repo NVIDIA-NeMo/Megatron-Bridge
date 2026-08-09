@@ -397,6 +397,12 @@ def test_nemotron_image_v3_tutorial_wires_pinned_subset_to_qwen_train_sh():
     assert "--mode lora --dataset energon" in tutorial
     assert "--seq_length 16384" in tutorial
     assert 'dataset.path="$ENERGON_PATH"' in tutorial
+    assert "checkpoint.save_interval=1" in tutorial
+    assert "train.train_iters=1" in tutorial
+    assert "train.global_batch_size=1" in tutorial
+    assert "validation.eval_interval=1" in tutorial
+    assert "dataset.num_workers=0" in tutorial
+    assert "dataset.num_val_workers=0" in tutorial
     assert "dataset.packing_buffer_size=16" in tutorial
     assert 'dataset.task_encoder.hf_processor_revision="$MODEL_REVISION"' in tutorial
     assert '+tokenizer.hf_tokenizer_kwargs.revision="$MODEL_REVISION"' in tutorial
