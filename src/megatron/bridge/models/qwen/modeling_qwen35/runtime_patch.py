@@ -119,12 +119,8 @@ class _Qwen35H100GatedDeltaNet(GatedDeltaNet):
         return _apply_fused_gated_rms_norm(self, x, gate)
 
 
-def _setup_h100_static_hybridep_metadata(
-    manager: Any,
-    routing_map: torch.Tensor,
-    probs: torch.Tensor,
-) -> None:
-    """Set fixed-shape BF16 HybridEP metadata with its native H100 alignment."""
+def _validate_h100_static_hybridep_contract(manager: Any) -> None:
+    """Validate the fixed-shape H100 HybridEP contract once at layer construction."""
     config = manager.config
     if config.fp8 or config.fp4:
         raise RuntimeError("The Qwen3.5 H100 static HybridEP path is BF16-only")
@@ -143,9 +139,15 @@ def _setup_h100_static_hybridep_metadata(
     if getattr(config, "variable_seq_lengths", False):
         raise RuntimeError("The Qwen3.5 H100 fixed-shape path does not support variable sequence lengths")
 
+
+def _setup_h100_static_hybridep_metadata(
+    manager: Any,
+    routing_map: torch.Tensor,
+    probs: torch.Tensor,
+) -> None:
+    """Set fixed-shape BF16 HybridEP metadata with its native H100 alignment."""
+    config = manager.config
     num_tokens = routing_map.shape[0]
-    manager._original_num_tokens = num_tokens
-    manager._padded_num_tokens = num_tokens
     manager.routing_map = routing_map.reshape(num_tokens, manager.num_experts)
     manager.token_probs = probs.reshape(num_tokens, manager.num_experts)
     budget = int(num_tokens * config.moe_router_topk * manager.moe_expert_rank_capacity_factor)
@@ -302,6 +304,7 @@ class _Qwen35H100MoELayer(MoELayer):
         manager = self.token_dispatcher._comm_manager
         if self.config.moe_flex_dispatcher_backend != "hybridep":
             raise RuntimeError("The Qwen3.5 H100 runtime requires the HybridEP dispatcher")
+        _validate_h100_static_hybridep_contract(manager)
         manager.setup_metadata = MethodType(
             _setup_h100_static_hybridep_metadata,
             manager,

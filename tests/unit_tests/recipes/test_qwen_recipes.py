@@ -1027,6 +1027,7 @@ def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
     routing_map = torch.zeros((3, 2, 8), dtype=torch.bool)
     probs = torch.zeros((3, 2, 8), dtype=torch.float32)
 
+    qwen35_runtime._validate_h100_static_hybridep_contract(manager)
     qwen35_runtime._setup_h100_static_hybridep_metadata(
         manager,
         routing_map,
@@ -1036,8 +1037,6 @@ def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
     assert manager.routing_map.shape == (3, 16)
     assert manager.token_probs.shape == (3, 16)
     assert manager.num_permuted_tokens == 32
-    assert manager._original_num_tokens == 3
-    assert manager._padded_num_tokens == 3
 
 
 @pytest.mark.parametrize(
@@ -1069,11 +1068,7 @@ def test_qwen35_h100_static_hybridep_metadata_rejects_unsupported_configs(
     )
 
     with pytest.raises(RuntimeError, match=match):
-        qwen35_runtime._setup_h100_static_hybridep_metadata(
-            manager,
-            torch.zeros((3, 2, 8), dtype=torch.bool),
-            torch.zeros((3, 2, 8), dtype=torch.float32),
-        )
+        qwen35_runtime._validate_h100_static_hybridep_contract(manager)
 
 
 @pytest.mark.parametrize(
@@ -1113,11 +1108,7 @@ def test_qwen35_h100_static_hybridep_metadata_enforces_fixed_shape_contract(
     )
 
     with pytest.raises(RuntimeError, match=match):
-        qwen35_runtime._setup_h100_static_hybridep_metadata(
-            manager,
-            torch.zeros((3, 2, 8), dtype=torch.bool),
-            torch.zeros((3, 2, 8), dtype=torch.float32),
-        )
+        qwen35_runtime._validate_h100_static_hybridep_contract(manager)
 
 
 def test_qwen35_h100_grouped_mm_selects_supported_torch_entry_point(
