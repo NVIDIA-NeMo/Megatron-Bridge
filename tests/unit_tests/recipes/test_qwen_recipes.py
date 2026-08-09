@@ -1068,7 +1068,11 @@ def test_qwen35_h100_static_hybridep_metadata_rejects_unsupported_configs(
     )
 
     with pytest.raises(RuntimeError, match=match):
-        qwen35_runtime._validate_h100_static_hybridep_contract(manager)
+        qwen35_runtime._setup_h100_static_hybridep_metadata(
+            manager,
+            torch.zeros((3, 2, 8), dtype=torch.bool),
+            torch.zeros((3, 2, 8), dtype=torch.float32),
+        )
 
 
 @pytest.mark.parametrize(

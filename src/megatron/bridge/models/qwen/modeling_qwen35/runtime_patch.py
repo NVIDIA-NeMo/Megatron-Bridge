@@ -122,12 +122,6 @@ class _Qwen35H100GatedDeltaNet(GatedDeltaNet):
 def _validate_h100_static_hybridep_contract(manager: Any) -> None:
     """Validate the fixed-shape H100 HybridEP contract once at layer construction."""
     config = manager.config
-    if config.fp8 or config.fp4:
-        raise RuntimeError("The Qwen3.5 H100 static HybridEP path is BF16-only")
-    if manager.drop_and_pad:
-        raise RuntimeError("The Qwen3.5 H100 rank-capacity path does not support per-expert drop-and-pad")
-    if manager.moe_expert_rank_capacity_factor is None:
-        raise RuntimeError("The Qwen3.5 H100 HybridEP path requires static rank capacity")
     if not getattr(config, "moe_hybridep_assume_equal_dispatch_inputs", False):
         raise RuntimeError("The Qwen3.5 H100 HybridEP path requires equal dispatch inputs across ranks")
     padding_fields = (
@@ -145,8 +139,15 @@ def _setup_h100_static_hybridep_metadata(
     routing_map: torch.Tensor,
     probs: torch.Tensor,
 ) -> None:
-    """Set fixed-shape BF16 HybridEP metadata with its native H100 alignment."""
+    """Set static BF16 HybridEP metadata with its native H100 alignment."""
     config = manager.config
+    if config.fp8 or config.fp4:
+        raise RuntimeError("The Qwen3.5 H100 static HybridEP path is BF16-only")
+    if manager.drop_and_pad:
+        raise RuntimeError("The Qwen3.5 H100 rank-capacity path does not support per-expert drop-and-pad")
+    if manager.moe_expert_rank_capacity_factor is None:
+        raise RuntimeError("The Qwen3.5 H100 HybridEP path requires static rank capacity")
+
     num_tokens = routing_map.shape[0]
     manager.routing_map = routing_map.reshape(num_tokens, manager.num_experts)
     manager.token_probs = probs.reshape(num_tokens, manager.num_experts)
