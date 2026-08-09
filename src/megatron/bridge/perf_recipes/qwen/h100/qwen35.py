@@ -129,7 +129,6 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
-        **_qwen35_rank_local_kernel_cache_env(),
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
@@ -143,4 +142,7 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    # Cache paths must be derived from the runtime rank; keep all fixed
+    # benchmark environment settings explicit in the literal mapping above.
+    cfg.env_vars.update(_qwen35_rank_local_kernel_cache_env())
     return cfg
