@@ -36,6 +36,10 @@ from megatron.bridge.models.conversion.utils import (
     remove_non_pickleables,
 )
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+from megatron.core.tensor_parallel.mappings import (
+    _gather_along_first_dim,
+    _gather_along_last_dim,
+)
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
@@ -96,6 +100,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                     gathered = self.gather_from_tp_ranks(weight)
                     return {"custom_weight": gathered[0].t()}
     """
+    # Cache for metadata and tensor_spec_output
+    _broadcast_obj_cache = {}
+    _tensor_spec_output_cache = {}
 
     def __init__(self, megatron_param: str, hf_param: Union[str, Dict[str, str]]):
         """Initialize the weight mapping.
@@ -109,9 +116,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         self.hf_param = hf_param
         self._validate_patterns()
 
-        # Cache for metadata and tensor_spec_output
-        self._broadcast_obj_cache = {}
-        self._tensor_spec_output_cache = {}
         self._pg_collection = None
 
         if mpu.is_initialized():
@@ -367,12 +371,19 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         if self.pp_size == 1:
             return tensor
 
+        if cache_key is not None:
+            cache_key = self.__class__.__name__ + cache_key
+
         # ------------------------------------------------------------------
         # 1.  Gather (shape, dtype, tensor_parallel flag, partition_dim) from
         #     every PP rank so that we can find the source rank.
         # ------------------------------------------------------------------
-        if cache_key is not None and cache_key in self._tensor_spec_output_cache:
-            tensor_spec_output = self._tensor_spec_output_cache[cache_key]
+        if cache_key is not None and cache_key in __class__._tensor_spec_output_cache:
+            # Cache hit: reuse (src_rank, target_tensor_spec) from the first call.
+            # all_gather_object is skipped because tensor layout (shape/dtype/
+            # partition) is stable across successive conversions of the same param.
+            # The broadcast in step 4 is still executed to deliver updated weights.
+            src_rank, target_tensor_spec = __class__._tensor_spec_output_cache[cache_key]
         else:
             if tensor is not None:
                 shape = tensor.shape
@@ -385,22 +396,24 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
             tensor_spec_output: list[Optional[tuple]] = [None] * self.pp_size
             torch.distributed.all_gather_object(tensor_spec_output, tensor_spec, group=self.pp_group)
-            self._tensor_spec_output_cache[cache_key] = tensor_spec_output
 
-        # ------------------------------------------------------------------
-        # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
-        #     that holds the tensor).  Certain architectures (MLA / DeepSeek-V3,
-        #     MTP, or models with tied embeddings) legitimately place the same
-        #     weight on more than one PP rank, so we must *not* raise on
-        #     duplicates – instead we deterministically pick the first owner
-        #     as the broadcast source.
-        # ------------------------------------------------------------------
-        target_tensor_spec = None
-        src_rank = None  # Rank *inside* the PP group.
-        for rank, spec in enumerate(tensor_spec_output):
-            if spec is not None and target_tensor_spec is None:
-                target_tensor_spec = spec
-                src_rank = rank
+            # ------------------------------------------------------------------
+            # 2.  Identify the first owning rank (pick the lowest-ranked PP stage
+            #     that holds the tensor).  Certain architectures (MLA / DeepSeek-V3,
+            #     MTP, or models with tied embeddings) legitimately place the same
+            #     weight on more than one PP rank, so we must *not* raise on
+            #     duplicates – instead we deterministically pick the first owner
+            #     as the broadcast source.
+            # ------------------------------------------------------------------
+            target_tensor_spec = None
+            src_rank = None  # Rank *inside* the PP group.
+            for rank, spec in enumerate(tensor_spec_output):
+                if spec is not None and target_tensor_spec is None:
+                    target_tensor_spec = spec
+                    src_rank = rank
+
+            if cache_key is not None:
+                __class__._tensor_spec_output_cache[cache_key] = (src_rank, target_tensor_spec)
 
         if target_tensor_spec is None:
             # No rank had the tensor – this is an error in the caller.
@@ -453,9 +466,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         if self.pp_size == 1:
             return obj
 
+        if cache_key is not None:
+            cache_key = self.__class__.__name__ + cache_key
+
         # Check if we already have a cached result (only if cache_key is provided)
-        if cache_key is not None and cache_key in self._broadcast_obj_cache:
-            return self._broadcast_obj_cache[cache_key]
+        if cache_key is not None and cache_key in __class__._broadcast_obj_cache:
+            return __class__._broadcast_obj_cache[cache_key]
 
         # ------------------------------------------------------------------
         # 1. Gather presence flags from all PP ranks to find the source rank
@@ -492,7 +508,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         # Cache the result for future calls (only if cache_key is provided)
         if cache_key is not None:
-            self._broadcast_obj_cache[cache_key] = result
+            __class__._broadcast_obj_cache[cache_key] = result
 
         return result
 
@@ -502,7 +518,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         This can be useful for testing or if the objects being broadcast
         might change during the lifetime of the mapping.
         """
-        self._broadcast_obj_cache.clear()
+        __class__._broadcast_obj_cache.clear()
 
     def clear_tensor_spec_output_cache(self):
         """Clear the tensor spec output cache.
@@ -510,7 +526,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         This can be useful for testing or if the tensor spec output
         might change during the lifetime of the mapping.
         """
-        self._tensor_spec_output_cache.clear()
+        __class__._tensor_spec_output_cache.clear()
 
     def broadcast_tensor_to_tp_ranks(self, tensor: torch.Tensor, src_rank: int = 0) -> torch.Tensor:
         """Broadcast a tensor to all TP ranks.
@@ -630,6 +646,34 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         gathered = [torch.empty_like(tensor) for _ in range(self.tp_size)]
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
+        return gathered
+
+    def gather_from_tp_ranks_first_dim(self, tensor: torch.Tensor) -> List[torch.Tensor]:
+        """Gather tensors from all TP ranks.
+
+        Args:
+            tensor (torch.Tensor): The tensor shard to be gathered from the
+                current rank.
+
+        Returns:
+            List[torch.Tensor]: A list of tensor shards from all TP ranks.
+        """
+        # _gather_along_first_dim(input_, group, output_split_sizes=None, use_global_buffer=False)
+        gathered = _gather_along_first_dim(tensor, group=self.tp_group, use_global_buffer=True)
+        return gathered
+
+    def gather_from_tp_ranks_last_dim(self, tensor: torch.Tensor) -> List[torch.Tensor]:
+        """Gather tensors from all TP ranks.
+
+        Args:
+            tensor (torch.Tensor): The tensor shard to be gathered from the
+                current rank.
+
+        Returns:
+            List[torch.Tensor]: A list of tensor shards from all TP ranks.
+        """
+        # _gather_along_last_dim(input_, group)
+        gathered = _gather_along_last_dim(tensor, group=self.tp_group)
         return gathered
 
     @staticmethod
@@ -1045,8 +1089,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             full_weights = megatron_weights
         else:
             # Gather from all TP ranks
-            gathered = self.gather_from_tp_ranks(megatron_weights)
-            full_weights = torch.cat(gathered, dim=0)
+            full_weights = self.gather_from_tp_ranks_first_dim(megatron_weights)
 
         if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
@@ -1208,8 +1251,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             # bias is unsharded in row parallel, so we can just return it
             full_weights = megatron_weights
         else:
-            gathered = self.gather_from_tp_ranks(megatron_weights)
-            full_weights = torch.cat(gathered, dim=1)
+            full_weights = self.gather_from_tp_ranks_first_dim(megatron_weights)
 
         if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
@@ -2130,8 +2172,7 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             if self.tp_size == 1:
                 full_weight = component
             else:
-                gathered = self.gather_from_tp_ranks(component)
-                full_weight = torch.cat(gathered, dim=0)
+                full_weight = self.gather_from_tp_ranks_first_dim(component)
             full_weights.append(full_weight)
 
         return {self.hf_param: torch.cat(full_weights, dim=0)}
@@ -2218,8 +2259,7 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             if self.tp_size == 1:
                 full_weight = component
             else:
-                gathered = self.gather_from_tp_ranks(component)
-                full_weight = torch.cat(gathered, dim=0)
+                full_weight = self.gather_from_tp_ranks_first_dim(component)
             full_weights.append(full_weight)
 
         return {self.hf_param: torch.cat(full_weights, dim=0)}
