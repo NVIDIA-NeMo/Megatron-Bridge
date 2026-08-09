@@ -333,20 +333,25 @@ def _build_task(
     """Build the direct-srun or per-node torchrun training task."""
     quoted_training_args = [shlex.quote(argument) for argument in training_args]
     if args.launcher == "torchrun":
-        return run.Script(
-            path="-m",
-            entrypoint="python",
-            env=task_environment,
-            args=[
-                "torch.distributed.run",
+        command = " ".join(
+            [
+                "python -m torch.distributed.run",
                 f"--nnodes={args.nodes}",
                 f"--nproc-per-node={args.gpus_per_node}",
                 "--node-rank=$SLURM_NODEID",
                 "--master-addr=$MASTER_ADDR",
                 "--master-port=$MASTER_PORT",
-                str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
+                shlex.quote(str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py")),
                 *quoted_training_args,
-            ],
+            ]
+        )
+        return run.Script(
+            path="-lc",
+            entrypoint="bash",
+            env=task_environment,
+            # Delay Slurm rank-variable expansion until bash runs once inside
+            # each per-node task rather than in the parent batch shell.
+            args=[shlex.quote(command)],
         )
     return run.Script(
         path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
