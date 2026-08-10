@@ -190,7 +190,9 @@ RUN groupadd --gid "${RUNTIME_GID}" nemo-runtime && \
         --create-home --home-dir /home/nemo-runtime --shell /bin/bash nemo-runtime && \
     chown "${RUNTIME_UID}:${RUNTIME_GID}" /opt/Megatron-Bridge
 
-COPY --chown=${RUNTIME_UID}:${RUNTIME_GID} --chmod=644 . /opt/Megatron-Bridge
+# Preserve repository file and directory modes: a blanket 0644 mode makes
+# copied directories untraversable by the final non-root user.
+COPY --chown=${RUNTIME_UID}:${RUNTIME_GID} . /opt/Megatron-Bridge
 
 ENV HOME=/home/nemo-runtime \
     XDG_CACHE_HOME=/tmp/regent-cache/xdg \
@@ -205,5 +207,8 @@ RUN test "$(id -u)" = "${RUNTIME_UID}" && \
     test -x /usr/local/bin/uv && \
     test -x /opt/venv/bin/python && \
     mkdir -p "${XDG_CACHE_HOME}" "${UV_CACHE_DIR}" && \
+    test -r /opt/Megatron-Bridge/pyproject.toml && \
+    test -x /opt/Megatron-Bridge/tests/unit_tests && \
+    test -r /opt/Megatron-Bridge/tests/unit_tests/Launch_Unit_Tests_Core.sh && \
     touch /opt/Megatron-Bridge/.nonroot-write-probe && \
     rm /opt/Megatron-Bridge/.nonroot-write-probe
