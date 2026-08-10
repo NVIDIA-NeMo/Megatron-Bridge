@@ -5,11 +5,21 @@ try:
 except ModuleNotFoundError:
     HAVE_MEGATRON_BRIDGE = False
 
+HAVE_LLAMA2_LORA_CONFIGS = False
+
 if HAVE_MEGATRON_BRIDGE:
-    from .llama2_llm_finetune import (
-        llama2_70b_lora_config_gb200,
-        llama2_70b_lora_config_gb300,
-    )
+    try:
+        from .llama2_llm_finetune import (
+            llama2_70b_lora_config_gb200,
+            llama2_70b_lora_config_gb300,
+        )
+
+        HAVE_LLAMA2_LORA_CONFIGS = True
+    except ImportError:
+        # llama2_70b_peft_config landed in Megatron-Bridge after v0.5.1, which is
+        # what nemo:26.06.01 ships. The llama3 configs below do not depend on it.
+        pass
+
     from .llama3_llm_finetune import (
         llama3_8b_sft_config_gb200,
         llama3_8b_sft_config_h100,
@@ -362,11 +372,17 @@ __all__ = [
     "LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V4",
 ]
 
-if HAVE_MEGATRON_BRIDGE:
+if HAVE_LLAMA2_LORA_CONFIGS:
     __all__.extend(
         [
             "llama2_70b_lora_config_gb200",
             "llama2_70b_lora_config_gb300",
+        ]
+    )
+
+if HAVE_MEGATRON_BRIDGE:
+    __all__.extend(
+        [
             "llama3_8b_pretrain_config_gb300",
             "llama3_8b_pretrain_config_gb200",
             "llama3_8b_pretrain_config_b300",
