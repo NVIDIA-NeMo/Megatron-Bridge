@@ -157,8 +157,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=True)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
 
-    cfg.model.moe_expert_rank_capacity_factor = 4
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+    # cfg.model.moe_expert_rank_capacity_factor = 4
+    # cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
