@@ -42,7 +42,7 @@ from megatron.bridge.training.profiling import (
     should_profile_rank,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.train import checkpoint_and_decide_exit, maybe_run_manual_gc
+from megatron.bridge.training.train import checkpoint_and_decide_exit, maybe_run_manual_gc, save_checkpoint_and_time
 from megatron.bridge.training.utils.train_utils import (
     prepare_forward_step_func,
     training_log,
@@ -287,6 +287,7 @@ def train_megatron_mimo(
     prof = None
     nsys_nvtx_context = None
     profiling_stopped = False
+    should_exit = False
     prof_config = cfg.profiling
     if prof_config and should_profile_rank(prof_config, dist.get_rank()):
         if prof_config.use_pytorch_profiler:
@@ -446,6 +447,29 @@ def train_megatron_mimo(
             profiling_stopped = prof_config is not None and train_state.step == prof_config.profile_step_end
         if should_exit:
             break
+
+    # Save final checkpoint when training completes normally and the last
+    # step wasn't already persisted by the interval-based save inside
+    # checkpoint_and_decide_exit.
+    if not should_exit:
+        ckpt_config = cfg.checkpoint
+        if (
+            ckpt_config.save
+            and train_state.step != 0
+            and ckpt_config.save_interval != 0
+            and (ckpt_config.save_interval is None or train_state.step % ckpt_config.save_interval != 0)
+        ):
+            save_checkpoint_and_time(
+                state=global_state,
+                model=[model],
+                optimizer=optimizer,
+                opt_param_scheduler=first_scheduler,
+                num_floating_point_operations_so_far=0,
+                checkpoint_manager=checkpoint_manager,
+                train_data_iterator=train_data_iterator,
+                pg_collection=local_pg_collection,
+                module_name=active_module_name,
+            )
 
     if not profiling_stopped:
         handle_profiling_stop(

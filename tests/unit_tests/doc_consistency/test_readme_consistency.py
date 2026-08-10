@@ -34,6 +34,12 @@ TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 DATASET_UTILS = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "utils" / "dataset_utils.py"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
+RL_INTEGRATION_DOCS = (
+    REPO_ROOT / "docs" / "bridge-rl-integration.md",
+    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "bridge-rl-integration.mdx",
+    REPO_ROOT / "docs" / "fern" / "versions" / "0.4.2" / "pages" / "bridge-rl-integration.mdx",
+)
+MODEL_PROVIDER = REPO_ROOT / "src" / "megatron" / "bridge" / "models" / "model_provider.py"
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
 GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
@@ -203,6 +209,51 @@ def test_hf_path_flag_documented_if_implemented():
     if '"--hf_path"' not in _read(RUN_RECIPE):
         return  # flag not implemented — nothing to document
     assert "--hf_path" in _read(TRAINING_README), "--hf_path is implemented but not documented in README"
+
+
+def test_rl_integration_get_model_calls_supply_required_keyword_only_arguments():
+    """RL integration snippets must satisfy get_model's required keyword-only contract."""
+    provider_tree = ast.parse(_read(MODEL_PROVIDER), filename=str(MODEL_PROVIDER))
+    get_model_def = next(
+        node for node in provider_tree.body if isinstance(node, ast.FunctionDef) and node.name == "get_model"
+    )
+    required_keywords = {
+        arg.arg
+        for arg, default in zip(get_model_def.args.kwonlyargs, get_model_def.args.kw_defaults)
+        if default is None
+    }
+    assert required_keywords, "get_model has no required keyword-only arguments — update this contract test"
+
+    missing: dict[str, dict[int, list[str]]] = {}
+    for path in RL_INTEGRATION_DOCS:
+        text = _read(path)
+        documented_calls: list[tuple[int, set[str]]] = []
+        for match in re.finditer(r"```python\n(?P<code>.*?)```", text, re.DOTALL):
+            code = match.group("code")
+            if "get_model(" not in code:
+                continue
+            tree = ast.parse(code, filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                function_name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                if function_name != "get_model":
+                    continue
+                source_line = text.count("\n", 0, match.start("code")) + node.lineno
+                documented_calls.append(
+                    (source_line, {keyword.arg for keyword in node.keywords if keyword.arg is not None})
+                )
+
+        assert len(documented_calls) == 2, f"expected two RL integration get_model calls in {path}"
+        omitted = {
+            source_line: sorted(required_keywords - supplied_keywords)
+            for source_line, supplied_keywords in documented_calls
+            if required_keywords - supplied_keywords
+        }
+        if omitted:
+            missing[str(path.relative_to(REPO_ROOT))] = omitted
+
+    assert not missing, f"RL integration get_model calls omit required keyword-only arguments: {missing}"
 
 
 def test_model_examples_use_current_run_recipe_arguments():

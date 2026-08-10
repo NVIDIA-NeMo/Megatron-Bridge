@@ -348,8 +348,10 @@ class Gemma3RotaryEmbedding(RotaryEmbedding):
 
 def _is_local_attn_layer(
     layer_number: int,
-    layer_pattern: Tuple[int, int],
+    layer_pattern: tuple[int, int] | list[str],
 ) -> bool:
-    pattern_size = sum(layer_pattern)
-    local_layer_count = layer_pattern[0]
+    if layer_pattern and isinstance(layer_pattern[0], str):
+        return layer_pattern[layer_number - 1] == "sliding_attention"
+    local_layer_count = int(layer_pattern[0])
+    pattern_size = local_layer_count + int(layer_pattern[1])
     return (layer_number - 1) % pattern_size < local_layer_count

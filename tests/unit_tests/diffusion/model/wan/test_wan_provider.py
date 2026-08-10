@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 import torch.nn as nn
@@ -20,6 +22,38 @@ from megatron.core import parallel_state
 import megatron.bridge.diffusion.models.wan.wan_model as wan_model_module
 from megatron.bridge.diffusion.models.wan.wan_model import WanModel
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
+from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
+
+
+def test_wan_provider_uses_runtime_geometry_for_flops():
+    provider = WanModelProvider(
+        num_layers=2,
+        hidden_size=8,
+        ffn_hidden_size=16,
+        num_attention_heads=2,
+        crossattn_emb_size=6,
+        in_channels=4,
+        out_channels=4,
+        patch_spatial=2,
+        patch_temporal=1,
+        text_dim=12,
+    )
+    config = SimpleNamespace(model=provider)
+
+    runtime_stats = {
+        "batch_size": 2,
+        "seqlen_sum": 10,
+        "seqlen_squared_sum": 58,
+        "cross_seqlen_sum": 6,
+        "cross_seqlen_product_sum": 34,
+    }
+    provider.seq_length = 1024
+    old_value = num_floating_point_operations(config, **runtime_stats)
+    provider.seq_length = 8192
+    new_value = num_floating_point_operations(config, **runtime_stats)
+
+    assert old_value == 120_624
+    assert new_value == old_value
 
 
 @pytest.mark.parametrize(
