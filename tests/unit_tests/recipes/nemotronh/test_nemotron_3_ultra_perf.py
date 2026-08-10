@@ -214,10 +214,10 @@ def test_gb200_ultra_bf16_verification_recipes_are_convergence_safe(
     assert cfg.model.min_offloaded_tensor_size == 350_000_000
     assert cfg.model.offload_modules == ["fused_group_mlp"]
     assert cfg.model.fine_grained_offloading_max_inflight_offloads == 1
-    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
-    assert cfg.model.recompute_modules == ["moe_act"]
+    assert cfg.model.recompute_modules is None
 
     assert cfg.ddp.use_megatron_fsdp is use_megatron_fsdp
     assert cfg.dist.use_megatron_fsdp is use_megatron_fsdp
@@ -256,6 +256,7 @@ def test_gb200_ultra_bf16_fsdp_verification_uses_fp32_optimizer_state(
     assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
     assert cfg.ddp.megatron_fsdp_main_params_dtype == torch.float32
     assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_use_decoupled_grad is False
     assert cfg.model.gradient_accumulation_fusion is True
     assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.main_params_dtype == torch.float32
@@ -287,6 +288,8 @@ def test_gb200_ultra_bf16_verification_recipes_validate_for_declared_world_size(
     training_config.runtime_config_update(cfg)
 
     assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
+    if cfg.ddp.use_megatron_fsdp:
+        assert cfg.ddp.megatron_fsdp_use_decoupled_grad is False
     data_parallel_size = world_size // (
         cfg.model.tensor_model_parallel_size * cfg.model.pipeline_model_parallel_size * cfg.model.context_parallel_size
     )

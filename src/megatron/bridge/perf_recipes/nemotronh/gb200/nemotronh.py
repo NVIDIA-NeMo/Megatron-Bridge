@@ -339,16 +339,17 @@ def _nemotron_3_ultra_pretrain_gb200_bf16_base() -> ConfigContainer:
     # BF16 does not require the expert-token padding used by MXFP8 kernels.
     cfg.model.moe_router_padding_for_quantization = False
 
-    # Match the memory plan from PR 5287: offload only the large fused expert
-    # MLP activation and recompute its activation function on the backward pass.
+    # Match the memory plan from PR 5287 by offloading only the large fused
+    # expert-MLP activation. NeMo 26.06 / TE 2.16 rejects BF16 `moe_act`
+    # recompute because it does not select TE's required fused grouped-MLP path.
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.min_offloaded_tensor_size = 350_000_000
     cfg.model.offload_modules = ["fused_group_mlp"]
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_modules = None
 
     cfg.optimizer.overlap_param_gather = True
     cfg.logger.log_throughput = True
@@ -371,6 +372,7 @@ def nemotron_3_ultra_pretrain_128gpu_gb200_bf16_fsdp_config() -> ConfigContainer
     cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
     cfg.model.gradient_accumulation_fusion = True
     cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.ddp.megatron_fsdp_use_decoupled_grad = False
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
@@ -444,6 +446,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_fsdp_config() -> ConfigContainer
     cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
     cfg.model.gradient_accumulation_fusion = True
     cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.ddp.megatron_fsdp_use_decoupled_grad = False
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32

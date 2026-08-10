@@ -380,10 +380,12 @@ items:
         recipe must complete all 50 optimizer steps at
         TP2/PP4/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length 8192 with
         finite loss, no skipped or NaN iterations, and all four training
-        metrics. HybridEP, natural expert routing, FP32 gradient reduction,
-        targeted fused expert-MLP activation offload, and selective moe_act
-        recompute must remain active. Forced expert balancing, MXFP8, and
-        disabled numerical checks are not part of this verification workload.
+        metrics. HybridEP, natural expert routing, FP32 gradient reduction, and
+        targeted fused expert-MLP activation offload must remain active.
+        Activation recompute remains disabled because BF16 does not select the
+        fused grouped-MLP path required by TE 2.16 moe_act recompute. Forced
+        expert balancing, MXFP8, and disabled numerical checks are not part of
+        this verification workload.
 
   pretrain_fsdp:
     GB200:
@@ -411,9 +413,11 @@ items:
         NaN iterations, all four training metrics, and peak allocated and
         reserved memory. HybridEP, natural expert routing, FP32 gradient
         reduction, FP32 main gradients and optimizer state, targeted fused
-        expert-MLP activation offload, selective moe_act recompute,
-        and Megatron-FSDP must remain active. Fine-grained parameter gather
-        remains disabled in this BF16 HSDP verification profile.
+        expert-MLP activation offload, and Megatron-FSDP must remain active.
+        Activation recompute remains disabled because BF16 does not select the
+        fused grouped-MLP path required by TE 2.16 moe_act recompute.
+        Fine-grained parameter gather remains disabled in this BF16 HSDP
+        verification profile.
         Forced expert balancing, MXFP8, and disabled numerical checks are not
         part of this verification workload.
 
