@@ -190,6 +190,8 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
     }
     return cfg
 

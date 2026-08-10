@@ -259,6 +259,8 @@ class TestKimiK25VLSftConfig:
         assert cfg.model.moe_shared_expert_overlap is True
         assert cfg.model.moe_router_force_load_balancing is False
         assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+        assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+        assert cfg.env_vars["USE_MNNVL"] == 0
 
     def test_sft_config_transformer_engine_and_cuda_graph(self):
         """TE backend with CUDA graphs disabled by default (warmup steps still set)."""
