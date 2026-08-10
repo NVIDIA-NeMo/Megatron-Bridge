@@ -1,0 +1,200 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: muse_glimmer_30b
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. This card covers the complete Muse Glimmer 30B vision-language
+  checkpoint through the builder-backed model-config, model-builder, and model
+  bridge path. The modeled architecture includes the vision tower, adapter,
+  projection, and dense text decoder; it does not use a legacy model provider.
+  Conversion, numerical parity, inference, and training remain unverified until
+  the corresponding pinned public commands complete their declared gates.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: meta-models/Muse-Glimmer-30B
+  hf_revision: f84ecc3a0ea984a4c04542a84269e3d065350a6e  # pragma: allowlist secret
+  architecture: MuseGlimmerForConditionalGeneration
+  min_transformers_version: "5.15.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.07-py3
+  bridge_commit: 6d00aafb874b9d06c7126d2e7239798982ca44d6  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Import the complete pinned checkpoint through AutoBridge.get_model(),
+      persist a reloadable Megatron checkpoint, and audit every language,
+      vision, adapter, and projection tensor for key, shape, dtype, and value
+      agreement.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Import the complete pinned checkpoint on GPUs through the builder-backed
+      path, persist and reload it, and report an exact audit of all mapped
+      tensors with no missing or unexpected parameters.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Export a complete CPU-imported Megatron checkpoint to Hugging Face,
+      strictly reload it with the minimum supported Transformers version, and
+      compare all source and exported tensors under a declared exact criterion.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Export a complete GPU-imported Megatron checkpoint, strictly reload the
+      resulting Hugging Face model, and match all language, vision, adapter,
+      and projection keys, shapes, dtypes, and values to the pinned source.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Process the same pinned image and prompt through native Hugging Face and
+      Megatron implementations, match the next token, achieve logit cosine
+      similarity of at least 0.99, and report maximum and mean absolute logit
+      differences as non-gating diagnostics.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Reload the persisted complete Megatron checkpoint, process a pinned
+      public image and prompt, and complete deterministic bounded generation
+      with finite logits and a semantically correct response.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Complete a bounded 100-step multimodal pretraining run with finite loss,
+        no skipped or NaN iterations, all four metrics, and a reloadable final
+        checkpoint.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Complete a pinned-data 100-step multimodal SFT run with finite loss, no
+        skipped or NaN iterations, all four metrics, and a reloadable final
+        checkpoint.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        Export the completed SFT checkpoint to a complete Hugging Face VLM,
+        strictly reload it, and complete deterministic image-conditioned
+        generation with the pinned prompt.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Complete a 100-step long-context multimodal SFT run with declared
+        packing and context-parallel settings, finite loss, no skipped or NaN
+        iterations, all four metrics, and a reloadable checkpoint.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Complete a pinned-data 100-step PEFT run with an audited adapter target
+        set, finite loss, no skipped or NaN iterations, all four metrics, and a
+        reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Resume the bounded pretraining run from an intermediate checkpoint,
+        restore model, optimizer, scheduler, data-order, and RNG state, match
+        declared sentinel losses within tolerance, and save a distinct
+        reloadable final checkpoint.
