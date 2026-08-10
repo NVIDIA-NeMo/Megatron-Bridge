@@ -183,4 +183,27 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         bash scripts/install_diffusion_deps.sh; \
     fi
 
-COPY --chmod=644 . /opt/Megatron-Bridge
+ARG RUNTIME_UID=65532
+ARG RUNTIME_GID=65532
+RUN groupadd --gid "${RUNTIME_GID}" nemo-runtime && \
+    useradd --no-log-init --uid "${RUNTIME_UID}" --gid "${RUNTIME_GID}" \
+        --create-home --home-dir /home/nemo-runtime --shell /bin/bash nemo-runtime && \
+    chown "${RUNTIME_UID}:${RUNTIME_GID}" /opt/Megatron-Bridge
+
+COPY --chown=${RUNTIME_UID}:${RUNTIME_GID} --chmod=644 . /opt/Megatron-Bridge
+
+ENV HOME=/home/nemo-runtime \
+    XDG_CACHE_HOME=/tmp/regent-cache/xdg \
+    UV_CACHE_DIR=/tmp/regent-cache/uv
+
+USER ${RUNTIME_UID}:${RUNTIME_GID}
+
+# Keep dependency state immutable while proving the launcher worktree and
+# runtime-owned cache roots are usable without root. This stays after the
+# source COPY so the check also covers its effective ownership.
+RUN test "$(id -u)" = "${RUNTIME_UID}" && \
+    test -x /usr/local/bin/uv && \
+    test -x /opt/venv/bin/python && \
+    mkdir -p "${XDG_CACHE_HOME}" "${UV_CACHE_DIR}" && \
+    touch /opt/Megatron-Bridge/.nonroot-write-probe && \
+    rm /opt/Megatron-Bridge/.nonroot-write-probe
