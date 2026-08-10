@@ -1,15 +1,11 @@
-# Nemotron 3.5 Lightning on Megatron Bridge 0.5.1
+# Nemotron 3.5 Lightning
 
-This directory is the release-specific entrypoint for
+This directory is the day-0 release entrypoint for
 `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` on Megatron Bridge 0.5.1.
-Use it with the immutable NeMo 26.06.01 runtime documented below and a checkout
-that contains this directory.
+Use it with the `nvcr.io/nvidia/nemo:26.06.01` runtime and a Megatron Bridge
+0.5.1 checkout that contains Nemotron 3.5 Lightning support (i.e. the `nemotron-3.5-lightning-mb-0.5.1` branch).
 
-The unmodified 26.06.01 image does not contain this model support or the newer
-generic `scripts/training/train.sh` and `scripts/conversion/convert.sh`
-wrappers. It does contain the Python entrypoints used here. These model-local
-wrappers are intentionally scoped to the 0.5.1 release line; Megatron Bridge
-0.6 and newer use the generic launchers instead.
+The support based on Megatron Bridge 0.6.0 (NeMo 26.08 container) is available on the main branch.
 
 ## Contents
 
@@ -66,9 +62,8 @@ documented artifact and both dataset caches at once.
 
 ## Override the Megatron Bridge folder
 
-The NeMo 26.06.01 image is `nvcr.io/nvidia/nemo:26.06.01`. Its validated
-immutable address is
-`nvcr.io/nvidia/nemo@sha256:912033288c982a8c4af05df46a1d670c34350f1427c758f5da9c485bdec57264`.
+The NeMo 26.06.01 image is `nvcr.io/nvidia/nemo:26.06.01`. 
+(`nvcr.io/nvidia/nemo@sha256:912033288c982a8c4af05df46a1d670c34350f1427c758f5da9c485bdec57264`).
 The image does not contain this release-specific model support. Override the
 Megatron Bridge folder with the following steps:
 
@@ -108,73 +103,13 @@ mkdir -p "$HF_HUB_CACHE" "$HF_DATASETS_CACHE" "$NEMO_DATASETS_CACHE" /workspace/
 The scripts use `uv run --active --no-sync` with the bundled environment. No
 package installation or dependency change is required.
 
-## Prepare immutable inputs
-
-The model and both training datasets are pinned to immutable revisions:
-
-```bash
-export HF_MODEL_ID="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-export HF_MODEL_REVISION="b3caaabed0263651a17dc1f2d4ce97e794f76c44"
-export OPENMATH_REVISION="469216e3f46f4dacf476b382e192485ea51a143e"
-export SQUAD_REVISION="7b6d24c440a36b6815f21b70d25016731768db1f"
-export HF_MODEL_PATH_FILE=/workspace/models/nemotron-3.5-lightning-hf-source.path
-```
-
-Download the model once into the standard persistent HF cache and record the
-resolved snapshot path:
-
-```bash
-uv run --active --no-sync python - <<'PY'
-import os
-from pathlib import Path
-
-from huggingface_hub import snapshot_download
-
-snapshot = snapshot_download(
-    repo_id=os.environ["HF_MODEL_ID"],
-    revision=os.environ["HF_MODEL_REVISION"],
-    cache_dir=os.environ["HF_HUB_CACHE"],
-)
-Path(os.environ["HF_MODEL_PATH_FILE"]).write_text(f"{Path(snapshot).resolve()}\n")
-print(snapshot)
-PY
-
-export HF_MODEL="$(<"$HF_MODEL_PATH_FILE")"
-test -f "$HF_MODEL/config.json"
-```
-
-Prefetch the exact dataset revisions into the same paths used by the SFT and
-LoRA builders. This step downloads raw data; packing occurs when training first
-uses each dataset.
-
-```bash
-uv run --active --no-sync python - <<'PY'
-import os
-from pathlib import Path
-
-from datasets import load_dataset
-
-cache_root = Path(os.environ["NEMO_DATASETS_CACHE"])
-load_dataset(
-    "nvidia/OpenMathInstruct-2",
-    split="train_1M",
-    revision=os.environ["OPENMATH_REVISION"],
-    cache_dir=str(cache_root / "nvidia/OpenMathInstruct-2"),
-)
-load_dataset(
-    "rajpurkar/squad",
-    revision=os.environ["SQUAD_REVISION"],
-    cache_dir=str(cache_root / "rajpurkar/squad"),
-)
-PY
-```
-
 ## Checkpoint conversion
 
 Import the pinned local HF snapshot with TP1/EP8. Eight local ranks are
 required:
 
 ```bash
+export HF_MODEL=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
 export BASE_MEGATRON_ROOT=/workspace/models/nemotron-3.5-lightning-megatron
 export BASE_MEGATRON_CHECKPOINT="$BASE_MEGATRON_ROOT/iter_0000000"
 
@@ -198,71 +133,6 @@ TP=1 EP=8 \
   ./examples/models/nemotron/nemotron_3_5_lightning/conversion.sh export
 
 test -f "$BASE_HF_EXPORT/model.safetensors.index.json"
-```
-
-### Exact round-trip tensor audit
-
-The following verifier compares the source and round-trip HF artifacts by
-tensor name, shape, native dtype, and exact value. It exits nonzero on the
-first mismatch and includes MTP tensors in the same audit:
-
-```bash
-export HF_EXPORT_PATH="$BASE_HF_EXPORT"
-uv run --active --no-sync python - <<'PY'
-import json
-import os
-from contextlib import ExitStack
-from pathlib import Path
-
-import torch
-from safetensors import safe_open
-
-
-def weight_map(root: Path) -> dict[str, str]:
-    indexes = sorted(root.glob("*.safetensors.index.json"))
-    if len(indexes) == 1:
-        return json.loads(indexes[0].read_text())["weight_map"]
-    if indexes:
-        raise RuntimeError(f"Expected one safetensors index in {root}, found {len(indexes)}")
-
-    result = {}
-    for shard in sorted(root.glob("*.safetensors")):
-        with safe_open(shard, framework="pt", device="cpu") as handle:
-            result.update({name: shard.name for name in handle.keys()})
-    if not result:
-        raise RuntimeError(f"No safetensors weights found in {root}")
-    return result
-
-
-source = Path(os.environ["HF_MODEL"])
-exported = Path(os.environ["HF_EXPORT_PATH"])
-source_map = weight_map(source)
-exported_map = weight_map(exported)
-if source_map.keys() != exported_map.keys():
-    missing = sorted(source_map.keys() - exported_map.keys())
-    extra = sorted(exported_map.keys() - source_map.keys())
-    raise SystemExit(f"Tensor schema mismatch: missing={missing[:10]}, extra={extra[:10]}")
-
-with ExitStack() as stack:
-    source_handles = {
-        shard: stack.enter_context(safe_open(source / shard, framework="pt", device="cpu"))
-        for shard in set(source_map.values())
-    }
-    exported_handles = {
-        shard: stack.enter_context(safe_open(exported / shard, framework="pt", device="cpu"))
-        for shard in set(exported_map.values())
-    }
-    for name in sorted(source_map):
-        expected = source_handles[source_map[name]].get_tensor(name)
-        actual = exported_handles[exported_map[name]].get_tensor(name)
-        if expected.shape != actual.shape or expected.dtype != actual.dtype or not torch.equal(expected, actual):
-            raise SystemExit(
-                f"Tensor mismatch: {name}; source={expected.shape}/{expected.dtype}, "
-                f"export={actual.shape}/{actual.dtype}"
-            )
-
-print(f"PASS: {len(source_map)} tensors match by name, shape, dtype, and exact value")
-PY
 ```
 
 ## Inference
@@ -336,7 +206,7 @@ indexed data. For example, set `dataset.blend` to the mounted dataset prefix.
 
 ## Full SFT
 
-The SFT workflow uses packed OpenMathInstruct-2 at the pinned revision prepared
+The SFT workflow uses packed OpenMathInstruct-2 prepared
 above. Its input is the imported `iter_0000000` checkpoint.
 
 ```bash
@@ -408,28 +278,6 @@ TP=1 EP=8 \
   ./examples/models/nemotron/nemotron_3_5_lightning/adapter.sh export
 ```
 
-Check the exported adapter schema without loading model weights:
-
-```bash
-uv run --active --no-sync python - <<'PY'
-import json
-import os
-from pathlib import Path
-
-from safetensors import safe_open
-
-root = Path(os.environ["HF_ADAPTER_PATH"])
-config = json.loads((root / "adapter_config.json").read_text())
-if config.get("peft_type") != "LORA":
-    raise SystemExit(f"Unexpected PEFT type: {config.get('peft_type')}")
-with safe_open(root / "adapter_model.safetensors", framework="pt", device="cpu") as handle:
-    keys = list(handle.keys())
-if not keys or not any("lora_A" in key for key in keys) or not any("lora_B" in key for key in keys):
-    raise SystemExit("Adapter does not contain both LoRA A and B tensors")
-print(f"PASS: standard PEFT config and {len(keys)} adapter tensors found")
-PY
-```
-
 Merge the same Megatron LoRA checkpoint with its imported Megatron base into a
 standalone HF checkpoint:
 
@@ -450,98 +298,4 @@ Verify that the merged standalone artifact loads and generates:
 ```bash
 NPROC_PER_NODE=8 HF_MODEL="$HF_MERGED_PATH" MEGATRON_PATH= TP=1 EP=8 \
   ./examples/models/nemotron/nemotron_3_5_lightning/inference.sh
-```
-
-## Enforced offline operation
-
-Complete the immutable input preparation once while network access is
-available. The model snapshot, raw datasets, and generated packed datasets then
-remain under `/workspace/cache`.
-
-Enable offline enforcement in the same container shell:
-
-```bash
-export HF_HUB_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-export HF_MODEL="$(<"$HF_MODEL_PATH_FILE")"
-```
-
-Confirm that the pinned model and datasets resolve locally before starting an
-offline workflow:
-
-```bash
-uv run --active --no-sync python - <<'PY'
-import os
-from pathlib import Path
-
-from datasets import load_dataset
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id=os.environ["HF_MODEL_ID"],
-    revision=os.environ["HF_MODEL_REVISION"],
-    cache_dir=os.environ["HF_HUB_CACHE"],
-    local_files_only=True,
-)
-cache_root = Path(os.environ["NEMO_DATASETS_CACHE"])
-load_dataset(
-    "nvidia/OpenMathInstruct-2",
-    split="train_1M",
-    revision=os.environ["OPENMATH_REVISION"],
-    cache_dir=str(cache_root / "nvidia/OpenMathInstruct-2"),
-)
-load_dataset(
-    "rajpurkar/squad",
-    revision=os.environ["SQUAD_REVISION"],
-    cache_dir=str(cache_root / "rajpurkar/squad"),
-)
-print("PASS: all pinned inputs resolved with offline mode enforced")
-PY
-```
-
-With these variables set, run the import, export, inference, SFT, LoRA,
-adapter-export, or merge commands above unchanged. To return to online mode:
-
-```bash
-unset HF_HUB_OFFLINE HF_DATASETS_OFFLINE TRANSFORMERS_OFFLINE
-```
-
-## Artifact inventory and cleanup
-
-Inspect free space, cache size, outputs, and recorded checkpoint iterations:
-
-```bash
-df -h /workspace
-du -sh /workspace/cache /workspace/models /workspace/results
-find /workspace/models /workspace/results -name latest_checkpointed_iteration.txt \
-  -exec sh -c 'printf "%s: " "$1"; cat "$1"' _ {} \;
-find /workspace/models /workspace/results -maxdepth 2 -type d -name 'iter_*' -print
-```
-
-The host retains the mounted workspace after the container exits. Review the
-inventory above, then remove only the task-scoped outputs you no longer need:
-
-```bash
-test "$WORKSPACE" = /workspace
-case "$HARDWARE" in
-  h100|gb200) ;;
-  *) echo "HARDWARE must be h100 or gb200" >&2; return 2 ;;
-esac
-rm -rf -- \
-  /workspace/models/nemotron-3.5-lightning-megatron \
-  /workspace/models/nemotron-3.5-lightning-hf-export \
-  "/workspace/models/nemotron-3.5-lightning-sft-$HARDWARE-hf" \
-  "/workspace/models/nemotron-3.5-lightning-lora-$HARDWARE-adapter" \
-  "/workspace/models/nemotron-3.5-lightning-lora-$HARDWARE-merged" \
-  "/workspace/results/nemotron-3.5-lightning-pretrain-$HARDWARE" \
-  "/workspace/results/nemotron-3.5-lightning-sft-$HARDWARE" \
-  "/workspace/results/nemotron-3.5-lightning-lora-$HARDWARE"
-```
-
-Remove the persistent caches only when no retained workflow needs them:
-
-```bash
-test "$WORKSPACE" = /workspace
-rm -rf -- /workspace/cache/huggingface /workspace/cache/nemo
 ```
