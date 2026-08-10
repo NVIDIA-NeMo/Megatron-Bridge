@@ -41,6 +41,7 @@ from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.spec_utils import import_module
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
 from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 
@@ -134,6 +135,7 @@ def _gpt_provider(
         pre_process=pre_process,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
+        **logit_dtype_kwarg(GPTModel, getattr(args, "logit_dtype", None)),
         parallel_output=True,
         share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
         position_embedding_type=args.position_embedding_type,
@@ -216,6 +218,7 @@ def _hybrid_provider(
         hybrid_layer_pattern=args.hybrid_layer_pattern,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
+        **logit_dtype_kwarg(HybridModel, getattr(args, "logit_dtype", None)),
         parallel_output=True,
         share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
         position_embedding_type=args.position_embedding_type,

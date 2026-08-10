@@ -42,6 +42,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 
 
@@ -188,6 +189,7 @@ class NemotronOmniModel(MegatronModule):
                 vocab_size=language_vocab_size,
                 max_sequence_length=language_max_sequence_length,
                 parallel_output=parallel_output,
+                **logit_dtype_kwarg(HybridModel, language_transformer_config.logit_dtype),
                 position_embedding_type=language_position_embedding_type,
                 pre_process=pre_process,
                 hybrid_layer_pattern=hybrid_layer_pattern,

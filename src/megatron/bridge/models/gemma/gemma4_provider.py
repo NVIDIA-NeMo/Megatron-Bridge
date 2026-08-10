@@ -44,6 +44,7 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
 )
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 
 
 def _validate_gemma4_moe_orchestration(provider: GPTModelProvider) -> None:
@@ -234,6 +235,7 @@ class Gemma4DenseProvider(GPTModelProvider):
                 transformer_layer_spec=get_gemma4_layer_spec(config),
                 vocab_size=padded_vocab,
                 max_sequence_length=self.seq_length,
+                **logit_dtype_kwarg(GPTModel, self.logit_dtype),
                 position_embedding_type=self.position_embedding_type,
                 rotary_percent=self.rotary_percent,
                 share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
