@@ -90,7 +90,7 @@ RUN pip install "fastapi==0.139.1" \
     "jupyterlab>=4.5.10" \
     "jupyter-server>=2.20.0" \
     "mistune>=3.3.0" \
-    "GitPython>=3.1.55" && \
+    "GitPython>=3.1.58" && \
     # Address CVE from transitive dependency
     # Remove the package pulled in by Humming kernels.
     # Humming-backed vLLM quantization is unavailable without pyelftools.
