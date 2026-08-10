@@ -76,6 +76,8 @@ RECIPE_FORWARD_STEPS = {
     "qwen3_vl_8b_peft_energon_config": "vlm_step",
 }
 
+QWEN_VL_RECIPE_PREFIXES = ("qwen3_vl_", "qwen35_vl_")
+
 # Put specific multimodal families before the text default. This registry is
 # source-agnostic: library and benchmark recipes with the same identity use
 # the same forward step.
@@ -177,8 +179,18 @@ def resolved_benchmark_recipe_metadata(recipe_name: str) -> BenchmarkRecipeMetad
     return available_benchmark_recipe_metadata(recipe_name)
 
 
-def recipe_step(recipe_name: str) -> str:
-    """Return the default forward-step registry name for any recipe."""
+def recipe_step(recipe_name: str, *, native_energon_packing: bool = False) -> str:
+    """Return the default forward-step registry name for any recipe.
+
+    Args:
+        recipe_name: Exported library or benchmark recipe name.
+        native_energon_packing: Whether the resolved dataset uses Energon's
+            candidate-buffer packing. Qwen-VL consumes its canonical THD
+            metadata through ``vlm_step`` rather than its legacy step-owned
+            packing path.
+    """
+    if native_energon_packing and recipe_name.startswith(QWEN_VL_RECIPE_PREFIXES):
+        return "vlm_step"
     if recipe_name in RECIPE_FORWARD_STEPS:
         return RECIPE_FORWARD_STEPS[recipe_name]
     for prefix, step_name in RECIPE_FORWARD_STEP_PREFIXES:

@@ -943,6 +943,44 @@ def test_energon_uses_requested_pretrain_mode_and_qwen_step():
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
+def test_qwen35_native_energon_packing_defaults_to_vlm_step():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        dataset=SimpleNamespace(packing_buffer_size=8),
+    )
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    handles.recipe_runner.load_forward_step.assert_called_once_with("vlm_step", mode="pretrain")
+
+
+def test_explicit_step_overrides_qwen35_native_energon_default():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        dataset=SimpleNamespace(packing_buffer_size=8),
+    )
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+            "--step-func",
+            "qwen3_vl_step",
+        ]
+    )
+
+    handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
+
+
 @pytest.mark.parametrize("mode", ["pretrain", "sft", "lora", "dora"])
 def test_energon_is_compatible_with_all_training_modes(mode):
     module, handles = _load_module()

@@ -509,7 +509,11 @@ def main(argv: list[str] | None = None) -> None:
     recipe = sync_offline_packing_alignment(recipe)
     recipe = sync_model_dataset_sequence_length(recipe)
 
-    step_func_name = args.step_func or recipe_step(recipe_name)
+    native_energon_packing = getattr(getattr(recipe, "dataset", None), "packing_buffer_size", None) is not None
+    step_func_name = args.step_func or recipe_step(
+        recipe_name,
+        native_energon_packing=native_energon_packing,
+    )
     forward_step = load_forward_step(step_func_name, mode=step_mode)
     run_config(
         config=recipe,

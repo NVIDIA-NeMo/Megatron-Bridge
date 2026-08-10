@@ -145,6 +145,20 @@ def test_recipe_step_is_source_agnostic(recipe_name, step_name):
     assert module.recipe_step(recipe_name) == step_name
 
 
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        "qwen35_vl_35b_a3b_pretrain_mock_config",
+    ],
+)
+def test_qwen_vl_native_energon_packing_uses_canonical_vlm_step(recipe_name):
+    module = _load_module()
+
+    assert module.recipe_step(recipe_name) == "qwen3_vl_step"
+    assert module.recipe_step(recipe_name, native_energon_packing=True) == "vlm_step"
+
+
 def test_every_registered_non_text_prefix_covers_exported_library_recipes():
     module = _load_module()
     root = Path(__file__).resolve().parents[4] / "src" / "megatron" / "bridge" / "recipes"
