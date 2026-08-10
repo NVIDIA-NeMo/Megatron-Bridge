@@ -188,7 +188,10 @@ ARG RUNTIME_GID=65532
 RUN groupadd --gid "${RUNTIME_GID}" nemo-runtime && \
     useradd --no-log-init --uid "${RUNTIME_UID}" --gid "${RUNTIME_GID}" \
         --create-home --home-dir /home/nemo-runtime --shell /bin/bash nemo-runtime && \
-    chown "${RUNTIME_UID}:${RUNTIME_GID}" /opt/Megatron-Bridge
+    chown "${RUNTIME_UID}:${RUNTIME_GID}" /opt/Megatron-Bridge && \
+    # NeMo Run recipes use this canonical experiment root. ARC runners are
+    # root, so missing ownership is otherwise hidden until non-root execution.
+    install -d -o "${RUNTIME_UID}" -g "${RUNTIME_GID}" /nemo_run
 
 # Preserve repository file and directory modes: a blanket 0644 mode makes
 # copied directories untraversable by the final non-root user.
@@ -210,5 +213,7 @@ RUN test "$(id -u)" = "${RUNTIME_UID}" && \
     test -r /opt/Megatron-Bridge/pyproject.toml && \
     test -x /opt/Megatron-Bridge/tests/unit_tests && \
     test -r /opt/Megatron-Bridge/tests/unit_tests/Launch_Unit_Tests_Core.sh && \
+    touch /nemo_run/.nonroot-write-probe && \
+    rm /nemo_run/.nonroot-write-probe && \
     touch /opt/Megatron-Bridge/.nonroot-write-probe && \
     rm /opt/Megatron-Bridge/.nonroot-write-probe
