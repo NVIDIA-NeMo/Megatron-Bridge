@@ -30,7 +30,7 @@ model:
   min_transformers_version: "5.15.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: 6d00aafb874b9d06c7126d2e7239798982ca44d6  # pragma: allowlist secret
+  bridge_commit: 2e5efbab0e2039446693f61e2fc99d0233832775  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
