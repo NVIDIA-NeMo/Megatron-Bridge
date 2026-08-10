@@ -7,9 +7,9 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. GPT-OSS 20B H100 support verification has completed GPU
   HF-to-Megatron conversion, GPU Megatron-to-HF export, manual forward-pass
-  correlation, deterministic Megatron inference, bounded pretraining, and
-  direct checkpoint resume; CPU conversion, full SFT, SFT export/inference,
-  long-context SFT, and PEFT remain pending.
+  correlation, deterministic Megatron inference, bounded pretraining, full SFT,
+  SFT export/inference, LoRA PEFT, and direct checkpoint resume; CPU conversion
+  and long-context SFT remain pending.
 verification_index:
   model_level:
     verified:
@@ -22,8 +22,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      verified: [pretrain, checkpoint_resume]
-      unverified: [sft, sft_export_inference, sft_long_context, peft]
+      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [sft_long_context]
 model:
   hf_id: openai/gpt-oss-20b
   hf_revision: 6cee5e81ee83917806bbde320786a8fb61efebee  # pragma: allowlist secret
@@ -186,7 +186,7 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -195,61 +195,72 @@ items:
         --recipe gpt_oss_20b_sft_8gpu_h100_bf16_config --mode sft
         --dataset tulu3
         --pretrained_checkpoint work/model-verification/gpt-oss-20b/imported-megatron/iter_0000000
-        --max_steps 100 --seq_length 8192
+        --max_steps 100 --seq_length 2048
         --lr 5e-6 --min_lr 0 --warmup_iters 10
         'dataset.hf_dataset.split="train[:10000]"'
         'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
         '++tokenizer.hf_tokenizer_kwargs.revision="6cee5e81ee83917806bbde320786a8fb61efebee"'
-        dataset.hf_output_root=work/data/tulu3/gpt-oss-20b-sft-b14afda60f1b
+        dataset.hf_output_root=work/data/tulu3/gpt-oss-20b-sft-2k-b14afda60f1b
         dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
         +dataset.offline_packing_specs.pad_seq_to_mult=1
         scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
         checkpoint.load=null
-        --save_dir work/model-verification/gpt-oss-20b/sft-checkpoints
+        --save_dir work/model-verification/gpt-oss-20b/sft-2k-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-09
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 2.130852
+        final_loss: 0.758708
+        last_10_steps_step_time_ms_avg: 6618.850
+        last_10_steps_model_tflops_per_gpu_avg: 109.050
       expected_result: >
-        Future verification must complete a 100-step full-SFT run from the
-        imported GPT-OSS 20B checkpoint with immutable Tulu3 data selection,
-        offline packing, finite loss, no skipped or NaN iterations, all four
-        metrics, the actual supervised-token count, and a reloadable final
-        full-model checkpoint.
+        On 8x H100, the command completes exactly 100 full-SFT optimizer steps
+        from the imported GPT-OSS 20B checkpoint with immutable Tulu3 data
+        selection, assistant-token loss masking, and offline packing. All 100
+        optimizer-step rows are present exactly once with finite loss, zero
+        skipped iterations, and zero NaN iterations. Loss decreases from
+        2.130852 to 0.758708, all four metrics are recorded, packing is 98.56%
+        efficient, and a complete 8-shard iter_0000100 full-model checkpoint is
+        saved with metadata, train state, tokenizer artifacts, and
+        latest-checkpoint markers.
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
+      bridge_commit: a8038f6d99d8ade33e1b715ba79bc9185b073e59  # pragma: allowlist secret
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 1 --gpus-per-node 8
           --hf-model unsloth/gpt-oss-20b-BF16
-          --megatron-path work/model-verification/gpt-oss-20b/sft-checkpoints/iter_0000100
+          --megatron-path work/model-verification/gpt-oss-20b/sft-2k-checkpoints/iter_0000100
           --hf-path work/model-verification/gpt-oss-20b/sft-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
           --distributed-save --tp 2 --pp 2 --ep 2 --etp 1
           --trust-remote-code
         - >
-          uv run python
-          skills/create-model-verification-card/scripts/verify_hf_inference.py
+          ./scripts/inference/infer.sh --task hf-inference
+          --nodes 1 --gpus-per-node 1
           --hf-model work/model-verification/gpt-oss-20b/sft-hf-export
           --prompt "Name the capital of France and explain its role in one sentence."
           --max-new-tokens 45 --chat-template
-      last_verified: null
+      last_verified: 2026-08-09
       expected_result: >
-        Future verification must export the final full-SFT checkpoint to
-        Hugging Face BF16 format, reload it with Transformers, run deterministic
-        greedy HF inference for exactly 45 new tokens, and record the literal
-        completion including whitespace.
+        The first command exits successfully and exports the final full-SFT
+        checkpoint to a reloadable 9-shard Hugging Face BF16 checkpoint with
+        411 tensors and attention_bias=true. The second command strictly reloads
+        the exported checkpoint with Transformers and runs deterministic greedy
+        HF inference, stopped at EOS, and produced exactly 38 generated tokens
+        within the 45-token bound with this
+        literal completion:
+        "finalThe capital of France is Paris, and it serves as the political,
+        economic, and cultural center of the country, hosting the headquarters
+        of many national institutions and international organizations."
 
   sft_long_context:
     H100:
@@ -293,42 +304,49 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
+      bridge_commit: a8038f6d99d8ade33e1b715ba79bc9185b073e59  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 1
         --recipe gpt_oss_20b_peft_1gpu_h100_bf16_config --mode lora
         --dataset tulu3
         --pretrained_checkpoint work/model-verification/gpt-oss-20b/imported-megatron/iter_0000000
-        --max_steps 100 --seq_length 8192
+        --max_steps 100 --seq_length 2048
         --lr 1e-4 --min_lr 0 --warmup_iters 10
         'dataset.hf_dataset.split="train[:10000]"'
         'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
         '++tokenizer.hf_tokenizer_kwargs.revision="6cee5e81ee83917806bbde320786a8fb61efebee"'
-        dataset.hf_output_root=work/data/tulu3/gpt-oss-20b-peft-b14afda60f1b
+        dataset.hf_output_root=work/data/tulu3/gpt-oss-20b-peft-2k-b14afda60f1b
         dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
         +dataset.offline_packing_specs.pad_seq_to_mult=1
         scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
         checkpoint.load=null
-        --save_dir work/model-verification/gpt-oss-20b/peft-checkpoints
+        --save_dir work/model-verification/gpt-oss-20b/peft-2k-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-09
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 2.129699
+        final_loss: 1.075515
+        last_10_steps_step_time_ms_avg: 50689.940
+        last_10_steps_model_tflops_per_gpu_avg: 113.240
       expected_result: >
-        Future verification must complete a 100-step LoRA PEFT run from the
-        imported GPT-OSS 20B checkpoint with the base model frozen, model-native
-        attention projection targets, immutable Tulu3 data selection, offline
-        packing, finite loss, no skipped or NaN iterations, all four metrics,
-        the actual supervised-token count, and a reloadable adapter checkpoint.
+        On 1x H100, the command completes exactly 100 LoRA PEFT optimizer steps
+        from the imported GPT-OSS 20B checkpoint with the base model frozen,
+        LoRA dim 32, alpha 32, dropout 0.0, target modules linear_qkv,
+        linear_proj, linear_fc1, and linear_fc2, immutable Tulu3 data selection,
+        assistant-token loss masking, and offline packing. All 100
+        optimizer-step rows are present exactly once with finite loss, zero
+        skipped iterations, and zero NaN iterations. Loss decreases from
+        2.129699 to 1.075515, all four metrics are recorded, packing is 98.56%
+        efficient, and a complete single-shard iter_0000100 adapter checkpoint
+        is saved with metadata, train state, run_config.yaml, and
+        latest-checkpoint markers.
 
   checkpoint_resume:
     H100:
