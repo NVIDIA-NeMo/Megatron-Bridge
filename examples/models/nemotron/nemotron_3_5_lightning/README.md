@@ -64,29 +64,17 @@ Plan storage before downloading or training. Approximate observed sizes are:
 Allow at least 160 GiB for import plus export, or about 1 TiB to retain every
 documented artifact and both dataset caches at once.
 
-## Build the immutable runtime image
+## Override the Megatron Bridge folder
 
-The validated 26.06.01 image digest is pinned so rebuilding this small local
-runtime tag cannot silently select different base contents:
-
-```bash
-export NEMO_IMAGE="nvcr.io/nvidia/nemo@sha256:912033288c982a8c4af05df46a1d670c34350f1427c758f5da9c485bdec57264"
-export LIGHTNING_IMAGE="nemotron-3.5-lightning-mb-0.5.1:26.06.01"
-
-docker pull "$NEMO_IMAGE"
-docker build --pull=false \
-  -t "$LIGHTNING_IMAGE" -f - . <<'DOCKERFILE'
-FROM nvcr.io/nvidia/nemo@sha256:912033288c982a8c4af05df46a1d670c34350f1427c758f5da9c485bdec57264
-WORKDIR /opt/Megatron-Bridge
-DOCKERFILE
-
-docker image inspect "$LIGHTNING_IMAGE" --format '{{.Id}} {{json .RepoDigests}}'
-```
-
-Start a fresh container with the checkout read-only and all model, dataset,
-and output state on the persistent workspace mount:
+The NeMo 26.06.01 image is `nvcr.io/nvidia/nemo:26.06.01`. Its validated
+immutable address is
+`nvcr.io/nvidia/nemo@sha256:912033288c982a8c4af05df46a1d670c34350f1427c758f5da9c485bdec57264`.
+The image does not contain this release-specific model support. Override the
+Megatron Bridge folder with the following steps:
 
 ```bash
+docker pull nvcr.io/nvidia/nemo:26.06.01
+
 docker run --rm -it --gpus all --ipc=host \
   --ulimit memlock=-1 --ulimit stack=67108864 \
   -v "$REPO_ROOT:/opt/Megatron-Bridge:ro" \
@@ -97,7 +85,7 @@ docker run --rm -it --gpus all --ipc=host \
   -e NEMO_HOME=/workspace/cache/nemo \
   -e NEMO_DATASETS_CACHE=/workspace/cache/nemo/datasets \
   -w /opt/Megatron-Bridge \
-  "$LIGHTNING_IMAGE" bash
+  nvcr.io/nvidia/nemo:26.06.01 bash
 ```
 
 In the container, activate the bundled environment and export the paths used
