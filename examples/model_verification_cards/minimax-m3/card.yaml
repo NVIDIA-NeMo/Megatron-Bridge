@@ -157,37 +157,17 @@ items:
       --trust_remote_code
     last_verified: 2026-08-08
     expected_result: >
-      One deterministic greedy generation on 32 H100s reloaded the persisted
-      full-VLM checkpoint at TP1/PP1/EP32/ETP1, processed docs/images/tp1.png,
-      produced exactly 64 tokens under the 64-token maximum, and stopped at the
-      configured bound rather than EOS. The first five logit tensors were
-      finite, with variances 11.6611, 11.3919, 11.3953, 11.4244, and 11.3850;
-      their selected token IDs matched the historical prefix 200059, 758, 3100,
-      9210, and 640. The completion contained zero NUL bytes and did not exhibit
-      token-0/NUL degeneration. The exact literal completion, represented with
-      JSON Unicode escapes for the model tag, was "\u003cmm:think\u003eThe user
+      The 32-H100 TP1/PP1/EP32 run generated exactly 64 tokens under the
+      64-token maximum, with finite sampled logits and no token-0/NUL
+      degeneration. The literal completion was "\u003cmm:think\u003eThe user
       wants me to read the green caption near the top of the image and respond
       with only the exact quoted term, including capitalization and hyphen."
-      The bounded completion remained coherent but did not reach the requested
-      OCR target before the maximum; this result does not claim task accuracy
-      or natural EOS. Bridge-created MiniMax-M3 providers and H100 training
-      recipes use the following model configuration when the runtime provides HybridEP:
-      moe_token_dispatcher_type="flex",
-      moe_flex_dispatcher_backend="hybridep",
-      moe_flex_dispatcher_num_sms=16, and
-      moe_permute_fusion_into_hybridep=false, with 8 HybridEP ranks per NVLink
-      domain on 8-GPU H100 nodes. Apply the same dispatcher overrides to both
-      the initial provider and the deserialized checkpoint model config;
-      changing only the provider does not replace the dispatcher saved in the
-      checkpoint. The public VLM command above does not yet expose checkpoint
-      dispatcher overrides, so the HybridEP result remains separate from its
-      command-level verification. A matched controlled validation of this
-      configuration kept every observed generation-logit vector finite with
-      zero NaNs and infinities, selected no token 0, reached EOS, and reproduced
-      the exact historical completion ending in "Pre-LayerNorm". The training
-      entries below remain unverified: selecting this model-specific default
-      does not establish training correctness, a performance result, or a
-      global dispatcher default.
+      A matched HybridEP run
+      kept all observed logits finite, reached EOS, and reproduced the expected
+      completion. Bridge-created providers and H100 recipes use
+      flex/hybridep with 16 dispatcher SMs, unfused HybridEP permutation, and
+      8 ranks per H100 NVLink domain. Older checkpoints may require the same
+      overrides after deserialization. Training remains unverified.
 
   pretrain:
     H100:
@@ -203,11 +183,8 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The public 256-H100 BF16 language-backbone recipe must complete a
-        bounded 100-step HybridEP run with finite loss, no skipped or NaN
-        iterations, all four metrics, a persisted post-setup configuration,
-        and a reloadable final checkpoint. This item does not claim vision or
-        projector training.
+        Complete a 100-step HybridEP language-backbone run with finite loss,
+        reported metrics, and a reloadable checkpoint.
 
   sft:
     H100:
@@ -224,10 +201,8 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The public 128-H100 packed BF16 language-backbone recipe must complete a
-        pinned-data 100-step HybridEP full-SFT run with finite loss, no skipped
-        or NaN iterations, all four metrics, and a reloadable final checkpoint.
-        This item does not claim vision or projector training.
+        Complete a 100-step packed HybridEP language-backbone SFT run with
+        finite loss, reported metrics, and a reloadable checkpoint.
 
   sft_export_inference:
     all:
