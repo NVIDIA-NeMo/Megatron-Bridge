@@ -287,10 +287,20 @@ class NemotronOmniModel(MegatronModule):
         media_token_id: int,
         attention_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        """Replace each valid media placeholder with exactly one feature row."""
+        """Replace each valid media placeholder with exactly one feature row.
+
+        ``attention_mask`` is a token-validity mask here, not MCore's 4-D
+        causal attention mask.  Requiring an exact shape match prevents a
+        causal mask from broadcasting the placeholder mask to ``[B, 1, S, S]``.
+        """
 
         media_mask = input_ids == media_token_id
         if attention_mask is not None:
+            if attention_mask.shape != input_ids.shape:
+                raise ValueError(
+                    "The media token-validity mask must have the same shape as input_ids: "
+                    f"got mask={tuple(attention_mask.shape)}, input_ids={tuple(input_ids.shape)}."
+                )
             media_mask = media_mask & attention_mask.bool()
 
         expected_features = int(media_mask.sum().item())
@@ -679,12 +689,23 @@ class NemotronOmniModel(MegatronModule):
             if image_embeddings is None:
                 image_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
 
+            # MBridge collators use a 2-D attention mask as a token-validity
+            # mask, while NeMo RL's dense Megatron path supplies MCore's 4-D
+            # causal mask (where True means blocked).  Only the former can
+            # filter media placeholders.  Padding masks are unambiguous and
+            # take precedence for collator-owned packed inputs.
+            media_token_validity_mask = None
+            if padding_mask is not None:
+                media_token_validity_mask = ~padding_mask
+            elif attention_mask is not None and attention_mask.dim() == input_ids.dim():
+                media_token_validity_mask = attention_mask
+
             combined_embeddings = self._merge_projected_media(
                 combined_embeddings,
                 input_ids,
                 image_embeddings,
                 self.image_token_index,
-                ~padding_mask if packed_seq_params is not None and padding_mask is not None else attention_mask,
+                media_token_validity_mask,
             )
 
             if self.sound_token_index > 0:
@@ -695,7 +716,7 @@ class NemotronOmniModel(MegatronModule):
                     input_ids,
                     sound_embeddings,
                     self.sound_token_index,
-                    ~padding_mask if packed_seq_params is not None and padding_mask is not None else attention_mask,
+                    media_token_validity_mask,
                 )
 
         if packed_seq_params is not None:

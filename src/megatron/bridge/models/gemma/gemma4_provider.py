@@ -285,7 +285,7 @@ class Gemma4ModelProvider(GPTModelProvider):
     kv_channels: int = 256
     num_query_groups: int = 8
     window_size: int = 1024
-    interleaved_attn_pattern: tuple = (5, 1)
+    interleaved_attn_pattern: tuple[int, int] | list[str] = (5, 1)
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
     attention_backend: AttnBackend = AttnBackend.auto

@@ -155,6 +155,20 @@ class TestPackBatchSequences:
         assert packed["max_seqlen_q"].item() == 5
         assert packed["total_tokens"] == 8
 
+    def test_fixed_width_direct_rows_reject_aggregate_over_sequence_length(self):
+        """Fixed-width packing rejects rows whose physical aggregate cannot fit."""
+        rows = [
+            {"input_ids": torch.arange(5), "position_ids": torch.arange(5)},
+            {"input_ids": torch.arange(4), "position_ids": torch.arange(4)},
+        ]
+
+        with pytest.raises(ValueError, match="Packed sequence length 9 exceeds configured sequence_length 8"):
+            build_mcore_thd_sequence_batch_from_rows(
+                rows,
+                sequence_length=8,
+                pad_to_max_length=True,
+            )
+
     def test_packing_with_pad_to_multiple_of(self):
         """Test packing with padding to a multiple (for CP compatibility)."""
         batch_size = 2

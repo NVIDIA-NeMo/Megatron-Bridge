@@ -984,6 +984,22 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                 for role in ("system", "developer", "user", "tool")
             },
         ),
+        # OpenAI Harmony (gpt-oss). One assistant turn renders as one or more
+        # channel segments, e.g. ``<|start|>assistant<|channel|>analysis<|message|>...
+        # <|end|><|start|>assistant<|channel|>final<|message|>...<|return|>``. The
+        # start marker stops at ``<|start|>assistant`` so the loss span begins at
+        # ``<|channel|>`` and covers every channel of the turn, analysis included.
+        # The template emits ``<|start|>`` and the role separately, so the required
+        # markers use the standalone structural specials rather than a concatenated
+        # ``<|start|>assistant``. End variants cover message (``<|end|>``), final
+        # generation (``<|return|>``), and tool call (``<|call|>``) terminators.
+        (
+            ("<|start|>", "<|channel|>", "<|message|>"),
+            "<|start|>assistant",
+            "<|return|>",
+            ("<|end|>", "<|call|>"),
+            {role: f"<|start|>{role}" for role in ("system", "developer", "user", "tool")},
+        ),
     )
     for required_markers, assistant_start, assistant_end, assistant_end_fallbacks, other_role_starts in candidates:
         if not all(marker in template for marker in required_markers):
