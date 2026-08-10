@@ -141,6 +141,16 @@ def test_provider_bridge_maps_dsa_architecture_from_hf_config(
     assert provider.dsa_indexer_use_sparse_loss is True
 
 
+def test_provider_bridge_uses_hybridep_dispatcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GLM-5 avoids the affected grouped all-to-all transport path."""
+    provider = _provider_from_hf_config(monkeypatch)
+
+    assert provider.moe_token_dispatcher_type == "flex"
+    assert provider.moe_flex_dispatcher_backend == "hybridep"
+    assert provider.moe_flex_dispatcher_num_sms == 16
+    assert provider.moe_permute_fusion_into_hybridep is False
+
+
 def test_mapping_registry_includes_grouped_and_local_expert_fc2_paths(glm5_bridge: GLM5Bridge) -> None:
     """GLM-5 MoE export supports both packed and local-expert down-projection names."""
     mappings = _mapping_by_megatron_param(glm5_bridge)

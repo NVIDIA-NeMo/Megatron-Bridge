@@ -93,7 +93,10 @@ class GLM5Bridge(MegatronModelBridge):
 
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
-        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_token_dispatcher_type = "flex"
+        provider.moe_flex_dispatcher_backend = "hybridep"
+        provider.moe_flex_dispatcher_num_sms = 16
+        provider.moe_permute_fusion_into_hybridep = False
         provider.moe_router_load_balancing_type = "seq_aux_loss"
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
