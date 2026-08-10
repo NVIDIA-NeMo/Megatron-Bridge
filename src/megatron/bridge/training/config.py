@@ -1133,7 +1133,7 @@ class ConfigContainer(Container):
         )
 
     def _disable_native_energon_packing_moe_overlap(self) -> None:
-        """Disable unsupported MoE overlap settings for native Energon packing."""
+        """Disable EP overlap until packed VLM schedule plans preserve every model input."""
         enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
             self.dataset.packing_buffer_size is not None
         )
@@ -1156,7 +1156,8 @@ class ConfigContainer(Container):
 
         warnings.warn(
             "Disabling MoE expert-parallel communication overlap and delayed weight-gradient compute because "
-            "Energon native sequence packing does not yet implement the combined-1F1B VLM schedule-plan path.",
+            "overlap switches MCore to combined-1F1B schedule-plan execution, but the current VLM path does not "
+            "forward visual inputs or packed-sequence metadata through that plan.",
             stacklevel=3,
         )
         for config in overlap_configs:
@@ -1930,8 +1931,9 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     # Calculate data parallel size (needed for comm overlap methods)
     cfg.set_data_parallel_size()
 
-    # Native Energon packing cannot use MoE EP overlap. Normalize every user-facing
-    # representation before CommOverlapConfig performs its stricter setup validation.
+    # EP overlap switches MCore to combined-1F1B schedule-plan execution. The current
+    # VLM plan does not forward visual inputs or packed-sequence metadata, so clear every
+    # user-facing copy before CommOverlapConfig can apply the requested value to the model.
     cfg._disable_native_energon_packing_moe_overlap()
 
     # Apply communication overlap configuration if provided
