@@ -26,13 +26,6 @@ def test_unwrap_model_uses_fsdp_wrapper_types(monkeypatch):
     class FSDPV2(FSDPV1):
         pass
 
-    def fsdp_factory(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(
-        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallel",
-        fsdp_factory,
-    )
     monkeypatch.setattr(
         "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallelV1",
         FSDPV1,
