@@ -77,7 +77,13 @@ def _verify_pinned_subset_files(source_dir: Path, subsets: tuple[str, ...]) -> l
     """Verify known self-contained subset payloads from the pinned dataset revision."""
     verified_files: list[dict[str, object]] = []
     for subset in subsets:
-        for relative_name, (expected_size, expected_sha256) in PINNED_SUBSET_FILES.get(subset, {}).items():
+        expected_files = PINNED_SUBSET_FILES.get(subset)
+        if not expected_files:
+            raise ValueError(
+                f"No pinned source-integrity manifest is available for subset {subset!r}. "
+                "Use --skip-source-integrity-check only after verifying its provenance yourself."
+            )
+        for relative_name, (expected_size, expected_sha256) in expected_files.items():
             path = source_dir / relative_name
             if not path.is_file():
                 raise FileNotFoundError(f"Pinned source file is missing: {path}")
@@ -100,19 +106,35 @@ def _verify_pinned_subset_files(source_dir: Path, subsets: tuple[str, ...]) -> l
 class MediaResolver:
     """Resolve subset-local media paths from files or downloaded tar archives."""
 
-    def __init__(self, subset_dir: Path) -> None:
+    def __init__(
+        self,
+        subset_dir: Path,
+        *,
+        allow_loose_media: bool = True,
+        archive_paths: tuple[Path, ...] | None = None,
+    ) -> None:
         self.subset_dir = subset_dir.resolve()
+        self.allow_loose_media = allow_loose_media
         self._stack = ExitStack()
         self._members: dict[str, tuple[tarfile.TarFile, tarfile.TarInfo] | None] = {}
 
-        for archive_path in sorted((self.subset_dir / "media").rglob("*.tar")):
-            archive = self._stack.enter_context(tarfile.open(archive_path))
-            for member in archive.getmembers():
-                if not member.isfile():
-                    continue
-                normalized = self._normalize_reference(member.name)
-                self._register(normalized, archive, member)
-                self._register(PurePosixPath(normalized).name, archive, member)
+        archives = (
+            sorted(archive_paths) if archive_paths is not None else sorted((self.subset_dir / "media").rglob("*.tar"))
+        )
+        try:
+            for archive_path in archives:
+                if not archive_path.resolve().is_relative_to(self.subset_dir):
+                    raise ValueError(f"Media archive is outside subset directory {self.subset_dir}: {archive_path}")
+                archive = self._stack.enter_context(tarfile.open(archive_path))
+                for member in archive.getmembers():
+                    if not member.isfile():
+                        continue
+                    normalized = self._normalize_reference(member.name)
+                    self._register(normalized, archive, member)
+                    self._register(PurePosixPath(normalized).name, archive, member)
+        except BaseException:
+            self._stack.close()
+            raise
 
     @staticmethod
     def _normalize_reference(reference: str) -> str:
@@ -149,10 +171,11 @@ class MediaResolver:
             )
 
         normalized = self._normalize_reference(reference)
-        for relative_path in (normalized, f"media/{normalized}"):
-            candidate = (self.subset_dir / relative_path).resolve()
-            if candidate.is_relative_to(self.subset_dir) and candidate.is_file():
-                return candidate.read_bytes()
+        if self.allow_loose_media:
+            for relative_path in (normalized, f"media/{normalized}"):
+                candidate = (self.subset_dir / relative_path).resolve()
+                if candidate.is_relative_to(self.subset_dir) and candidate.is_file():
+                    return candidate.read_bytes()
 
         for key in (normalized, PurePosixPath(normalized).name):
             if key not in self._members:
@@ -267,7 +290,10 @@ def _normalize_messages(
                     raise ValueError(f"{sample_name}: text content must contain a string text field.")
                 normalized_parts.append({"type": "text", "text": text})
             elif part_type == "image":
-                images.append(resolver.read(part.get("image")))
+                image_reference = part.get("image")
+                if not isinstance(image_reference, str) or not image_reference.strip():
+                    raise ValueError(f"{sample_name}: image content must contain a non-empty image reference.")
+                images.append(resolver.read(image_reference))
                 normalized_parts.append({"type": "image"})
             elif part_type in {"video", "audio"}:
                 raise ValueError(
@@ -297,13 +323,10 @@ def _jsonl_path(subset_dir: Path, subset: str) -> Path:
 
 
 def _validate_output_dir(output_dir: Path) -> None:
-    generated_paths = [*output_dir.glob("*-shard-*.tar"), output_dir / ".nv-meta", output_dir / "manifest.json"]
-    existing = [path for path in generated_paths if path.exists()]
+    existing = sorted(output_dir.iterdir())
     if existing:
         names = ", ".join(path.name for path in existing)
-        raise FileExistsError(
-            f"Output directory contains existing generated data ({names}); choose a fresh directory."
-        )
+        raise FileExistsError(f"Output directory is not empty ({names}); choose a fresh directory.")
 
 
 def convert_subsets(
@@ -314,6 +337,8 @@ def convert_subsets(
     validation_fraction: float = 0.05,
     max_samples_per_tar: int = 1000,
     max_samples: int | None = None,
+    allow_loose_media: bool = True,
+    media_archives: dict[str, tuple[Path, ...]] | None = None,
 ) -> dict[str, int]:
     """Convert selected local subsets into raw Bridge ChatML WebDataset shards."""
     if not subsets or any(not subset.strip() for subset in subsets):
@@ -340,7 +365,14 @@ def convert_subsets(
                 if not subset_dir.is_relative_to(source_dir) or not subset_dir.is_dir():
                     raise FileNotFoundError(f"Downloaded subset directory does not exist: {subset_dir}")
                 jsonl_path = _jsonl_path(subset_dir, subset)
-                with MediaResolver(subset_dir) as resolver, jsonl_path.open(encoding="utf-8") as jsonl_file:
+                with (
+                    MediaResolver(
+                        subset_dir,
+                        allow_loose_media=allow_loose_media,
+                        archive_paths=None if media_archives is None else media_archives.get(subset, ()),
+                    ) as resolver,
+                    jsonl_path.open(encoding="utf-8") as jsonl_file,
+                ):
                     for line_number, line in enumerate(jsonl_file, start=1):
                         if max_samples is not None and total >= max_samples:
                             break
@@ -392,6 +424,18 @@ def prepare_nemotron_image_v3(
     """Convert selected subsets, optionally index them, and write dataset metadata."""
     source_dir = source_dir.resolve()
     verified_files = _verify_pinned_subset_files(source_dir, subsets) if verify_source_integrity else []
+    verified_media_archives = (
+        {
+            subset: tuple(
+                source_dir / relative_name
+                for relative_name in PINNED_SUBSET_FILES[subset]
+                if Path(relative_name).suffix == ".tar"
+            )
+            for subset in subsets
+        }
+        if verify_source_integrity
+        else None
+    )
     counts = convert_subsets(
         source_dir,
         output_dir,
@@ -399,6 +443,8 @@ def prepare_nemotron_image_v3(
         validation_fraction=validation_fraction,
         max_samples_per_tar=max_samples_per_tar,
         max_samples=max_samples,
+        allow_loose_media=not verify_source_integrity,
+        media_archives=verified_media_archives,
     )
     split_patterns = {split: f"{split}-shard-.*" for split, count in counts.items() if count > 0}
     if run_prepare:
@@ -414,6 +460,7 @@ def prepare_nemotron_image_v3(
         "validation_fraction": validation_fraction,
         "max_samples": max_samples,
         "counts": counts,
+        "source_integrity_verified": verify_source_integrity,
         "verified_source_files": verified_files,
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -432,6 +479,11 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=None, help="Optional global cap across selected subsets")
     parser.add_argument("--num-workers", type=int, default=2, help="Workers used by Energon indexing")
     parser.add_argument("--skip-energon-prepare", action="store_true", help="Write raw shards without Energon indexes")
+    parser.add_argument(
+        "--skip-source-integrity-check",
+        action="store_true",
+        help="Allow unpinned subsets and loose media after verifying their provenance yourself",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -444,6 +496,7 @@ def main() -> None:
         max_samples=args.max_samples,
         num_workers=args.num_workers,
         run_prepare=not args.skip_energon_prepare,
+        verify_source_integrity=not args.skip_source_integrity_check,
     )
 
 

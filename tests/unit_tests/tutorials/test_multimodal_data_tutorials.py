@@ -324,6 +324,13 @@ def test_nemotron_image_v3_preparation_joins_jsonl_and_media_tar(tmp_path: Path)
             info = tarfile.TarInfo(record["image_name"])
             info.size = len(payload)
             archive.addfile(info, io.BytesIO(payload))
+            (subset_dir / record["image_name"]).write_bytes(b"unverified loose-file shadow")
+    with tarfile.open(media_dir / "unverified-shadow.tar", "w") as archive:
+        for record in records:
+            payload = b"unverified archive shadow"
+            info = tarfile.TarInfo(record["image_name"])
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
     (subset_dir / "turing.jsonl").write_text(
         "".join(json.dumps({"id": record["id"], "messages": record["messages"]}) + "\n" for record in records),
         encoding="utf-8",
@@ -369,6 +376,7 @@ def test_nemotron_image_v3_preparation_joins_jsonl_and_media_tar(tmp_path: Path)
         "validation_fraction": 0.5,
         "max_samples": None,
         "counts": {"train": 2, "val": 2},
+        "source_integrity_verified": True,
         "verified_source_files": [
             {
                 "path": str(path.relative_to(source_dir)),
@@ -383,6 +391,162 @@ def test_nemotron_image_v3_preparation_joins_jsonl_and_media_tar(tmp_path: Path)
     assert "conversation: json" in dataset_yaml
 
 
+def test_nemotron_image_v3_prepare_indexes_only_nonempty_splits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+    source_dir = tmp_path / "source"
+    subset_dir = source_dir / "custom"
+    subset_dir.mkdir(parents=True)
+    (subset_dir / "image.png").write_bytes(b"image")
+    (subset_dir / "custom.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "sample",
+                "messages": [
+                    {"role": "user", "content": [{"type": "image", "image": "image.png"}]},
+                    {"role": "assistant", "content": "answer"},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+    prepare = module["prepare_nemotron_image_v3"]
+    monkeypatch.setitem(
+        prepare.__globals__,
+        "prepare_webdataset",
+        lambda path, patterns, *, num_workers: calls.append((path, patterns, num_workers)),
+    )
+
+    counts = prepare(
+        source_dir,
+        tmp_path / "energon",
+        subsets=("custom",),
+        validation_fraction=0,
+        num_workers=3,
+        verify_source_integrity=False,
+    )
+
+    assert counts == {"train": 1, "val": 0}
+    assert calls == [(tmp_path / "energon", {"train": "train-shard-.*"}, 3)]
+    manifest = json.loads((tmp_path / "energon" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_integrity_verified"] is False
+
+
+def test_nemotron_image_v3_integrity_check_rejects_unpinned_subset(tmp_path: Path):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+
+    with pytest.raises(ValueError, match="No pinned source-integrity manifest"):
+        module["prepare_nemotron_image_v3"](
+            tmp_path,
+            tmp_path / "energon",
+            subsets=("custom",),
+            run_prepare=False,
+        )
+
+
+def test_nemotron_image_v3_integrity_check_rejects_invalid_pinned_file(tmp_path: Path):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+    source_file = tmp_path / "custom" / "data.jsonl"
+    module["PINNED_SUBSET_FILES"]["custom"] = {"custom/data.jsonl": (7, "0" * 64)}
+
+    with pytest.raises(FileNotFoundError, match="Pinned source file is missing"):
+        module["_verify_pinned_subset_files"](tmp_path, ("custom",))
+
+    source_file.parent.mkdir()
+    source_file.write_bytes(b"payload")
+    module["PINNED_SUBSET_FILES"]["custom"] = {"custom/data.jsonl": (8, "0" * 64)}
+    with pytest.raises(RuntimeError, match="has 7 bytes; expected 8"):
+        module["_verify_pinned_subset_files"](tmp_path, ("custom",))
+
+    module["PINNED_SUBSET_FILES"]["custom"] = {"custom/data.jsonl": (7, "0" * 64)}
+    with pytest.raises(RuntimeError, match="SHA-256"):
+        module["_verify_pinned_subset_files"](tmp_path, ("custom",))
+
+
+@pytest.mark.parametrize("media_type", ["video", "audio"])
+def test_nemotron_image_v3_rejects_nonimage_media(tmp_path: Path, media_type: str):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+
+    with module["MediaResolver"](tmp_path) as resolver:
+        with pytest.raises(ValueError, match=f"{media_type} content is outside"):
+            module["_normalize_messages"](
+                [{"role": "user", "content": [{"type": media_type, media_type: "media.bin"}]}],
+                resolver=resolver,
+                sample_name="sample",
+            )
+
+
+@pytest.mark.parametrize("image_reference", [None, "", 7])
+def test_nemotron_image_v3_rejects_invalid_image_reference(tmp_path: Path, image_reference: object):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+
+    with module["MediaResolver"](tmp_path) as resolver:
+        with pytest.raises(ValueError, match="image content must contain a non-empty image reference"):
+            module["_normalize_messages"](
+                [{"role": "user", "content": [{"type": "image", "image": image_reference}]}],
+                resolver=resolver,
+                sample_name="sample",
+            )
+
+
+def test_nemotron_image_v3_rejects_remote_and_ambiguous_media(tmp_path: Path):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    for archive_name, member_name in (("first.tar", "a/image.png"), ("second.tar", "b/image.png")):
+        with tarfile.open(media_dir / archive_name, "w") as archive:
+            payload = archive_name.encode()
+            info = tarfile.TarInfo(member_name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+
+    with module["MediaResolver"](tmp_path) as resolver:
+        with pytest.raises(FileNotFoundError, match="Remote media reference"):
+            resolver.read("https://example.com/image.png")
+        with pytest.raises(ValueError, match="ambiguous across downloaded archives"):
+            resolver.read("image.png")
+
+
+def test_nemotron_image_v3_rejects_archive_outside_subset_and_closes_opened_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+    subset_dir = tmp_path / "subset"
+    subset_dir.mkdir()
+    inside_archive_path = subset_dir / "inside.tar"
+    archive_path = tmp_path / "z-outside.tar"
+    for path in (inside_archive_path, archive_path):
+        with tarfile.open(path, "w"):
+            pass
+
+    opened_archives = []
+    real_tar_open = tarfile.open
+
+    def tracking_tar_open(*args, **kwargs):
+        archive = real_tar_open(*args, **kwargs)
+        opened_archives.append(archive)
+        return archive
+
+    monkeypatch.setattr(tarfile, "open", tracking_tar_open)
+
+    with pytest.raises(ValueError, match="Media archive is outside subset directory"):
+        module["MediaResolver"](subset_dir, archive_paths=(inside_archive_path, archive_path))
+
+    assert len(opened_archives) == 1
+    assert opened_archives[0].closed is True
+
+
+def test_nemotron_image_v3_rejects_stale_tgz_output(tmp_path: Path):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_nemotron_image_v3.py"))
+    output_dir = tmp_path / "energon"
+    output_dir.mkdir()
+    (output_dir / "train-shard-stale.tgz").write_bytes(b"stale")
+
+    with pytest.raises(FileExistsError, match="Output directory is not empty"):
+        module["_validate_output_dir"](output_dir)
+
+
 def test_nemotron_image_v3_tutorial_wires_pinned_subset_to_qwen_train_sh():
     tutorial = NEMOTRON_IMAGE_V3_TUTORIAL.read_text(encoding="utf-8")
 
@@ -391,6 +555,7 @@ def test_nemotron_image_v3_tutorial_wires_pinned_subset_to_qwen_train_sh():
     assert '--include "turing/**"' in tutorial
     assert "prepare_nemotron_image_v3.py" in tutorial
     assert "SHA-256" in tutorial
+    assert "--skip-source-integrity-check" in tutorial
     assert "./scripts/training/train.sh" in tutorial
     assert "qwen3_vl_8b_peft_energon_config" in tutorial
     assert "--step-func vlm_step" in tutorial

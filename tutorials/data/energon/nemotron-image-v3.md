@@ -74,11 +74,14 @@ find "$ENERGON_PATH/.nv-meta" -maxdepth 1 -type f -print
 
 `manifest.json` pins the dataset revision, selected subsets, split fraction, optional sample cap, and output counts.
 Use `--max-samples N` for a smaller converter smoke. If that cap selects no validation records, increase the cap or
-set `--validation-fraction 0` and disable validation in the launch. The converter refuses to reuse an output directory
-that already contains generated shards or metadata, preventing stale indexes from being mixed with new data.
+set `--validation-fraction 0` and disable validation in the launch. The converter requires an empty output directory,
+preventing stale shards, indexes, or unrelated files from being mixed with new data.
 
 To prepare another image-only subset, download both its JSONL and the media layout specified by its subset card, then
-add its directory name after `--subsets`. Video and audio rows are rejected by this image-focused Qwen3-VL tutorial
+add its directory name after `--subsets` and pass `--skip-source-integrity-check` after verifying its provenance
+yourself. The converter's built-in size and SHA-256 manifest currently covers only `turing`; in verified mode it reads
+media only from that verified archive, so an unrelated loose file cannot shadow an archive member. Video and audio rows
+are rejected by this image-focused Qwen3-VL tutorial
 rather than being silently dropped.
 
 ## 3. Import the Qwen3-VL checkpoint
