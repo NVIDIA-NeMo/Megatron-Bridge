@@ -38,8 +38,10 @@ from megatron.bridge.perf_recipes.qwen.b300.qwen3_moe import (
 )
 from megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_ncclep_config,
     qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_ncclep_config,
     qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config,
     qwen3_30b_a3b_pretrain_16gpu_gb200_bf16_dev_config,
     qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_paged_stash_dev_config,

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -244,6 +244,16 @@ def _apply_flat_cli_environment_compatibility(
     cp_size = getattr(model, "context_parallel_size", 1) or 1
     ep_size = getattr(model, "expert_model_parallel_size", 1) or 1
     gpu = args.gpu.lower()
+    effective_dispatcher_backend = getattr(model, "moe_flex_dispatcher_backend", base_dispatcher_backend)
+
+    if effective_dispatcher_backend != "hybridep":
+        for name in (
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+            "NVLINK_DOMAIN_SIZE",
+            "USE_MNNVL",
+        ):
+            _remove_recipe_env(recipe, name, protected)
 
     connection_override = any(
         value is not None
@@ -255,14 +265,14 @@ def _apply_flat_cli_environment_compatibility(
     )
     if connection_override:
         moe_a2a_overlap = args.moe_a2a_overlap if args.moe_a2a_overlap is not None else base_moe_a2a_overlap
-        max_connections = 32 if base_dispatcher_backend in {"deepep", "hybridep"} else 8
+        max_connections = 32 if effective_dispatcher_backend in {"deepep", "hybridep", "ncclep"} else 8
         if gpu in {"b200", "b300", "gb200", "gb300", "vr200"}:
             max_connections = 32
         elif (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
             max_connections = 1
         _set_recipe_env(recipe, "CUDA_DEVICE_MAX_CONNECTIONS", max_connections, protected)
 
-    if args.expert_model_parallel_size is not None and base_dispatcher_backend == "hybridep":
+    if args.expert_model_parallel_size is not None and effective_dispatcher_backend == "hybridep":
         if ep_size <= 0:
             raise ValueError("HybridEP expert parallel size must be positive.")
         if gpu in {"h100", "b200", "b300"}:

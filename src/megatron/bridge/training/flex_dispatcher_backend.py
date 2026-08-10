@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,18 +34,19 @@ def apply_flex_dispatcher_backend(
     model_config: TransformerConfig,
     moe_flex_dispatcher_backend: str | None = None,
 ) -> None:
-    """Apply DeepEP or HybridEP optimizations to the model config.
+    """Apply a supported flex dispatcher backend to the model config.
 
     DeepEP is applicable only for MoE models on Ampere, Hopper, B200 and B300 GPUs.
     HybridEP is applicable only for MoE models on GB200, GB300 with NVL72 and on Ampere, Hopper, B200 and B300 GPUs.
+    NCCL EP is applicable only for MoE models on Hopper and Blackwell GPUs.
     """
     num_moe_experts = getattr(model_config, "num_moe_experts", None)
     if num_moe_experts is None or num_moe_experts == 0:
         if get_rank_safe() == 0:
             logger.warning(
-                "DeepEP and HybridEP are only applicable to MoE models. "
+                "Flex dispatcher backends are only applicable to MoE models. "
                 "Model config does not use MoE (num_moe_experts is not set or is 0). "
-                "Skipping DeepEP configuration."
+                "Skipping flex dispatcher configuration."
             )
         return
 
@@ -70,9 +71,26 @@ def apply_flex_dispatcher_backend(
                 )
             _fallback_to_alltoall(model_config)
             return
+    elif moe_flex_dispatcher_backend == "ncclep":
+        if device_properties.major not in [9, 10]:
+            if get_rank_safe() == 0:
+                logger.warning(
+                    f"NCCL EP is only applicable to Hopper and Blackwell GPUs. "
+                    f"Current GPU: {device_properties.name}. Falling back to alltoall."
+                )
+            _fallback_to_alltoall(model_config)
+            return
+        if getattr(model_config, "moe_expert_rank_capacity_factor", None) is None:
+            raise ValueError(
+                "NCCL EP requires moe_expert_rank_capacity_factor to size its receive buffer. "
+                "Set it explicitly for the workload before enabling the ncclep backend."
+            )
     else:
         if get_rank_safe() == 0:
-            logger.warning("Not a valid flex dispatcher backend. Skipping flex dispatcher backend configuration.")
+            logger.warning(
+                "Not a valid flex dispatcher backend. Expected one of deepep, hybridep, or ncclep. "
+                "Skipping flex dispatcher backend configuration."
+            )
         return
 
     model_config.moe_token_dispatcher_type = "flex"
@@ -81,7 +99,7 @@ def apply_flex_dispatcher_backend(
 
 
 def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
-    """Validate DeepEP or HybridEP is supported for the current GPU architecture."""
+    """Validate the selected flex dispatcher backend for the current GPU architecture."""
     if model_config.moe_token_dispatcher_type == "flex":
         device_properties = torch.cuda.get_device_properties(0)
         if model_config.moe_flex_dispatcher_backend == "deepep":
@@ -97,4 +115,10 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
             if not device_properties.major in [8, 9, 10]:
                 raise ValueError(
                     "HybridEP is supported for GB200, GB300 with NVL72 and for Ampere, Hopper, B200 and B300 GPUs"
+                )
+
+        if model_config.moe_flex_dispatcher_backend == "ncclep":
+            if device_properties.major not in [9, 10]:
+                raise ValueError(
+                    f"NCCL EP is supported for Hopper and Blackwell GPUs. Current GPU: {device_properties.name}"
                 )

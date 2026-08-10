@@ -288,7 +288,7 @@ def apply_target_topology_environment(
     gpu: str,
     protected_env_names: set[str] | None = None,
 ) -> None:
-    """Adapt only HybridEP topology for the launch target.
+    """Adapt only HybridEP environment settings for the launch target.
 
     Some hardware targets reuse a recipe whose static defaults describe H100.
     This step changes only the final HybridEP topology for the selected target;
@@ -297,6 +297,7 @@ def apply_target_topology_environment(
     """
     topology_names = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
         "NVLINK_DOMAIN_SIZE",
         "USE_MNNVL",
     }
@@ -388,9 +389,9 @@ def apply_argparse_overrides(config: Any, args: Any) -> Any:
 
     dispatcher_backend = getattr(args, "moe_flex_dispatcher_backend", -1)
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
-    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+    if dispatcher_backend in {"deepep", "hybridep", "ncclep"} and num_moe_experts not in {None, 0}:
         config.model.moe_flex_dispatcher_backend = dispatcher_backend
-    elif dispatcher_backend in {"deepep", "hybridep"}:
+    elif dispatcher_backend in {"deepep", "hybridep", "ncclep"}:
         logger.warning("Ignoring flex dispatcher override for a model without MoE experts.")
     elif dispatcher_backend is None:
         config.model.moe_flex_dispatcher_backend = None
@@ -414,7 +415,12 @@ def finalize_config_overrides(config: Any) -> Any:
 
     dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
-    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+    if dispatcher_backend in {"deepep", "hybridep", "ncclep"} and num_moe_experts not in {None, 0}:
+        if dispatcher_backend == "ncclep" and getattr(config.model, "moe_expert_rank_capacity_factor", None) is None:
+            raise ValueError(
+                "NCCL EP requires model.moe_expert_rank_capacity_factor to size its receive buffer. "
+                "Set it explicitly for the workload before enabling the ncclep backend."
+            )
         config.model.moe_token_dispatcher_type = "flex"
         config.model.moe_shared_expert_overlap = False
     elif dispatcher_backend is None and getattr(config.model, "moe_token_dispatcher_type", None) == "flex":
