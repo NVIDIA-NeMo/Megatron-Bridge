@@ -141,6 +141,16 @@ def test_provider_bridge_maps_dsa_architecture_from_hf_config(
     assert provider.dsa_indexer_use_sparse_loss is True
 
 
+def test_provider_bridge_uses_hybridep_dispatcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GLM-5 avoids the affected grouped all-to-all transport path."""
+    provider = _provider_from_hf_config(monkeypatch)
+
+    assert provider.moe_token_dispatcher_type == "flex"
+    assert provider.moe_flex_dispatcher_backend == "hybridep"
+    assert provider.moe_flex_dispatcher_num_sms == 16
+    assert provider.moe_permute_fusion_into_hybridep is False
+
+
 def test_mapping_registry_includes_grouped_and_local_expert_fc2_paths(glm5_bridge: GLM5Bridge) -> None:
     """GLM-5 MoE export supports both packed and local-expert down-projection names."""
     mappings = _mapping_by_megatron_param(glm5_bridge)
@@ -260,9 +270,15 @@ def test_mapping_registry_includes_mtp_standalone_weights(glm5_bridge: GLM5Bridg
         assert mapping.hf_param == hf_param
 
 
-def test_mapping_registry_omits_mtp_mappings_without_nextn_layers() -> None:
+@pytest.mark.parametrize("num_nextn_predict_layers", [0, None])
+def test_mapping_registry_omits_mtp_mappings_without_nextn_layers(
+    num_nextn_predict_layers: int | None,
+) -> None:
     """No MTP mappings are registered when the HF config has no MTP layers."""
     bridge = GLM5Bridge()
-    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=0)
+    bridge.hf_config = SimpleNamespace(
+        num_hidden_layers=4,
+        num_nextn_predict_layers=num_nextn_predict_layers,
+    )
 
     assert all(not mapping.megatron_param.startswith("mtp.") for mapping in bridge.mapping_registry())
