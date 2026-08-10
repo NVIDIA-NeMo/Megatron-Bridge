@@ -26,6 +26,7 @@ from typing import Any
 
 import torch
 
+from megatron.bridge.models.bagel.checkpoint import initialize_bagel_from_native_checkpoint
 from megatron.bridge.models.bagel.modeling import (
     BagelDiffusionSubmodule,
     BagelVisionSubmodule,
@@ -93,6 +94,8 @@ class BagelModelProvider(GPTModelProvider):
     native_model_seed: int | None = None
     native_world_size: int | None = None
     validate_native_checkpoint_metadata: bool = True
+    reference_training_seed: int | None = None
+    reference_training_world_size: int | None = None
     reset_reference_training_rng: bool = False
 
     def finalize(self) -> None:
@@ -109,12 +112,18 @@ class BagelModelProvider(GPTModelProvider):
                 raise ValueError("BAGEL native seed/world size require native_model_checkpoint")
             if not self.validate_native_checkpoint_metadata:
                 raise ValueError("BAGEL metadata validation override requires native_model_checkpoint")
-            if self.reset_reference_training_rng:
-                raise ValueError("BAGEL reference RNG reset requires native_model_checkpoint")
         elif self.native_model_seed is None or self.native_world_size is None:
             raise ValueError("BAGEL native checkpoint requires native_model_seed and native_world_size")
         elif self.native_model_seed <= 0 or self.native_world_size <= 0:
             raise ValueError("BAGEL native_model_seed and native_world_size must be positive")
+        reference_identity = (self.reference_training_seed, self.reference_training_world_size)
+        if self.reset_reference_training_rng:
+            if None in reference_identity:
+                raise ValueError("BAGEL reference RNG reset requires reference seed and world size")
+            if self.reference_training_seed <= 0 or self.reference_training_world_size <= 0:
+                raise ValueError("BAGEL reference training seed and world size must be positive")
+        elif reference_identity != (None, None):
+            raise ValueError("BAGEL reference seed/world size require reset_reference_training_rng")
         self.sequence_parallel = False
         self.variable_seq_lengths = True
         super().finalize()
@@ -318,8 +327,6 @@ class BagelModelProvider(GPTModelProvider):
         if output_projection.bias is not None:
             torch.nn.init.zeros_(output_projection.bias)
         if self.native_model_checkpoint is not None:
-            from examples.mimo_bagel.utils.native_checkpoint import initialize_bagel_from_native_checkpoint
-
             report = initialize_bagel_from_native_checkpoint(
                 model,
                 self.native_model_checkpoint,

@@ -36,6 +36,22 @@ def _seed_reference_training_rng(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def _initialize_scheduler(scheduler: BagelDiffusionScheduler) -> None:
+    """Initialize the VAE without changing restored training RNG state."""
+    python_rng = random.getstate()
+    numpy_rng = np.random.get_state()
+    torch_rng = torch.get_rng_state()
+    cuda_rng = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
+    try:
+        scheduler.initialize()
+    finally:
+        random.setstate(python_rng)
+        np.random.set_state(numpy_rng)
+        torch.set_rng_state(torch_rng)
+        if cuda_rng is not None:
+            torch.cuda.set_rng_state(cuda_rng)
+
+
 def bagel_loss(
     ce_loss: torch.Tensor,
     *,
@@ -106,15 +122,15 @@ class BagelForwardStep:
                 timestep_shift=config.timestep_shift,
                 dtype=config.params_dtype,
             )
-            self.scheduler.initialize()
+            _initialize_scheduler(self.scheduler)
         if config.reset_reference_training_rng and not self.reference_rng_seeded:
             if state.train_state.step == 0:
                 world_size = torch.distributed.get_world_size()
-                if config.native_world_size != world_size:
-                    raise RuntimeError("BAGEL native checkpoint world size differs from the training world size")
+                if config.reference_training_world_size != world_size:
+                    raise RuntimeError("BAGEL reference world size differs from the training world size")
                 model_seed = state.cfg.rng.seed * world_size
-                if config.native_model_seed != model_seed:
-                    raise RuntimeError("BAGEL native checkpoint seed differs from the training seed")
+                if config.reference_training_seed != model_seed:
+                    raise RuntimeError("BAGEL reference seed differs from the training seed")
                 _seed_reference_training_rng(model_seed + torch.distributed.get_rank())
             self.reference_rng_seeded = True
 

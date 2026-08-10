@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import torch
 from megatron.energon import WorkerConfig, get_train_dataset
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
@@ -32,6 +34,22 @@ from megatron.bridge.models.bagel.data.energon import (
 from megatron.bridge.models.bagel.data.external import BagelExternalLoader, BagelRNGIterator
 from megatron.bridge.models.bagel.data.order import BagelPlannedLoader, plan_manifest_indices
 from megatron.bridge.models.bagel.data.packing import BagelPacker
+from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
+
+
+logger = logging.getLogger(__name__)
+
+
+def _restore_loader(loader: BagelExternalLoader, checkpoint_root: str, dp_rank: int) -> None:
+    """Restore one DP rank's BAGEL dataloader from the latest training checkpoint."""
+    tracker = Path(checkpoint_root) / "latest_checkpointed_iteration.txt"
+    iteration = int(tracker.read_text(encoding="utf-8"))
+    if iteration == 0:
+        return
+    state_path = Path(get_checkpoint_name(checkpoint_root, iteration)) / f"train_dataloader_dprank{dp_rank:03d}.pt"
+    payload = torch.load(state_path, map_location="cpu", weights_only=False)
+    loader.restore_state(payload["dataloader_state_dict"])
+    logger.info("Restored BAGEL dataloader state from %s", state_path)
 
 
 @dataclass(kw_only=True)
@@ -59,6 +77,8 @@ class BagelDatasetConfig(DatasetProvider):
     num_workers: int = 0
     pin_memory: bool = False
     persistent_workers: bool = False
+    dataloader_save: str | None = None
+    dataloader_load: str | None = None
 
     @staticmethod
     def _raw_dataset(path: Path, task_encoder: object, worker_config: WorkerConfig) -> object:
@@ -152,12 +172,11 @@ class BagelDatasetConfig(DatasetProvider):
             vae_cond_dropout_prob=self.vae_cond_dropout_prob,
         )
         isolated_packer = BagelRNGIterator(packer, self.seed * dp_size + dp_rank)
-        return (
-            BagelExternalLoader(
-                isolated_packer,
-                length=context.train_samples,
-                stateful_loaders=source_loaders,
-            ),
-            None,
-            None,
+        loader = BagelExternalLoader(
+            isolated_packer,
+            length=context.train_samples,
+            stateful_loaders=source_loaders,
         )
+        if self.dataloader_load is not None:
+            _restore_loader(loader, self.dataloader_load, dp_rank)
+        return loader, None, None

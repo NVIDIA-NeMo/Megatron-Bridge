@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-iters", type=int, default=1)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--forward-output-prefix", type=Path)
     return parser.parse_args()
 
 
@@ -46,6 +47,14 @@ def main() -> None:
     output = args.output.resolve()
     if output.exists():
         raise ValueError(f"Output already exists: {output}")
+    rank = int(os.environ["RANK"])
+    forward_output = None
+    if args.forward_output_prefix is not None:
+        prefix = args.forward_output_prefix.resolve()
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        forward_output = Path(f"{prefix}.rank{rank}.pt")
+        if forward_output.exists():
+            raise ValueError(f"Forward output already exists: {forward_output}")
     bridge_root = Path(__file__).resolve().parents[3]
     sys.path.insert(0, str(bridge_root / "examples" / "models" / "bagel" / "data"))
     from dump_official_order import configure_official_data
@@ -59,8 +68,10 @@ def main() -> None:
     rank_seed = args.seed * int(os.environ["WORLD_SIZE"]) + int(os.environ["RANK"])
     original_safe_load = official.yaml.safe_load
     original_data_loader = official.DataLoader
+    original_load_ae = official.load_ae
     original_forward = official.Bagel.forward
     reference_rng_seeded = False
+    forward_captured = False
 
     def load_dataset_meta(stream):
         metadata = original_safe_load(stream)
@@ -71,21 +82,36 @@ def main() -> None:
         loader_kwargs["generator"] = torch.Generator().manual_seed(rank_seed)
         return original_data_loader(*loader_args, **loader_kwargs)
 
+    def load_reference_vae(*vae_args, **vae_kwargs):
+        vae, params = original_load_ae(*vae_args, **vae_kwargs)
+        original_encode = vae.encode
+
+        def reference_encode(*encode_args, **encode_kwargs):
+            nonlocal reference_rng_seeded
+            if not reference_rng_seeded:
+                random.seed(rank_seed)
+                np.random.seed(rank_seed % (2**32))
+                torch.manual_seed(rank_seed)
+                reference_rng_seeded = True
+            return original_encode(*encode_args, **encode_kwargs)
+
+        vae.encode = reference_encode
+        return vae, params
+
     def reference_forward(model, *model_args, **model_kwargs):
-        nonlocal reference_rng_seeded
+        nonlocal forward_captured
         official.wandb.log = record_metrics
-        if not reference_rng_seeded:
-            random.seed(rank_seed)
-            np.random.seed(rank_seed % (2**32))
-            torch.manual_seed(rank_seed)
-            reference_rng_seeded = True
-        return original_forward(model, *model_args, **model_kwargs)
+        result = original_forward(model, *model_args, **model_kwargs)
+        if forward_output is not None and not forward_captured:
+            torch.save({name: result[name].detach().float().cpu() for name in ("ce", "mse")}, forward_output)
+            forward_captured = True
+        return result
 
     def skip_checkpoint(**_kwargs):
         return None
 
     def record_metrics(metrics, step):
-        if int(os.environ["RANK"]) == 0:
+        if rank == 0:
             keys = ("ce", "mse", "lr", "total_norm", "total_mse_tokens", "total_ce_tokens", "total_samples")
             row = {"step": step, **{key: metrics[key] for key in keys}}
             with output.open("a", encoding="utf-8") as stream:
@@ -93,6 +119,7 @@ def main() -> None:
 
     official.yaml.safe_load = load_dataset_meta
     official.DataLoader = build_data_loader
+    official.load_ae = load_reference_vae
     official.Bagel.forward = reference_forward
     official.FSDPCheckpoint.fsdp_save_ckpt = staticmethod(skip_checkpoint)
     official.wandb.log = record_metrics
@@ -100,6 +127,7 @@ def main() -> None:
     original_argv = sys.argv
     with tempfile.TemporaryDirectory(prefix="bagel-official-", dir=output.parent) as temporary_dir:
         temporary_path = Path(temporary_dir)
+        os.environ["WANDB_DIR"] = str(temporary_path)
         sys.argv = [
             str(Path(official.__file__).resolve()),
             "--model_path",

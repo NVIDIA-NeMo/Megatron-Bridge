@@ -228,73 +228,69 @@ def verify_restore(
     encoders: list[object],
     special_tokens: dict[str, int],
 ) -> None:
-    """Verify an exact DP1/worker1 suffix after external-loader state restoration."""
-    if args.world_size != 1 or args.num_workers != 1:
-        raise ValueError("save/restore verification currently requires DP1/worker1")
+    """Verify each DP rank's exact suffix after worker1 state restoration."""
+    if args.num_workers != 1:
+        raise ValueError("save/restore verification currently requires worker1")
     generator = torch.Generator().manual_seed(args.seed)
     torch_initial_seed = torch.empty((), dtype=torch.int64).random_(generator=generator).item()
-    prefix = f"official_seed{args.seed}_dp1_w1_rank0"
+    for rank in range(args.world_size):
+        prefix = f"official_seed{args.seed}_dp{args.world_size}_w1_rank{rank}"
+        with patch("torch.utils.data.get_worker_info", return_value=None):
+            packer, source_loaders = build_worker_pipeline(
+                args.dataset_root,
+                encoders,
+                special_tokens,
+                seed=args.seed,
+                rank=rank,
+                world_size=args.world_size,
+                worker_id=0,
+                num_workers=1,
+            )
+            set_worker_rng(torch_initial_seed, 0)
+            loader = BagelExternalLoader(packer, length=args.num_batches, stateful_loaders=source_loaders)
+            suffix = []
+            saved_state = None
+            with (
+                (args.official_root / f"{prefix}_{args.num_batches}.jsonl").open(encoding="utf-8") as official_stream,
+                (args.official_root / f"{prefix}_tensor_digests.jsonl").open(encoding="utf-8") as digest_stream,
+            ):
+                for step in range(args.num_batches):
+                    line = validate_batch(next(loader), step, official_stream, digest_stream)
+                    if step + 1 == args.save_after:
+                        saved_state = loader.save_state()
+                    elif step + 1 > args.save_after:
+                        suffix.append(line)
 
-    with patch("torch.utils.data.get_worker_info", return_value=None):
-        packer, source_loaders = build_worker_pipeline(
-            args.dataset_root,
-            encoders,
-            special_tokens,
-            seed=args.seed,
-            rank=0,
-            world_size=1,
-            worker_id=0,
-            num_workers=1,
-        )
-        set_worker_rng(torch_initial_seed, 0)
-        loader = BagelExternalLoader(
-            packer,
-            length=args.num_batches,
-            stateful_loaders=source_loaders,
-        )
-        suffix = []
-        saved_state = None
-        with (
-            (args.official_root / f"{prefix}_{args.num_batches}.jsonl").open(encoding="utf-8") as official_stream,
-            (args.official_root / f"{prefix}_tensor_digests.jsonl").open(encoding="utf-8") as digest_stream,
-        ):
-            for step in range(args.num_batches):
-                line = validate_batch(next(loader), step, official_stream, digest_stream)
-                if step + 1 == args.save_after:
-                    saved_state = loader.save_state()
-                elif step + 1 > args.save_after:
-                    suffix.append(line)
-
-        restored_packer, restored_sources = build_worker_pipeline(
-            args.dataset_root,
-            encoders,
-            special_tokens,
-            seed=args.seed,
-            rank=0,
-            world_size=1,
-            worker_id=0,
-            num_workers=1,
-        )
-        restored = BagelExternalLoader(
-            restored_packer,
-            length=args.num_batches,
-            stateful_loaders=restored_sources,
-        )
-        restored.restore_state(saved_state)
-        with (
-            (args.official_root / f"{prefix}_{args.num_batches}.jsonl").open(encoding="utf-8") as official_stream,
-            (args.official_root / f"{prefix}_tensor_digests.jsonl").open(encoding="utf-8") as digest_stream,
-        ):
-            for _ in range(args.save_after):
-                next(official_stream)
-                next(digest_stream)
-            restored_suffix = [
-                validate_batch(next(restored), step, official_stream, digest_stream)
-                for step in range(args.save_after, args.num_batches)
-            ]
-    if restored_suffix != suffix:
-        raise ValueError("independent restored packed-batch suffix differs")
-    logger.info("Independently restored the exact %d-batch suffix", len(restored_suffix))
+            restored_packer, restored_sources = build_worker_pipeline(
+                args.dataset_root,
+                encoders,
+                special_tokens,
+                seed=args.seed,
+                rank=rank,
+                world_size=args.world_size,
+                worker_id=0,
+                num_workers=1,
+            )
+            restored = BagelExternalLoader(
+                restored_packer,
+                length=args.num_batches,
+                stateful_loaders=restored_sources,
+            )
+            restored.restore_state(saved_state)
+            with (
+                (args.official_root / f"{prefix}_{args.num_batches}.jsonl").open(encoding="utf-8") as official_stream,
+                (args.official_root / f"{prefix}_tensor_digests.jsonl").open(encoding="utf-8") as digest_stream,
+            ):
+                for _ in range(args.save_after):
+                    next(official_stream)
+                    next(digest_stream)
+                restored_suffix = [
+                    validate_batch(next(restored), step, official_stream, digest_stream)
+                    for step in range(args.save_after, args.num_batches)
+                ]
+        if restored_suffix != suffix:
+            raise ValueError(f"rank {rank} restored packed-batch suffix differs")
+        logger.info("Rank %d independently restored the exact %d-batch suffix", rank, len(restored_suffix))
 
 
 def main() -> None:

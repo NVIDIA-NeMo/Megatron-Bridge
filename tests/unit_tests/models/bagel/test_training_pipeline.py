@@ -20,7 +20,7 @@ import pytest
 import torch
 from torch.utils.data._utils.worker import _generate_state
 
-from megatron.bridge.models.bagel.bagel_step import _seed_reference_training_rng, bagel_loss
+from megatron.bridge.models.bagel.bagel_step import _initialize_scheduler, _seed_reference_training_rng, bagel_loss
 from megatron.bridge.models.bagel.data.batch import _attention_metadata
 from megatron.bridge.models.bagel.data.external import BagelRNGIterator
 from megatron.bridge.models.bagel.diffusion import BagelDiffusionScheduler
@@ -156,6 +156,21 @@ def test_provider_requires_checkpoint_for_metadata_override():
         provider.finalize()
 
 
+def test_provider_allows_reference_rng_without_native_checkpoint():
+    provider = BagelModelProvider(
+        reference_training_seed=336,
+        reference_training_world_size=8,
+        reset_reference_training_rng=True,
+    )
+    provider.finalize()
+
+
+def test_provider_requires_complete_reference_rng_identity():
+    provider = BagelModelProvider(reference_training_seed=336, reset_reference_training_rng=True)
+    with pytest.raises(ValueError, match="reference seed and world size"):
+        provider.finalize()
+
+
 def test_reference_training_rng_matches_official_seed():
     _seed_reference_training_rng(42)
     actual = _draw_process_rng()
@@ -163,6 +178,28 @@ def test_reference_training_rng_matches_official_seed():
     np.random.seed(42)
     torch.manual_seed(42)
     assert actual == _draw_process_rng()
+
+
+def test_scheduler_initialization_preserves_process_rng(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    class Scheduler:
+        @staticmethod
+        def initialize():
+            random.random()
+            np.random.random()
+            torch.rand(1)
+
+    random.seed(11)
+    np.random.seed(12)
+    torch.manual_seed(13)
+    expected = _draw_process_rng()
+    random.seed(11)
+    np.random.seed(12)
+    torch.manual_seed(13)
+    _initialize_scheduler(Scheduler())
+
+    assert _draw_process_rng() == expected
 
 
 def test_recipe_uses_official_adam_epsilon():
