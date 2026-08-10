@@ -80,6 +80,7 @@ from megatron.bridge.utils.common_utils import (
     warn_rank_0,
 )
 from megatron.bridge.utils.cuda_graph import (
+    cuda_graph_module_names,
     is_full_iteration_cuda_graph,
     validate_cuda_graph_configuration,
 )
@@ -1183,6 +1184,34 @@ class ConfigContainer(Container):
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
 
+        if offline_packing_specs is not None:
+            pad_cu_seqlens = offline_packing_specs.pad_cu_seqlens
+            dataset_kwargs = getattr(self.dataset, "dataset_kwargs", None) or {}
+            pad_to_max_length = (
+                getattr(self.dataset, "pad_to_max_length", False) is True
+                or dataset_kwargs.get("pad_to_max_length", False) is True
+            )
+            if pad_cu_seqlens and not pad_to_max_length:
+                raise ValueError("offline_packing_specs.pad_cu_seqlens=True requires dataset pad_to_max_length=True.")
+
+            cuda_graph_impl = getattr(self.model, "cuda_graph_impl", "none")
+            cuda_graph_modules = cuda_graph_module_names(self.model)
+            is_full_iteration_graph = is_full_iteration_cuda_graph(self.model)
+            # Every training graph needs a static token width. Only graphs that include
+            # packed attention also consume cu_seqlens and require static boundary shapes.
+            uses_training_cuda_graphs = is_full_iteration_graph or cuda_graph_impl == "transformer_engine"
+            if uses_training_cuda_graphs and not pad_to_max_length:
+                raise ValueError("Offline packing with CUDA graphs requires dataset pad_to_max_length=True.")
+
+            captures_packed_attention = is_full_iteration_graph or (
+                cuda_graph_impl == "transformer_engine" and (not cuda_graph_modules or "attn" in cuda_graph_modules)
+            )
+            if captures_packed_attention and not pad_cu_seqlens:
+                raise ValueError(
+                    "Packed attention CUDA graphs require offline_packing_specs.pad_cu_seqlens=True. "
+                    "Enable it for full-iteration, whole-layer, or attention-scoped capture."
+                )
+
         # Validate declarative SFT values before deriving runtime padding
         # multiples so normalization cannot hide an invalid user value.
         if isinstance(
@@ -1229,7 +1258,8 @@ class ConfigContainer(Container):
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
         if enable_in_batch_packing:
-            self.model._enable_in_batch_packing = True
+            transformer_config = getattr(self.model, "transformer", self.model)
+            transformer_config._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
         elif isinstance(
@@ -1923,6 +1953,18 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.train.finalize()
     cfg.scheduler.finalize()
     cfg.checkpoint.finalize()
+
+    if cfg.validation.eval_global_batch_size is None:
+        assert cfg.train.global_batch_size is not None, (
+            "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
+        )
+        cfg.validation.eval_global_batch_size = cfg.train.global_batch_size
+    if cfg.validation.eval_micro_batch_size is None:
+        assert cfg.train.micro_batch_size is not None, (
+            "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
+        )
+        cfg.validation.eval_micro_batch_size = cfg.train.micro_batch_size
+
     if cfg.profiling is not None:
         cfg.profiling.finalize()
         if cfg.profiling.nvtx_ranges:

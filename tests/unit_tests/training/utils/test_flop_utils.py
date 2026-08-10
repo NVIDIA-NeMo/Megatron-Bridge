@@ -100,6 +100,10 @@ class MockModelConfig:
     dsa_indexer_n_heads: int | None = None
     dsa_indexer_head_dim: int | None = None
     dsa_indexer_topk: int | None = None
+    dsa_indexer_topk_freq: int = 1
+    dsa_indexer_skip_topk_offset: int = 0
+    dsa_indexer_loss_coeff: float = 0.0
+    dsa_indexer_use_sparse_loss: bool = False
     # GDN (Gated DeltaNet) settings
     experimental_attention_variant: str | None = None
     linear_attention_freq: int | list | None = None
@@ -2120,6 +2124,115 @@ class TestMLAFlops:
         assert f_long > 2 * f_short, (
             f"Expected superlinear seq scaling but got f(s=256)={f_long:.6e} vs 2*f(s=128)={2 * f_short:.6e}"
         )
+
+
+@pytest.mark.unit
+class TestDynamicSparseAttentionFlops:
+    """Closed-form training FLOPs for absorbed MLA with Dynamic Sparse Attention."""
+
+    @staticmethod
+    def _dsa_config(**overrides) -> MockConfigContainer:
+        values = {
+            "num_layers": 1,
+            "hidden_size": 8,
+            "seq_length": 4,
+            "ffn_hidden_size": 0,
+            "num_attention_heads": 2,
+            "num_query_groups": 2,
+            "kv_channels": 4,
+            "vocab_size": 128,
+            "make_vocab_size_divisible_by": 1,
+            "gated_linear_unit": False,
+            "multi_latent_attention": True,
+            "experimental_attention_variant": "dsa",
+            "q_lora_rank": 4,
+            "kv_lora_rank": 3,
+            "qk_head_dim": 2,
+            "qk_pos_emb_head_dim": 1,
+            "v_head_dim": 2,
+            "dsa_indexer_n_heads": 2,
+            "dsa_indexer_head_dim": 2,
+            "dsa_indexer_topk": 2,
+            "dsa_indexer_topk_freq": 1,
+            "dsa_indexer_skip_topk_offset": 0,
+            "dsa_indexer_loss_coeff": 0.001,
+            "dsa_indexer_use_sparse_loss": True,
+        }
+        values.update(overrides)
+        return MockConfigContainer(model=MockModelConfig(**values))
+
+    def test_dsa_exact_toy_formula(self):
+        """A one-layer toy covers absorbed sparse MLA and every lightning-indexer matmul."""
+        # At S=4 and top-k=2, the causal selected counts are [1, 2, 2, 2],
+        # while the dense indexer sees [1, 2, 3, 4]. The independently reduced
+        # per-token terms are:
+        #   MLA projections: 906; sparse QK+AV: 147
+        #   indexer projections (forward+wgrad): 192
+        #   index scores (dense forward 30 + sparse-loss backward 42): 72
+        #   sparse detached teacher QK (forward only): 28
+        #   vocabulary projection: 6144
+        expected = 4 * (906 + 147 + 192 + 72 + 28 + 6144)
+
+        assert num_floating_point_operations(self._dsa_config(), batch_size=1) == expected
+
+    def test_dsa_sequence_length_and_topk_scaling(self):
+        """Sparse MLA saturates at top-k while the lightning indexer remains quadratic."""
+        short = num_floating_point_operations(self._dsa_config(), batch_size=1)
+        long = num_floating_point_operations(self._dsa_config(seq_length=8), batch_size=1)
+        wider_topk = num_floating_point_operations(self._dsa_config(dsa_indexer_topk=4), batch_size=1)
+
+        # S=8, k=2: average sparse context is 15/8 and dense causal context is 9/2.
+        assert long == 60_228
+        assert long > 2 * short
+        # S=4, k=4 raises average sparse context from 7/4 to 5/2. Sparse QK/AV,
+        # the sparse-loss score backward, and the sparse teacher target change;
+        # top-k comparisons are not FLOPs.
+        assert wider_topk - short == 372
+
+    def test_dsa_index_sharing_cadence_and_offset(self):
+        """Only full IndexShare layers pay indexer projection, score, and teacher work."""
+        no_sharing = num_floating_point_operations(
+            self._dsa_config(num_layers=6, dsa_indexer_topk_freq=1), batch_size=1
+        )
+        offset_three = num_floating_point_operations(
+            self._dsa_config(
+                num_layers=6,
+                dsa_indexer_topk_freq=4,
+                dsa_indexer_skip_topk_offset=3,
+            ),
+            batch_size=1,
+        )
+        offset_one = num_floating_point_operations(
+            self._dsa_config(
+                num_layers=6,
+                dsa_indexer_topk_freq=4,
+                dsa_indexer_skip_topk_offset=1,
+            ),
+            batch_size=1,
+        )
+
+        # Full layers are [1..6], [1,2,3], and [1,5], respectively. Each full
+        # layer contributes (192 + 72 + 28) FLOPs per token of indexer work.
+        assert no_sharing - offset_three == 3 * 4 * 292
+        assert offset_three - offset_one == 4 * 292
+
+    def test_dsa_detached_indexer_projection_backward_multiplier(self):
+        """Indexer loss adds wgrad, not dgrad, for projections fed by detached inputs."""
+        with_loss = num_floating_point_operations(self._dsa_config(), batch_size=1)
+        without_loss = num_floating_point_operations(self._dsa_config(dsa_indexer_loss_coeff=0.0), batch_size=1)
+
+        # Enabling sparse indexer loss adds one projection wgrad (96/token),
+        # score gradients over the selected top-k context only (42/token),
+        # and teacher QK (28/token).
+        assert with_loss - without_loss == 4 * (96 + 42 + 28)
+
+    def test_dsa_mtp_layer_has_independent_sparse_attention_and_indexer(self):
+        """MTP1 adds one full DSA layer because MCore restarts MTP layer numbering at one."""
+        decoder_only = num_floating_point_operations(self._dsa_config(), batch_size=1)
+        with_mtp = num_floating_point_operations(self._dsa_config(mtp_num_layers=1), batch_size=1)
+
+        # Added per-token work: DSA layer 1345 + MTP norms/eh-proj 912 + logits 6144.
+        assert with_mtp - decoder_only == 4 * (1345 + 912 + 6144)
 
 
 @pytest.mark.unit

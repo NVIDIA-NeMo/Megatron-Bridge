@@ -881,6 +881,141 @@ def num_floating_point_operations(
 
                 sparse_attn_term = sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128
                 self_attn_term += 3 * 2 * (sparse_attn_term + main_compressor_term + indexer_term)
+            elif experimental_attention_variant == "dsa":
+                # DSA replaces dense MLA core attention with top-k attention while retaining a
+                # dense lightning indexer. The attention/indexer geometry follows equations 1-2
+                # of the official report: https://arxiv.org/abs/2512.02556. MCore implements the
+                # MLA path with matrix absorption: QK operates over kv_lora_rank + RoPE channels
+                # and AV over kv_lora_rank channels (experimental_attention_variant/absorbed_mla.py).
+                qk_head_dim = getattr(cfg.model, "qk_head_dim", 64)
+                qk_pos_emb_head_dim = getattr(cfg.model, "qk_pos_emb_head_dim", 0)
+                v_head_dim = getattr(cfg.model, "v_head_dim", 64)
+                kv_lora_rank = getattr(cfg.model, "kv_lora_rank", 0)
+                if kv_lora_rank <= 0:
+                    raise ValueError("kv_lora_rank must be positive for dsa FLOPs calculation")
+
+                idx_n_heads = getattr(cfg.model, "dsa_indexer_n_heads", None)
+                idx_head_dim = getattr(cfg.model, "dsa_indexer_head_dim", None)
+                idx_topk = getattr(cfg.model, "dsa_indexer_topk", None)
+                if idx_n_heads is None or idx_n_heads <= 0:
+                    raise ValueError("dsa_indexer_n_heads must be positive for dsa FLOPs calculation")
+                if idx_head_dim is None or idx_head_dim <= 0:
+                    raise ValueError("dsa_indexer_head_dim must be positive for dsa FLOPs calculation")
+                if idx_topk is None or idx_topk <= 0:
+                    raise ValueError("dsa_indexer_topk must be positive for dsa FLOPs calculation")
+
+                idx_topk_freq = getattr(cfg.model, "dsa_indexer_topk_freq", 1)
+                idx_skip_topk_offset = getattr(cfg.model, "dsa_indexer_skip_topk_offset", 0)
+                if not isinstance(idx_topk_freq, int) or idx_topk_freq <= 0:
+                    raise ValueError("dsa_indexer_topk_freq must be a positive integer")
+                if not isinstance(idx_skip_topk_offset, int) or idx_skip_topk_offset < 0:
+                    raise ValueError("dsa_indexer_skip_topk_offset must be a non-negative integer")
+
+                def count_indexer_layers(layer_count: int) -> int:
+                    """Count layers that compute rather than reuse DSA top-k indices."""
+                    sharing_offset = max(idx_skip_topk_offset, 1)
+                    return sum(
+                        max(layer_number - sharing_offset, 0) % idx_topk_freq == 0
+                        for layer_number in range(1, layer_count + 1)
+                    )
+
+                # MCore gives MTP layers their own 1-based numbering, so their sharing cadence
+                # restarts independently of the decoder. GLM-5.2 has MTP1, which computes one
+                # fresh index. See transformer/multi_token_prediction.py in Megatron-Core.
+                num_indexer_layers = count_indexer_layers(cfg.model.num_layers) + count_indexer_layers(mtp_num_layers)
+
+                # Average valid causal pairs per token. The top-k expression is exact for a
+                # fixed-length batch. Packed metadata supplies only sum(s) and sum(s^2), so for
+                # mixed sequences crossing top-k we use the token-weighted effective length
+                # (core_attn_seq_factor); it remains exact when every subsequence is <= top-k.
+                dense_causal_context = (core_attn_seq_factor + 1) / 2
+                if core_attn_seq_factor <= idx_topk:
+                    sparse_causal_context = dense_causal_context
+                else:
+                    sparse_causal_context = idx_topk - idx_topk * (idx_topk - 1) / (2 * core_attn_seq_factor)
+
+                if cfg.model.q_lora_rank is None:
+                    q_term = (
+                        cfg.model.hidden_size * cfg.model.num_attention_heads * (qk_head_dim + qk_pos_emb_head_dim)
+                    )
+                    indexer_q_input_size = cfg.model.hidden_size
+                else:
+                    q_term = cfg.model.q_lora_rank * (
+                        cfg.model.hidden_size
+                        + cfg.model.num_attention_heads * (qk_head_dim + qk_pos_emb_head_dim)
+                        + 1  # q norm
+                    )
+                    indexer_q_input_size = cfg.model.q_lora_rank
+
+                kv_term = (
+                    kv_lora_rank
+                    * (
+                        cfg.model.hidden_size
+                        + cfg.model.num_attention_heads * (qk_head_dim + v_head_dim)
+                        + 1  # kv norm
+                    )
+                    + cfg.model.hidden_size * qk_pos_emb_head_dim
+                )
+                output_term = cfg.model.num_attention_heads * v_head_dim * cfg.model.hidden_size
+                mla_projection_term = 3 * 2 * num_layers * (q_term + kv_term + output_term)
+
+                absorbed_qk_dim = kv_lora_rank + qk_pos_emb_head_dim
+                absorbed_v_dim = kv_lora_rank
+                sparse_mla_core_term = (
+                    3
+                    * 2
+                    * num_layers
+                    * sparse_causal_context
+                    * cfg.model.num_attention_heads
+                    * (absorbed_qk_dim + absorbed_v_dim)
+                )
+
+                indexer_projection_size = (
+                    indexer_q_input_size * idx_n_heads * idx_head_dim
+                    + cfg.model.hidden_size * idx_head_dim
+                    + cfg.model.hidden_size * idx_n_heads
+                )
+                indexer_loss_coeff = getattr(cfg.model, "dsa_indexer_loss_coeff", 0.0) or 0.0
+                trains_indexer = indexer_loss_coeff > 0
+
+                # MCore detaches x and q_resid before the indexer. With the auxiliary loss
+                # enabled, each projection therefore executes forward+wgrad (2x forward), not
+                # forward+dgrad+wgrad (3x). Without the loss, top-k is computed under no_grad.
+                indexer_projection_multiplier = 4 if trains_indexer else 2
+                indexer_projection_term = indexer_projection_multiplier * num_indexer_layers * indexer_projection_size
+
+                # Equation 1 computes H_i dense q_i.k_i dot products and a weighted head
+                # reduction. Top-k selection needs every causal score, so the forward is
+                # always dense. The backward only covers score entries the KL loss touches:
+                # every causal pair for the dense loss, but only the selected top-k pairs for
+                # the sparse loss (no gradient flows through the discrete top-k selection;
+                # MCore's indexer_backward_wrapper consumes the selected payload only).
+                # ReLU, normalization, and top-k comparisons are not floating-point matmuls and
+                # are intentionally outside this model-FLOPs numerator.
+                use_sparse_indexer_loss = getattr(cfg.model, "dsa_indexer_use_sparse_loss", False)
+                index_score_unit = idx_n_heads * (idx_head_dim + 1)
+                index_score_term = 2 * num_indexer_layers * dense_causal_context * index_score_unit
+                if trains_indexer:
+                    score_grad_context = sparse_causal_context if use_sparse_indexer_loss else dense_causal_context
+                    index_score_term += 4 * num_indexer_layers * score_grad_context * index_score_unit
+
+                # GLM recipes enable MCore's sparse indexer KL loss. Its attention target uses
+                # detached main-model Q/K, hence forward-only QK work. Dense-loss configurations
+                # use the full causal context instead of the selected context.
+                indexer_teacher_term = 0
+                if trains_indexer:
+                    teacher_context = sparse_causal_context if use_sparse_indexer_loss else dense_causal_context
+                    indexer_teacher_term = (
+                        2 * num_indexer_layers * teacher_context * cfg.model.num_attention_heads * absorbed_qk_dim
+                    )
+
+                self_attn_term = (
+                    mla_projection_term
+                    + sparse_mla_core_term
+                    + indexer_projection_term
+                    + index_score_term
+                    + indexer_teacher_term
+                )
             else:
                 ## MLA
                 if not hasattr(cfg.model, "q_lora_rank") or cfg.model.q_lora_rank is None:

@@ -38,6 +38,7 @@ collate = SimpleNamespace(
     kimi_k25_vl_collate_fn=kimi_collate.kimi_k25_vl_collate_fn,
     ministral3_collate_fn=ministral3_collate.ministral3_collate_fn,
     nemotron_omni_collate_fn=nemotron_omni_collate.nemotron_omni_collate_fn,
+    nemotron_omni_expanded_collate_fn=nemotron_omni_collate.nemotron_omni_expanded_collate_fn,
     nemotron_omni_llava_collate_fn=nemotron_omni_collate.nemotron_omni_llava_collate_fn,
     qwen2_5_collate_fn=qwen_vl_collate.qwen2_5_collate_fn,
     qwen2_audio_collate_fn=qwen_audio_collate.qwen2_audio_collate_fn,
@@ -53,6 +54,12 @@ def test_only_nemotron_omni_requires_model_collate_for_all_examples():
     assert model_collate_required_for_all_examples("NemotronH_Nano_Omni_Reasoning_V3Processor")
     assert not model_collate_required_for_all_examples("Qwen3VLProcessor")
     assert not model_collate_required_for_all_examples("UnknownProcessor")
+
+
+def test_nemotron_omni_registry_selects_canonical_expanded_contract():
+    assert (
+        resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is collate.nemotron_omni_expanded_collate_fn
+    )
 
 
 def test_vlm_collate_keeps_qwen_vl_registration():
@@ -232,6 +239,31 @@ def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
 
     assert proc.processor_kwargs[-1]["min_pixels"] == qwen_vl_collate.QWEN_VL_MIN_PIXELS
     assert proc.processor_kwargs[-1]["max_pixels"] == qwen_vl_collate.QWEN_VL_MAX_PIXELS
+
+
+def test_qwen2_5_collate_fn_pads_mm_token_type_ids_with_sequence(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _TokenTypeProcessor(_DummyProcessor):
+        def __call__(self, *args, **kwargs):
+            batch = super().__call__(*args, **kwargs)
+            batch["mm_token_type_ids"] = torch.tensor([[0, 1, 0]])
+            return batch
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    batch = collate.qwen2_5_collate_fn(
+        examples,
+        _TokenTypeProcessor(),
+        sequence_length=8,
+        pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].shape == batch["mm_token_type_ids"].shape == (1, 4)
+    assert batch["mm_token_type_ids"].tolist() == [[0, 1, 0, 0]]
 
 
 def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
@@ -917,6 +949,48 @@ def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch)
     assert batch["visual_inputs"].mm_token_type_ids.tolist() == [[0, 1, 0, 0, 0, 2, 2, 0]]
     assert processor.padding_values == [False, False]
     assert processor.tokenizer.padding_side == "left"
+
+
+def test_glm4v_collate_flattens_structured_assistant_content(monkeypatch):
+    class _GlmProcessor:
+        class _Tokenizer:
+            padding_side = "left"
+            pad_token_id = 0
+
+        def __init__(self):
+            self.tokenizer = self._Tokenizer()
+            self.conversations = None
+
+        def apply_chat_template(self, conversations, **kwargs):
+            self.conversations = conversations
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "attention_mask": torch.ones((1, 3), dtype=torch.long),
+                "mm_token_type_ids": torch.zeros((1, 3), dtype=torch.long),
+            }
+
+    monkeypatch.setattr(
+        glm_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
+    )
+    monkeypatch.setattr(glm_vl_collate, "_glm4v_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(
+        glm_vl_collate,
+        "_build_glm4v_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: torch.ones_like(input_ids, dtype=torch.float32),
+    )
+    assistant_content = [{"type": "text", "text": "A picture."}]
+    example = {
+        "conversation": [
+            {"role": "user", "content": "Describe."},
+            {"role": "assistant", "content": assistant_content},
+        ]
+    }
+    processor = _GlmProcessor()
+
+    glm_vl_collate.glm4v_collate_fn([example], processor)
+
+    assert processor.conversations[0][-1]["content"] == "A picture."
+    assert example["conversation"][-1]["content"] == assistant_content
 
 
 @pytest.mark.parametrize(
@@ -1907,6 +1981,37 @@ def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
     assert batch["labels"][0, -5:].tolist() == [21, 22, 102, 103, -100]
 
 
+def test_nemotron_omni_collate_ignores_end_token_padding_when_building_loss_masks():
+    proc = _NemotronOmniProcessor(
+        tokenized_rows=[
+            [199, 10, 102, 103, 101, 21, 22, 102, 103],
+            [199, 11, 102, 103, 101, 31, 32, 33, 34, 35, 102, 103],
+        ]
+    )
+    proc.tokenizer.pad_token_id = 102
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "short question"},
+                {"role": "assistant", "content": "short answer"},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": "long question"},
+                {"role": "assistant", "content": "longer answer"},
+            ]
+        },
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc, pad_to_multiple_of=1)
+
+    assert batch["attention_mask"][0].tolist() == [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0]
+    assert torch.all(batch["loss_mask"][0, 9:] == 0)
+    assert batch["loss_mask"][0].sum() > 0
+    assert batch["loss_mask"][1].sum() > 0
+
+
 def test_nemotron_omni_collate_rejects_unsupported_visual_keys():
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6]])
 
@@ -1922,13 +2027,14 @@ def test_nemotron_omni_llava_collate_packs_heterogeneous_image_rows_at_post_merg
     processor = _DynamicNemotronOmniProcessor()
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
 
-    batch = collate.nemotron_omni_llava_collate_fn(
-        _heterogeneous_nemotron_examples(),
-        processor,
-        enable_in_batch_packing=True,
-        sequence_length=24,
-        in_batch_packing_pad_to_multiple_of=4,
-    )
+    with pytest.warns(FutureWarning, match="collapse/expand data contract is deprecated"):
+        batch = collate.nemotron_omni_llava_collate_fn(
+            _heterogeneous_nemotron_examples(),
+            processor,
+            enable_in_batch_packing=True,
+            sequence_length=24,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
 
     assert batch["input_ids"].tolist() == [
         [
@@ -2471,3 +2577,31 @@ def test_nemotron_omni_llava_collate_checks_temporal_model_expansion_before_trun
             use_temporal_video_embedder=True,
             patch_dim=16,
         )
+
+
+def test_nemotron_omni_expanded_collate_emits_one_placeholder_per_temporal_feature(monkeypatch):
+    processor = _NemotronOmniProcessor()
+    input_ids = torch.tensor([[10, NEMO_IMG_START_TOKEN_ID, NEMO_IMAGE_TOKEN_ID, NEMO_IMG_END_TOKEN_ID, 11]])
+    prepared = {
+        "input_ids": input_ids,
+        "attention_mask": torch.ones_like(input_ids),
+        "visual_inputs": GenericVisualInputs(pixel_values=torch.ones(1, 1, 768)),
+    }
+    examples = [{"conversation": [{"role": "user", "content": "one tubelet"}]}]
+    monkeypatch.setattr(
+        nemotron_omni_collate,
+        "_prepare_temporal_rows",
+        lambda *args, **kwargs: (prepared, examples, torch.ones(1, dtype=torch.long)),
+    )
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+
+    batch = collate.nemotron_omni_expanded_collate_fn(
+        examples,
+        processor,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        pad_to_multiple_of=1,
+    )
+
+    assert int((batch["input_ids"] == NEMO_IMAGE_TOKEN_ID).sum().item()) == 256
+    assert int(batch["attention_mask"].sum().item()) == 260

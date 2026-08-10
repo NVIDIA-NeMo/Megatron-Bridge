@@ -45,7 +45,12 @@ from vlm_generate_utils import (
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import (
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+    print_rank_last,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +149,7 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
 
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
+    maybe_initialize_distributed()
     tp = args.tp
     pp = args.pp
     ep = args.ep
@@ -199,6 +205,9 @@ def main(args) -> None:
             "expert_tensor_parallel_size": etp,
             "pipeline_dtype": torch.bfloat16,
         }
+        mp_overrides["params_dtype"] = mp_overrides["pipeline_dtype"]
+        mp_overrides["bf16"] = mp_overrides["pipeline_dtype"] == torch.bfloat16
+        mp_overrides["fp16"] = mp_overrides["pipeline_dtype"] == torch.float16
         if args.pp_layout:
             mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout
         model = bridge.load_megatron_model(
@@ -284,6 +293,7 @@ def main(args) -> None:
             image_token_id=image_token_id,
         )
 
+    prompt_length = input_ids_raw.size(1)
     input_ids_raw = input_ids_raw.cuda()
     pixel_values = to_cuda(pixel_values)
     image_grid_thw = to_cuda(image_grid_thw)
@@ -391,11 +401,13 @@ def main(args) -> None:
                 break
 
     generated_text = tokenizer.decode(list(generated_ids[0]))
+    completion = tokenizer.decode(generated_ids[0, prompt_length:].tolist(), skip_special_tokens=True)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
     print_rank_0(f"Prompt: {args.prompt}")
     print_rank_0(f"Generated: {generated_text}")
+    print_rank_0(f"Completion: {completion}")
     print_rank_0("=======================================")
 
 
@@ -432,7 +444,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--trust_remote_code", action="store_true", help="Trust remote code for HF model loading")
     args = parser.parse_args()
-
     main(args)
 
     if torch.distributed.is_initialized():

@@ -69,7 +69,6 @@ def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: boo
 @pytest.mark.parametrize(
     ("recipe", "expected_vpp"),
     [
-        (qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config, None),
         (qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config, 3),
         (qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config, 3),
     ],
@@ -84,6 +83,31 @@ def test_qwen_mxfp8_recipes_match_r050_full_iteration_settings(recipe, expected_
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
+
+
+def test_qwen_30b_a3b_b200_fp8mx_uses_partial_cuda_graph() -> None:
+    """B200's 180 GB cannot hold the full-iteration graph, so the 8-GPU MXFP8 recipe uses
+    partial (TE-scoped) CUDA graph plus explicit HybridEP a2a/wgrad overlap instead."""
+    cfg = qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config()
+
+    # Partial (TE-scoped) CUDA graph, not full-iteration.
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
+
+    # Explicit HybridEP expert-parallel overlap + swept SM tuning.
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.model.moe_hybridep_num_sms == 64
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+
+    # Partial-CG allocator / env: the full-iteration extras are removed.
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
+    assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from dataclasses import fields
 from typing import Any, Optional, Union
@@ -28,9 +29,11 @@ from megatron.bridge.data.builders import (
     HFEnergonTaskEncoderConfig,
     MockVLMSFTDatasetConfig,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.models.transformer_config import HeterogeneousTransformerConfig, TransformerConfig
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -1153,6 +1156,73 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_in_batch_packing_enables_variable_pp_shapes_for_builder_model(self, monkeypatch):
+        """Test builder-backed GPT configs use dynamic PP shapes for packed batches."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                pipeline_model_parallel_size=2,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert model_cfg.transformer.variable_seq_lengths is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_in_batch_packing_enables_variable_pp_shapes_for_heterogeneous_model(self):
+        """Test heterogeneous GPT configs use dynamic PP shapes for packed batches."""
+        block = {
+            "attention": {"no_op": False, "replace_with_linear": False, "num_query_groups": 4},
+            "mlp": {"no_op": False, "replace_with_linear": False, "ffn_hidden_size": 256},
+        }
+        model_cfg = BridgeGPTModelConfig(
+            transformer=HeterogeneousTransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                pipeline_model_parallel_size=2,
+                use_cpu_initialization=True,
+                heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block, block]}),
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert model_cfg.transformer.variable_seq_lengths is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_enable_in_batch_packing_sets_collate_padding_multiple(self, monkeypatch):
         """Test in-batch packing forwards CP/SP divisibility requirements to collate-time packers."""
         gpt_model_cfg = create_test_gpt_config(
@@ -1487,6 +1557,124 @@ class TestConfigContainerValidation:
                 ValueError,
                 match="enable_offline_packing and enable_in_batch_packing are mutually exclusive",
             ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_pad_cu_seqlens_requires_fixed_token_width(self, monkeypatch):
+        """Test static packed boundaries also require a fixed packed-token width."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(
+            packed_sequence_size=512,
+            pad_cu_seqlens=True,
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="pad_cu_seqlens=True requires dataset pad_to_max_length=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("graph_modules", [[], ["attn"], ["attn", "mlp"]])
+    def test_packed_attention_cuda_graph_requires_padded_cu_seqlens(self, graph_modules, monkeypatch):
+        """Test whole-layer and attention-scoped graphs require static packed boundaries."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(model_cfg, graph_modules)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Packed attention CUDA graphs require.*pad_cu_seqlens=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_mlp_only_cuda_graph_does_not_require_padded_cu_seqlens(self, monkeypatch):
+        """Test an MLP-only graph does not capture packed attention metadata."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(model_cfg, ["mlp"])
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_mlp_only_cuda_graph_still_requires_fixed_token_width(self, monkeypatch):
+        """Test every CUDA graph over offline-packed tokens requires a static token shape."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(model_cfg, ["mlp"])
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Offline packing with CUDA graphs requires.*pad_to_max_length=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_full_iteration_cuda_graph_requires_padded_cu_seqlens_for_offline_packing(self, monkeypatch):
+        """Test full-iteration graphs require static packed attention metadata."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
+        set_full_iteration_cuda_graph(model_cfg)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Packed attention CUDA graphs require.*pad_cu_seqlens=True"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)

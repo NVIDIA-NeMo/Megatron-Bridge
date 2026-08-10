@@ -24,7 +24,7 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
+from megatron.core.distributed.fsdp import mcore_fsdp_adapter
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -954,8 +954,9 @@ def train_step(
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
     log_max_attention_logit = None
-    if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
-        log_max_attention_logit = clip_qk(model)
+    qk_clip_enabled = getattr(cfg.model, "qk_clip", False)
+    if qk_clip_enabled or getattr(cfg.model, "log_max_attention_logit", False):
+        log_max_attention_logit = clip_qk(model, log_max_only=not qk_clip_enabled)
 
     timers("optimizer").stop()
     nvtx_range_pop(suffix="optimizer_step")
@@ -1553,6 +1554,7 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
     if global_state._comet_logger:
         global_state._comet_logger.end()
 
+    _delete_cuda_graphs(None)
     destroy_global_state()
 
 
@@ -1662,7 +1664,7 @@ def _handle_mxfp8_param_buffer_copy(
                     optim_instance._copy_main_params_to_param_buffer()
 
 
-def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
+def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
     """
     Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
     process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
@@ -1676,15 +1678,22 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     print_rank_0("Deleting CUDA graphs")
 
-    # Explicitly delete the training CUDA graph because of
+    # Explicitly delete full CUDA graphs because of
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
-    if "training" in FullCudaGraphWrapper.cuda_graph:
-        del FullCudaGraphWrapper.cuda_graph["training"]
+    for stage in ("training", "validation"):
+        if stage in FullCudaGraphWrapper.cuda_graph:
+            del FullCudaGraphWrapper.cuda_graph[stage]
+        FullCudaGraphWrapper.cuda_graph[stage] = None
+        FullCudaGraphWrapper.result[stage] = None
+        FullCudaGraphWrapper.curr_iteration[stage] = 0
 
     # Explicitly delete optimizer CUDA graph
-    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
-        del OptimizerCudaGraphWrapper.cuda_graph
+    if HAS_OPTIMIZER_CUDA_GRAPH:
+        if OptimizerCudaGraphWrapper.cuda_graph is not None:
+            del OptimizerCudaGraphWrapper.cuda_graph
         OptimizerCudaGraphWrapper.cuda_graph = None
+        OptimizerCudaGraphWrapper.result = None
+        OptimizerCudaGraphWrapper.curr_iteration = 0
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
@@ -1695,6 +1704,22 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
 
     # Run GC to collect the freshed object
     gc.collect()
+
+
+def _get_megatron_fsdp_types(adapter: Any = mcore_fsdp_adapter) -> tuple[type, ...]:
+    """Return the concrete MCore FSDP wrapper types exposed by an adapter version."""
+    return tuple(
+        module_type
+        for module_type in (
+            getattr(adapter, "FullyShardedDataParallel", None),
+            getattr(adapter, "FullyShardedDataParallelV1", None),
+            getattr(adapter, "FullyShardedDataParallelV2", None),
+        )
+        if isinstance(module_type, type)
+    )
+
+
+_MEGATRON_FSDP_TYPES = _get_megatron_fsdp_types()
 
 
 def _maybe_register_fsdp_buffers(
@@ -1710,7 +1735,7 @@ def _maybe_register_fsdp_buffers(
     ):
         print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
         for model_chunk in model:
-            if isinstance(model_chunk, megatron_FSDP) and getattr(
+            if isinstance(model_chunk, _MEGATRON_FSDP_TYPES) and getattr(
                 model_chunk.ddp_config, "fsdp_manual_registration", False
             ):
                 fsdp_param_and_grad_buffer = getattr(model_chunk, "param_and_grad_buffer", None)
