@@ -1140,6 +1140,10 @@ class ConfigContainer(Container):
         if not enable_energon_packing:
             return
 
+        # The same request can live on the model, on CommOverlapConfig, and on
+        # its resolved user config. CommOverlapConfig.setup() runs after this
+        # method and copies its value back to the model, so clearing only the
+        # model would allow a stale wrapper value to re-enable the unsafe path.
         overlap_configs: list[object] = [self.model]
         if self.comm_overlap is not None:
             overlap_configs.append(self.comm_overlap)
