@@ -129,7 +129,7 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.offload_modules = []
 
     opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
-        muon_momentum=0.9,
+        muon_momentum=0.95,
         muon_use_nesterov=False,
         muon_scale_mode="spectral",
         muon_fp32_matmul_prec="medium",
@@ -137,10 +137,10 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         muon_tp_mode="blockwise",
         muon_extra_scale_factor=1.0,
         muon_scalar_optimizer="adam",
-        lr_warmup_iters=10,
+        lr_warmup_iters=0,
         lr_decay_iters=50,
-        max_lr=3.9e-6,
-        min_lr=3.9e-7,
+        max_lr=2e-4,
+        min_lr=2e-5,
         weight_decay=0.1,
         clip_grad=1.0,
     )
@@ -151,13 +151,13 @@ def deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     opt_cfg.overlap_param_gather = True
     opt_cfg.muon_coefficient_type = "quintic"
     opt_cfg.adam_beta1 = 0.9
-    opt_cfg.adam_beta2 = 0.95
+    opt_cfg.adam_beta2 = 0.999
     opt_cfg.main_grads_dtype = torch.float32
     opt_cfg.main_params_dtype = torch.float32
     opt_cfg.exp_avg_dtype = torch.float32
     opt_cfg.exp_avg_sq_dtype = torch.float32
     opt_cfg.use_precision_aware_optimizer = False
-    scheduler_cfg.lr_warmup_init = 3.9e-7
+    scheduler_cfg.lr_warmup_init = 2e-5
     scheduler_cfg.start_weight_decay = 0.1
     scheduler_cfg.end_weight_decay = 0.1
 
