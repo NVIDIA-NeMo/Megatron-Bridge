@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -29,6 +30,36 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+
+
+@dataclass(frozen=True)
+class GlobalFlopsRuntimeStats:
+    """Data-parallel-global FLOPS statistics collected during one training step.
+
+    Attributes:
+        seqlen_sum: Total padded language tokens, or ``None`` when unavailable.
+        seqlen_squared_sum: Sum of squared language subsequence lengths.
+        num_vision_patches: Legacy aggregate vision-patch count.
+        vision_patch_sum: Exact sum of independent vision patch counts.
+        vision_patch_squared_sum: Exact sum of squared independent patch counts.
+        vision_merged_token_sum: Exact sum of post-merger vision tokens.
+        cross_seqlen_sum: Total cross-attention key/value length.
+        cross_seqlen_product_sum: Sum of query/key-value length products.
+    """
+
+    seqlen_sum: int | None
+    seqlen_squared_sum: int | None
+    num_vision_patches: int = 0
+    vision_patch_sum: int = 0
+    vision_patch_squared_sum: int = 0
+    vision_merged_token_sum: int = 0
+    cross_seqlen_sum: int | None = None
+    cross_seqlen_product_sum: int | None = None
+
+    @property
+    def has_exact_vision_stats(self) -> bool:
+        """Return whether exact additive vision-patch statistics were collected."""
+        return self.vision_patch_sum > 0
 
 
 def _packed_data_exists(path: str | None) -> bool:
@@ -85,7 +116,7 @@ def _accumulator_to_int(value) -> int:
     return 0
 
 
-def resolve_global_flops_training_stats(
+def resolve_global_flops_runtime_stats(
     state,
     *,
     data_parallel_size: int,
@@ -93,7 +124,7 @@ def resolve_global_flops_training_stats(
     dp_group=None,
     include_vision_patch_stats: bool = False,
     include_cross_attention_stats: bool = False,
-) -> tuple[int | None, int | None, int, int, int, int, int | None, int | None]:
+) -> GlobalFlopsRuntimeStats:
     """Resolve all data-parallel-global FLOPS statistics used by training.
 
     Reads the accumulators populated by the forward step
@@ -129,11 +160,8 @@ def resolve_global_flops_training_stats(
             not local batch contents.
 
     Returns:
-        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches,
-        vision_patch_sum, vision_patch_squared_sum,
-        vision_merged_token_sum,
-        cross_seqlen_sum, cross_seqlen_product_sum)``. Sequence values are ``None``
-        when no corresponding accumulation happened. Vision values are ``0``
+        Global statistics with sequence values set to ``None`` when no
+        corresponding accumulation happened and vision values set to ``0``
         when no matching metadata was accumulated.
     """
     local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
@@ -200,76 +228,16 @@ def resolve_global_flops_training_stats(
     if cross_seqlen_sum <= 0:
         cross_seqlen_sum = None
         cross_seqlen_product_sum = None
-    return (
-        seqlen_sum,
-        seqlen_squared_sum,
-        max(num_vision_patches, 0),
-        max(vision_patch_sum, 0),
-        max(vision_patch_squared_sum, 0),
-        max(vision_merged_token_sum, 0),
-        cross_seqlen_sum,
-        cross_seqlen_product_sum,
+    return GlobalFlopsRuntimeStats(
+        seqlen_sum=seqlen_sum,
+        seqlen_squared_sum=seqlen_squared_sum,
+        num_vision_patches=max(num_vision_patches, 0),
+        vision_patch_sum=max(vision_patch_sum, 0),
+        vision_patch_squared_sum=max(vision_patch_squared_sum, 0),
+        vision_merged_token_sum=max(vision_merged_token_sum, 0),
+        cross_seqlen_sum=cross_seqlen_sum,
+        cross_seqlen_product_sum=cross_seqlen_product_sum,
     )
-
-
-def resolve_global_flops_runtime_stats(
-    state,
-    *,
-    data_parallel_size: int,
-    vp_size: int | None = None,
-    dp_group=None,
-    include_cross_attention_stats: bool = False,
-) -> tuple[int | None, int | None, int, int | None, int | None]:
-    """Resolve self-attention, legacy vision, and optional cross-attention stats.
-
-    This compatibility wrapper preserves the established five-value runtime
-    contract and its three- or five-integer collective.
-    """
-    (
-        seqlen_sum,
-        seqlen_squared_sum,
-        num_vision_patches,
-        _,
-        _,
-        _,
-        cross_seqlen_sum,
-        cross_seqlen_product_sum,
-    ) = resolve_global_flops_training_stats(
-        state,
-        data_parallel_size=data_parallel_size,
-        vp_size=vp_size,
-        dp_group=dp_group,
-        include_vision_patch_stats=False,
-        include_cross_attention_stats=include_cross_attention_stats,
-    )
-    return (
-        seqlen_sum,
-        seqlen_squared_sum,
-        num_vision_patches,
-        cross_seqlen_sum,
-        cross_seqlen_product_sum,
-    )
-
-
-def resolve_global_flops_stats(
-    state,
-    *,
-    data_parallel_size: int,
-    vp_size: int | None = None,
-    dp_group=None,
-) -> tuple[int | None, int | None, int, int, int, int]:
-    """Resolve language and exact additive ViT statistics.
-
-    This compatibility wrapper preserves the established six-value return
-    contract while sharing the same DP collective with runtime statistics.
-    """
-    return resolve_global_flops_training_stats(
-        state,
-        data_parallel_size=data_parallel_size,
-        vp_size=vp_size,
-        dp_group=dp_group,
-        include_vision_patch_stats=True,
-    )[:6]
 
 
 def resolve_global_flops_seqlen_stats(
@@ -284,13 +252,14 @@ def resolve_global_flops_seqlen_stats(
     This compatibility wrapper preserves the established three-value return
     contract and its three-integer collective.
     """
-    return resolve_global_flops_runtime_stats(
+    stats = resolve_global_flops_runtime_stats(
         state,
         data_parallel_size=data_parallel_size,
         vp_size=vp_size,
         dp_group=dp_group,
         include_cross_attention_stats=False,
-    )[:3]
+    )
+    return stats.seqlen_sum, stats.seqlen_squared_sum, stats.num_vision_patches
 
 
 def _add_flops_accumulator(state, name: str, delta) -> None:

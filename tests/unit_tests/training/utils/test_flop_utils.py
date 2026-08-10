@@ -23,14 +23,13 @@ import torch
 
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.utils.flop_utils import (
+    GlobalFlopsRuntimeStats,
     _lora_seq_stats_cache,
     _packed_data_exists,
     accumulate_flops_metadata,
     num_floating_point_operations,
     resolve_global_flops_runtime_stats,
     resolve_global_flops_seqlen_stats,
-    resolve_global_flops_stats,
-    resolve_global_flops_training_stats,
     vision_patch_stats_from_grid_thw,
     vit_flops,
     vit_flops_from_grid_thw,
@@ -2932,14 +2931,14 @@ class TestResolveGlobalFlopsSeqlenStats:
         state._flops_vision_patches = 64
         state._flops_cross_seqlen_sum = 32
         state._flops_cross_seqlen_product_sum = 8_000
-        seqlen_sum, seqlen_sq_sum, vision, cross_sum, cross_product_sum = resolve_global_flops_runtime_stats(
-            state, data_parallel_size=4, dp_group=None
+        stats = resolve_global_flops_runtime_stats(state, data_parallel_size=4, dp_group=None)
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=1000 * 4,
+            seqlen_squared_sum=250_000 * 4,
+            num_vision_patches=64 * 4,
+            cross_seqlen_sum=32 * 4,
+            cross_seqlen_product_sum=8_000 * 4,
         )
-        assert seqlen_sum == 1000 * 4
-        assert seqlen_sq_sum == 250_000 * 4
-        assert vision == 64 * 4
-        assert cross_sum == 32 * 4
-        assert cross_product_sum == 8_000 * 4
 
     def test_dp_size_one_returns_local(self):
         state = _State()
@@ -3062,10 +3061,21 @@ class TestResolveGlobalFlopsSeqlenStats:
         monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
-        resolved = resolve_global_flops_stats(state, data_parallel_size=2, dp_group=object())
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=2,
+            dp_group=object(),
+            include_vision_patch_stats=True,
+        )
 
         all_reduce.assert_called_once()
-        assert resolved == (30, 500, 0, 300, 30_000, 75)
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=30,
+            seqlen_squared_sum=500,
+            vision_patch_sum=300,
+            vision_patch_squared_sum=30_000,
+            vision_merged_token_sum=75,
+        )
 
     def test_cross_capability_extends_all_reduce_when_local_stats_are_zero(self, monkeypatch):
         state = _State()
@@ -3093,7 +3103,7 @@ class TestResolveGlobalFlopsSeqlenStats:
 
         all_reduce.assert_called_once()
         assert all_reduce.call_args.args[0].numel() == 5
-        assert stats == (40, 400, 0, None, None)
+        assert stats == GlobalFlopsRuntimeStats(seqlen_sum=40, seqlen_squared_sum=400)
 
     def test_vision_and_cross_stats_share_one_all_reduce(self, monkeypatch):
         state = _State()
@@ -3117,7 +3127,7 @@ class TestResolveGlobalFlopsSeqlenStats:
         monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
-        stats = resolve_global_flops_training_stats(
+        stats = resolve_global_flops_runtime_stats(
             state,
             data_parallel_size=2,
             dp_group=object(),
@@ -3126,7 +3136,15 @@ class TestResolveGlobalFlopsSeqlenStats:
         )
 
         all_reduce.assert_called_once()
-        assert stats == (20, 200, 0, 40, 800, 10, 60, 600)
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=20,
+            seqlen_squared_sum=200,
+            vision_patch_sum=40,
+            vision_patch_squared_sum=800,
+            vision_merged_token_sum=10,
+            cross_seqlen_sum=60,
+            cross_seqlen_product_sum=600,
+        )
 
 
 @pytest.mark.unit
