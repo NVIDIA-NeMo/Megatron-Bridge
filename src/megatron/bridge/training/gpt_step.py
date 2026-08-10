@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from functools import partial
+from functools import partial, wraps
 from typing import Iterable
 
 import modelopt.torch.distill as mtd
@@ -44,6 +44,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params, get_thd_cp_partition_indices
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_u
 _LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _PackedMetadataValue = torch.Tensor | int | None
 _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED = "_mbridge_expert_bias_padding_mask_compatible"
+_MCORE_SCHEDULE_PADDING_MASK_PATCHED = "_mbridge_schedule_padding_mask_compatible"
 
 
 def _trim_padded_cu_seqlens_for_cp(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
@@ -123,6 +125,76 @@ def _patch_mcore_expert_bias_padding_mask() -> None:
     TopKRouter._apply_expert_bias = _apply_expert_bias
 
 
+def _patch_mcore_schedule_plan_padding_mask() -> None:
+    """Forward the schedule-plan chunk mask into the pinned MCore MoE router.
+
+    TODO: Remove this compatibility patch after MCore dev's schedule-plan
+    padding-mask forwarding reaches the pinned main commit.
+    """
+    from megatron.core.models.common import fine_grained_callables
+
+    current_builder = fine_grained_callables.build_transformer_layer_callables
+    if getattr(current_builder, _MCORE_SCHEDULE_PADDING_MASK_PATCHED, False):
+        return
+
+    @wraps(current_builder)
+    def build_transformer_layer_callables(layer):
+        forward_funcs, backward_dw = current_builder(layer)
+        if not hasattr(layer.mlp, "route"):
+            return forward_funcs, backward_dw
+
+        forward_funcs = list(forward_funcs)
+        current_pre_dispatch = forward_funcs[0]
+
+        @wraps(current_pre_dispatch)
+        def pre_dispatch_with_padding_mask(node, *args, **kwargs):
+            chunk_padding_mask = getattr(node.chunk_state, "padding_mask", None)
+            if chunk_padding_mask is None:
+                return current_pre_dispatch(node, *args, **kwargs)
+
+            had_instance_route = "route" in layer.mlp.__dict__
+            instance_route = layer.mlp.__dict__.get("route")
+            current_route = layer.mlp.route
+
+            @wraps(current_route)
+            def route_with_padding_mask(hidden_states, padding_mask=None, *args, **kwargs):
+                if padding_mask is None:
+                    padding_mask = chunk_padding_mask
+                return current_route(hidden_states, padding_mask, *args, **kwargs)
+
+            layer.mlp.route = route_with_padding_mask
+            try:
+                return current_pre_dispatch(node, *args, **kwargs)
+            finally:
+                if had_instance_route:
+                    layer.mlp.route = instance_route
+                else:
+                    delattr(layer.mlp, "route")
+
+        forward_funcs[0] = pre_dispatch_with_padding_mask
+        return forward_funcs, backward_dw
+
+    setattr(build_transformer_layer_callables, _MCORE_SCHEDULE_PADDING_MASK_PATCHED, True)
+    fine_grained_callables.build_transformer_layer_callables = build_transformer_layer_callables
+
+
+def _validate_packed_moe_cuda_graph(config) -> None:
+    """Reject router-scoped TE graphs that cannot consume packed padding masks."""
+    if (
+        not getattr(config, "num_moe_experts", None)
+        or getattr(config, "cuda_graph_impl", "none") != "transformer_engine"
+    ):
+        return
+
+    graph_modules = set(cuda_graph_module_names(config))
+    captures_router = not graph_modules or bool(graph_modules & {"moe", "moe_router", "moe_preprocess"})
+    if captures_router:
+        raise ValueError(
+            "Packed MoE padding masks do not support router-scoped Transformer Engine CUDA graphs in the pinned "
+            "MCore. Use an attention-only CUDA graph scope or disable scoped CUDA graphs."
+        )
+
+
 def _prepare_packed_padding_mask(
     padding_mask: torch.Tensor | None,
     *,
@@ -136,9 +208,11 @@ def _prepare_packed_padding_mask(
     if getattr(config, "moe_router_enable_expert_bias", False):
         _patch_mcore_expert_bias_padding_mask()
 
-    # A pre-process GPT stage scatters this mask alongside its embeddings. Other
-    # PP stages receive SP-local activations and therefore need the same slice.
-    if getattr(config, "sequence_parallel", False) and not unwrap_model(model).pre_process:
+    # A pre-process GPT stage scatters this mask alongside its embeddings. HybridModel
+    # scatters only its embeddings in the pinned MCore, while later PP stages already
+    # receive SP-local activations, so both paths need the matching local mask here.
+    needs_sp_scatter = not unwrap_model(model).pre_process or getattr(config, "is_hybrid_model", False)
+    if getattr(config, "sequence_parallel", False) and needs_sp_scatter:
         padding_mask = (
             tensor_parallel.scatter_to_sequence_parallel_region(
                 padding_mask.transpose(0, 1).contiguous(), group=pg_collection.tp
@@ -500,8 +574,14 @@ def _forward_step_common(
 
     # Add packed sequence support
     if packed_seq_metadata is not None:
+        padding_mask = packed_seq_metadata.get("padding_mask")
+        # Supported producers make mask presence configuration-driven and stable
+        # across DP ranks. Never branch on mask contents here: an all-false local
+        # batch must follow the same path as a padded batch on another rank.
+        if padding_mask is not None:
+            _validate_packed_moe_cuda_graph(config)
         padding_mask = _prepare_packed_padding_mask(
-            packed_seq_metadata.get("padding_mask"),
+            padding_mask,
             config=config,
             model=model,
             pg_collection=pg_collection,
@@ -526,6 +606,8 @@ def _forward_step_common(
             assert config.overlap_moe_expert_parallel_comm, (
                 "overlap_moe_expert_parallel_comm must be enabled to return the schedule plan"
             )
+            if forward_args.get("padding_mask") is not None:
+                _patch_mcore_schedule_plan_padding_mask()
             schedule_plan = model.build_schedule_plan(
                 tokens,
                 position_ids,
