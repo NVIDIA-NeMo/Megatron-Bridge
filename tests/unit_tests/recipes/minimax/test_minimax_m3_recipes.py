@@ -57,3 +57,5 @@ def test_text_recipe_uses_text_only_provider(monkeypatch, recipe):
     assert cfg.model.moe_flex_dispatcher_num_sms == 16
     assert cfg.model.moe_permute_fusion_into_hybridep is False
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["USE_MNNVL"] == 0
