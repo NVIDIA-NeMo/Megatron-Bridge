@@ -194,7 +194,7 @@ class TestCanonicalLoRA:
         assert lora.lora_A_init_method == "xavier"
         assert lora.lora_B_init_method == "zero"
         assert hasattr(lora, "canonical_mapping")
-        assert lora.share_expert_adapters is True
+        assert lora.share_expert_adapters is False
 
         # Test custom initialization
         custom_lora = CanonicalLoRA(
@@ -387,7 +387,7 @@ class TestCanonicalLoRA:
     def test_canonical_lora_treats_moe_expert_linear_fc1_as_unfused(self):
         """Grouped expert linear_fc1 should keep a single unfused LoRA adapter."""
         model = MoEMegatronStyleModel()
-        lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
+        lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"], share_expert_adapters=True)
 
         def mock_get_attrs(module, is_expert=False):
             return AdapterAttributes(
@@ -420,6 +420,7 @@ class TestCanonicalLoRA:
             target_modules=["linear_fc1_up", "linear_fc1_gate"],
             dim=32,
             normalize_moe_lora=True,
+            share_expert_adapters=True,
         )
 
         def mock_get_attrs(module, is_expert=False):
@@ -470,6 +471,7 @@ class TestCanonicalLoRA:
             target_modules=["linear_fc1_up", "linear_fc1_gate"],
             dim=8,
             normalize_moe_lora=True,
+            share_expert_adapters=True,
         )
 
         def mock_get_attrs(module, is_expert=False):
@@ -510,6 +512,7 @@ class TestCanonicalLoRA:
             target_modules=["linear_fc1_up", "linear_fc1_gate"],
             dim=32,
             normalize_moe_lora=True,
+            share_expert_adapters=True,
         )
 
         def mock_get_attrs(module, is_expert=False):

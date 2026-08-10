@@ -76,7 +76,7 @@ The following table lists key hyperparameters for configuring LoRA, which contro
 | `alpha` | `float` | `32` | Scaling parameter for LoRA |
 | `dropout` | `float` | `0.0` | Dropout rate for LoRA layers |
 | `normalize_moe_lora` | `bool` | `False` | Reduce expert-layer rank to `dim // moe_router_topk` while keeping dense layers at the full rank |
-| `share_expert_adapters` | `bool` | `True` | Share one adapter across all local experts on an EP rank instead of creating one adapter per local expert |
+| `share_expert_adapters` | `bool` | `False` | Create one adapter per local expert (EP-invariant); set `True` to instead share one adapter across all local experts on an EP rank |
 
 #### Target Modules
 The following table lists specific submodules within transformer architectures that are commonly targeted for LoRA, enabling efficient fine-tuning of attention and feedforward components:
@@ -107,11 +107,11 @@ MLP layers such as `linear_fc1`, `linear_fc2`, `linear_fc1_up`, and
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `share_expert_adapters` | `bool` | `True` | Preserve the original behavior and share one adapter across all local experts on each EP rank |
+| `share_expert_adapters` | `bool` | `False` | Create one adapter per local expert (EP-invariant); set `True` to instead share one adapter across the experts co-located on each EP rank |
 | `normalize_moe_lora` | `bool` | `False` | Use `dim // moe_router_topk` for expert layers only so MoE adapter capacity stays comparable to a dense model |
 
-- `share_expert_adapters=True` keeps the original shared-adapter behavior for grouped expert linears.
-- `share_expert_adapters=False` opts into per-local-expert adapters.
+- `share_expert_adapters=False` (default) uses per-local-expert adapters, which are EP-invariant.
+- `share_expert_adapters=True` shares one adapter across the experts co-located on each EP rank. Note this makes the adapter's effective sharing granularity — and therefore the trained numerics — depend on the expert-parallel degree; use it mainly to save parameters.
 - `normalize_moe_lora=True` only changes expert layers; non-expert layers still use the full `dim`.
 - `dim` must be divisible by `moe_router_topk` when `normalize_moe_lora=True`.
 - When expert tensor parallelism shards a non-input-parallel expert layer, Megatron Bridge may round the effective expert rank up to the expert-TP granularity so the adapter can be partitioned cleanly.
@@ -224,7 +224,7 @@ canonical_lora_config = CanonicalLoRA(
 | `lora_A_init_method` | `str` | `"xavier"` | Initialization method for LoRA A matrix |
 | `lora_B_init_method` | `str` | `"zero"` | Initialization method for LoRA B matrix |
 | `normalize_moe_lora` | `bool` | `False` | Reduce expert-layer rank to `dim // moe_router_topk` while keeping dense layers at the full rank |
-| `share_expert_adapters` | `bool` | `True` | Share one adapter across all local experts on an EP rank instead of creating one adapter per local expert |
+| `share_expert_adapters` | `bool` | `False` | Create one adapter per local expert (EP-invariant); set `True` to instead share one adapter across all local experts on an EP rank |
 
 #### Target Modules for Canonical LoRA
 

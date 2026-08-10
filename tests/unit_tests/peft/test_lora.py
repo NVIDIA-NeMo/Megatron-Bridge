@@ -216,7 +216,7 @@ class TestLoRA:
         assert lora.sequence_parallel_input_regather is False
         assert lora.lora_A_init_method == "xavier"
         assert lora.lora_B_init_method == "zero"
-        assert lora.share_expert_adapters is True
+        assert lora.share_expert_adapters is False
 
         # Test custom initialization
         custom_lora = LoRA(
@@ -599,7 +599,12 @@ class TestLoRANormalizeMoE:
     def test_normalize_moe_lora_reduces_expert_dim(self):
         """Expert layers should get dim // moe_router_topk when normalize_moe_lora is enabled."""
         model = MoEModel(moe_router_topk=2)
-        lora = LoRA(target_modules=["linear_fc1", "linear_fc2", "linear_proj"], dim=32, normalize_moe_lora=True)
+        lora = LoRA(
+            target_modules=["linear_fc1", "linear_fc2", "linear_proj"],
+            dim=32,
+            normalize_moe_lora=True,
+            share_expert_adapters=True,
+        )
 
         def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
             assert sequence_parallel_input_regather is False
@@ -639,7 +644,12 @@ class TestLoRANormalizeMoE:
     def test_normalize_moe_lora_disabled_uses_full_dim(self):
         """All layers should get full dim when normalize_moe_lora is False (default)."""
         model = MoEModel(moe_router_topk=2)
-        lora = LoRA(target_modules=["linear_fc1", "linear_fc2"], dim=32, normalize_moe_lora=False)
+        lora = LoRA(
+            target_modules=["linear_fc1", "linear_fc2"],
+            dim=32,
+            normalize_moe_lora=False,
+            share_expert_adapters=True,
+        )
 
         def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
             assert sequence_parallel_input_regather is False
@@ -664,7 +674,7 @@ class TestLoRANormalizeMoE:
     def test_normalize_moe_lora_indivisible_dim_raises(self):
         """Should raise ValueError when dim is not divisible by moe_router_topk."""
         model = MoEModel(moe_router_topk=3)
-        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
+        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True, share_expert_adapters=True)
 
         def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
             assert sequence_parallel_input_regather is False
@@ -686,7 +696,7 @@ class TestLoRANormalizeMoE:
     def test_normalize_moe_lora_shared_experts_get_full_dim(self):
         """Shared expert layers should get full dim (they are excluded by is_expert_linear)."""
         model = MoEModel(moe_router_topk=2)
-        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
+        lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True, share_expert_adapters=True)
 
         def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
             assert sequence_parallel_input_regather is False
@@ -716,7 +726,7 @@ class TestLoRANormalizeMoE:
         for module in model.modules():
             if hasattr(module, "config"):
                 module.config.expert_tensor_parallel_size = 2
-        lora = LoRA(target_modules=["linear_fc1"], dim=8, normalize_moe_lora=True)
+        lora = LoRA(target_modules=["linear_fc1"], dim=8, normalize_moe_lora=True, share_expert_adapters=True)
 
         def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
             assert sequence_parallel_input_regather is False
