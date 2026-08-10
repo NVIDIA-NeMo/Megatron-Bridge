@@ -19,12 +19,14 @@ import modelopt.torch.distill as mtd
 import pytest
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _cu_seqlens_for_cp_partition,
     _forward_step_common,
     _partition_packed_batch_for_cp,
+    _patch_mcore_expert_bias_padding_mask,
     get_batch,
     get_packed_seq_params,
 )
@@ -672,13 +674,8 @@ class TestGetBatch:
         assert "cu_seqlens" not in get_packed_seq_params_mock.call_args.args[0]
         assert "cu_seqlens_argmin" not in get_packed_seq_params_mock.call_args.args[0]
 
-    @pytest.mark.parametrize(
-        ("return_schedule_plan", "expert_bias", "expect_mask"),
-        [(False, False, True), (True, False, True), (False, True, False)],
-    )
-    def test_forward_common_passes_packed_padding_mask_to_model(
-        self, monkeypatch, return_schedule_plan, expert_bias, expect_mask
-    ):
+    @pytest.mark.parametrize(("return_schedule_plan", "expert_bias"), [(False, False), (True, False), (False, True)])
+    def test_forward_common_passes_packed_padding_mask_to_model(self, monkeypatch, return_schedule_plan, expert_bias):
         """Packed alignment gaps must not contribute to MoE router statistics."""
         tokens = _as_nocuda(torch.arange(8).unsqueeze(0))
         labels = _as_nocuda(torch.arange(1, 9).unsqueeze(0))
@@ -726,10 +723,30 @@ class TestGetBatch:
         _forward_step_common(state, _Iterator(batch), model, return_schedule_plan=return_schedule_plan)
 
         assert model.forward_kwargs is not None
-        if expect_mask:
-            assert torch.equal(model.forward_kwargs["padding_mask"], padding_mask)
-        else:
-            assert "padding_mask" not in model.forward_kwargs
+        assert torch.equal(model.forward_kwargs["padding_mask"], padding_mask)
+
+    def test_mcore_expert_bias_padding_mask_compat(self, monkeypatch):
+        """The pinned MCore expert-bias path must receive a broadcastable mask."""
+        observed = {}
+
+        def current_apply_expert_bias(_self, routing_map, padding_mask=None):
+            observed["routing_map"] = routing_map & (~padding_mask)
+
+        monkeypatch.setattr(TopKRouter, "_apply_expert_bias", current_apply_expert_bias)
+
+        _patch_mcore_expert_bias_padding_mask()
+        patched_apply_expert_bias = TopKRouter._apply_expert_bias
+        _patch_mcore_expert_bias_padding_mask()
+
+        routing_map = torch.tensor([[True, False], [False, True], [True, True]])
+        padding_mask = torch.tensor([False, True, False])
+        patched_apply_expert_bias(object(), routing_map, padding_mask=padding_mask)
+
+        assert TopKRouter._apply_expert_bias is patched_apply_expert_bias
+        assert observed["routing_map"].tolist() == [[True, False], [False, False], [True, True]]
+
+        with pytest.raises(AssertionError, match="padding_mask flat"):
+            patched_apply_expert_bias(object(), routing_map, padding_mask=torch.zeros(4, dtype=torch.bool))
 
     def test_forward_common_scatters_packed_padding_mask_on_middle_pp_sp_stage(self, monkeypatch):
         """Middle PP stages must receive an SP-local router padding mask."""
