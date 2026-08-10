@@ -159,6 +159,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     # cfg.model.moe_expert_rank_capacity_factor = 4
     # cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
