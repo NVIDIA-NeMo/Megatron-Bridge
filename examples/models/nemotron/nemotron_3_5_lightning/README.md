@@ -3,9 +3,10 @@
 This directory is the day-0 release entrypoint for
 `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` on Megatron Bridge 0.5.1.
 Use it with the `nvcr.io/nvidia/nemo:26.06.01` runtime and a Megatron Bridge
-0.5.1 checkout that contains Nemotron 3.5 Lightning support (i.e. the `nemotron-3.5-lightning-mb-0.5.1` branch).
+0.5.1 checkout from the `nemotron-3.5-lightning-mb-0.5.1` branch.
 
-The support based on Megatron Bridge 0.6.0 (NeMo 26.08 container) is available on the main branch.
+Megatron Bridge 0.6.0 support is available in the NeMo 26.08 container without
+overriding `/opt/Megatron-Bridge`.
 
 ## Contents
 
@@ -62,10 +63,8 @@ documented artifact and both dataset caches at once.
 
 ## Override the Megatron Bridge folder
 
-The NeMo 26.06.01 image is `nvcr.io/nvidia/nemo:26.06.01`. 
-(`nvcr.io/nvidia/nemo@sha256:912033288c982a8c4af05df46a1d670c34350f1427c758f5da9c485bdec57264`).
-The image does not contain this release-specific model support. Override the
-Megatron Bridge folder with the following steps:
+The NeMo 26.06.01 image does not contain this release-specific model support.
+Override its Megatron Bridge folder with the release checkout:
 
 ```bash
 docker pull nvcr.io/nvidia/nemo:26.06.01
@@ -74,6 +73,7 @@ docker run --rm -it --gpus all --ipc=host \
   --ulimit memlock=-1 --ulimit stack=67108864 \
   -v "$REPO_ROOT:/opt/Megatron-Bridge:ro" \
   -v "$LIGHTNING_STATE:/workspace" \
+  -e WORKSPACE=/workspace \
   -e HF_HOME=/workspace/cache/huggingface \
   -e HF_HUB_CACHE=/workspace/cache/huggingface/hub \
   -e HF_DATASETS_CACHE=/workspace/cache/huggingface/datasets \
@@ -83,20 +83,11 @@ docker run --rm -it --gpus all --ipc=host \
   nvcr.io/nvidia/nemo:26.06.01 bash
 ```
 
-In the container, activate the bundled environment and export the paths used
-by every subsequent command:
+In the container, activate the bundled environment and create the persistent
+cache and output directories:
 
 ```bash
 source /opt/venv/bin/activate
-cd /opt/Megatron-Bridge
-
-export PYTHONPATH="$PWD/src:$PWD/3rdparty/Megatron-LM:${PYTHONPATH:-}"
-export WORKSPACE=/workspace
-export HF_HOME=/workspace/cache/huggingface
-export HF_HUB_CACHE=/workspace/cache/huggingface/hub
-export HF_DATASETS_CACHE=/workspace/cache/huggingface/datasets
-export NEMO_HOME=/workspace/cache/nemo
-export NEMO_DATASETS_CACHE=/workspace/cache/nemo/datasets
 mkdir -p "$HF_HUB_CACHE" "$HF_DATASETS_CACHE" "$NEMO_DATASETS_CACHE" /workspace/{models,results}
 ```
 
@@ -109,7 +100,24 @@ Import the pinned local HF snapshot with TP1/EP8. Eight local ranks are
 required:
 
 ```bash
-export HF_MODEL=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+export HF_MODEL_ID=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+export HF_MODEL_REVISION=42fc80d68b37a37a4dd59561e688e4f7e3f8cb56
+export HF_MODEL="$(
+  uv run --active --no-sync python - <<'PY'
+import os
+
+from huggingface_hub import snapshot_download
+
+print(
+    snapshot_download(
+        repo_id=os.environ["HF_MODEL_ID"],
+        revision=os.environ["HF_MODEL_REVISION"],
+    )
+)
+PY
+)"
+test -f "$HF_MODEL/config.json"
+
 export BASE_MEGATRON_ROOT=/workspace/models/nemotron-3.5-lightning-megatron
 export BASE_MEGATRON_CHECKPOINT="$BASE_MEGATRON_ROOT/iter_0000000"
 
@@ -194,7 +202,7 @@ and can create a checkpoint of approximately 450 GiB.
 export PRETRAIN_OUTPUT=/workspace/results/nemotron-3.5-lightning-pretrain-$HARDWARE
 
 NPROC_PER_NODE="$PRETRAIN_NPROC" HARDWARE="$HARDWARE" \
-WORKSPACE=/workspace OUTPUT_DIR="$PRETRAIN_OUTPUT" \
+OUTPUT_DIR="$PRETRAIN_OUTPUT" \
   ./examples/models/nemotron/nemotron_3_5_lightning/pretrain.sh
 
 test "$(<"$PRETRAIN_OUTPUT/latest_checkpointed_iteration.txt")" = 100
@@ -206,8 +214,8 @@ indexed data. For example, set `dataset.blend` to the mounted dataset prefix.
 
 ## Full SFT
 
-The SFT workflow uses packed OpenMathInstruct-2 prepared
-above. Its input is the imported `iter_0000000` checkpoint.
+The SFT workflow downloads and packs OpenMathInstruct-2 on first use. Its input
+is the imported `iter_0000000` checkpoint.
 
 ```bash
 export SFT_OUTPUT=/workspace/results/nemotron-3.5-lightning-sft-$HARDWARE
@@ -215,8 +223,7 @@ export SFT_CHECKPOINT="$SFT_OUTPUT/iter_0000100"
 
 NPROC_PER_NODE="$SFT_NPROC" HARDWARE="$HARDWARE" \
 PRETRAINED_CHECKPOINT="$BASE_MEGATRON_CHECKPOINT" OUTPUT_DIR="$SFT_OUTPUT" \
-  ./examples/models/nemotron/nemotron_3_5_lightning/sft.sh \
-  "dataset.hf_kwargs={revision:${OPENMATH_REVISION}}"
+  ./examples/models/nemotron/nemotron_3_5_lightning/sft.sh
 
 test "$(<"$SFT_OUTPUT/latest_checkpointed_iteration.txt")" = 100
 test -f "$SFT_CHECKPOINT/run_config.yaml"
@@ -251,7 +258,7 @@ NPROC_PER_NODE=8 HF_MODEL="$SFT_HF_EXPORT" MEGATRON_PATH= TP=1 EP=8 \
 
 The LoRA recipe uses rank 32, alpha 32, zero dropout, and targets attention,
 MLP, Mamba, expert, shared-expert, and MTP linear layers. Its packed SQuAD
-dataset is explicitly pinned by the final override below.
+dataset is downloaded and prepared on first use.
 
 ```bash
 export LORA_OUTPUT=/workspace/results/nemotron-3.5-lightning-lora-$HARDWARE
@@ -259,8 +266,7 @@ export LORA_CHECKPOINT="$LORA_OUTPUT/iter_0000100"
 
 NPROC_PER_NODE="$LORA_NPROC" HARDWARE="$HARDWARE" \
 PRETRAINED_CHECKPOINT="$BASE_MEGATRON_CHECKPOINT" OUTPUT_DIR="$LORA_OUTPUT" \
-  ./examples/models/nemotron/nemotron_3_5_lightning/lora.sh \
-  "dataset.hf_kwargs={revision:${SQUAD_REVISION}}"
+  ./examples/models/nemotron/nemotron_3_5_lightning/lora.sh
 
 test "$(<"$LORA_OUTPUT/latest_checkpointed_iteration.txt")" = 100
 test -f "$LORA_CHECKPOINT/run_config.yaml"
