@@ -467,6 +467,9 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        global_state._flops_vision_patch_sum = 0
+        global_state._flops_vision_patch_sq_sum = 0
+        global_state._flops_vision_merged_token_sum = 0
         global_state._flops_cross_seqlen_sum = 0
         global_state._flops_cross_seqlen_product_sum = 0
         global_state._flops_requires_global_reduce = False
@@ -581,17 +584,12 @@ def train(
         # fixed-length stats from the local DP rank; THD batches request one exact SUM
         # all-reduce over the pure DP group because packed sub-sequence lengths can
         # differ by rank.
-        (
-            seqlen_sum,
-            seqlen_squared_sum,
-            num_vision_patches,
-            cross_seqlen_sum,
-            cross_seqlen_product_sum,
-        ) = flop_utils.resolve_global_flops_runtime_stats(
+        flops_stats = flop_utils.resolve_global_flops_runtime_stats(
             global_state,
             data_parallel_size=dp_size,
             vp_size=config.model.virtual_pipeline_model_parallel_size,
             dp_group=pg_collection.dp,
+            include_vision_patch_stats=True,
             include_cross_attention_stats=hasattr(
                 config.model, "_get_num_floating_point_operations_with_runtime_stats"
             ),
@@ -599,12 +597,19 @@ def train(
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
             config,
             batch_size=batch_size,
-            seqlen_sum=seqlen_sum,
-            seqlen_squared_sum=seqlen_squared_sum,
-            num_vision_patches=num_vision_patches,
-            cross_seqlen_sum=cross_seqlen_sum,
-            cross_seqlen_product_sum=cross_seqlen_product_sum,
+            seqlen_sum=flops_stats.seqlen_sum,
+            seqlen_squared_sum=flops_stats.seqlen_squared_sum,
+            num_vision_patches=0 if flops_stats.has_exact_vision_stats else flops_stats.num_vision_patches,
+            cross_seqlen_sum=flops_stats.cross_seqlen_sum,
+            cross_seqlen_product_sum=flops_stats.cross_seqlen_product_sum,
         )
+        if flops_stats.has_exact_vision_stats:
+            num_floating_point_operations_in_batch += flop_utils.vit_flops_from_patch_stats(
+                config,
+                patch_sum=flops_stats.vision_patch_sum,
+                patch_squared_sum=flops_stats.vision_patch_squared_sum,
+                merged_token_sum=flops_stats.vision_merged_token_sum,
+            )
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch

@@ -14,6 +14,7 @@
 
 import json
 import os
+import warnings
 from dataclasses import fields
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
@@ -28,10 +29,12 @@ from megatron.bridge.data.builders import (
     HFDatasetSourceConfig,
     HFEnergonTaskEncoderConfig,
     MockVLMSFTDatasetConfig,
+    QwenVLEnergonTaskEncoderConfig,
 )
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
+from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.models.transformer_config import HeterogeneousTransformerConfig, TransformerConfig
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -95,6 +98,19 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     }
     defaults.update(kwargs)
     return GPTModelProvider(**defaults)
+
+
+def create_test_qwen3_vl_config(**kwargs: Any) -> Qwen3VLModelProvider:
+    """Create a minimal Qwen3-VL provider for configuration validation."""
+    defaults = {
+        "num_layers": 1,
+        "hidden_size": 128,
+        "num_attention_heads": 4,
+        "seq_length": 512,
+        "apply_rope_fusion": False,
+    }
+    defaults.update(kwargs)
+    return Qwen3VLModelProvider(**defaults)
 
 
 def create_test_deepseek_config(**kwargs: Any) -> MLAModelProvider:
@@ -185,6 +201,17 @@ def create_test_energon_dataset_config(sequence_length: int, micro_batch_size: i
         seq_length=sequence_length,
         micro_batch_size=micro_batch_size,
         task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+    )
+
+
+def create_test_qwen_native_energon_dataset_config(sequence_length: int) -> EnergonDatasetConfig:
+    """Create an Energon config using Qwen-VL native online packing."""
+    return EnergonDatasetConfig(
+        path="/tmp/energon",
+        seq_length=sequence_length,
+        micro_batch_size=1,
+        packing_buffer_size=32,
+        task_encoder=QwenVLEnergonTaskEncoderConfig(hf_processor_path="Qwen/model"),
     )
 
 
@@ -1157,6 +1184,38 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_native_energon_packing_marks_builder_transformer_config(self, monkeypatch):
+        """Test native Energon packing marks the nested builder transformer config."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                calculate_per_token_loss=True,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert model_cfg.transformer._enable_in_batch_packing is True
+            assert "_enable_in_batch_packing" not in model_cfg.__dict__
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_enable_in_batch_packing_sets_collate_padding_multiple(self, monkeypatch):
         """Test in-batch packing forwards CP/SP divisibility requirements to collate-time packers."""
         gpt_model_cfg = create_test_gpt_config(
@@ -1238,7 +1297,7 @@ class TestConfigContainerValidation:
 
     def test_energon_packing_and_non_packed_padding_include_cp_sp_requirements(self, monkeypatch):
         """Test Energon receives the same CP/SP-safe collate multiples as direct HF."""
-        model_cfg = create_test_gpt_config(
+        model_cfg = create_test_qwen3_vl_config(
             context_parallel_size=2,
             tensor_model_parallel_size=4,
             sequence_parallel=True,
@@ -1282,6 +1341,225 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             assert dataset_cfg.pad_to_multiple_of == 24
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_sets_variable_sequences_and_cp_sp_alignment(self, monkeypatch):
+        """Native Energon packing uses MBS1 while deriving the same THD alignment."""
+        model_cfg = create_test_qwen3_vl_config(
+            context_parallel_size=2,
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 8
+            assert model_cfg._enable_in_batch_packing is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_requires_per_token_loss(self, monkeypatch):
+        """Variable source samples per pack require token-normalized loss."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=False)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="requires model.calculate_per_token_loss=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_requires_non_averaged_collective(self, monkeypatch):
+        """MCore per-token loss requires sum-reduced DDP gradients."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = True
+
+        try:
+            with pytest.raises(ValueError, match="requires ddp.average_in_collective=False"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("field_name", "value", "world_size", "message"),
+        [
+            ("mtp_num_layers", 1, 1, "does not support MTP"),
+            ("cuda_graph_impl", "local", 1, "does not support CUDA graphs"),
+            ("vision_cuda_graph_impl", "transformer_engine", 1, "does not support CUDA graphs"),
+            ("pipeline_model_parallel_size", 2, 2, "does not yet support pipeline parallelism"),
+        ],
+    )
+    def test_native_energon_packing_rejects_unsupported_execution_modes(
+        self, monkeypatch, field_name, value, world_size, message
+    ):
+        """Native online packs fail fast for fixed-width or unvalidated execution modes."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        if not hasattr(model_cfg, field_name):
+            raise ValueError(f"Test model config has no field {field_name!r}.")
+        setattr(model_cfg, field_name, value)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=world_size,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.raises(ValueError, match=message):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_allows_expert_parallelism(self):
+        """Allow native packing configuration with expert parallelism."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="alltoall",
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("dispatcher", ["allgather", "flex"])
+    def test_native_energon_packing_allows_other_ep_dispatchers_with_fixed_width(self, dispatcher):
+        """Allow dispatcher selection while deriving fixed-width native EP packs."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type=dispatcher,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_to_max_length is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_disables_moe_ep_overlap(self):
+        """Fall back to non-overlapped EP instead of rejecting native packing."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="alltoall",
+            overlap_moe_expert_parallel_comm=True,
+            delay_wgrad_compute=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.warns(UserWarning, match="Disabling MoE expert-parallel communication overlap"):
+                container.validate()
+            assert model_cfg.overlap_moe_expert_parallel_comm is False
+            assert model_cfg.delay_wgrad_compute is False
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_rejects_qwen_dist_train(self, monkeypatch):
+        """Native online packing has not been validated with split vision/language worlds."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        model_cfg.dist_train.use_dist_train = True
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.raises(ValueError, match="does not support Qwen3-VL DistTrain"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_does_not_require_model_capability_flag(self, monkeypatch):
+        """Native packing is selected and constrained by the dataset path, not a model allowlist."""
+        model_cfg = create_test_gpt_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert model_cfg._enable_in_batch_packing is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -3509,6 +3787,91 @@ class TestRuntimeConfigUpdate:
             assert full_cfg.data_parallel_size == 8  # world_size / model_parallel_size
             assert full_cfg.comm_overlap.data_parallel_size == 8  # Should be set by runtime_config_update
 
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("dispatcher", ["alltoall", "allgather"])
+    def test_runtime_config_update_disables_native_packing_moe_ep_overlap(self, dispatcher):
+        """Disable EP overlap after runtime communication settings reach the model."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        model_cfg = create_test_qwen3_vl_config(
+            bf16=True,
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type=dispatcher,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        optimizer_cfg = create_test_optimizer_config(bf16=True)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            optimizer_config=optimizer_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        container.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=False,
+            overlap_moe_expert_parallel_comm=True,
+        )
+
+        try:
+            with pytest.warns(UserWarning, match="Disabling MoE expert-parallel communication overlap") as records:
+                runtime_config_update(container)
+            assert len(records) == 1
+            assert model_cfg.overlap_moe_expert_parallel_comm is False
+            assert model_cfg.delay_wgrad_compute is False
+            assert container.comm_overlap.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.delay_wgrad_compute is False
+            assert container.comm_overlap.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.user_comm_overlap_cfg.delay_wgrad_compute is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_runtime_config_update_disables_native_packing_delay_wgrad_only(self):
+        """Disable delayed weight-gradient compute before communication-overlap setup."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="allgather",
+            overlap_moe_expert_parallel_comm=False,
+            delay_wgrad_compute=False,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        container.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=False,
+            overlap_moe_expert_parallel_comm=False,
+            delay_wgrad_compute=True,
+        )
+
+        try:
+            with pytest.warns(UserWarning, match="Disabling MoE expert-parallel communication overlap") as records:
+                runtime_config_update(container)
+            assert len(records) == 1
+            assert model_cfg.overlap_moe_expert_parallel_comm is False
+            assert model_cfg.delay_wgrad_compute is False
+            assert container.comm_overlap.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.delay_wgrad_compute is False
+            assert container.comm_overlap.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.user_comm_overlap_cfg.delay_wgrad_compute is False
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

@@ -41,11 +41,11 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    # MBS4 exhausts 184-GiB GB200 HBM before the second optimizer step in
-    # NeMo 26.06. MBS3 retains most of its compute intensity with headroom for
-    # the optimizer step; GBS480 gives 20 microbatches at dense DP8.
+    # BF16 MBS3 exhausts 184-GiB GB200 HBM in the second-iteration output
+    # projection. MBS2 leaves enough headroom; GBS480 gives 30 microbatches at
+    # dense DP8.
     cfg.train.global_batch_size = 480
-    cfg.train.micro_batch_size = 3
+    cfg.train.micro_batch_size = 2
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -87,6 +87,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3.5/Qwen3.6-VL 35B-A3B pretrain: 8× GB200, FP8 current-scaling."""
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
+    cfg.train.micro_batch_size = 3
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -116,6 +117,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5/Qwen3.6-VL 35B-A3B pretrain: 8× GB200, MXFP8."""
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.train.micro_batch_size = 3
     # This fixed-shape synthetic MXFP8 path has been measured successfully with
     # Transformer Engine graphs for the Qwen35-VL router and preprocessing scopes.
     cfg.model.cuda_graph_impl = "transformer_engine"

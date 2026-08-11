@@ -15,6 +15,7 @@
 """Qwen VL collator implementations."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -51,6 +52,25 @@ try:
     HAVE_QWEN_VL_UTILS = True
 except ImportError:
     HAVE_QWEN_VL_UTILS = False
+
+
+@dataclass
+class QwenVLPreparedSequence:
+    """One fully processed, unpadded Qwen-VL sequence and its visual payload.
+
+    Note:
+        This model-owned storage layout is provisional and may evolve as more
+        VLMs adopt native packing. Callers should use ``sequence_length`` when
+        they do not need Qwen-specific ``row`` or ``visual_values`` payloads.
+    """
+
+    row: dict[str, torch.Tensor]
+    visual_values: dict[str, torch.Tensor]
+
+    @property
+    def sequence_length(self) -> int:
+        """Return the exact post-processor token length."""
+        return int(self.row["input_ids"].numel())
 
 
 def _normalize_qwen_video_paths(example: dict[str, Any]) -> dict[str, Any]:
@@ -90,6 +110,169 @@ def _normalize_qwen_video_paths(example: dict[str, Any]) -> dict[str, Any]:
     normalized_example = dict(example)
     normalized_example["conversation"] = normalized_conversation
     return normalized_example
+
+
+def _prepare_qwen_vl_sequence(
+    example: dict[str, Any],
+    processor: Any,
+    *,
+    text: str,
+    images: list[Any],
+    videos: list[Any],
+    skipped_tokens: torch.Tensor,
+    boundary_config: Any,
+    min_pixels: int | None,
+    max_pixels: int | None,
+    require_assistant_matches: bool,
+) -> QwenVLPreparedSequence:
+    """Process one example into the exact row consumed by THD packing."""
+    processor_kwargs: dict[str, Any] = {
+        "text": [text],
+        "padding": False,
+        "return_tensors": "pt",
+    }
+    if min_pixels is not None:
+        processor_kwargs["min_pixels"] = min_pixels
+    if max_pixels is not None:
+        processor_kwargs["max_pixels"] = max_pixels
+    if images:
+        processor_kwargs["images"] = images
+    if videos:
+        processor_kwargs["videos"] = videos
+
+    with use_processor_right_padding(processor):
+        sample_batch = {
+            key: value.contiguous() if isinstance(value, torch.Tensor) else value
+            for key, value in processor(**processor_kwargs).items()
+        }
+
+    input_ids = sample_batch["input_ids"][0]
+    attention_mask = sample_batch.get("attention_mask")
+    if attention_mask is None:
+        attention_mask = torch.ones_like(input_ids)
+    else:
+        attention_mask = attention_mask[0]
+    position_ids = sample_batch.get("position_ids")
+    if position_ids is None:
+        position_ids = torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long)
+    else:
+        position_ids = position_ids[0]
+
+    loss_mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        processor,
+        skipped_tokens,
+        boundary_config=boundary_config,
+        warn_on_all_masked=not require_assistant_matches,
+    ).to(device=input_ids.device, dtype=torch.float32)
+    labels = torch.cat([input_ids[1:], input_ids.new_full((1,), IGNORE_INDEX)])
+    if skipped_tokens.numel() > 0:
+        labels = labels.masked_fill(torch.isin(labels, skipped_tokens.to(device=labels.device)), IGNORE_INDEX)
+    shifted_loss_mask = torch.cat([loss_mask[1:], loss_mask.new_zeros(1)])
+
+    visual_values = {}
+    for key in QWEN_VISUAL_KEYS:
+        value = sample_batch.get(key)
+        if not isinstance(value, torch.Tensor):
+            continue
+        if key in {"pixel_values", "pixel_values_videos"} and value.dim() == 5:
+            value = value.flatten(0, 1)
+        elif key in {"image_grid_thw", "video_grid_thw"} and value.dim() == 3:
+            value = value.flatten(0, 1)
+        visual_values[key] = value
+
+    return QwenVLPreparedSequence(
+        row={
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
+            "loss_mask": shifted_loss_mask,
+        },
+        visual_values=visual_values,
+    )
+
+
+def prepare_qwen_vl_sequence(
+    example: dict[str, Any],
+    processor: Any,
+    *,
+    min_pixels: int | None = QWEN_VL_MIN_PIXELS,
+    max_pixels: int | None = QWEN_VL_MAX_PIXELS,
+    require_assistant_matches: bool = False,
+) -> QwenVLPreparedSequence:
+    """Process one Qwen-VL example once for online or collate-time packing."""
+    if not HAVE_QWEN_VL_UTILS:
+        raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
+
+    example = _normalize_qwen_video_paths(example)
+    skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=CHATML_ASSISTANT_START,
+        assistant_end=CHATML_ASSISTANT_END,
+        assistant_end_fallbacks=("<|im_end|>",),
+        role_start_markers=CHATML_OTHER_ROLE_STARTS,
+    )
+    text = processor.apply_chat_template(
+        example["conversation"],
+        tokenize=False,
+        **chat_template_kwargs_from_example(example),
+    )
+    images, videos = process_vision_info(example["conversation"])
+    if images is None:
+        images = []
+    elif not isinstance(images, list):
+        images = [images]
+    if videos is None:
+        videos = []
+    elif not isinstance(videos, list):
+        videos = [videos]
+
+    return _prepare_qwen_vl_sequence(
+        example,
+        processor,
+        text=text,
+        images=images,
+        videos=videos,
+        skipped_tokens=skipped_tokens,
+        boundary_config=boundary_config,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+        require_assistant_matches=require_assistant_matches,
+    )
+
+
+def build_qwen_vl_packed_batch(
+    sequences: list[QwenVLPreparedSequence],
+    *,
+    sequence_length: int | None,
+    pad_to_multiple_of: int,
+    pad_to_max_length: bool = False,
+) -> dict[str, Any]:
+    """Build one canonical MCore THD row from prepared Qwen-VL sequences.
+
+    When ``pad_to_max_length`` is true, the last physical segment is padded so
+    the row reaches ``sequence_length`` while the unpadded THD boundaries keep
+    describing only real tokens.
+    """
+    packed_batch = build_mcore_thd_sequence_batch_from_rows(
+        [sequence.row for sequence in sequences],
+        sequence_length=sequence_length,
+        pad_token_id=0,
+        ignore_index=IGNORE_INDEX,
+        pad_to_multiple_of=pad_to_multiple_of,
+        pad_to_max_length=pad_to_max_length,
+    )
+    visual_values: dict[str, list[torch.Tensor]] = {key: [] for key in QWEN_VISUAL_KEYS}
+    for sequence in sequences:
+        for key, value in sequence.visual_values.items():
+            visual_values[key].append(value)
+    packed_batch["visual_inputs"] = GenericVisualInputs(
+        **{key: torch.cat(values, dim=0) for key, values in visual_values.items() if values}
+    )
+    return packed_batch
 
 
 def qwen2_5_collate_fn(
@@ -151,87 +334,28 @@ def qwen2_5_collate_fn(
         has_media.append(len(imgs) > 0 or len(videos) > 0)
 
     if enable_in_batch_packing:
-        sequence_rows = []
-        visual_values: dict[str, list[torch.Tensor]] = {key: [] for key in QWEN_VISUAL_KEYS}
-        with use_processor_right_padding(processor):
-            for example, text, images, videos in zip(
-                examples, texts, per_example_images, per_example_videos, strict=True
-            ):
-                processor_kwargs = {
-                    "text": [text],
-                    "padding": False,
-                    "return_tensors": "pt",
-                }
-                if min_pixels is not None:
-                    processor_kwargs["min_pixels"] = min_pixels
-                if max_pixels is not None:
-                    processor_kwargs["max_pixels"] = max_pixels
-                if images:
-                    processor_kwargs["images"] = images
-                if videos:
-                    processor_kwargs["videos"] = videos
+        prepared_sequences = []
+        for example, text, images, videos in zip(examples, texts, per_example_images, per_example_videos, strict=True):
+            prepared = _prepare_qwen_vl_sequence(
+                example,
+                processor,
+                text=text,
+                images=images,
+                videos=videos,
+                skipped_tokens=skipped_tokens,
+                boundary_config=boundary_config,
+                min_pixels=min_pixels,
+                max_pixels=max_pixels,
+                require_assistant_matches=require_assistant_matches,
+            )
+            prepared_sequences.append(prepared)
 
-                sample_batch = {
-                    key: value.contiguous() if isinstance(value, torch.Tensor) else value
-                    for key, value in processor(**processor_kwargs).items()
-                }
-                input_ids = sample_batch["input_ids"][0]
-                attention_mask = sample_batch.get("attention_mask")
-                if attention_mask is None:
-                    attention_mask = torch.ones_like(input_ids)
-                else:
-                    attention_mask = attention_mask[0]
-                position_ids = sample_batch.get("position_ids")
-                if position_ids is None:
-                    position_ids = torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long)
-                else:
-                    position_ids = position_ids[0]
-
-                loss_mask = build_assistant_loss_mask(
-                    example,
-                    input_ids,
-                    processor,
-                    skipped_tokens,
-                    boundary_config=boundary_config,
-                    warn_on_all_masked=not require_assistant_matches,
-                ).to(device=input_ids.device, dtype=torch.float32)
-                labels = torch.cat([input_ids[1:], input_ids.new_full((1,), IGNORE_INDEX)])
-                if skipped_tokens.numel() > 0:
-                    labels = labels.masked_fill(
-                        torch.isin(labels, skipped_tokens.to(device=labels.device)), IGNORE_INDEX
-                    )
-                shifted_loss_mask = torch.cat([loss_mask[1:], loss_mask.new_zeros(1)])
-                sequence_rows.append(
-                    {
-                        "input_ids": input_ids,
-                        "attention_mask": attention_mask,
-                        "position_ids": position_ids,
-                        "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
-                        "loss_mask": shifted_loss_mask,
-                    }
-                )
-
-                for key in QWEN_VISUAL_KEYS:
-                    value = sample_batch.get(key)
-                    if not isinstance(value, torch.Tensor):
-                        continue
-                    if key in {"pixel_values", "pixel_values_videos"} and value.dim() == 5:
-                        value = value.flatten(0, 1)
-                    elif key in {"image_grid_thw", "video_grid_thw"} and value.dim() == 3:
-                        value = value.flatten(0, 1)
-                    visual_values[key].append(value)
-
-        packed_batch = build_mcore_thd_sequence_batch_from_rows(
-            sequence_rows,
+        return build_qwen_vl_packed_batch(
+            prepared_sequences,
             sequence_length=sequence_length,
-            pad_token_id=0,
-            ignore_index=IGNORE_INDEX,
             pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+            pad_to_max_length=pad_to_max_length,
         )
-        packed_batch["visual_inputs"] = GenericVisualInputs(
-            **{key: torch.cat(values, dim=0) for key, values in visual_values.items() if values}
-        )
-        return packed_batch
 
     idx_with = [i for i, h in enumerate(has_media) if h]
     idx_without = [i for i, h in enumerate(has_media) if not h]

@@ -203,3 +203,5 @@ work, not as afterthoughts.
 7. **Separate screening, causality, and acceptance**: short runs reject weak
    candidates, matched one-variable A/Bs explain a mechanism, and a 50-step
    final run validates the complete winner.
+
+_Last signature refresh: 2026-08-03._
