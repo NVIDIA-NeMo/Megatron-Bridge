@@ -286,3 +286,5 @@ HybridEP tuning. They answer different questions.
 8. **Feature activation needs evidence**: a config dump is insufficient when a
    backend can fall back, a graph can capture without helping, or a lower-
    precision recipe can miss the intended kernels.
+
+_Last signature refresh: 2026-08-03._

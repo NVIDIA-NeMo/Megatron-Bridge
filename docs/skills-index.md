@@ -58,6 +58,7 @@ skills/nemo-mbridge-perf-activation-recompute/SKILL
 ```{toctree}
 :hidden:
 
+skills/nemo-mbridge-recipe-recommender/references/recipe-index
 skills/nemo-mbridge-perf-nsys-analysis/references/pitfalls
 skills/nemo-mbridge-perf-nsys-analysis/references/sql-recipes
 ```

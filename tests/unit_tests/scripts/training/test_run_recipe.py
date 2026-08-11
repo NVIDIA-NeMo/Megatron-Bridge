@@ -310,6 +310,8 @@ def test_kimi_supported_pp_vp_override_refreshes_pipeline_layout():
     [
         ("qwen25_vl_7b_sft_config", "sft", "vlm_step"),
         ("qwen3_vl_8b_sft_config", "sft", "qwen3_vl_step"),
+        ("qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config", "lora", "vlm_step"),
+        ("qwen3_vl_8b_peft_energon_config", "lora", "vlm_step"),
         ("qwen2_audio_7b_sft_config", "sft", "audio_lm_step"),
         ("flux_12b_pretrain_config", "pretrain", "flux_step"),
     ],
@@ -362,6 +364,17 @@ def test_full_recipe_auto_detects_benchmark_recipe(monkeypatch):
         dryrun_world_size=16,
         dump_environment=False,
     )
+
+
+def test_main_resolves_relative_paths_from_repository_root(monkeypatch):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+    change_directory = Mock()
+    monkeypatch.setattr(module.os, "chdir", change_directory)
+
+    module.main(["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"])
+
+    change_directory.assert_called_once_with(module.REPO_ROOT)
 
 
 @pytest.mark.parametrize(
@@ -939,6 +952,44 @@ def test_energon_uses_requested_pretrain_mode_and_qwen_step():
     handles.build_dataset_config.assert_called_once_with(config, "energon")
     handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
+
+
+def test_qwen35_native_energon_packing_defaults_to_vlm_step():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        dataset=SimpleNamespace(packing_buffer_size=8),
+    )
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    handles.recipe_runner.load_forward_step.assert_called_once_with("vlm_step", mode="pretrain")
+
+
+def test_explicit_step_overrides_qwen35_native_energon_default():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        dataset=SimpleNamespace(packing_buffer_size=8),
+    )
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+            "--step-func",
+            "qwen3_vl_step",
+        ]
+    )
+
+    handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
 
 
 @pytest.mark.parametrize("mode", ["pretrain", "sft", "lora", "dora"])

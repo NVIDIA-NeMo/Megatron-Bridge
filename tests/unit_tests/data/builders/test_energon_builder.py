@@ -40,7 +40,6 @@ def _qwen_config(**overrides) -> EnergonDatasetConfig:
         "micro_batch_size": 2,
         "num_workers": 0,
         "task_encoder": QwenVLEnergonTaskEncoderConfig(hf_processor_path="Qwen/model"),
-        "defer_in_batch_packing_to_step": True,
     }
     values.update(overrides)
     return EnergonDatasetConfig(**values)
@@ -84,6 +83,7 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
         pad_to_max_length=True,
         pad_to_multiple_of=64,
         in_batch_packing_pad_to_multiple_of=8,
+        defer_in_batch_packing_to_step=True,
         task_encoder=QwenVLEnergonTaskEncoderConfig(
             hf_processor_path="Qwen/model",
             hf_processor_revision="0123456789abcdef",
@@ -140,6 +140,7 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
         pad_to_max_length=True,
         pad_to_multiple_of=64,
         enable_in_batch_packing=False,
+        enable_energon_packing=False,
         in_batch_packing_pad_to_multiple_of=8,
     )
 
@@ -153,6 +154,66 @@ def test_qwen_config_rejects_empty_processor_revision():
     )
 
     with pytest.raises(ValueError, match="hf_processor_revision"):
+        config.validate()
+
+
+def test_qwen_factory_enables_native_energon_packing_from_buffer_size(monkeypatch: pytest.MonkeyPatch):
+    config = _qwen_config(
+        micro_batch_size=1,
+        packing_buffer_size=32,
+        in_batch_packing_pad_to_multiple_of=8,
+    )
+    encoder_cls = MagicMock(return_value=object())
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", lambda **_: False)
+    monkeypatch.setattr(
+        "megatron.bridge.data.builders.energon.AutoTokenizer.from_pretrained",
+        lambda *_, **__: object(),
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.data.builders.energon.Qwen3VLProcessor.from_pretrained",
+        lambda *_, **__: object(),
+    )
+    monkeypatch.setattr("megatron.bridge.models.qwen_vl.data.energon.QwenVLTaskEncoder", encoder_cls)
+
+    assert config.enable_in_batch_packing is False
+    assert config.defer_in_batch_packing_to_step is False
+    build_energon_task_encoder(config)
+
+    assert encoder_cls.call_args.kwargs["enable_energon_packing"] is True
+    assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is False
+    assert encoder_cls.call_args.kwargs["in_batch_packing_pad_to_multiple_of"] == 8
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        ({"enable_in_batch_packing": True}, "select exactly one packing owner"),
+        ({"defer_in_batch_packing_to_step": True}, "canonical vlm_step"),
+        ({"micro_batch_size": 2}, "micro_batch_size=1"),
+    ],
+)
+def test_native_energon_packing_rejects_incompatible_modes(overrides: dict, error: str):
+    values = {
+        "micro_batch_size": 1,
+        "packing_buffer_size": 32,
+        **overrides,
+    }
+    config = _qwen_config(**values)
+
+    with pytest.raises(ValueError, match=error):
+        config.validate()
+
+
+def test_native_energon_packing_rejects_unsupported_task_encoder():
+    config = EnergonDatasetConfig(
+        path="/data/shards",
+        seq_length=2048,
+        micro_batch_size=1,
+        packing_buffer_size=32,
+        task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+    )
+
+    with pytest.raises(ValueError, match="supports only QwenVLEnergonTaskEncoderConfig"):
         config.validate()
 
 
@@ -264,7 +325,11 @@ def test_nemotron_config_rejects_unsupported_visual_keys():
 
 
 def test_builder_honors_requested_splits_and_reuses_runtime_encoder(monkeypatch: pytest.MonkeyPatch):
-    config = _qwen_config(num_val_workers=0, packing_buffer_size=32)
+    config = _qwen_config(
+        micro_batch_size=1,
+        num_val_workers=0,
+        packing_buffer_size=32,
+    )
     task_encoder = object()
     build_encoder = MagicMock(return_value=task_encoder)
     datamodule = MagicMock()

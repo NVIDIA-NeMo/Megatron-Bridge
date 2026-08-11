@@ -14,6 +14,7 @@
 
 """Unit tests for Qwen3VL text model forward behavior."""
 
+import inspect
 from types import SimpleNamespace
 
 import torch
@@ -41,15 +42,18 @@ class _DummyModel:
         self.decoder = _DummyDecoder()
         self.mtp_process = False
         self.preprocess_output = None
+        self.preprocess_kwargs = None
         self.postprocess_args = None
 
-    def _preprocess(self, **_):
+    def _preprocess(self, **kwargs):
+        self.preprocess_kwargs = kwargs
         self.preprocess_output = (
             torch.randn(1, 1, 1),
             torch.randn(1, 1),
             torch.randn(1, 1),
             torch.randn(1, 1),
             torch.tensor([0]),
+            torch.tensor([[False]]),
             torch.randn(1, 1),
         )
         return self.preprocess_output
@@ -59,8 +63,8 @@ class _DummyModel:
         return "ok"
 
 
-def test_forward_accepts_extra_preprocess_output():
-    """Ensure forward ignores extra values returned by _preprocess."""
+def test_forward_forwards_preprocessed_padding_mask_and_ignores_extra_output():
+    """Forward MoE padding from preprocessing while ignoring fused-rope extras."""
     dummy = _DummyModel()
     input_ids = torch.zeros((1, 4), dtype=torch.long)
     position_ids = torch.zeros((1, 4), dtype=torch.long)
@@ -80,8 +84,10 @@ def test_forward_accepts_extra_preprocess_output():
     assert dummy.decoder.called_with["rotary_pos_cos"] is preproc[2]
     assert dummy.decoder.called_with["rotary_pos_sin"] is preproc[3]
     assert dummy.decoder.called_with["sequence_len_offset"] is preproc[4]
-    assert not any(value is preproc[5] for value in dummy.decoder.called_with.values())
+    assert dummy.decoder.called_with["padding_mask"] is preproc[5]
+    assert not any(value is preproc[6] for value in dummy.decoder.called_with.values())
     assert dummy.postprocess_args["decoder_input"] is preproc[0]
+    assert dummy.postprocess_args["padding_mask"] is preproc[5]
 
 
 def test_forward_forwards_output_processor_hook():
@@ -171,7 +177,10 @@ def test_mtp_uses_padded_boundaries_for_packed_token_rolling():
 
     mtp_packed_seq_params = _get_mtp_packed_seq_params(packed_seq_params)
     tokens = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
-    rolled_tokens, _ = roll_tensor(tokens, packed_seq_params=mtp_packed_seq_params)
+    if "tensors" in inspect.signature(roll_tensor).parameters:
+        (rolled_tokens,) = roll_tensor([tokens], packed_seq_params=mtp_packed_seq_params)
+    else:
+        rolled_tokens, _ = roll_tensor(tokens, packed_seq_params=mtp_packed_seq_params)
 
     assert mtp_packed_seq_params is not packed_seq_params
     assert mtp_packed_seq_params.cu_seqlens_q is cu_seqlens_padded

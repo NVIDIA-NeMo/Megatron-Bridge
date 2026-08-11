@@ -686,7 +686,7 @@ class GPTSFTDataset(Dataset):
             dict: A dictionary of batched tensors ready for model input. Key tensors include
                   'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
         """
-        if self.enable_in_batch_packing:
+        if getattr(self, "enable_in_batch_packing", False):
             return self._collate_in_batch(batch)
 
         input_ids = [item["input_ids"][:-1] for item in batch]
@@ -880,7 +880,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
             dict: A dictionary of batched tensors ready for model input. Key tensors include
                   'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
         """
-        if self.enable_in_batch_packing:
+        if getattr(self, "enable_in_batch_packing", False):
             return self._collate_in_batch(batch)
 
         # Removes the last token from each input sequence to ensure the model
