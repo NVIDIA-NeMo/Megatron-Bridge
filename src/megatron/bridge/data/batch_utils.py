@@ -14,9 +14,59 @@
 
 """Batch handling utilities for finetuning data."""
 
+from collections.abc import Callable
 from typing import Any, Iterator
 
 import torch
+
+
+_PRECOLLATED_MICROBATCHES_KEY = "__precollated_microbatches__"
+
+
+def collate_finetuning_microbatches(
+    samples: list[Any],
+    *,
+    micro_batch_size: int,
+    collate_fn: Callable[[list[Any]], dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Collate a global batch as independently packed logical microbatches.
+
+    The ``batch`` finetuning sampler deliberately sends a full per-DP-rank
+    global batch to one DataLoader collate call. In-batch packing must happen
+    after that input is divided into logical microbatches; otherwise the whole
+    global batch becomes one physical THD row and cannot be consumed by the
+    configured number of pipeline microbatches.
+
+    Args:
+        samples: Samples assigned to one DP rank for the current global batch.
+        micro_batch_size: Number of logical samples to pack together.
+        collate_fn: Dataset collator that converts one logical microbatch to a
+            physical packed batch.
+
+    Returns:
+        A pin-memory-compatible mapping containing the pre-collated
+        microbatches.
+
+    Raises:
+        ValueError: If the sample count cannot form complete microbatches or a
+            collate result is not a mapping.
+    """
+    if micro_batch_size <= 0:
+        raise ValueError("micro_batch_size must be greater than 0.")
+    if not samples or len(samples) % micro_batch_size != 0:
+        raise ValueError(
+            f"Global batch sample count {len(samples)} must be a positive multiple of "
+            f"micro_batch_size {micro_batch_size}."
+        )
+
+    microbatches = []
+    for start in range(0, len(samples), micro_batch_size):
+        microbatch = collate_fn(samples[start : start + micro_batch_size])
+        if not isinstance(microbatch, dict):
+            raise ValueError("Finetuning collate_fn must return a batch dictionary.")
+        microbatches.append(microbatch)
+
+    return {_PRECOLLATED_MICROBATCHES_KEY: microbatches}
 
 
 def split_batch_into_microbatches(
@@ -99,8 +149,9 @@ def prepare_finetuning_batch(
 
     This function handles the finetuning-specific data flow:
     1. Gets the full global batch from the iterator
-    2. Extracts the dynamic sequence length from the batch
-    3. Splits the batch into microbatches with consistent sequence length
+    2. Reuses pre-collated logical microbatches when the DataLoader performed
+       in-batch packing, otherwise splits the dense global batch
+    3. Extracts the dynamic sequence length from the resulting microbatches
     4. Returns an iterator over microbatches and the extracted sequence length
 
     Args:
@@ -130,6 +181,27 @@ def prepare_finetuning_batch(
 
     # Get full global batch from dataloader
     global_batch = next(data_iterator)
+
+    precollated_microbatches = (
+        global_batch.get(_PRECOLLATED_MICROBATCHES_KEY) if isinstance(global_batch, dict) else None
+    )
+    if precollated_microbatches is not None:
+        if not isinstance(precollated_microbatches, list) or not all(
+            isinstance(microbatch, dict) for microbatch in precollated_microbatches
+        ):
+            raise ValueError("Pre-collated finetuning microbatches must be a list of batch dictionaries.")
+        if len(precollated_microbatches) != num_microbatches:
+            raise ValueError(
+                f"Expected {num_microbatches} pre-collated microbatches, got {len(precollated_microbatches)}."
+            )
+
+        sequence_lengths = [
+            microbatch[seq_key].size(1)
+            for microbatch in precollated_microbatches
+            if isinstance(microbatch.get(seq_key), torch.Tensor) and microbatch[seq_key].dim() >= 2
+        ]
+        seq_length = max(sequence_lengths, default=default_seq_length)
+        return iter(precollated_microbatches), seq_length
 
     # Extract dynamic seq_length from the full batch
     seq_length = default_seq_length

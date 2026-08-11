@@ -19,7 +19,7 @@ import importlib
 import pytest
 import torch
 
-from megatron.bridge.data.batch_utils import prepare_finetuning_batch
+from megatron.bridge.data.batch_utils import collate_finetuning_microbatches, prepare_finetuning_batch
 
 
 def test_finetuning_module_is_removed():
@@ -163,3 +163,42 @@ def test_prepare_finetuning_batch_preserves_all_keys():
         assert mb["loss_mask"].shape == (2, 100)
         assert mb["attention_mask"].shape == (2, 100)
         assert mb["position_ids"].shape == (2, 100)
+
+
+def test_prepare_finetuning_batch_preserves_precollated_packed_microbatches():
+    """A global-batch DataLoader must pack each logical microbatch independently."""
+    samples = [{"tokens": torch.arange(length)} for length in (3, 2, 4, 3)]
+
+    def pack_rows(rows):
+        total_tokens = sum(row["tokens"].numel() for row in rows)
+        return {
+            "tokens": torch.zeros((1, total_tokens), dtype=torch.long),
+            "logical_rows": len(rows),
+        }
+
+    global_batch = collate_finetuning_microbatches(
+        samples,
+        micro_batch_size=2,
+        collate_fn=pack_rows,
+    )
+    microbatch_iter, seq_length = prepare_finetuning_batch(
+        iter([global_batch]),
+        num_microbatches=2,
+        default_seq_length=16,
+    )
+
+    microbatches = list(microbatch_iter)
+    assert [microbatch["tokens"].shape for microbatch in microbatches] == [(1, 5), (1, 7)]
+    assert [microbatch["logical_rows"] for microbatch in microbatches] == [2, 2]
+    assert seq_length == 7
+
+
+def test_prepare_finetuning_batch_rejects_wrong_prepacked_microbatch_count():
+    global_batch = collate_finetuning_microbatches(
+        [{"tokens": torch.arange(2)}, {"tokens": torch.arange(2)}],
+        micro_batch_size=2,
+        collate_fn=lambda rows: {"tokens": torch.zeros((1, 4), dtype=torch.long)},
+    )
+
+    with pytest.raises(ValueError, match="Expected 2 pre-collated microbatches, got 1"):
+        prepare_finetuning_batch(iter([global_batch]), num_microbatches=2, default_seq_length=8)

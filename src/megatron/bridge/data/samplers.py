@@ -3,11 +3,14 @@
 """Dataloaders."""
 
 import random
+from functools import partial
 from typing import Any, Callable, Iterator, Optional
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+
+from megatron.bridge.data.batch_utils import collate_finetuning_microbatches
 
 
 def build_pretraining_data_loader(
@@ -110,13 +113,23 @@ def build_pretraining_data_loader(
     else:
         raise Exception("{} dataloader type is not supported.".format(dataloader_type))
 
+    effective_collate_fn = collate_fn
+    if dataloader_type == "batch" and getattr(dataset, "enable_in_batch_packing", False) is True:
+        if collate_fn is None:
+            raise ValueError("In-batch packing with dataloader_type='batch' requires a dataset collate_fn.")
+        effective_collate_fn = partial(
+            collate_finetuning_microbatches,
+            micro_batch_size=micro_batch_size,
+            collate_fn=collate_fn,
+        )
+
     # Torch dataloader.
     return DataLoader(
         dataset,
         batch_sampler=batch_sampler,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        collate_fn=collate_fn,
+        collate_fn=effective_collate_fn,
         persistent_workers=persistent_workers,
         worker_init_fn=worker_init_fn,
     )

@@ -104,12 +104,19 @@ the packed dataset (asserted in `src/megatron/bridge/data/datasets/sft.py`).
 Custom packed datasets that omit the metadata file will hit an assertion at
 dataset initialization.
 
-In-batch packing for VLM finetuning:
+In-batch packing for GPT SFT and supported VLM finetuning:
 
 ```python
 cfg.dataset.enable_in_batch_packing = True
-cfg.train.micro_batch_size = 2
+cfg.train.micro_batch_size = 4
 ```
+
+For local or materialized GPT-SFT JSONL, this keeps the existing mmap-backed
+dataset and performs tokenization lazily. Both prompt/completion
+(`GPTSFTDataset`) and chat (`GPTSFTChatDataset`) preserve their loss-mask
+semantics. With the default `dataloader_type="batch"`, the DataLoader first
+divides each per-DP-rank global batch into logical microbatches and packs each
+logical microbatch into its own physical THD row.
 
 Long-context baseline:
 
@@ -203,6 +210,23 @@ def prepare_padded_or_packed_sequence_batch(
         return
 ```
 
+GPT-SFT direct-row packing and global-batch microbatch preservation:
+
+```627:671:src/megatron/bridge/data/datasets/gpt_sft.py
+def _collate_in_batch(self, batch):
+    ...
+    return build_mcore_thd_sequence_batch_from_rows(...)
+```
+
+```18:57:src/megatron/bridge/data/batch_utils.py
+def collate_finetuning_microbatches(samples, *, micro_batch_size, collate_fn):
+    ...
+```
+
+Do not flatten a GPT-SFT `batch`-sampler global batch into one THD row. The
+training schedule still consumes the configured number of logical
+microbatches; each one must retain independent packed metadata.
+
 Packed THD runtime constraint:
 
 ```94:108:src/megatron/bridge/training/gpt_step.py
@@ -221,7 +245,7 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
 
 ## Pitfalls
 
-1. Offline packed SFT and VLM in-batch packing are different features with opposite micro-batch rules.
+1. Offline packed SFT and runtime in-batch packing are different features with opposite micro-batch rules.
 2. When CP is enabled, packed sequence lengths must respect `2 * context_parallel_size` divisibility.
 3. For finetuning with CP, `calculate_per_token_loss=True` and `ddp.average_in_collective=False` are required.
 4. `pad_cu_seqlens=True` also requires `pad_to_max_length=True`.
@@ -240,6 +264,9 @@ Use the checked-in unit coverage:
 uv run python -m pytest tests/unit_tests/training/utils/test_packed_seq_utils.py -v && \
 uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequence or enable_in_batch_packing or offline_and_in_batch_packing_are_mutually_exclusive or context_parallel_seq_length_divisibility or context_parallel_finetuning_validations" -v && \
 uv run python -m pytest tests/unit_tests/data/packing/test_in_batch.py -v && \
+uv run python -m pytest tests/unit_tests/data/datasets/test_gpt_sft.py -k "in_batch_packing or batch_dataloader" -v && \
+uv run python -m pytest tests/unit_tests/data/builders/test_gpt_sft_config.py -v && \
+uv run python -m pytest tests/unit_tests/data/test_batch_utils.py -v && \
 uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "deferred_in_batch_packing or packed_metadata" -v && \
 uv run python -m pytest tests/unit_tests/data/datasets/test_packed_parquet.py -k "negative_index_zeroes_loss_mask" -v && \
 uv run python -m pytest tests/unit_tests/data/datasets/test_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v
@@ -250,4 +277,5 @@ Success criteria:
 - all selected tests pass
 - offline and in-batch configuration validation remains mutually exclusive
 - packed metadata reaches the training step in MCore THD form
+- a GPT-SFT global batch is pre-collated as one THD row per logical microbatch
 - mapped padding rows do not contribute to loss

@@ -194,6 +194,25 @@ data automatically, so a separate packing Slurm job is not required. The selecte
 sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on
 shared mounted storage.
 
+### In-batch packing for GPT SFT JSONL
+
+As an alternative to offline artifacts, `GPTSFTDatasetConfig` can pack each
+logical microbatch during collation. This supports both prompt-completion and
+chat JSONL preprocessing while retaining the local JSONL mmap path; only the
+selected rows are parsed and tokenized, so the full dataset is not loaded into
+host memory. For example:
+
+```bash
+--dataset local-jsonl \
+dataset.dataset_root=/data/sft \
+dataset.enable_in_batch_packing=true \
+train.micro_batch_size=4
+```
+
+The logical micro-batch must be larger than one. Collation emits one physical
+THD row and derives per-sequence CP/SP alignment from the resolved topology.
+Do not combine `dataset.enable_in_batch_packing=true` with offline packing.
+
 ### VLM data
 
 The hosted VLM names use the existing Hugging Face dataset adapters and retain the processor and in-batch packing
