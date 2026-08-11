@@ -45,15 +45,6 @@ The performance data includes:
 | DGX-GB300 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 2 | 1 | 8 | 32 | 6288 | 1635 |
 | DGX-GB200 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 4 | 1 | 4 | 64 | 4912 | 1276 |
 
-#### Model: DeepSeekV4 Pro
-
-| System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
-|--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
-| DGX-GB300 | 256 | MXFP8 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | n/a | n/a |
-| DGX-GB300 | 256 | NVFP4 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | n/a | n/a |
-| DGX-GB200 | 256 | MXFP8 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | n/a | n/a |
-| DGX-GB200 | 256 | NVFP4 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | n/a | n/a |
-
 #### Model: DeepSeekV4 Flash
 
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
@@ -87,7 +78,6 @@ The performance data includes:
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 8 | MXFP8 | 512 | 4 | 8192 | 1 | 1 | 1 | n/a | 8 | 39936 | 901 |
-| DGX-GB200 | 8 | MXFP8 | 512 | 2 | 8192 | 1 | 1 | 1 | n/a | 8 | 34816 | 781 |
 
 #### Model: Nemotron_3_5_Lightning
 
