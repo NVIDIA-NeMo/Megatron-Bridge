@@ -1098,9 +1098,11 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             if not isinstance(target_param, DTensor):
                 expect_dim0_size *= self.tp_size
             if actual_dim0_size != expect_dim0_size:
-                assert self.megatron_param in {"embedding.word_embeddings.weight", "output_layer.weight"}, (
-                    f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
-                )
+                assert self.megatron_param in {
+                    "embedding.word_embeddings.weight",
+                    "output_layer.weight",
+                    "output_layer.bias",
+                }, f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
                 hf_weights = _pad_right_dim0(hf_weights, pad_size=expect_dim0_size - actual_dim0_size)
 
             # For bias (1D), we still split along dim 0

@@ -34,13 +34,31 @@ The `nvidia/megatron-bert-uncased-345m` Hugging Face repo only hosts tokenizer f
 weights must be downloaded from NVIDIA GPU Cloud (NGC) and converted to HF format first, using
 HF's own conversion script (this is a one-time step, unrelated to Megatron-Bridge):
 
+    mkdir -p megatron-bert-uncased-345m-hf
     wget --content-disposition \
       https://api.ngc.nvidia.com/v2/models/nvidia/megatron_bert_345m/versions/v0.1_uncased/zip \
-      -O checkpoint.zip
+      -O megatron-bert-uncased-345m-hf/checkpoint.zip
     git clone https://github.com/huggingface/transformers.git
-    python3 transformers/src/transformers/models/megatron_bert/convert_megatron_bert_checkpoint.py checkpoint.zip
+    git -C transformers checkout fe747d88a3296bd94d426db2717f232f9d4afdb7
+    uv run python transformers/src/transformers/models/megatron_bert/convert_megatron_bert_checkpoint.py \
+      megatron-bert-uncased-345m-hf/checkpoint.zip
 
-This produces a `config.json` + weights directory that can be used as `HF_MODEL_PATH` below. See
+The upstream converter writes a pretraining checkpoint without the architecture metadata needed
+by `AutoBridge`. Normalize it to the masked-LM architecture and add the tokenizer assets before
+using the directory with Megatron Bridge:
+
+    uv run python - <<'PY'
+    from transformers import AutoTokenizer, MegatronBertForMaskedLM
+
+    checkpoint_path = "megatron-bert-uncased-345m-hf"
+    model = MegatronBertForMaskedLM.from_pretrained(checkpoint_path)
+    model.save_pretrained(checkpoint_path, safe_serialization=True)
+    tokenizer = AutoTokenizer.from_pretrained("nvidia/megatron-bert-uncased-345m")
+    tokenizer.save_pretrained(checkpoint_path)
+    PY
+
+This produces a self-contained config, weights, and tokenizer directory that can be used as
+`HF_MODEL_PATH` below. See
 the [`nvidia/megatron-bert-uncased-345m` model card](https://huggingface.co/nvidia/megatron-bert-uncased-345m)
 for full details, including the `-cased` variant.
 

@@ -34,6 +34,8 @@ Other implementation notes:
 - `add_binary_head=False` — masked-LM checkpoints have no pooler/NSP head.
 - `hidden_act="gelu"` is required because Megatron-Core's BERT masked-LM head hardcodes GELU.
 - Decoder and cross-attention configurations are not supported.
+- Untied word embeddings are not supported because Hugging Face represents two independent MLM
+  biases in that mode, while Megatron-Core has a single output-layer bias.
 - HF ties `cls.predictions.decoder.bias` to `cls.predictions.bias` internally. The bridge
   synthesizes the alias when the export target expects both keys; safe serialization normally
   stores only the canonical `cls.predictions.bias` key.
