@@ -7,9 +7,10 @@ summary: >
   performance recipe; timing and throughput metrics from functional training
   items remain sanity checks rather than optimized performance results.
   GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export,
-  manual HF/Megatron forward-pass correlation, and deterministic Megatron
-  inference are verified. CPU conversion, training, checkpoint resume, and
-  performance verification remain planned but not yet verified.
+  manual HF/Megatron forward-pass correlation, deterministic Megatron
+  inference, bounded H100 pretraining, and H100 checkpoint resume are
+  verified. CPU conversion, SFT, and performance verification remain planned
+  but not yet verified.
 verification_index:
   model_level:
     verified:
@@ -22,7 +23,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, checkpoint_resume]
+      unverified: [sft, sft_export_inference, sft_long_context, peft]
   performance:
     GB200: unverified
 model:
@@ -153,12 +155,12 @@ items:
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
-        --recipe gpt_oss_120b_pretrain_64gpu_h100_bf16_config --mode pretrain
+        --recipe gpt_oss_120b_pretrain_config --mode pretrain
         --dataset megatron-indexed --seq_length 4096 --max_steps 100
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
         'dataset.blend=[["work/data/rp2/head_01"],null]'
@@ -174,20 +176,22 @@ items:
         --save_dir work/model-verification/gpt-oss-120b/pretrain-reference-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-11
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 10.91136
+        final_loss: 5.828481
+        last_10_steps_step_time_ms_avg: 16664.930
+        last_10_steps_model_tflops_per_gpu_avg: 58.420
       expected_result: >
-        Future support verification must complete exactly 100 bounded RP2
+        On 64x H100, the command completes exactly 100 bounded pretraining
         optimizer steps using the recipe-owned GBS/MBS, natural routing, and
-        BF16 configuration; record all required training metrics with finite
-        losses and zero skipped or NaN iterations; persist the post-setup
-        ConfigContainer; and save complete reloadable step-50 and step-100
-        checkpoints. The current recipe batch contract is not a claim of
-        qwen3_30b_a3b_convergence_v2 comparability.
+        BF16 configuration. All 100 optimizer-step rows are present exactly
+        once with finite loss, zero skipped iterations, and zero NaN
+        iterations. Loss decreases from 10.91136 to 5.828481, all four metrics
+        are recorded, the post-setup run_config.yaml persists, and complete
+        64-shard iter_0000050 and iter_0000100 checkpoints are saved with
+        metadata, train state, tokenizer artifacts, and latest-checkpoint
+        markers suitable for direct resume.
 
   sft:
     H100:
@@ -321,12 +325,12 @@ items:
 
   checkpoint_resume:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
-        --recipe gpt_oss_120b_pretrain_64gpu_h100_bf16_config --mode pretrain
+        --recipe gpt_oss_120b_pretrain_config --mode pretrain
         --dataset megatron-indexed --seq_length 4096 --max_steps 100
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
         'dataset.blend=[["work/data/rp2/head_01"],null]'
@@ -343,24 +347,30 @@ items:
         --save_dir work/model-verification/gpt-oss-120b/pretrain-resume-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-11
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 6.489011
+        final_loss: 5.825046
+        last_10_steps_step_time_ms_avg: 16625.300
+        last_10_steps_model_tflops_per_gpu_avg: 58.560
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
+        sentinels_match: true
       expected_result: >
-        After the reference pretrain run is verified, future verification must
-        restore optimizer, scheduler, data-order, and RNG state directly from
-        step 50 into a distinct output root, execute steps 51 through 100, and
-        match reference losses at steps 51 and 100 within the declared one
-        percent relative plus 1e-6 absolute gate.
+        The command restores optimizer, scheduler, data-order, and RNG state
+        directly from the verified pretrain step-50 checkpoint into a distinct
+        output root and executes exactly steps 51 through 100. All 50 resumed
+        optimizer-step rows are present exactly once with finite loss, zero
+        skipped iterations, and zero NaN iterations. The step-51 loss matches
+        the reference exactly at 6.489011, and the step-100 loss 5.825046 is
+        within the declared one percent relative plus 1e-6 absolute gate
+        against reference loss 5.828481. All four metrics are recorded, the
+        post-setup run_config.yaml persists, and the final step-100 checkpoint
+        is complete with 64 DistCP shards, metadata, train state, tokenizer
+        artifacts, and latest-checkpoint marker 100.
 
   pretrain_performance:
     GB200:
