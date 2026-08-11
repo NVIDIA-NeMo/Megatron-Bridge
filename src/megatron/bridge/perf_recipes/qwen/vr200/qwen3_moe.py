@@ -138,9 +138,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, FP8-MX (alias of GB300)."""
     cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
 
-    cfg.model.recompute_modules = ["core_attn", "moe_act", "layernorm"]
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.offload_modules = ["qkv_linear"]
+    cfg.train.micro_batch_size = 4
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
