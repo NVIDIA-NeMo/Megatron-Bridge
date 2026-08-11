@@ -1,0 +1,372 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: gpt_oss_120b
+summary: >
+  Performance scope: pretrain_performance.H100 uses a tuned canonical
+  performance recipe; timing and throughput metrics from functional training
+  items remain sanity checks rather than optimized performance results.
+  GPT-OSS 120B H100 conversion, inference, training, checkpoint resume, and
+  performance verification are planned but not yet verified.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    H100: unverified
+model:
+  hf_id: openai/gpt-oss-120b
+  hf_revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a  # pragma: allowlist secret
+  architecture: GptOssForCausalLM
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.06
+  bridge_commit: 736f8282d6f95f9cd1a1b1bf93a5356ce609838f  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model openai/gpt-oss-120b
+      --hf-revision b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+      --megatron-path work/model-verification/gpt-oss-120b/cpu-megatron
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Future verification must import the pinned MXFP4 Hugging Face checkpoint,
+      dequantize it into a reloadable BF16 Megatron checkpoint at iter_0000000,
+      and audit keys, shapes, dtypes, and values against the recorded source
+      revision.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8
+      --hf-model openai/gpt-oss-120b
+      --hf-revision b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+      --megatron-path work/model-verification/gpt-oss-120b/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 4 --ep 8 --etp 1
+      --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Future verification must import the pinned MXFP4 checkpoint on 32 H100
+      GPUs and create a reloadable TP1/PP4/EP8/ETP1 BF16 Megatron checkpoint
+      with complete DistCP, metadata, train-state, tokenizer, and latest-marker
+      artifacts.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model unsloth/gpt-oss-120b-BF16
+      --megatron-path work/model-verification/gpt-oss-120b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/gpt-oss-120b/cpu-hf-export
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Future verification must export the CPU-imported checkpoint to a public
+      BF16 Hugging Face layout, strictly reload it as GptOssForCausalLM with
+      attention_bias=true, and audit keys, shapes, dtypes, and values against
+      the BF16 reference semantics.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8
+      --hf-model unsloth/gpt-oss-120b-BF16
+      --megatron-path work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/gpt-oss-120b/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 1 --pp 4 --ep 8 --etp 1
+      --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Future verification must export the distributed Megatron checkpoint to a
+      reloadable BF16 Hugging Face checkpoint with attention_bias=true and no
+      missing, unexpected, shape, dtype, or value mismatches against the public
+      BF16 reference semantics.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      --task model-comparison
+      --hf_model_path openai/gpt-oss-120b
+      --hf-revision b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+      --megatron_model_path work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
+      --tp 1 --pp 4 --ep 8 --etp 1
+      --prompt "The capital of France is the city of"
+      --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Future verification must compare the pinned Hugging Face and Megatron
+      logits on the same prompt, require the next token to match and cosine
+      similarity to be at least 0.99, and record numeric maximum and mean
+      absolute logit differences as report-only diagnostics.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      --task legacy-full-prefix-generation --legacy-full-prefix
+      --hf_model_path unsloth/gpt-oss-120b-BF16
+      --megatron_model_path work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
+      --prompt "The capital of France is" --max_new_tokens 32
+      --tp 1 --pp 4 --ep 8 --etp 1
+      --attention-backend local --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Future verification must complete one synchronous deterministic greedy
+      generation through the non-cached compatibility path and record the
+      actual generated-token count plus the literal completion, including
+      whitespace, within the 32-token bound.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
+        --recipe gpt_oss_120b_pretrain_64gpu_h100_bf16_config --mode pretrain
+        --dataset megatron-indexed --seq_length 4096 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/rp2/head_01"],null]'
+        dataset.path_to_cache=work/cache/gpt-oss-120b/rp2
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        dataset.random_seed=1234 rng.seed=1234
+        scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
+        model.moe_router_force_load_balancing=false
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
+        checkpoint.finetune=false checkpoint.save_optim=true checkpoint.save_rng=true
+        --save_dir work/model-verification/gpt-oss-120b/pretrain-reference-checkpoints
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Future support verification must complete exactly 100 bounded RP2
+        optimizer steps using the recipe-owned GBS/MBS, natural routing, and
+        BF16 configuration; record all required training metrics with finite
+        losses and zero skipped or NaN iterations; persist the post-setup
+        ConfigContainer; and save complete reloadable step-50 and step-100
+        checkpoints. The current recipe batch contract is not a claim of
+        qwen3_30b_a3b_convergence_v2 comparability.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
+        --recipe gpt_oss_120b_sft_32gpu_h100_bf16_config --mode sft
+        --dataset tulu3
+        --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048
+        --lr 5e-6 --min_lr 0 --warmup_iters 10
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="b5c939de8f754692c1647ca79fbf85e8c1e70f8a"'
+        dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-sft-2k-b14afda60f1b
+        dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true
+        +dataset.offline_packing_specs.pad_seq_to_mult=1
+        scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
+        checkpoint.load=null
+        --save_dir work/model-verification/gpt-oss-120b/sft-2k-checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Future support verification must complete 100 full-SFT steps from the
+        imported checkpoint with immutable Tulu3 selection, assistant-token
+        masking, offline packing, finite losses, zero skipped or NaN iterations,
+        all required metrics, a persisted post-setup ConfigContainer, and a
+        complete reloadable final full-model checkpoint. The recipe-owned batch
+        contract is not a qwen3_30b_a3b_convergence_v2 claim.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 4 --gpus-per-node 8
+          --hf-model unsloth/gpt-oss-120b-BF16
+          --megatron-path work/model-verification/gpt-oss-120b/sft-2k-checkpoints/iter_0000100
+          --hf-path work/model-verification/gpt-oss-120b/sft-hf-export
+          --torch-dtype bfloat16 --export-weight-dtype bfloat16
+          --distributed-save --tp 1 --pp 4 --ep 8 --etp 1
+          --trust-remote-code
+        - >
+          ./scripts/inference/infer.sh --task hf-inference
+          --nodes 1 --gpus-per-node 1
+          --hf-model work/model-verification/gpt-oss-120b/sft-hf-export
+          --prompt "Name the capital of France and explain its role in one sentence."
+          --max-new-tokens 45 --chat-template
+      last_verified: null
+      expected_result: >
+        After SFT is verified, future verification must export its final
+        checkpoint to a strict-reloadable BF16 Hugging Face checkpoint with
+        attention_bias=true, then run deterministic greedy HF inference and
+        record the actual generated-token count and literal completion within
+        the 45-token bound.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A model-appropriate long-context topology and memory plan must be
+        resolved before a public command is recorded. Future verification must
+        exercise sequence packing with context parallelism greater than one,
+        use the topology-derived packing alignment, complete at least 10 steps
+        with finite losses and zero skipped or NaN iterations, and record all
+        required metrics.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+        --recipe gpt_oss_120b_peft_8gpu_h100_bf16_config --mode lora
+        --dataset tulu3
+        --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048
+        --lr 1e-4 --min_lr 0 --warmup_iters 10
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="b5c939de8f754692c1647ca79fbf85e8c1e70f8a"'
+        dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-peft-2k-b14afda60f1b
+        dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true
+        +dataset.offline_packing_specs.pad_seq_to_mult=1
+        scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
+        checkpoint.load=null
+        --save_dir work/model-verification/gpt-oss-120b/peft-2k-checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Future support verification must complete 100 LoRA steps from the
+        imported checkpoint with the base frozen, model-native target modules,
+        immutable Tulu3 selection, assistant-token masking, offline packing,
+        finite losses, zero skipped or NaN iterations, all required metrics, a
+        persisted post-setup ConfigContainer, and a reloadable final adapter
+        checkpoint. The recipe-owned batch contract is not a
+        qwen3_30b_a3b_convergence_v2 claim.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: >
+        ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
+        --recipe gpt_oss_120b_pretrain_64gpu_h100_bf16_config --mode pretrain
+        --dataset megatron-indexed --seq_length 4096 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/rp2/head_01"],null]'
+        dataset.path_to_cache=work/cache/gpt-oss-120b/rp2
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        dataset.random_seed=1234 rng.seed=1234
+        scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
+        model.moe_router_force_load_balancing=false
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        checkpoint.ckpt_step=50 checkpoint.finetune=false
+        --load_dir work/model-verification/gpt-oss-120b/pretrain-reference-checkpoints
+        --save_dir work/model-verification/gpt-oss-120b/pretrain-resume-checkpoints
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        After the reference pretrain run is verified, future verification must
+        restore optimizer, scheduler, data-order, and RNG state directly from
+        step 50 into a distinct output root, execute steps 51 through 100, and
+        match reference losses at steps 51 and 100 within the declared one
+        percent relative plus 1e-6 absolute gate.
+
+  pretrain_performance:
+    H100:
+      status: unverified
+      precision: bf16
+      command: >
+        ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
+        --recipe gpt_oss_120b_pretrain_64gpu_h100_bf16_config
+        --mode pretrain --max_steps 50
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Future verification must run the exact canonical 64-H100 BF16 mock-data
+        performance recipe for 50 optimizer steps, record finite losses with
+        zero skipped or NaN iterations and all required metrics, and define
+        measured step-time and model-TFLOP/s/GPU thresholds before this item is
+        marked verified. Its forced router balancing and benchmark batch
+        contract make it performance evidence, not convergence evidence.
