@@ -79,6 +79,7 @@ from megatron.bridge.utils.common_utils import (
     warn_rank_0,
 )
 from megatron.bridge.utils.cuda_graph import (
+    cuda_graph_module_names,
     is_full_iteration_cuda_graph,
     validate_cuda_graph_configuration,
 )
@@ -1131,6 +1132,43 @@ class ConfigContainer(Container):
             "an HF model id."
         )
 
+    def _disable_native_energon_packing_moe_overlap(self) -> None:
+        """Disable EP overlap until packed VLM schedule plans preserve every model input."""
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
+        if not enable_energon_packing:
+            return
+
+        # The same request can live on the model, on CommOverlapConfig, and on
+        # its resolved user config. CommOverlapConfig.setup() runs after this
+        # method and copies its value back to the model, so clearing only the
+        # model would allow a stale wrapper value to re-enable the unsafe path.
+        overlap_configs: list[object] = [self.model]
+        if self.comm_overlap is not None:
+            overlap_configs.append(self.comm_overlap)
+            resolved_overlap = getattr(self.comm_overlap, "user_comm_overlap_cfg", None)
+            if resolved_overlap is not None:
+                overlap_configs.append(resolved_overlap)
+
+        overlap_fields = ("overlap_moe_expert_parallel_comm", "delay_wgrad_compute")
+        overlap_requested = any(
+            getattr(config, field_name, False) is True for config in overlap_configs for field_name in overlap_fields
+        )
+        if not overlap_requested:
+            return
+
+        warnings.warn(
+            "Disabling MoE expert-parallel communication overlap and delayed weight-gradient compute because "
+            "overlap switches MCore to combined-1F1B schedule-plan execution, but the current VLM path does not "
+            "forward visual inputs or packed-sequence metadata through that plan.",
+            stacklevel=3,
+        )
+        for config in overlap_configs:
+            for field_name in overlap_fields:
+                if hasattr(config, field_name):
+                    setattr(config, field_name, False)
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1146,6 +1184,9 @@ class ConfigContainer(Container):
             raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
 
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
 
@@ -1155,6 +1196,34 @@ class ConfigContainer(Container):
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+
+        if offline_packing_specs is not None:
+            pad_cu_seqlens = offline_packing_specs.pad_cu_seqlens
+            dataset_kwargs = getattr(self.dataset, "dataset_kwargs", None) or {}
+            pad_to_max_length = (
+                getattr(self.dataset, "pad_to_max_length", False) is True
+                or dataset_kwargs.get("pad_to_max_length", False) is True
+            )
+            if pad_cu_seqlens and not pad_to_max_length:
+                raise ValueError("offline_packing_specs.pad_cu_seqlens=True requires dataset pad_to_max_length=True.")
+
+            cuda_graph_impl = getattr(self.model, "cuda_graph_impl", "none")
+            cuda_graph_modules = cuda_graph_module_names(self.model)
+            is_full_iteration_graph = is_full_iteration_cuda_graph(self.model)
+            # Every training graph needs a static token width. Only graphs that include
+            # packed attention also consume cu_seqlens and require static boundary shapes.
+            uses_training_cuda_graphs = is_full_iteration_graph or cuda_graph_impl == "transformer_engine"
+            if uses_training_cuda_graphs and not pad_to_max_length:
+                raise ValueError("Offline packing with CUDA graphs requires dataset pad_to_max_length=True.")
+
+            captures_packed_attention = is_full_iteration_graph or (
+                cuda_graph_impl == "transformer_engine" and (not cuda_graph_modules or "attn" in cuda_graph_modules)
+            )
+            if captures_packed_attention and not pad_cu_seqlens:
+                raise ValueError(
+                    "Packed attention CUDA graphs require offline_packing_specs.pad_cu_seqlens=True. "
+                    "Enable it for full-iteration, whole-layer, or attention-scoped capture."
+                )
 
         # Validate declarative SFT values before deriving runtime padding
         # multiples so normalization cannot hide an invalid user value.
@@ -1171,6 +1240,26 @@ class ConfigContainer(Container):
                 "EnergonDatasetConfig.micro_batch_size must match train.micro_batch_size "
                 f"({self.dataset.micro_batch_size} != {self.train.micro_batch_size})."
             )
+
+        if enable_energon_packing:
+            if self.train.micro_batch_size != 1:
+                raise ValueError("Energon native sequence packing requires train.micro_batch_size=1.")
+            if not self.model.calculate_per_token_loss:
+                raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
+            if self.ddp.average_in_collective:
+                raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
+            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
+                raise ValueError("Energon native sequence packing does not support MTP.")
+            if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
+                self.model, "vision_cuda_graph_impl", None
+            ) not in (None, "none"):
+                raise ValueError("Energon native sequence packing does not support CUDA graphs.")
+            dist_train = getattr(self.model, "dist_train", None)
+            if dist_train is not None and getattr(dist_train, "use_dist_train", False):
+                raise ValueError("Energon native sequence packing does not support Qwen3-VL DistTrain.")
+            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+                raise ValueError("Energon native sequence packing does not yet support pipeline parallelism.")
+            self._disable_native_energon_packing_moe_overlap()
 
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
@@ -1201,8 +1290,9 @@ class ConfigContainer(Container):
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if enable_in_batch_packing:
-            self.model._enable_in_batch_packing = True
+        if enable_in_batch_packing or enable_energon_packing:
+            transformer_config = getattr(self.model, "transformer", self.model)
+            transformer_config._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
         elif isinstance(
@@ -1845,6 +1935,11 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     # Calculate data parallel size (needed for comm overlap methods)
     cfg.set_data_parallel_size()
 
+    # EP overlap switches MCore to combined-1F1B schedule-plan execution. The current
+    # VLM plan does not forward visual inputs or packed-sequence metadata, so clear every
+    # user-facing copy before CommOverlapConfig can apply the requested value to the model.
+    cfg._disable_native_energon_packing_moe_overlap()
+
     # Apply communication overlap configuration if provided
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.finalize()
@@ -1896,6 +1991,18 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.train.finalize()
     cfg.scheduler.finalize()
     cfg.checkpoint.finalize()
+
+    if cfg.validation.eval_global_batch_size is None:
+        assert cfg.train.global_batch_size is not None, (
+            "train.global_batch_size must be set when eval_global_batch_size is not explicitly configured"
+        )
+        cfg.validation.eval_global_batch_size = cfg.train.global_batch_size
+    if cfg.validation.eval_micro_batch_size is None:
+        assert cfg.train.micro_batch_size is not None, (
+            "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
+        )
+        cfg.validation.eval_micro_batch_size = cfg.train.micro_batch_size
+
     if cfg.profiling is not None:
         cfg.profiling.finalize()
         if cfg.profiling.nvtx_ranges:

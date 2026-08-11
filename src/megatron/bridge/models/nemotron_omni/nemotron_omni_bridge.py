@@ -202,7 +202,9 @@ class NemotronOmniBridge(NemotronVLBridge):
 
     def _llava_mapping_registry(self) -> MegatronMappingRegistry:
         """Build mappings for the historical LLaVA wrapper namespace."""
-        vl_registry = super().mapping_registry()
+        # Call the explicit legacy implementation. NemotronVLBridge.mapping_registry
+        # can route V2-labeled MoE checkpoints back to this canonical bridge.
+        vl_registry = self._legacy_mapping_registry()
         mapping_list = list(vl_registry.mappings)
 
         # MoE language decoder (not present in the dense VL variant).

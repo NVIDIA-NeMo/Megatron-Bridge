@@ -29,6 +29,18 @@ from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLMo
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
+def _is_legacy_v2_omni_config(hf_config) -> bool:
+    """Identify Nano Omni checkpoints serialized with the historical V2 label."""
+
+    architectures = getattr(hf_config, "architectures", None) or []
+    llm_config = getattr(hf_config, "llm_config", None)
+    return (
+        "NemotronH_Nano_VL_V2" in architectures
+        and llm_config is not None
+        and getattr(llm_config, "n_routed_experts", None) is not None
+    )
+
+
 @MegatronModelBridge.register_bridge(
     source="NemotronH_Nano_VL_V2",
     target=NemotronVLModel,
@@ -48,9 +60,36 @@ class NemotronVLBridge(MegatronModelBridge):
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronVLModelProvider:  # type: ignore[override]
+    def _canonical_omni_bridge(self):
+        """Create the canonical bridge lazily to avoid a module import cycle."""
+
+        from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
+
+        bridge = NemotronOmniBridge()
+        bridge.hf_pretrained = getattr(self, "hf_pretrained", None)
+        bridge.hf_config = getattr(self, "hf_config", None)
+        return bridge
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM):  # type: ignore[override]
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
+
+        if _is_legacy_v2_omni_config(hf_config):
+            # Some Nano Omni checkpoints were exported before the dedicated
+            # architecture name existed. Route only the MoE-shaped V2 configs
+            # to the canonical expanded-sequence model; dense V2 checkpoints
+            # continue to use the historical NemotronVLModel/LLaVAModel path.
+            bridge = self._canonical_omni_bridge()
+            bridge.hf_pretrained = hf_pretrained
+            bridge.hf_config = hf_config
+            provider = bridge.provider_bridge(hf_pretrained)
+
+            # The historical tokenizer uses <img>/<\/img> IDs 19/20, whereas
+            # the public V3 checkpoint uses 21/22. Prefer serialized numeric
+            # values when present and otherwise preserve the V2 contract.
+            provider.img_start_token_id = getattr(hf_config, "img_start_token_id", None) or 19
+            provider.img_end_token_id = getattr(hf_config, "img_end_token_id", None) or 20
+            return provider
 
         # Use base class helper for common config mapping
         provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
@@ -80,6 +119,13 @@ class NemotronVLBridge(MegatronModelBridge):
     # ------------------------------------------------------------------
 
     def mapping_registry(self) -> MegatronMappingRegistry:  # noqa: D401
+        if _is_legacy_v2_omni_config(getattr(self, "hf_config", None)):
+            return self._canonical_omni_bridge().mapping_registry()
+        return self._legacy_mapping_registry()
+
+    def _legacy_mapping_registry(self) -> MegatronMappingRegistry:
+        """Return the historical wrapper-prefixed Nemotron-VL mappings."""
+
         param_mappings = {
             # vision model
             "llava_model.vision_model.class_token": "vision_model.radio_model.model.patch_generator.cls_token.token",

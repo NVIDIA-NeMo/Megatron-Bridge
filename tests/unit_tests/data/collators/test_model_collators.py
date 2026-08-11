@@ -66,6 +66,21 @@ def test_vlm_collate_keeps_qwen_vl_registration():
     assert resolve_model_collate("Qwen2_5_VLProcessor") is collate.qwen2_5_collate_fn
 
 
+def test_resolver_cache_clear_refreshes_registered_module_symbol():
+    original = qwen_vl_collate.qwen2_5_collate_fn
+
+    def replacement(*args, **kwargs):  # noqa: ARG001
+        return {}
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(qwen_vl_collate, "qwen2_5_collate_fn", replacement)
+        resolve_model_collate.cache_clear()
+        assert resolve_model_collate("Qwen3VLProcessor") is replacement
+
+    resolve_model_collate.cache_clear()
+    assert resolve_model_collate("Qwen3VLProcessor") is original
+
+
 class _DummyProcessor:
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
@@ -814,17 +829,17 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         in_batch_packing_pad_to_multiple_of=4,
     )
 
-    assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]
-    assert batch["input_ids"].shape[1] != 16
+    assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 0, 0, 0]]
+    assert batch["input_ids"].shape[1] == 16
     assert processor.padding_values == [False, False]
     assert processor.tokenizer.padding_side == "left"
     assert batch["attention_mask"] is None
     assert batch["cu_seqlens_q"].tolist() == [0, 3, 8]
     assert batch["cu_seqlens_kv"].tolist() == [0, 3, 8]
-    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
-    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
-    assert batch["max_seqlen_q"].item() == 8
-    assert batch["max_seqlen_kv"].item() == 8
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 16]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 16]
+    assert batch["max_seqlen_q"].item() == 12
+    assert batch["max_seqlen_kv"].item() == 12
     assert "cu_seqlens" not in batch
     assert "cu_seqlens_unpadded" not in batch
     assert batch["visual_inputs"] is not None

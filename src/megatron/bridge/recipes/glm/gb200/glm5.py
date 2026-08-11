@@ -29,6 +29,7 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 _GLM52_MODEL_ID = "zai-org/GLM-5.2"
 _GLM52_MODEL_REVISION = "4d67f66cc64d3219133b767c253b2ad1425c6c88"  # pragma: allowlist secret
 _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
+_GLM52_PP6_128K_LAYOUT = "|".join(("E" + "t" * 14, "t" * 16, "t" * 12, "t" * 12, "t" * 12, "t" * 12 + "mL"))
 
 
 def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
@@ -118,13 +119,12 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
-
-    cfg.model.seq_length = 2048
+    cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.context_parallel_size = 1
+    cfg.model.context_parallel_size = 4
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
@@ -140,10 +140,13 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.gradient_accumulation_fusion = True
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.deallocate_pipeline_outputs = True
     cfg.model.persist_layer_norm = True
     cfg.model.bias_dropout_fusion = True
     cfg.model.bias_activation_fusion = True
@@ -165,24 +168,28 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.validation.eval_interval = 0
     cfg.logger.log_interval = 1
 
+    packing_alignment = 2 * cfg.model.context_parallel_size
     cfg.dataset = default_tulu3_config(
-        seq_length=2048,
+        seq_length=cfg.model.seq_length,
         enable_offline_packing=True,
-        pad_seq_to_mult=32,
+        pad_seq_to_mult=packing_alignment,
     )
     cfg.dataset.hf_dataset.split = "train[:10000]"
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _TULU3_REVISION}
-    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-full-sft-gb200"
+    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-full-sft-gb200-8k-v5"
     cfg.dataset.hf_rewrite = False
     cfg.dataset.hf_validation_proportion = None
     cfg.dataset.max_train_samples = 10000
     cfg.dataset.seed = 1234
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
+    cfg.dataset.offline_packing_specs.max_single_sequence_length = cfg.model.seq_length - packing_alignment
+    # HybridEP needs a fixed token width; CUDA graphs are disabled, so cu_seqlens can remain dynamic.
+    cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
-    cfg.train.global_batch_size = 32
+    cfg.train.global_batch_size = 8
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=10,
         max_lr=5e-6,
@@ -193,7 +200,19 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.checkpoint.save_optim = False
     cfg.checkpoint.save_rng = False
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "USE_MNNVL": 1,
+    }
     return cfg
 
 
@@ -206,18 +225,17 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
-
     cfg.model.seq_length = 131072
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_model_parallel_layout = _GLM52_PP6_128K_LAYOUT
     cfg.model.context_parallel_size = 32
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.microbatch_group_size_per_vp_stage = None
@@ -232,6 +250,9 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.deallocate_pipeline_outputs = True
     cfg.model.persist_layer_norm = True
     cfg.model.bias_dropout_fusion = True
     cfg.model.bias_activation_fusion = True
@@ -250,24 +271,28 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 10
     cfg.train.train_iters = 20
-    cfg.train.global_batch_size = 8
+    cfg.train.global_batch_size = 56
     cfg.validation.eval_iters = 0
     cfg.validation.eval_interval = 0
     cfg.logger.log_interval = 1
 
-    cfg.dataset.seq_length = 131072
+    cfg.dataset = default_tulu3_config(
+        seq_length=131072,
+        enable_offline_packing=True,
+        pad_seq_to_mult=64,
+    )
     cfg.dataset.hf_dataset = None
-    cfg.dataset.dataset_root = "work/data/glm5-2/synthetic-long-context-gb200"
+    cfg.dataset.dataset_root = "work/data/glm5-2/synthetic-long-sft-128k"
     cfg.dataset.hf_output_root = None
+    cfg.dataset.hf_rewrite = False
     cfg.dataset.hf_validation_proportion = None
+    cfg.dataset.max_train_samples = 1120
     cfg.dataset.seed = 1234
     cfg.dataset.preprocessing = ChatSFTPreprocessingConfig()
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
-    cfg.dataset.offline_packing_specs.packed_sequence_size = 131072
     cfg.dataset.offline_packing_specs.tokenizer_model_name = "glm5"
-    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 64
-    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
+    # HybridEP needs a fixed token width; CUDA graphs are disabled, so cu_seqlens can remain dynamic.
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     cfg.rng.seed = 5678
@@ -281,9 +306,15 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "NCCL_NVLS_ENABLE": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "USE_MNNVL": 1,
     }
     return cfg
@@ -298,7 +329,6 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     )
     cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
-
     cfg.model.seq_length = 2048
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
