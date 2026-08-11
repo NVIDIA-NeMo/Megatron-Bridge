@@ -3,7 +3,7 @@
 
 title: gpt_oss_120b
 summary: >
-  Performance scope: pretrain_performance.H100 uses a tuned canonical
+  Performance scope: pretrain_performance.GB200 uses a tuned canonical
   performance recipe; timing and throughput metrics from functional training
   items remain sanity checks rather than optimized performance results.
   GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export,
@@ -24,7 +24,7 @@ verification_index:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
   performance:
-    H100: unverified
+    GB200: unverified
 model:
   hf_id: openai/gpt-oss-120b
   hf_revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a  # pragma: allowlist secret
@@ -363,12 +363,12 @@ items:
         percent relative plus 1e-6 absolute gate.
 
   pretrain_performance:
-    H100:
+    GB200:
       status: unverified
       precision: bf16
       command: >
-        ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
-        --recipe gpt_oss_120b_pretrain_64gpu_h100_bf16_config
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
+        --recipe gpt_oss_120b_pretrain_64gpu_gb200_bf16_config
         --mode pretrain --max_steps 50
       last_verified: null
       metrics:
@@ -377,9 +377,12 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        Future verification must run the exact canonical 64-H100 BF16 mock-data
-        performance recipe for 50 optimizer steps, record finite losses with
-        zero skipped or NaN iterations and all required metrics, and define
-        measured step-time and model-TFLOP/s/GPU thresholds before this item is
-        marked verified. Its forced router balancing and benchmark batch
-        contract make it performance evidence, not convergence evidence.
+        Future verification must run the exact canonical 64-GB200 BF16
+        mock-data performance recipe for 50 optimizer steps, record finite
+        losses with zero skipped or NaN iterations and all required metrics,
+        and define measured step-time and model-TFLOP/s/GPU thresholds before
+        this item is marked verified. The recipe uses TP1/PP1/EP64,
+        GBS1280/MBS4, forced router balancing, selective layernorm and MoE
+        activation recompute, and expert-parallel communication overlap; this
+        benchmark batch contract makes it performance evidence, not
+        convergence evidence.
