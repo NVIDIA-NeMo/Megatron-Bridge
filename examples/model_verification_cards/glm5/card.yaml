@@ -5,12 +5,12 @@ title: glm5
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Model-level verification covers deterministic inference and exact
-  distributed GPU import/export of the pinned GLM-5 Hugging Face checkpoint's
-  78-layer inference graph. The checkpoint's appended MTP auxiliary layer is
-  intentionally disabled and excluded from those claims. CPU conversion,
-  Hugging Face/Megatron forward parity, training, checkpoint resume, and
-  post-SFT export/reload verification are deferred.
+  results. Model-level verification covers deterministic HybridEP inference
+  and exact distributed GPU import/export of the pinned GLM-5 Hugging Face
+  checkpoint's 78-layer inference graph. The checkpoint's appended MTP
+  auxiliary layer is intentionally disabled and excluded from those claims.
+  CPU conversion, Hugging Face/Megatron forward parity, training, checkpoint
+  resume, and post-SFT export/reload verification are deferred.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
@@ -109,28 +109,23 @@ items:
   inference:
     status: verified
     precision: bf16
+    bridge_commit: b58afee863f40b64304373830ae79f3f61a1af19  # pragma: allowlist secret
     command: >
-      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      ./scripts/inference/infer.sh --nodes 8 --gpus-per-node 8
       --task legacy-full-prefix-generation
       --hf_model_path zai-org/GLM-5
       --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
-      --prompt "Write one concise sentence explaining why deterministic tests matter:"
-      --apply-chat-template --thinking-mode disabled --max_new_tokens 16
-      --legacy-full-prefix --tp 1 --pp 4 --ep 8 --etp 1
-      --pipeline-model-parallel-layout
-      "Etttttt|tttttttttttttttttttttttt|tttttttttttttttttttttttt|ttttttttttttttttttttttttL"
-    last_verified: 2026-08-07
+      --prompt "What is artificial intelligence?" --max_new_tokens 20
+      --legacy-full-prefix --tp 1 --pp 2 --ep 32 --etp 1
+    last_verified: 2026-08-10
     expected_result: |-
-      One deterministic BF16 run completes all 6,201 distributed mapping tasks
-      from the pinned Hugging Face model directly into Megatron across 32 ranks
-      at TP1/PP4/EP8/ETP1. The inference graph intentionally excludes the
+      One deterministic BF16 run loads the pinned Hugging Face model directly
+      into Megatron across 64 H100 ranks at TP1/PP2/EP32/ETP1 and uses the
+      flex HybridEP dispatcher. The inference graph intentionally excludes the
       checkpoint's appended MTP auxiliary layer. It exits successfully after
-      exactly 16 new greedy tokens. The first generated token is ID 16 (`1`),
-      and first-step logits are finite with variance 10.3619. The literal
-      completion was:
-      "1.  **Analyze the Request:**
-          *   **Topic:**"
-      It produced exactly 16 new tokens.
+      exactly 20 new greedy tokens. The literal completion, including its
+      leading space, was:
+      " How is artificial intelligence going to change our lives?"
 
   pretrain:
     H100:
