@@ -1,8 +1,11 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
+import torch
 
 from megatron.bridge.data.collators.registry import (
     model_collate_required_for_processor,
@@ -140,6 +143,27 @@ def test_deepseek_v4_tokenizer_builds_content_plus_eos_mask(mode, expected_assis
     assert supervised == expected_assistant_text
 
 
+@pytest.mark.parametrize("truncation_side", ["left", "right"])
+def test_deepseek_v4_tokenizer_truncates_ids_and_mask_together(truncation_side):
+    tokenizer = _DeepSeekV4CharacterTokenizer()
+    tokenizer.truncation_side = truncation_side
+    example = {"messages": ORDINARY_MESSAGES, "thinking_mode": "chat"}
+    full = tokenize_deepseek_v4_example(example, tokenizer, loss_mode="last_turn")
+    max_length = full.input_ids.numel() - 1
+
+    truncated = tokenize_deepseek_v4_example(
+        example,
+        tokenizer,
+        max_length=max_length,
+        loss_mode="last_turn",
+        warn_on_all_masked=False,
+    )
+
+    expected_slice = slice(1, None) if truncation_side == "left" else slice(None, -1)
+    assert torch.equal(truncated.input_ids, full.input_ids[expected_slice])
+    assert torch.equal(truncated.assistant_mask, full.assistant_mask[expected_slice])
+
+
 def test_deepseek_v4_collator_shifts_labels_and_pads_rows():
     tokenizer = _DeepSeekV4CharacterTokenizer()
     examples = [
@@ -168,6 +192,19 @@ def test_deepseek_v4_direct_sft_auto_selects_model_collator():
     batch = dataset.collate_fn([dataset[0]])
     assert batch["input_ids"].shape[0] == 1
     assert batch["loss_mask"].sum().item() > 0
+
+
+def test_deepseek_v4_auto_selection_checks_nested_and_snapshot_identities(tmp_path):
+    tokenizer = _DeepSeekV4CharacterTokenizer()
+    wrapper = type("ProcessorWrapper", (), {"name_or_path": "generic-wrapper", "tokenizer": tokenizer})()
+    assert model_collate_required_for_processor(wrapper)
+
+    tokenizer.name_or_path = "/cache/models--deepseek-ai--DeepSeek-V4-Flash/snapshots/revision"
+    assert model_collate_required_for_processor(tokenizer)
+
+    (tmp_path / "config.json").write_text('{"model_type": "deepseek_v4"}', encoding="utf-8")
+    tokenizer.name_or_path = str(tmp_path)
+    assert model_collate_required_for_processor(tokenizer)
 
 
 def test_deepseek_v4_collator_requires_explicit_thinking_mode():

@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lazy resolution of model-owned VLM collators by HF processor type."""
+"""Lazy resolution of model-owned collators by HF processor identity."""
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from importlib import import_module
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal, cast
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,8 @@ class _ModelCollateSpec:
     module_name: str
     symbol_name: str
     required_for_all_examples: bool = False
+    model_name_prefixes: tuple[str, ...] = ()
+    supported_chat_loss_modes: tuple[str, ...] = ("assistant",)
 
 
 _MODEL_COLLATE_SPECS = {
@@ -54,45 +58,76 @@ _MODEL_COLLATE_SPECS = {
     ),
     "Glm4vProcessor": _ModelCollateSpec("megatron.bridge.models.glm_vl.data.collate_fn", "glm4v_collate_fn"),
     "KimiK25Processor": _ModelCollateSpec("megatron.bridge.models.kimi_vl.data.collate_fn", "kimi_k25_vl_collate_fn"),
-}
-
-_MODEL_NAME_COLLATE_SPECS = {
     "deepseek-v4": _ModelCollateSpec(
         "megatron.bridge.models.deepseek.data.collate_fn",
         "deepseek_v4_collate_fn",
         required_for_all_examples=True,
+        model_name_prefixes=("deepseek-v4",),
+        supported_chat_loss_modes=("assistant", "last_turn", "full"),
     ),
 }
 
 
-def _model_name_from_processor(processor: Any) -> str | None:
+def _normalize_model_identifier(value: str) -> str:
+    return value.rstrip("/").rsplit("/", 1)[-1].lower().replace("_", "-")
+
+
+def _local_model_type(name_or_path: str) -> str | None:
+    config_path = Path(name_or_path).expanduser() / "config.json"
+    try:
+        with config_path.open(encoding="utf-8") as config_file:
+            model_type = json.load(config_file).get("model_type")
+    except (AttributeError, json.JSONDecodeError, OSError):
+        return None
+    return _normalize_model_identifier(model_type) if isinstance(model_type, str) else None
+
+
+def _model_identifiers_from_processor(processor: Any) -> tuple[str, ...]:
+    identifiers: list[str] = []
     current = processor
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         name_or_path = getattr(current, "name_or_path", None)
         if isinstance(name_or_path, str) and name_or_path:
-            return name_or_path.rstrip("/").rsplit("/", 1)[-1].lower().replace("_", "-")
+            identifiers.append(_normalize_model_identifier(name_or_path))
+            for path_part in Path(name_or_path).parts:
+                normalized_part = _normalize_model_identifier(path_part)
+                identifiers.append(normalized_part)
+                if normalized_part.startswith("models--"):
+                    identifiers.append(normalized_part.rsplit("--", 1)[-1])
+            local_model_type = _local_model_type(name_or_path)
+            if local_model_type is not None:
+                identifiers.append(local_model_type)
+        config = getattr(current, "config", None)
+        model_type = getattr(config, "model_type", None)
+        if isinstance(model_type, str) and model_type:
+            identifiers.append(_normalize_model_identifier(model_type))
         nested = getattr(current, "tokenizer", None)
         current = nested if nested is not current else None
-    return None
+    return tuple(dict.fromkeys(identifiers))
 
 
 def _model_collate_spec_for_processor(processor: Any) -> _ModelCollateSpec | None:
     spec = _MODEL_COLLATE_SPECS.get(type(processor).__name__)
     if spec is not None:
         return spec
-    model_name = _model_name_from_processor(processor)
-    if model_name is None:
-        return None
-    return next((spec for prefix, spec in _MODEL_NAME_COLLATE_SPECS.items() if model_name.startswith(prefix)), None)
+    identifiers = _model_identifiers_from_processor(processor)
+    return next(
+        (
+            spec
+            for spec in _MODEL_COLLATE_SPECS.values()
+            if any(identifier.startswith(prefix) for prefix in spec.model_name_prefixes for identifier in identifiers)
+        ),
+        None,
+    )
 
 
 def _resolve_model_collate_spec(spec: _ModelCollateSpec) -> Callable[..., dict[str, Any]]:
     collate = getattr(import_module(spec.module_name), spec.symbol_name)
     if not callable(collate):
         raise TypeError(f"Registered collator {spec.module_name}.{spec.symbol_name} is not callable.")
-    return collate
+    return cast(Callable[..., dict[str, Any]], collate)
 
 
 def model_collate_required_for_all_examples(processor_type: str) -> bool:
@@ -120,12 +155,24 @@ def resolve_model_collate(processor_type: str) -> Callable[..., dict[str, Any]]:
     return _resolve_model_collate_spec(spec)
 
 
-def resolve_model_collate_for_processor(processor: Any) -> Callable[..., dict[str, Any]]:
+def resolve_model_collate_for_processor(
+    processor: Any,
+    *,
+    loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+) -> Callable[..., dict[str, Any]]:
     """Resolve a model-owned collator from processor type or tokenizer model name."""
     spec = _model_collate_spec_for_processor(processor)
     if spec is None:
         processor_type = type(processor).__name__
-        model_name = _model_name_from_processor(processor)
-        details = f" type '{processor_type}'" + (f" and model '{model_name}'" if model_name else "")
+        model_identifiers = _model_identifiers_from_processor(processor)
+        details = f" type '{processor_type}'" + (f" and models {model_identifiers}" if model_identifiers else "")
         raise ValueError(f"No model collate function is registered for processor{details}.")
-    return _resolve_model_collate_spec(spec)
+    if loss_mode not in spec.supported_chat_loss_modes:
+        raise ValueError(
+            f"Registered collator {spec.module_name}.{spec.symbol_name} supports only chat loss modes "
+            f"{spec.supported_chat_loss_modes}, not '{loss_mode}'."
+        )
+    collate = _resolve_model_collate_spec(spec)
+    if loss_mode == "assistant":
+        return collate
+    return partial(collate, loss_mode=loss_mode)

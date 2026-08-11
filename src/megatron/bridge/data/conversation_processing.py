@@ -91,8 +91,8 @@ class AssistantMaskBoundaryConfig:
     include_end_tokens_for_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,)
     trim_leading_token_ids: Sequence[int] = ()
     trim_leading_token_sequences: Sequence[Sequence[int]] = ()
-    role_start_token_variants: Mapping[str, Sequence[Sequence[int]]] = field(default_factory=dict)
     role_end_token_variants: Mapping[str, Sequence[Sequence[int]]] = field(default_factory=dict)
+    role_start_token_variants: Mapping[str, Sequence[Sequence[int]]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

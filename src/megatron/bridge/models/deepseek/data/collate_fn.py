@@ -148,11 +148,6 @@ def tokenize_deepseek_v4_example(
 
     tokenizer = get_processor_tokenizer(processor)
     input_ids = tokenizer.encode(rendered, add_special_tokens=False)
-    if max_length is not None and len(input_ids) > max_length:
-        if getattr(tokenizer, "truncation_side", "right") == "left":
-            input_ids = input_ids[-max_length:]
-        else:
-            input_ids = input_ids[:max_length]
     input_tensor = torch.tensor(input_ids, dtype=torch.long)
 
     if loss_mode == "full":
@@ -180,6 +175,14 @@ def tokenize_deepseek_v4_example(
         )
     if loss_mode == "full" and skipped_tokens is not None and skipped_tokens.numel() > 0:
         assistant_mask &= ~torch.isin(input_tensor, skipped_tokens.to(dtype=torch.long))
+    if max_length is not None and input_tensor.numel() > max_length:
+        if getattr(tokenizer, "truncation_side", "right") == "left":
+            start = input_tensor.numel() - max_length
+            input_tensor = input_tensor[start:]
+            assistant_mask = assistant_mask[start:]
+        else:
+            input_tensor = input_tensor[:max_length]
+            assistant_mask = assistant_mask[:max_length]
     return TokenizedConversation(
         input_ids=input_tensor,
         assistant_mask=assistant_mask,

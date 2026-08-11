@@ -1981,6 +1981,24 @@ def test_build_assistant_loss_mask_uses_explicit_boundary_config():
     assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
 
 
+def test_assistant_mask_boundary_config_preserves_role_end_variants_positional_argument():
+    role_end_variants = {"assistant": [[103], [104]]}
+
+    boundary_config = AssistantMaskBoundaryConfig(
+        {"assistant": [102]},
+        {"assistant": [103]},
+        ("assistant",),
+        (),
+        ("assistant",),
+        (),
+        (),
+        role_end_variants,
+    )
+
+    assert boundary_config.role_end_token_variants == role_end_variants
+    assert boundary_config.role_start_token_variants == {}
+
+
 def test_build_assistant_loss_mask_raises_for_incomplete_boundary_config():
     example = {
         "conversation": [
