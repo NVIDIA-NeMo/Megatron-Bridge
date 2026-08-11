@@ -303,7 +303,7 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
     )
 
     def find_class(self, module: str, name: str) -> object:
-        if module == "__builtin__" and name == "frozenset":
+        if module == "__builtin__":
             module = "builtins"
         if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
             return pickle.Unpickler.find_class(self, module, name)
