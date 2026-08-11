@@ -383,7 +383,10 @@ class TestDataGPTSFTPackedDataset:
         assert processed["max_seqlen_q"].tolist() == [[3], [7]]
         assert processed["max_seqlen_kv"].tolist() == [[3], [7]]
         assert processed["padding_mask"].dtype == torch.bool
-        assert not processed["padding_mask"].any()
+        assert processed["padding_mask"].tolist() == [
+            [False, False, False, False, False, False, True],
+            [False, False, False, False, False, False, False],
+        ]
 
     def test_collate_fn_marks_offline_alignment_padding(self, tmp_path):
         """Offline-packed rows expose physical alignment gaps to the MoE router."""

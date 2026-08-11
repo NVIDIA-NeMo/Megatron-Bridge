@@ -120,6 +120,15 @@ async def _generate(
             for idx, result in enumerate(results):
                 print_rank_0(f"[{idx}] Prompt: {prompts[idx]}")
                 print_rank_0(f"[{idx}] Generated: {result.generated_text}")
+                for label, attribute in (
+                    ("Prompt log probs", "prompt_log_probs"),
+                    ("Generated log probs", "generated_log_probs"),
+                    ("Prompt top-n logprobs", "prompt_top_n_logprobs"),
+                    ("Generated top-n logprobs", "generated_top_n_logprobs"),
+                ):
+                    value = getattr(result, attribute, None)
+                    if value is not None:
+                        print_rank_0(f"[{idx}] {label}: {value}")
             print_rank_0("============================================")
 
 

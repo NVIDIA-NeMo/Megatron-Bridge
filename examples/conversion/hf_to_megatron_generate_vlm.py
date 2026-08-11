@@ -147,6 +147,19 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
+def _gather_last_token_logits(output: torch.Tensor, real_seq_len: int) -> torch.Tensor:
+    """Gather only the last real token's tensor-parallel vocabulary shards."""
+    local_logits = output[:, real_seq_len - 1]
+    world_size = parallel_state.get_tensor_model_parallel_world_size()
+    gathered_logits = [torch.zeros_like(local_logits) for _ in range(world_size)]
+    dist.all_gather(
+        gathered_logits,
+        local_logits,
+        group=parallel_state.get_tensor_model_parallel_group(),
+    )
+    return torch.cat(gathered_logits, dim=-1)
+
+
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
     maybe_initialize_distributed()
@@ -366,26 +379,22 @@ def main(args) -> None:
                 output = output[0]
 
             if parallel_state.is_pipeline_last_stage():
-                world_size = parallel_state.get_tensor_model_parallel_world_size()
-                gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
-                dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
-                output = torch.cat(gathered_tensors, dim=2)
-
-                last_pos = real_seq_len - 1
-                next_token_ids = torch.argmax(output[:, last_pos], dim=-1, keepdim=True)
+                last_token_logits = _gather_last_token_logits(output, real_seq_len)
+                del output
+                next_token_ids = torch.argmax(last_token_logits, dim=-1, keepdim=True)
 
                 if step < 5:
                     print_rank_last(
-                        f"Step {step}: output shape={output.shape}, "
-                        f"real_seq_len={real_seq_len}, var={output.var():.4f}"
+                        f"Step {step}: last-token logits shape={last_token_logits.shape}, "
+                        f"real_seq_len={real_seq_len}, last-token var={last_token_logits.var():.4f}"
                     )
-                    logits = output[0, last_pos, :]
-                    top5_vals, top5_ids = torch.topk(logits, 5)
+                    top5_vals, top5_ids = torch.topk(last_token_logits[0], 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_last(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
                     print_rank_last(
                         f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
                     )
+                del last_token_logits
             else:
                 next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
 

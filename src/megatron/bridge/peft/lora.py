@@ -127,14 +127,14 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
+        adapter_types = (LoRALinear, LoRATopKRouter)
         if isinstance(module, adapter_types):
             return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             _, full_name = ans
             if isinstance(module, nn.Linear) and not is_modelopt_linear(module):
-                return LinearAdapter(
+                adapter = LinearAdapter(
                     module,
                     dim=self.dim,
                     alpha=self.alpha,
@@ -142,6 +142,7 @@ class LoRA(PEFT, ModuleMatcher):
                     lora_A_init_method=self.lora_A_init_method,
                     lora_dtype=self.lora_dtype,
                 )
+                return LoRALinear(module, adapter)
 
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(
