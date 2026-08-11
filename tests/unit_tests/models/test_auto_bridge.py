@@ -311,6 +311,15 @@ class TestAutoBridge:
         # Nested text_config carries num_hidden_layers.
         assert _mtp_source_key_prefixes(glm_src, {"text_config": {"num_hidden_layers": 47}}) == ("model.layers.47.",)
 
+        # Step3.7 stores multiple MTP layers after the regular decoder layers.
+        step37_src = src("model.layers.45.*", "model.layers.46.*", "model.layers.47.*")
+        step37_config = {"text_config": {"num_hidden_layers": 45, "num_nextn_predict_layers": 3}}
+        assert _mtp_source_key_prefixes(step37_src, step37_config) == (
+            "model.layers.45.",
+            "model.layers.46.",
+            "model.layers.47.",
+        )
+
         # No matching source keys -> nothing to strip.
         assert _mtp_source_key_prefixes(src(), {"num_hidden_layers": 47}) == ()
 
