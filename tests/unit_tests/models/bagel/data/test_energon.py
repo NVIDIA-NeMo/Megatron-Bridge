@@ -50,7 +50,9 @@ def test_editing_task_encoder_processes_images_instruction_and_sequence_plan() -
         return torch.ones((3, 14, 28))
 
     random.seed(42)
-    sample = BagelEditingTaskEncoder(tokenizer, transform, vit_transform, 16, 14).cookers[0].cook(crude_sample)
+    encoder = BagelEditingTaskEncoder(tokenizer, transform, vit_transform, 16, 14)
+    assert getattr(encoder.cookers[0].cook, "__stateless__", False)
+    sample = encoder.cookers[0].cook(crude_sample)
 
     assert isinstance(sample, BagelSample)
     assert len(sample.image_tensor_list) == 3
@@ -90,7 +92,9 @@ def test_t2i_task_encoder_processes_caption_image_and_sequence_plan() -> None:
         return torch.full((3, 16, 32), 0.5)
 
     random.seed(42)
-    sample = BagelT2ITaskEncoder(tokenizer, transform, 16).cookers[0].cook(crude_sample)
+    encoder = BagelT2ITaskEncoder(tokenizer, transform, 16)
+    assert getattr(encoder.cookers[0].cook, "__stateless__", False)
+    sample = encoder.cookers[0].cook(crude_sample)
 
     assert isinstance(sample, BagelSample)
     assert torch.equal(sample.image_tensor_list[0], transform(Image.new("RGB", (32, 16))))
@@ -133,7 +137,9 @@ def test_vlm_task_encoder_processes_image_conversation_and_sequence_plan() -> No
         assert image_count == 1
         return torch.ones((3, 14, 28))
 
-    sample = BagelVLMTaskEncoder(tokenizer, transform, 14).cookers[0].cook(crude_sample)
+    encoder = BagelVLMTaskEncoder(tokenizer, transform, 14)
+    assert getattr(encoder.cookers[0].cook, "__stateless__", False)
+    sample = encoder.cookers[0].cook(crude_sample)
 
     assert isinstance(sample, BagelSample)
     assert len(sample.image_tensor_list) == 1

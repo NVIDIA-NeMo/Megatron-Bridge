@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from functools import partial
 
 import torch
-from megatron.energon import Cooker, Sample, TaskEncoder, basic_sample_keys
+from megatron.energon import Cooker, Sample, TaskEncoder, basic_sample_keys, stateless
 from PIL import Image
 from transformers import PreTrainedTokenizerBase
 
@@ -297,11 +297,13 @@ class BagelT2ITaskEncoder(TaskEncoder):
         """Configure the official tokenizer and image transform."""
         self.cookers = [
             Cooker(
-                partial(
-                    cook_bagel_t2i_sample,
-                    tokenizer=tokenizer,
-                    transform=transform,
-                    image_stride=image_stride,
+                stateless(
+                    partial(
+                        cook_bagel_t2i_sample,
+                        tokenizer=tokenizer,
+                        transform=transform,
+                        image_stride=image_stride,
+                    )
                 )
             )
         ]
@@ -321,13 +323,15 @@ class BagelEditingTaskEncoder(TaskEncoder):
         """Configure the official tokenizer and image transforms."""
         self.cookers = [
             Cooker(
-                partial(
-                    cook_bagel_editing_sample,
-                    tokenizer=tokenizer,
-                    transform=transform,
-                    vit_transform=vit_transform,
-                    image_stride=image_stride,
-                    vit_image_stride=vit_image_stride,
+                stateless(
+                    partial(
+                        cook_bagel_editing_sample,
+                        tokenizer=tokenizer,
+                        transform=transform,
+                        vit_transform=vit_transform,
+                        image_stride=image_stride,
+                        vit_image_stride=vit_image_stride,
+                    )
                 )
             )
         ]
@@ -345,11 +349,13 @@ class BagelVLMTaskEncoder(TaskEncoder):
         """Configure the official tokenizer and image transform."""
         self.cookers = [
             Cooker(
-                partial(
-                    cook_bagel_vlm_sample,
-                    tokenizer=tokenizer,
-                    transform=transform,
-                    image_stride=image_stride,
+                stateless(
+                    partial(
+                        cook_bagel_vlm_sample,
+                        tokenizer=tokenizer,
+                        transform=transform,
+                        image_stride=image_stride,
+                    )
                 )
             )
         ]
