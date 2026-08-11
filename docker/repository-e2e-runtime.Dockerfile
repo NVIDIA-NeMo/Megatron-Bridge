@@ -23,7 +23,7 @@ RUN if ! getent group "${RUNTIME_GID}" >/dev/null; then \
     find /opt/Megatron-Bridge -type d -exec chmod a+rx {} + && \
     chown "${RUNTIME_UID}:${RUNTIME_GID}" /opt/Megatron-Bridge && \
     install -d -o "${RUNTIME_UID}" -g "${RUNTIME_GID}" \
-      /nemo_run /tmp/regent-cache /tmp/regent-cache/home
+      /nemo_run /tmp/regent-cache /tmp/regent-cache/home /workspace
 
 ENV HOME=/tmp/regent-cache/home \
     UV_CACHE_DIR=/tmp/regent-cache/uv
@@ -33,6 +33,8 @@ RUN touch /nemo_run/.repository-e2e-write-probe && \
     rm /nemo_run/.repository-e2e-write-probe && \
     touch /opt/Megatron-Bridge/.repository-e2e-write-probe && \
     rm /opt/Megatron-Bridge/.repository-e2e-write-probe && \
+    touch /workspace/.repository-e2e-write-probe && \
+    rm /workspace/.repository-e2e-write-probe && \
     test -r /opt/Megatron-Bridge/tests/unit_tests/Launch_Unit_Tests_Core.sh && \
     test "$(getent passwd "$(id -u)" | cut -d: -f6)" = "${HOME}" && \
     uv cache dir | grep -Fx /tmp/regent-cache/uv
