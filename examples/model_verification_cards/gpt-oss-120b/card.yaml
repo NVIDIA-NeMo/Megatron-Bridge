@@ -6,15 +6,17 @@ summary: >
   Performance scope: pretrain_performance.H100 uses a tuned canonical
   performance recipe; timing and throughput metrics from functional training
   items remain sanity checks rather than optimized performance results.
-  GPT-OSS 120B H100 conversion, inference, training, checkpoint resume, and
-  performance verification are planned but not yet verified.
+  GPT-OSS 120B H100 GPU HF-to-Megatron import and GPU Megatron-to-HF export
+  are verified. Inference, training, checkpoint resume, and performance
+  verification remain planned but not yet verified.
 verification_index:
   model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - megatron_to_hf_gpu
     unverified:
       - hf_to_megatron_cpu
-      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
   training:
@@ -29,7 +31,7 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 736f8282d6f95f9cd1a1b1bf93a5356ce609838f  # pragma: allowlist secret
+  bridge_commit: a8038f6d99d8ade33e1b715ba79bc9185b073e59  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -49,7 +51,7 @@ items:
       revision.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -59,12 +61,12 @@ items:
       --megatron-path work/model-verification/gpt-oss-120b/imported-megatron
       --torch-dtype bfloat16 --tp 1 --pp 4 --ep 8 --etp 1
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-10
     expected_result: >
-      Future verification must import the pinned MXFP4 checkpoint on 32 H100
-      GPUs and create a reloadable TP1/PP4/EP8/ETP1 BF16 Megatron checkpoint
-      with complete DistCP, metadata, train-state, tokenizer, and latest-marker
-      artifacts.
+      Imports the pinned MXFP4 checkpoint on 32 H100 GPUs and creates a
+      reloadable TP1/PP4/EP8/ETP1 BF16 Megatron checkpoint at iter_0000000
+      with 32 DistCP shards, metadata, train-state, tokenizer, and
+      latest-marker artifacts.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -83,7 +85,7 @@ items:
       the BF16 reference semantics.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -94,12 +96,13 @@ items:
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 1 --pp 4 --ep 8 --etp 1
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-10
     expected_result: >
-      Future verification must export the distributed Megatron checkpoint to a
-      reloadable BF16 Hugging Face checkpoint with attention_bias=true and no
-      missing, unexpected, shape, dtype, or value mismatches against the public
-      BF16 reference semantics.
+      Exports the distributed Megatron checkpoint to a reloadable BF16 Hugging
+      Face checkpoint with attention_bias=true. The exported checkpoint has 73
+      safetensors shards and 615 BF16 tensors totaling 116,829,156,672
+      parameters, with no missing, unexpected, shape, dtype, or value
+      mismatches against unsloth/gpt-oss-120b-BF16.
 
   manual_forward_pass:
     status: unverified
