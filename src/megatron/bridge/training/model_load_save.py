@@ -30,7 +30,7 @@ from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
-from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.checkpointing import _CpuTorchDistSaveShardedStrategy, save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
@@ -615,6 +615,17 @@ def save_megatron_model(
         dist=None,
     )
 
+    runtime_config = getattr(model[0], "config", None)
+    use_cpu_save_strategy = getattr(runtime_config, "use_cpu_initialization", False) is True
+    if isinstance(model_config, ModelConfig):
+        transformer_config = getattr(model_config, "transformer", None)
+        use_cpu_save_strategy = (
+            use_cpu_save_strategy or getattr(transformer_config, "use_cpu_initialization", False) is True
+        )
+    checkpointing_context = None
+    if ckpt_format == "torch_dist" and use_cpu_save_strategy:
+        checkpointing_context = {"save_strategy": _CpuTorchDistSaveShardedStrategy("torch_dist", 1)}
+
     if low_memory_save:
         # Low-memory save flow: process factories incrementally, freeing memory as we go
         import gc
@@ -777,6 +788,7 @@ def save_megatron_model(
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
             pg_collection=pg_collection,
+            checkpointing_context=checkpointing_context,
             callback_manager=None,
         )
     else:
@@ -787,6 +799,7 @@ def save_megatron_model(
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=checkpointing_context,
             callback_manager=None,
         )
 

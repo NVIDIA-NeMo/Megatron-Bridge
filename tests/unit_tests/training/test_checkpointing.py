@@ -16,12 +16,15 @@
 import os
 import pickle
 import tempfile
+from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
 import numpy as np
 import pytest
 import torch
+from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
+from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
@@ -34,6 +37,7 @@ from megatron.bridge.training.checkpointing import (
     DefaultCheckpointManager,
     _build_auto_bridge_for_save,
     _clear_auto_bridge_cache,
+    _CpuTorchDistSaveShardedStrategy,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
@@ -735,6 +739,35 @@ class TestSaveCheckpoint:
         # Check that the iteration (1000) was written
         written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
         assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
+
+    def test_cpu_torch_dist_strategy_uses_blocking_preload(self, tmp_path):
+        """CPU checkpoint staging must not synchronize an unavailable CUDA device."""
+        preload_modes = []
+        written_buckets = []
+
+        def preload(write_buckets, non_blocking=True):
+            preload_modes.append(non_blocking)
+            return write_buckets
+
+        def write(_rank, write_buckets, _results_queue):
+            written_buckets.extend(write_buckets)
+
+        request = AsyncRequest(
+            async_fn=write,
+            async_fn_args=(0, None, None),
+            finalize_fns=[],
+            preload_fn=partial(preload, ["cpu-tensor"], True),
+        )
+        strategy = _CpuTorchDistSaveShardedStrategy()
+
+        with (
+            patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request),
+            patch("torch.distributed.barrier"),
+        ):
+            strategy.save({}, tmp_path)
+
+        assert preload_modes == [False]
+        assert written_buckets == ["cpu-tensor"]
 
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""

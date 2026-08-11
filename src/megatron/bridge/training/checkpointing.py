@@ -16,6 +16,7 @@
 
 import contextlib
 import gc
+import inspect
 import os
 import random
 import shutil
@@ -24,6 +25,7 @@ import threading
 from abc import ABC
 from dataclasses import dataclass, replace
 from enum import Enum, auto
+from functools import partial
 from logging import getLogger
 from pathlib import Path
 from time import time
@@ -157,6 +159,29 @@ HF_WEIGHTS_SUBDIR = "hf"
 # default (currently only Megatron Energon). Used to derive dataloader_save / dataloader_load when
 # those config fields are left unset.
 DATALOADER_STATE_SUBDIR = "energon"
+
+
+class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
+    """Run MCore's synchronous torch-dist writer without a CUDA staging barrier."""
+
+    def save(self, sharded_state_dict: ShardedStateDict, checkpoint_dir: Path) -> None:
+        """Save CPU tensors synchronously without calling ``torch.cuda.synchronize``."""
+        async_request = self.async_save(sharded_state_dict, checkpoint_dir, async_strategy="mcore")
+        preload_fn = async_request.preload_fn
+        if preload_fn is not None:
+            if not isinstance(preload_fn, partial):
+                raise TypeError(f"Expected a partial CPU preload callback, got {type(preload_fn).__name__}.")
+            bound = inspect.signature(preload_fn.func).bind_partial(
+                *preload_fn.args,
+                **(preload_fn.keywords or {}),
+            )
+            if "non_blocking" not in bound.signature.parameters:
+                raise TypeError("MCore checkpoint preload callback does not accept non_blocking.")
+            bound.arguments["non_blocking"] = False
+            async_request = async_request._replace(
+                preload_fn=partial(preload_fn.func, *bound.args, **bound.kwargs),
+            )
+        async_request.execute_sync()
 
 
 # ============================================================================
