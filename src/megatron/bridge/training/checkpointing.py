@@ -164,6 +164,16 @@ DATALOADER_STATE_SUBDIR = "energon"
 class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
     """Run MCore's synchronous torch-dist writer without a CUDA staging barrier."""
 
+    @staticmethod
+    def _run_cpu_finalize(finalize_fn: Callable[[], None]) -> None:
+        """Make MCore's failure-status tensor use the CPU for a Gloo save."""
+        current_device = torch.cuda.current_device
+        try:
+            torch.cuda.current_device = lambda: torch.device("cpu")
+            finalize_fn()
+        finally:
+            torch.cuda.current_device = current_device
+
     def save(self, sharded_state_dict: ShardedStateDict, checkpoint_dir: Path) -> None:
         """Save CPU tensors synchronously without calling ``torch.cuda.synchronize``."""
         async_request = self.async_save(sharded_state_dict, checkpoint_dir, async_strategy="mcore")
@@ -181,6 +191,9 @@ class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
             async_request = async_request._replace(
                 preload_fn=partial(preload_fn.func, *bound.args, **bound.kwargs),
             )
+        async_request = async_request._replace(
+            finalize_fns=[partial(self._run_cpu_finalize, finalize_fn) for finalize_fn in async_request.finalize_fns],
+        )
         async_request.execute_sync()
 
 

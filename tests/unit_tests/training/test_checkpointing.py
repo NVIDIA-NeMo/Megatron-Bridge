@@ -744,6 +744,7 @@ class TestSaveCheckpoint:
         """CPU checkpoint staging must not synchronize an unavailable CUDA device."""
         preload_modes = []
         written_buckets = []
+        finalize_devices = []
 
         def preload(write_buckets, non_blocking=True):
             preload_modes.append(non_blocking)
@@ -755,10 +756,11 @@ class TestSaveCheckpoint:
         request = AsyncRequest(
             async_fn=write,
             async_fn_args=(0, None, None),
-            finalize_fns=[],
+            finalize_fns=[lambda: finalize_devices.append(torch.cuda.current_device())],
             preload_fn=partial(preload, ["cpu-tensor"], True),
         )
         strategy = _CpuTorchDistSaveShardedStrategy()
+        original_current_device = torch.cuda.current_device
 
         with (
             patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request),
@@ -768,6 +770,8 @@ class TestSaveCheckpoint:
 
         assert preload_modes == [False]
         assert written_buckets == ["cpu-tensor"]
+        assert finalize_devices == [torch.device("cpu")]
+        assert torch.cuda.current_device is original_current_device
 
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""
