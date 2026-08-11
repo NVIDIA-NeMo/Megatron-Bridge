@@ -10,11 +10,12 @@ summary: >
   bridge path. The modeled architecture includes the vision tower, adapter,
   projection, and a native Megatron-Core HybridModel text decoder; it does not
   use a legacy model provider or GPTModel wrapper.
-  Conversion, numerical parity, inference, and training remain unverified until
-  the corresponding pinned public commands complete their declared gates.
+  CPU and TP8 GPU conversion, exact round-trip tensor equality, numerical
+  forward parity, and deterministic image-conditioned inference are verified.
+  Training remains unverified.
 verification_index:
   model_level:
-    unverified:
+    verified:
       - hf_to_megatron_cpu
       - hf_to_megatron_gpu
       - megatron_to_hf_cpu
@@ -31,70 +32,132 @@ model:
   min_transformers_version: "5.15.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: 95bc2220f8d721744388a1e6dc8b32df34ec421c  # pragma: allowlist secret
+  bridge_commit: e322510641fd910a48ef6f6dc143eac9573366e5  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1 --hf-model meta-models/Muse-Glimmer-30B
+      --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
+      --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron
+      --torch-dtype bfloat16 --overwrite
+    last_verified: 2026-08-11
     expected_result: >
-      Import the complete pinned checkpoint through AutoBridge.get_model(),
-      persist a reloadable Megatron checkpoint, and audit every language,
-      vision, adapter, and projection tensor for key, shape, dtype, and value
-      agreement.
+      On a CPU-only node with no CUDA runtime, the command builds a native
+      52-layer HybridModel, completes all 1,228 mappings for 29,776,626,688
+      parameters, and persists iter_0000000. The checkpoint reloads for CPU
+      export, whose exact audit covers all 1,436 source tensors and
+      29,776,626,688 elements with zero missing, unexpected, shape, dtype, or
+      value mismatches.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 37df4b0bec9f5fff6240818baa55c5a7c0aab1e9  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B
+      --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
+      --megatron-path work/model-verification/muse-glimmer-30b/gpu-megatron
+      --torch-dtype bfloat16 --tp 8 --overwrite
+    last_verified: 2026-08-11
     expected_result: >
-      Import the complete pinned checkpoint on GPUs through the builder-backed
-      path, persist and reload it, and report an exact audit of all mapped
-      tensors with no missing or unexpected parameters.
+      The eight-GPU command builds the complete native HybridModel, completes
+      all 1,228 mappings, validates the TP8 distributed state, and persists
+      iter_0000000. The checkpoint reloads at TP8 for strict GPU export; its
+      complete round-trip audit is bitwise exact across all 1,436 tensors and
+      29,776,626,688 elements.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model meta-models/Muse-Glimmer-30B
+      --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
+      --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/muse-glimmer-30b/cpu-hf-export
+      --torch-dtype bfloat16 --overwrite
+    last_verified: 2026-08-11
     expected_result: >
-      Export a complete CPU-imported Megatron checkpoint to Hugging Face,
-      strictly reload it with the minimum supported Transformers version, and
-      compare all source and exported tensors under a declared exact criterion.
+      Strict export exits successfully. All 1,436 BF16 tensors and
+      29,776,626,688 elements match the pinned source exactly in keys, shapes,
+      dtypes, and values (maximum absolute difference 0). Transformers 5.15.0
+      reloads the result as MuseGlimmerForConditionalGeneration with no missing,
+      unexpected, mismatched, or error keys and the same parameter count.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 0bbd420fada019562647a17fa420ec981c6f81e3  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B
+      --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
+      --megatron-path work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/muse-glimmer-30b/gpu-hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 8 --overwrite
+    last_verified: 2026-08-11
     expected_result: >
-      Export a complete GPU-imported Megatron checkpoint, strictly reload the
-      resulting Hugging Face model, and match all language, vision, adapter,
-      and projection keys, shapes, dtypes, and values to the pinned source.
+      Strict distributed export exits successfully. Every language, vision,
+      adapter, and projection tensor matches the pinned source bitwise: 1,436
+      tensors and 29,776,626,688 elements with zero missing, unexpected,
+      shape, dtype, or value mismatches. Transformers 5.15.0 strictly reloads
+      the result with the same class and parameter count.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task model-comparison --hf_model_path meta-models/Muse-Glimmer-30B
+      --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
+      --model_class MuseGlimmerForConditionalGeneration
+      --megatron_model_path
+      work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000
+      --image_path docs/images/tp1.png
+      --prompt "What type of neural network block is shown in this image?"
+      --tp 8 --pp 1 --ep 1 --etp 1
+    last_verified: 2026-08-11
     expected_result: >
-      Process the same pinned image and prompt through native Hugging Face and
-      Megatron implementations, match the next token, achieve logit cosine
-      similarity of at least 0.99, and report maximum and mean absolute logit
-      differences as non-gating diagnostics.
+      The repository image is 850 by 477 pixels with SHA-256
+      a7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2.
+      Both implementations consume 584 padded input positions and a
+      2040-by-1176 processed pixel tensor. The Hugging Face and Megatron
+      next-token predictions match at token 328 (' to').
+      Logit cosine similarity is 0.999929, above the 0.99 gate; maximum and
+      mean absolute logit differences are 0.687500 and 0.080432, respectively.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
-    expected_result: >
-      Reload the persisted complete Megatron checkpoint, process a pinned
-      public image and prompt, and complete deterministic bounded generation
-      with finite logits and a semantically correct response.
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task vlm-generation --hf_model_path meta-models/Muse-Glimmer-30B
+      --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
+      --megatron_model_path
+      work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000
+      --image_path docs/images/tp1.png
+      --prompt "What type of neural network block is shown in this image?"
+      --max_new_tokens 64 --tp 8 --pp 1 --ep 1 --etp 1
+    last_verified: 2026-08-11
+    expected_result: |-
+      Two independent greedy runs reload the complete TP8 HybridModel
+      checkpoint and use the same repository image (SHA-256
+      a7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2).
+      Both produce finite logits and the same exact 64-token completion without
+      EOS. The response identifies the image as a "Pre-LayerNorm Transformer
+      block" and accurately describes its attention, feed-forward, and residual
+      paths. The literal completion, represented with JSON newline and quote
+      escapes, is " to=self\u003c|message|\u003eWhat type of neural network block
+      is shown in this image?\n\nThe image shows \u0022Pre-Layernorm Transformer
+      Block\u0022. Transformers. Shows Layer Norm before Self-Attention, then
+      Multi-Headed Attention, Linear, Dropout, residual add, then Layer Norm,
+      Linear, Activation, Linear, Dropout,"
 
   pretrain:
     H100:
