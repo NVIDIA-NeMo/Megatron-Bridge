@@ -46,6 +46,7 @@ if [[ -z "${PP:-}" ]]; then
 fi
 TP=1
 
+# DSv4 hybrid attention does not support inference contexts yet, so use full-prefix generation.
 # Inference directly from the HF checkpoint (Bridge dequantises in-flight).
 uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     examples/conversion/hf_to_megatron_generate_text.py \
@@ -53,6 +54,7 @@ uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     --prompt "${PROMPT}" \
     --max_new_tokens 100 \
     --tp ${TP} --pp ${PP} --ep ${EP} \
+    --legacy-full-prefix \
     --trust-remote-code
 
 # Inference from a previously-imported Megatron checkpoint (faster cold start).
@@ -65,5 +67,6 @@ if [[ -d "${MEGATRON_DIR}/iter_0000000" ]]; then
         --prompt "${PROMPT}" \
         --max_new_tokens 100 \
         --tp ${TP} --pp ${PP} --ep ${EP} \
+        --legacy-full-prefix \
         --trust-remote-code
 fi

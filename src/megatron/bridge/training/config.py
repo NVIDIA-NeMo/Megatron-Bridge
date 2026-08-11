@@ -1062,13 +1062,20 @@ class ConfigContainer(Container):
         torch.use_deterministic_algorithms(True)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
-        """
-        Validate Megatron-FSDP configuration when Megatron-FSDP is used.
-        """
+        """Validate and apply configuration required by the selected Megatron-FSDP version."""
         # Set configs needed for Megatron-FSDP.
         self.dist.use_megatron_fsdp = True
         self.ddp.use_megatron_fsdp = True
 
+        if self.ddp.megatron_fsdp_version == 1:
+            self._validate_and_apply_megatron_fsdp_v1_configs()
+        elif self.ddp.megatron_fsdp_version == 2:
+            self._validate_and_apply_megatron_fsdp_v2_configs()
+        else:
+            raise ValueError(f"Unsupported megatron_fsdp_version: {self.ddp.megatron_fsdp_version}")
+
+    def _validate_and_apply_megatron_fsdp_v1_configs(self) -> None:
+        """Validate and apply the established MFSDP V1 training contract."""
         # Megatron-FSDP always uses a distributed optimizer.
         if not self.ddp.use_distributed_optimizer or not self.optimizer.use_distributed_optimizer:
             print_rank_0("use_distributed_optimizer=True is required for Megatron-FSDP. Activating...")
@@ -1113,6 +1120,80 @@ class ConfigContainer(Container):
                 "supported with the Megatron-FSDP optim_grads_params sharding strategy"
             )
         assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
+
+    def _validate_and_apply_megatron_fsdp_v2_configs(self) -> None:
+        """Validate and apply the experimental MFSDP V2 training contract.
+
+        MFSDP V2 owns its sharded parameter and gradient storage, so it must use
+        its dedicated optimizer rather than Bridge's distributed-optimizer path.
+        Checkpointing and model-parallel topologies remain intentionally unsupported
+        upstream and are rejected here before model construction.
+        """
+        if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
+            raise ValueError("MFSDP V2 requires BF16 training (model.bf16=True and optimizer.bf16=True).")
+        if self.model.params_dtype != torch.bfloat16:
+            raise ValueError("MFSDP V2 requires model.params_dtype=torch.bfloat16.")
+
+        unsupported_parallelisms = (
+            "tensor_model_parallel_size",
+            "pipeline_model_parallel_size",
+            "context_parallel_size",
+            "expert_model_parallel_size",
+        )
+        configured_parallelisms = [
+            f"{name}={getattr(self.model, name)}"
+            for name in unsupported_parallelisms
+            if getattr(self.model, name) != 1
+        ]
+        if configured_parallelisms:
+            raise ValueError(
+                "MFSDP V2 currently supports DP-only training; unsupported settings: "
+                + ", ".join(configured_parallelisms)
+            )
+        if self.model.num_moe_experts is not None:
+            raise ValueError("MFSDP V2 does not currently support MoE models.")
+        if self.model.virtual_pipeline_model_parallel_size is not None:
+            raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
+        if self.dist.use_tp_pp_dp_mapping:
+            raise ValueError("MFSDP V2 does not support use_tp_pp_dp_mapping.")
+        if self.rng.data_parallel_random_init:
+            raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
+        if self.ddp.num_distributed_optimizer_instances != 1:
+            raise ValueError("MFSDP V2 does not currently support HSDP.")
+        if self.ddp.outer_dp_sharding_strategy != "no_shard":
+            raise ValueError("MFSDP V2 does not currently support outer DP sharding.")
+        if self.checkpoint.save is not None or self.checkpoint.load is not None:
+            raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
+        if self.checkpoint.pretrained_checkpoint is not None:
+            raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
+        if self.optimizer.loss_scale is not None:
+            raise ValueError("MFSDP V2 does not support loss scaling.")
+        if self.optimizer.clip_grad > 0.0:
+            raise ValueError("MFSDP V2 does not currently support gradient clipping.")
+        if self.optimizer.use_precision_aware_optimizer:
+            raise ValueError("MFSDP V2 does not support precision-aware optimizer.")
+        if self.optimizer.optimizer_cpu_offload:
+            raise ValueError("MFSDP V2 does not support optimizer CPU offload.")
+        if self.optimizer.use_layer_wise_distributed_optimizer:
+            raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
+        if self.optimizer.optimizer_cuda_graph:
+            raise ValueError("MFSDP V2 does not support optimizer CUDA graphs.")
+        if self.model.calculate_per_token_loss:
+            raise ValueError("MFSDP V2 does not support per-token loss normalization.")
+        if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
+            raise ValueError("MFSDP V2 does not support FP8 or FP4.")
+        if self.model.cuda_graph_impl != "none" or self.ddp.megatron_fsdp_cuda_graph_mode:
+            raise ValueError("MFSDP V2 does not support CUDA graphs.")
+
+        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        self.ddp.use_distributed_optimizer = False
+        self.optimizer.use_distributed_optimizer = False
+        self.ddp.overlap_grad_reduce = False
+        self.ddp.overlap_param_gather = False
+        self.optimizer.overlap_param_gather = False
+        self.optimizer.overlap_param_gather_with_optimizer_step = False
+        self.model.gradient_accumulation_fusion = False
+        self.ddp.fsdp_all_gather_in_start_param_sync = False
 
     def _validate_hf_checkpoint_export_source(self) -> None:
         """Validate that HF sidecar export has a source for HF config/tokenizer assets."""

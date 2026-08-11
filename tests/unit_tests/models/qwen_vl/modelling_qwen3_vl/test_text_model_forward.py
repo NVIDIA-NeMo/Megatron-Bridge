@@ -14,6 +14,7 @@
 
 """Unit tests for Qwen3VL text model forward behavior."""
 
+import inspect
 from types import SimpleNamespace
 
 import torch
@@ -176,7 +177,10 @@ def test_mtp_uses_padded_boundaries_for_packed_token_rolling():
 
     mtp_packed_seq_params = _get_mtp_packed_seq_params(packed_seq_params)
     tokens = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
-    rolled_tokens, _ = roll_tensor(tokens, packed_seq_params=mtp_packed_seq_params)
+    if "tensors" in inspect.signature(roll_tensor).parameters:
+        (rolled_tokens,) = roll_tensor([tokens], packed_seq_params=mtp_packed_seq_params)
+    else:
+        rolled_tokens, _ = roll_tensor(tokens, packed_seq_params=mtp_packed_seq_params)
 
     assert mtp_packed_seq_params is not packed_seq_params
     assert mtp_packed_seq_params.cu_seqlens_q is cu_seqlens_padded

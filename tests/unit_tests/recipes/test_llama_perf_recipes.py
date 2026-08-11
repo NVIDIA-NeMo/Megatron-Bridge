@@ -19,6 +19,9 @@ from collections.abc import Callable
 
 import pytest
 
+from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
+    llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
+)
 from megatron.bridge.perf_recipes.llama.h100.llama3 import (
     llama3_70b_pretrain_64gpu_h100_fp8cs_config,
 )
@@ -108,3 +111,31 @@ def test_llama3_70b_h100_fp8cs_sets_explicit_pipeline_layout(monkeypatch: pytest
     assert cfg.model.context_parallel_size == 1
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
+
+
+@pytest.mark.unit
+def test_llama3_70b_gb200_nvfp4_captures_whole_transformer_layer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 64-GPU GB200 NVFP4 recipe captures the whole Transformer layer per graph.
+
+    Megatron-Core expresses whole-layer coverage as an empty ``cuda_graph_modules``; the field's
+    ``"full"`` default normalizes to the same empty list, and ``"full"`` itself is deprecated.
+    ``clear_cuda_graph_modules()`` also clears the deprecated ``cuda_graph_scope`` so the config
+    stays off the conversion path in ``TransformerConfig.__post_init__``.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    cfg = llama3_70b_pretrain_64gpu_gb200_nvfp4_config()
+
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_modules == []
+    assert cfg.model.cuda_graph_scope is None
+
+    # TE RNG trackers are derived from graphs being active, not assigned by the recipe.
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+
+    # Parallelism and batch are unchanged by the capture-scope setting.
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 5
+    assert cfg.train.global_batch_size == 256
