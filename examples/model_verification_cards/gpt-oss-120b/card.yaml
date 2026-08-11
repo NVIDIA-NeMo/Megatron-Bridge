@@ -6,19 +6,20 @@ summary: >
   Performance scope: pretrain_performance.H100 uses a tuned canonical
   performance recipe; timing and throughput metrics from functional training
   items remain sanity checks rather than optimized performance results.
-  GPT-OSS 120B H100 GPU HF-to-Megatron import and GPU Megatron-to-HF export
-  are verified. Inference, training, checkpoint resume, and performance
-  verification remain planned but not yet verified.
+  GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export,
+  manual HF/Megatron forward-pass correlation, and deterministic Megatron
+  inference are verified. CPU conversion, training, checkpoint resume, and
+  performance verification remain planned but not yet verified.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - manual_forward_pass
-      - inference
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -105,7 +106,7 @@ items:
       mismatches against unsloth/gpt-oss-120b-BF16.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
@@ -113,18 +114,20 @@ items:
       --hf_model_path openai/gpt-oss-120b
       --hf-revision b5c939de8f754692c1647ca79fbf85e8c1e70f8a
       --megatron_model_path work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
+      --hf-logits-path work/model-verification/gpt-oss-120b/manual-forward/hf_logits_france.pt
       --tp 1 --pp 4 --ep 8 --etp 1
       --prompt "The capital of France is the city of"
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-10
     expected_result: >
-      Future verification must compare the pinned Hugging Face and Megatron
-      logits on the same prompt, require the next token to match and cosine
-      similarity to be at least 0.99, and record numeric maximum and mean
-      absolute logit differences as report-only diagnostics.
+      Compares pinned OpenAI Hugging Face reference logits and the imported
+      Megatron checkpoint on the prompt "The capital of France is the city of".
+      Both predict next token 12650 (' Paris'); token match is true, cosine
+      similarity is 0.999963, maximum absolute logit difference is 0.250000,
+      and mean absolute logit difference is 0.022671.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
@@ -133,13 +136,20 @@ items:
       --megatron_model_path work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
       --prompt "The capital of France is" --max_new_tokens 32
       --tp 1 --pp 4 --ep 8 --etp 1
-      --attention-backend local --trust-remote-code
-    last_verified: null
-    expected_result: >
-      Future verification must complete one synchronous deterministic greedy
-      generation through the non-cached compatibility path and record the
-      actual generated-token count plus the literal completion, including
-      whitespace, within the 32-token bound.
+      --trust-remote-code
+    last_verified: 2026-08-10
+    expected_result: |
+      Completes one synchronous deterministic greedy generation through the
+      non-cached compatibility path. Generated exactly 32 new tokens with this
+      literal completion "
+       Paris.
+
+      Great! If you have any more questions or need further assistance, feel free to ask!
+
+      Sure!
+
+      If there's anything else you'd like to
+      "
 
   pretrain:
     H100:
