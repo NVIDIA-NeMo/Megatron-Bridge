@@ -59,6 +59,8 @@ class AssistantMaskBoundaryConfig:
         the start of loss-role content. ``trim_leading_token_sequences`` removes
         exact leading token sequences, for example an empty ``<think></think>``
         wrapper without masking a non-empty ``<think>reasoning`` span.
+        ``role_start_token_variants`` provides fallback start sequences for
+        formats whose rendered role prefix depends on the preceding turn.
         ``role_end_token_variants`` provides ordered fallback end sequences for
         formats whose final turn may omit a trailing delimiter such as a
         newline. The primary ``role_end_tokens`` sequence is always preferred.
@@ -89,6 +91,7 @@ class AssistantMaskBoundaryConfig:
     include_end_tokens_for_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,)
     trim_leading_token_ids: Sequence[int] = ()
     trim_leading_token_sequences: Sequence[Sequence[int]] = ()
+    role_start_token_variants: Mapping[str, Sequence[Sequence[int]]] = field(default_factory=dict)
     role_end_token_variants: Mapping[str, Sequence[Sequence[int]]] = field(default_factory=dict)
 
 
@@ -496,6 +499,11 @@ def normalize_chat_conversation(
             raise ValueError("Chat conversation turns must be dictionaries.")
         turn = dict(raw_turn)
         if "role" in turn and "content" in turn:
+            if turn.get("role") == CHATML_ASSISTANT_ROLE and turn.get("tool_calls") and turn["content"] == "":
+                # OpenAI-compatible datasets commonly encode tool-call-only turns
+                # with an empty string. Templates such as DeepSeek V3 distinguish
+                # these turns with an explicit null content value.
+                turn["content"] = None
             normalized.append(turn)
             continue
         if "from" in turn and "value" in turn:
@@ -572,6 +580,31 @@ def _apply_tokenized_chat_template(
         except TypeError:
             kwargs.pop("return_dict", None)
             return apply_chat_template(conversation, **kwargs)
+
+
+def _normalize_tool_arguments_for_template(
+    conversation: Sequence[Mapping[str, Any]],
+    template: str | None,
+) -> list[dict[str, Any]]:
+    """Serialize mapping tool arguments for templates that concatenate strings."""
+    normalized = copy.deepcopy([dict(turn) for turn in conversation])
+    if template is None or "tool['function']['arguments']" not in template:
+        return normalized
+
+    for turn in normalized:
+        tool_calls = turn.get("tool_calls")
+        if not isinstance(tool_calls, Sequence) or isinstance(tool_calls, (str, bytes)):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, MutableMapping):
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, MutableMapping):
+                continue
+            arguments = function.get("arguments")
+            if isinstance(arguments, Mapping):
+                function["arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    return normalized
 
 
 def _common_token_prefix_length(left: Sequence[int], right: Sequence[int]) -> int:
@@ -724,7 +757,9 @@ def tokenize_chat_example(
             tokenize_kwargs["return_assistant_tokens_mask"] = True
         if max_length is not None:
             tokenize_kwargs.update({"truncation": True, "max_length": max_length})
-        tokenized_chat = _apply_tokenized_chat_template(template_owner, conversation, tokenize_kwargs)
+        rendered_conversation = _normalize_tool_arguments_for_template(conversation, template)
+        tokenized_chat = _apply_tokenized_chat_template(template_owner, rendered_conversation, tokenize_kwargs)
+        conversation = rendered_conversation
         selected_template_owner = template_owner
         selected_tokenize_kwargs = tokenize_kwargs
         break
@@ -984,6 +1019,13 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                 for role in ("system", "developer", "user", "tool")
             },
         ),
+        (
+            ("<｜User｜>", "<｜Assistant｜>", "<｜end▁of▁sentence｜>"),
+            "<｜Assistant｜>",
+            "<｜end▁of▁sentence｜>",
+            ("<｜tool▁call▁end｜>",),
+            {"user": "<｜User｜>"},
+        ),
         # OpenAI Harmony (gpt-oss). One assistant turn renders as one or more
         # channel segments, e.g. ``<|start|>assistant<|channel|>analysis<|message|>...
         # <|end|><|start|>assistant<|channel|>final<|message|>...<|return|>``. The
@@ -1013,6 +1055,11 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
         ]
         if start_tokens and end_tokens:
             role_start_tokens = {CHATML_ASSISTANT_ROLE: start_tokens}
+            role_start_token_variants: dict[str, list[list[int]]] = {}
+            if assistant_start == "<｜Assistant｜>":
+                tool_output_end_tokens = tokenize_text_without_special_tokens(tokenizer, "<｜tool▁outputs▁end｜>")
+                if tool_output_end_tokens:
+                    role_start_token_variants[CHATML_ASSISTANT_ROLE] = [tool_output_end_tokens]
             role_start_tokens.update(
                 {
                     role: token_ids
@@ -1023,6 +1070,7 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
             return AssistantMaskBoundaryConfig(
                 role_start_tokens=role_start_tokens,
                 role_end_tokens={role: end_tokens for role in role_start_tokens},
+                role_start_token_variants=role_start_token_variants,
                 role_end_token_variants={role: end_token_variants for role in role_start_tokens},
             )
     return None
@@ -1212,20 +1260,18 @@ def _assistant_mask_from_conversation_turns(
     except (AssertionError, AttributeError, KeyError, TypeError, ValueError):
         return None
     role_start_tokens = _token_map_from_boundary_config(boundary_config.role_start_tokens)
+    role_start_token_variants = _token_variant_map_from_boundary_config(boundary_config.role_start_token_variants)
     role_end_tokens = _token_map_from_boundary_config(boundary_config.role_end_tokens)
-    role_end_token_variants = {
-        role: [token_ids for raw_token_ids in raw_variants if (token_ids := _as_token_id_list(raw_token_ids))]
-        for role, raw_variants in boundary_config.role_end_token_variants.items()
-    }
+    role_end_token_variants = _token_variant_map_from_boundary_config(boundary_config.role_end_token_variants)
     include_start_roles = set(boundary_config.include_start_tokens_for_roles)
     include_end_roles = set(boundary_config.include_end_tokens_for_roles)
     rendered_mask = torch.zeros(len(rendered_ids), dtype=torch.float32)
 
     for turn_index, turn in loss_turns:
         role = turn["role"]
-        start_tokens = role_start_tokens.get(role)
+        start_patterns = [role_start_tokens.get(role, []), *role_start_token_variants.get(role, [])]
         end_patterns = [role_end_tokens.get(role, []), *role_end_token_variants.get(role, [])]
-        if not start_tokens or not any(end_patterns):
+        if not any(start_patterns) or not any(end_patterns):
             return None
 
         try:
@@ -1251,9 +1297,22 @@ def _assistant_mask_from_conversation_turns(
         if turn_search_start >= turn_limit:
             return None
 
-        role_start, content_start = find_token_span(rendered_ids, start_tokens, turn_search_start)
-        if role_start < 0 or content_start > turn_limit:
+        candidate_starts = []
+        for priority, pattern in enumerate(start_patterns):
+            if not pattern:
+                continue
+            # Some templates close a tool-output prefix with the same marker
+            # that introduces the following assistant content. Prefix rendering
+            # therefore includes the marker itself; admit a match that ends
+            # exactly at the common-prefix boundary.
+            pattern_search_start = max(turn_search_start - len(pattern), 0)
+            role_start, content_start = find_token_span(rendered_ids, pattern, pattern_search_start)
+            starts_current_turn = role_start >= turn_search_start or content_start == turn_search_start
+            if role_start >= 0 and starts_current_turn and content_start <= turn_limit:
+                candidate_starts.append((role_start, priority, content_start, pattern))
+        if not candidate_starts:
             return None
+        role_start, _, content_start, start_tokens = min(candidate_starts)
 
         candidate_ends: list[tuple[int, int, int, list[int]]] = []
         for priority, pattern in enumerate(end_patterns):
@@ -1300,6 +1359,17 @@ def _token_map_from_boundary_config(token_map: Mapping[str, Sequence[int]] | Non
         return {}
     return {
         role: token_ids for role, raw_token_ids in token_map.items() if (token_ids := _as_token_id_list(raw_token_ids))
+    }
+
+
+def _token_variant_map_from_boundary_config(
+    token_map: Mapping[str, Sequence[Sequence[int]]] | None,
+) -> dict[str, list[list[int]]]:
+    if token_map is None:
+        return {}
+    return {
+        role: [token_ids for raw_token_ids in raw_variants if (token_ids := _as_token_id_list(raw_token_ids))]
+        for role, raw_variants in token_map.items()
     }
 
 
@@ -1368,6 +1438,13 @@ def _conversation_contains_boundary_tokens(
     """Return whether rendered conversation payloads contain structural token sequences."""
     token_sequences = [
         *(_token_map_from_boundary_config(boundary_config.role_start_tokens).values()),
+        *(
+            token_ids
+            for token_variants in _token_variant_map_from_boundary_config(
+                boundary_config.role_start_token_variants
+            ).values()
+            for token_ids in token_variants
+        ),
         *(_token_map_from_boundary_config(boundary_config.role_end_tokens).values()),
         *(
             token_ids
@@ -1440,11 +1517,9 @@ def _assistant_mask_from_boundary_config(
     conversation_roles: Sequence[str] | None = None,
 ) -> torch.Tensor | None:
     role_start_tokens = _token_map_from_boundary_config(boundary_config.role_start_tokens)
+    role_start_token_variants = _token_variant_map_from_boundary_config(boundary_config.role_start_token_variants)
     role_end_tokens = _token_map_from_boundary_config(boundary_config.role_end_tokens)
-    role_end_token_variants = {
-        role: [token_ids for raw_token_ids in raw_variants if (token_ids := _as_token_id_list(raw_token_ids))]
-        for role, raw_variants in boundary_config.role_end_token_variants.items()
-    }
+    role_end_token_variants = _token_variant_map_from_boundary_config(boundary_config.role_end_token_variants)
     loss_roles = set(boundary_config.loss_roles)
     if not role_start_tokens or not role_end_tokens or not loss_roles:
         raise ValueError(
@@ -1459,13 +1534,14 @@ def _assistant_mask_from_boundary_config(
 
     markers: list[tuple[int, str, int]] = []
     for role, start_tokens in role_start_tokens.items():
-        search_start = 0
-        while search_start < len(ids):
-            start_pos, after_start = find_token_span(ids, start_tokens, search_start)
-            if start_pos < 0:
-                break
-            markers.append((start_pos, role, len(start_tokens)))
-            search_start = after_start
+        for start_pattern in (start_tokens, *role_start_token_variants.get(role, [])):
+            search_start = 0
+            while search_start < len(ids):
+                start_pos, after_start = find_token_span(ids, start_pattern, search_start)
+                if start_pos < 0:
+                    break
+                markers.append((start_pos, role, len(start_pattern)))
+                search_start = after_start
     if not markers:
         return None
 

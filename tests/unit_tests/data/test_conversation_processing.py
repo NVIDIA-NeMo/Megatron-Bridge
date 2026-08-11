@@ -387,6 +387,79 @@ class _MoonlightBoundaryProcessor(_Processor):
         self.tokenizer = _MoonlightBoundaryTokenizer()
 
 
+class _DeepSeekV3BoundaryTokenizer(_Tokenizer):
+    chat_template = (
+        "{{ bos_token }}{% for message in messages %}"
+        "{% if message['role'] == 'user' %}<｜User｜>{% else %}<｜Assistant｜>{% endif %}"
+        "{{ message['content'] }}{% if message['role'] == 'assistant' %}<｜end▁of▁sentence｜>{% endif %}"
+        "{% endfor %}"
+    )
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "<｜User｜>": [128803],
+            "<｜Assistant｜>": [128804],
+            "<｜tool▁outputs▁end｜>": [128805],
+            "<｜tool▁call▁end｜>": [128806],
+            "<｜end▁of▁sentence｜>": [1],
+            "question": [16],
+            "answer": [3, 4],
+        }
+        return {"input_ids": mapping.get(text, [42])}
+
+    def apply_chat_template(self, conversation, tokenize=True, add_generation_prompt=False, return_dict=False):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = [0]
+        for turn in conversation:
+            input_ids.append(128803 if turn["role"] == "user" else 128804)
+            input_ids.extend(self(turn["content"])["input_ids"])
+            if turn["role"] == "assistant":
+                input_ids.append(1)
+        return {"input_ids": input_ids}
+
+
+class _DeepSeekV3ToolBoundaryTokenizer(_DeepSeekV3BoundaryTokenizer):
+    chat_template = (
+        _DeepSeekV3BoundaryTokenizer.chat_template + "{{ tool['function']['arguments'] + '<｜tool▁outputs▁end｜>' }}"
+    )
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "tool result": [5],
+            "final answer": [6, 7],
+        }
+        return {"input_ids": mapping.get(text, super().__call__(text, add_special_tokens)["input_ids"])}
+
+    def apply_chat_template(self, conversation, tokenize=True, add_generation_prompt=False, return_dict=False):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = [0]
+        in_tool_output = False
+        for turn in conversation:
+            if turn["role"] == "user":
+                input_ids.extend([128803, *self(turn["content"])["input_ids"]])
+            elif turn["role"] == "assistant" and turn.get("tool_calls"):
+                assert turn["content"] is None
+                assert turn["tool_calls"][0]["function"]["arguments"] == '{"city":"Seattle"}'
+                input_ids.extend([128804, 50, 128806])
+            elif turn["role"] == "tool":
+                input_ids.extend([60, *self(turn["content"])["input_ids"], 61])
+                in_tool_output = True
+            elif turn["role"] == "assistant":
+                if in_tool_output:
+                    input_ids.append(128805)
+                    in_tool_output = False
+                else:
+                    input_ids.append(128804)
+                input_ids.extend([*self(turn["content"])["input_ids"], 1])
+        if in_tool_output:
+            input_ids.append(128805)
+        return {"input_ids": input_ids}
+
+
 class _ProcessorTemplateBoundaryProcessor(_ChatMLBoundaryProcessor):
     chat_template = "<|turn>model\n{{ content }}<turn|>"
 
@@ -1130,6 +1203,72 @@ def test_infer_assistant_mask_boundary_config_from_moonlight_template():
         True,
         True,
     ]
+
+
+def test_infer_assistant_mask_boundary_config_from_deepseek_v3_template():
+    tokenizer = _DeepSeekV3BoundaryTokenizer()
+    boundary_config = infer_assistant_mask_boundary_config(tokenizer)
+
+    assert boundary_config is not None
+    assert boundary_config.role_start_tokens == {"assistant": [128804], "user": [128803]}
+    assert boundary_config.role_start_token_variants == {"assistant": [[128805]]}
+    assert all(token_ids == [1] for token_ids in boundary_config.role_end_tokens.values())
+    assert all(token_variants == [[128806]] for token_variants in boundary_config.role_end_token_variants.values())
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        tokenizer,
+    )
+    assert tokenized.input_ids.tolist() == [0, 128803, 16, 128804, 3, 4, 1]
+    assert tokenized.assistant_mask.tolist() == [False, False, False, False, True, True, True]
+
+
+def test_deepseek_v3_tool_turn_normalization_and_alternate_assistant_boundary():
+    tokenizer = _DeepSeekV3ToolBoundaryTokenizer()
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {"name": "get_weather", "arguments": {"city": "Seattle"}},
+                        }
+                    ],
+                },
+                {"role": "tool", "content": "tool result"},
+                {"role": "assistant", "content": "final answer"},
+            ]
+        },
+        tokenizer,
+    )
+
+    assert tokenized.input_ids.tolist() == [0, 128803, 16, 128804, 50, 128806, 60, 5, 61, 128805, 6, 7, 1]
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+    ]
+    assert tokenized.conversation[1]["content"] is None
+    assert tokenized.conversation[1]["tool_calls"][0]["function"]["arguments"] == '{"city":"Seattle"}'
 
 
 def test_infer_assistant_mask_boundary_config_handles_jinja_separated_chatml_newline():

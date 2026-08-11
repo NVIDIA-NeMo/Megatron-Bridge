@@ -73,13 +73,12 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         self._base_examples = base_examples
         self._length = int(max(0, target_length))
         self._processor = processor
-        # Choose collate implementation by processor type name when not provided
-        collate_key = type(processor).__name__ if processor is not None else "default"
+        # Choose a model-owned collator from processor type or tokenizer identity.
         explicit_collate_impl = collate_impl is not None
         if collate_impl is None:
-            from megatron.bridge.data.collators.registry import resolve_model_collate
+            from megatron.bridge.data.collators.registry import resolve_model_collate_for_processor
 
-            collate_impl = resolve_model_collate(collate_key)
+            collate_impl = resolve_model_collate_for_processor(processor)
         assert collate_impl is not None
 
         collate_kwargs: dict[str, Any] = {

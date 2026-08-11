@@ -56,10 +56,54 @@ _MODEL_COLLATE_SPECS = {
     "KimiK25Processor": _ModelCollateSpec("megatron.bridge.models.kimi_vl.data.collate_fn", "kimi_k25_vl_collate_fn"),
 }
 
+_MODEL_NAME_COLLATE_SPECS = {
+    "deepseek-v4": _ModelCollateSpec(
+        "megatron.bridge.models.deepseek.data.collate_fn",
+        "deepseek_v4_collate_fn",
+        required_for_all_examples=True,
+    ),
+}
+
+
+def _model_name_from_processor(processor: Any) -> str | None:
+    current = processor
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name_or_path = getattr(current, "name_or_path", None)
+        if isinstance(name_or_path, str) and name_or_path:
+            return name_or_path.rstrip("/").rsplit("/", 1)[-1].lower().replace("_", "-")
+        nested = getattr(current, "tokenizer", None)
+        current = nested if nested is not current else None
+    return None
+
+
+def _model_collate_spec_for_processor(processor: Any) -> _ModelCollateSpec | None:
+    spec = _MODEL_COLLATE_SPECS.get(type(processor).__name__)
+    if spec is not None:
+        return spec
+    model_name = _model_name_from_processor(processor)
+    if model_name is None:
+        return None
+    return next((spec for prefix, spec in _MODEL_NAME_COLLATE_SPECS.items() if model_name.startswith(prefix)), None)
+
+
+def _resolve_model_collate_spec(spec: _ModelCollateSpec) -> Callable[..., dict[str, Any]]:
+    collate = getattr(import_module(spec.module_name), spec.symbol_name)
+    if not callable(collate):
+        raise TypeError(f"Registered collator {spec.module_name}.{spec.symbol_name} is not callable.")
+    return collate
+
 
 def model_collate_required_for_all_examples(processor_type: str) -> bool:
     """Return whether a processor must always use its model-owned collator."""
     spec = _MODEL_COLLATE_SPECS.get(processor_type)
+    return spec is not None and spec.required_for_all_examples
+
+
+def model_collate_required_for_processor(processor: Any) -> bool:
+    """Return whether a processor or tokenizer must use its model-owned collator."""
+    spec = _model_collate_spec_for_processor(processor)
     return spec is not None and spec.required_for_all_examples
 
 
@@ -73,7 +117,15 @@ def resolve_model_collate(processor_type: str) -> Callable[..., dict[str, Any]]:
             f"No VLM collate function is registered for processor type '{processor_type}'. "
             "Register a model-owned collator or pass a collate function explicitly."
         ) from error
-    collate = getattr(import_module(spec.module_name), spec.symbol_name)
-    if not callable(collate):
-        raise TypeError(f"Registered collator {spec.module_name}.{spec.symbol_name} is not callable.")
-    return collate
+    return _resolve_model_collate_spec(spec)
+
+
+def resolve_model_collate_for_processor(processor: Any) -> Callable[..., dict[str, Any]]:
+    """Resolve a model-owned collator from processor type or tokenizer model name."""
+    spec = _model_collate_spec_for_processor(processor)
+    if spec is None:
+        processor_type = type(processor).__name__
+        model_name = _model_name_from_processor(processor)
+        details = f" type '{processor_type}'" + (f" and model '{model_name}'" if model_name else "")
+        raise ValueError(f"No model collate function is registered for processor{details}.")
+    return _resolve_model_collate_spec(spec)
