@@ -1190,7 +1190,9 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.attention_backend = "auto"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
+    # Native fused cross entropy materializes a full FP32 vocabulary-sized
+    # softmax buffer. Use the TE kernel to keep the 248K-token loss bounded.
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     # MoE settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -1204,10 +1206,12 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
+    # Full SFT retains FP32 optimizer state alongside the FSDP communication
+    # pools, so recompute each transformer layer to bound live activations.
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
