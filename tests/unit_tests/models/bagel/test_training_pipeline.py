@@ -28,6 +28,7 @@ from megatron.bridge.models.bagel.provider import BagelModelProvider
 from megatron.bridge.recipes.bagel.h100.bagel import (
     bagel_7b_finetune_8gpu_h100_bf16_config,
     bagel_7b_pretrain_8gpu_h100_bf16_config,
+    bagel_7b_pretrain_32gpu_h100_bf16_config,
 )
 
 
@@ -208,6 +209,20 @@ def test_recipe_uses_official_adam_epsilon():
     assert config.model.max_latent_size == config.dataset.max_latent_size == 64
     assert config.model.recompute_granularity == "full"
     assert config.model.recompute_vit
+
+
+def test_32gpu_recipe_uses_pure_dp_fsdp_topology():
+    config = bagel_7b_pretrain_32gpu_h100_bf16_config()
+    assert config.train.global_batch_size == 32
+    assert config.train.micro_batch_size == 1
+    assert config.model.tensor_model_parallel_size == 1
+    assert config.model.pipeline_model_parallel_size == 1
+    assert config.model.context_parallel_size == 1
+    assert config.model.moe_token_dispatcher_type == "alltoall"
+    assert config.ddp.use_megatron_fsdp
+    assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+    assert not config.ddp.average_in_collective
+    assert config.checkpoint.ckpt_format == "fsdp_dtensor"
 
 
 def test_finetune_recipe_uses_official_overrides():

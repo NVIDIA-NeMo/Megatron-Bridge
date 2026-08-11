@@ -16,7 +16,6 @@ def _t2i(row: int) -> BagelSample:
     return BagelSample(
         __key__=f"t2i-{row}",
         __restore_key__=("t2i", row),
-        __subflavor__=None,
         __subflavors__={},
         image_tensor_list=[torch.full((3, 16, 16), row / 10)],
         text_ids_list=[[10, row]],
@@ -39,7 +38,6 @@ def _vlm(row: int) -> BagelSample:
     return BagelSample(
         __key__=f"vlm-{row}",
         __restore_key__=("vlm", row),
-        __subflavor__=None,
         __subflavors__={},
         image_tensor_list=[torch.full((3, 14, 14), row / 10)],
         text_ids_list=[[20, row]],

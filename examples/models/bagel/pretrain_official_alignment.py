@@ -112,8 +112,25 @@ def main() -> None:
 
     def record_metrics(metrics, step):
         if rank == 0:
-            keys = ("ce", "mse", "lr", "total_norm", "total_mse_tokens", "total_ce_tokens", "total_samples")
-            row = {"step": step, **{key: metrics[key] for key in keys}}
+            keys = (
+                "ce",
+                "mse",
+                "lr",
+                "total_norm",
+                "total_mse_tokens",
+                "total_ce_tokens",
+                "total_samples",
+                "tokens_per_sec",
+                "tokens_per_step",
+                "actual_tflops",
+                "mfu",
+                "mem_allocated",
+                "mem_cache",
+            )
+            row = {
+                "step": step,
+                **{key: metrics[key].item() if torch.is_tensor(metrics[key]) else metrics[key] for key in keys},
+            }
             with output.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
 

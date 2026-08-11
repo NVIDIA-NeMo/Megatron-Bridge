@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from megatron.core.transformer.module import convert_module_to_dtype_except_fp32_marked
 from safetensors.torch import save_file
 
 from megatron.bridge.models.bagel.checkpoint import (
@@ -291,7 +290,7 @@ def test_fp32_main_hook_survives_float16_module_conversion():
 
     with torch.no_grad():
         _copy_parameter(module.weight, source, "weight")
-    convert_module_to_dtype_except_fp32_marked(module, torch.bfloat16)
+    module.bfloat16()
 
     assert module.weight is original_parameter
     assert module.weight.dtype == torch.bfloat16

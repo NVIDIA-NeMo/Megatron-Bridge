@@ -26,6 +26,7 @@ from megatron.bridge.models.bagel.bagel_step import BagelForwardStep
 from megatron.bridge.recipes.bagel.h100.bagel import (
     bagel_7b_finetune_8gpu_h100_bf16_config,
     bagel_7b_pretrain_8gpu_h100_bf16_config,
+    bagel_7b_pretrain_32gpu_h100_bf16_config,
 )
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager
 from megatron.bridge.training.pretrain import pretrain
@@ -34,7 +35,7 @@ from megatron.bridge.training.pretrain import pretrain
 def parse_args() -> argparse.Namespace:
     """Parse BAGEL training arguments."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--recipe", choices=("pretrain", "finetune"), default="pretrain")
+    parser.add_argument("--recipe", choices=("pretrain", "pretrain-32gpu", "finetune"), default="pretrain")
     parser.add_argument("--bagel-repo", type=Path, required=True)
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path, required=True)
@@ -117,11 +118,12 @@ def main() -> None:
         forward_prefix = args.forward_output_prefix.resolve()
         forward_prefix.parent.mkdir(parents=True, exist_ok=True)
     world_size = int(os.environ["WORLD_SIZE"])
-    cfg = (
-        bagel_7b_finetune_8gpu_h100_bf16_config()
-        if args.recipe == "finetune"
-        else bagel_7b_pretrain_8gpu_h100_bf16_config()
-    )
+    recipes = {
+        "pretrain": bagel_7b_pretrain_8gpu_h100_bf16_config,
+        "pretrain-32gpu": bagel_7b_pretrain_32gpu_h100_bf16_config,
+        "finetune": bagel_7b_finetune_8gpu_h100_bf16_config,
+    }
+    cfg = recipes[args.recipe]()
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
     cfg.model.bagel_repo = str(args.bagel_repo.resolve())
     cfg.model.model_path = str(args.model_path.resolve())

@@ -50,16 +50,25 @@ def bagel_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     )
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.average_in_collective = False
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.fsdp_double_buffer = True
     cfg.logger.log_interval = 10
     cfg.checkpoint.save_interval = 2000
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
     cfg.rng.seed = 42
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = 152064
     cfg.mixed_precision = "bf16_mixed"
+    return cfg
+
+
+def bagel_7b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a 32-GPU pure-data-parallel Megatron-FSDP BAGEL configuration."""
+    cfg = bagel_7b_pretrain_8gpu_h100_bf16_config()
+    cfg.train.global_batch_size = 32
     return cfg
 
 
@@ -77,5 +86,6 @@ def bagel_7b_finetune_8gpu_h100_bf16_config() -> ConfigContainer:
 
 __all__ = [
     "bagel_7b_finetune_8gpu_h100_bf16_config",
+    "bagel_7b_pretrain_32gpu_h100_bf16_config",
     "bagel_7b_pretrain_8gpu_h100_bf16_config",
 ]

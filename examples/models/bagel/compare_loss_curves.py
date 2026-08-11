@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bridge", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--curve-output", type=Path, required=True)
+    parser.add_argument("--svg-output", type=Path)
     return parser.parse_args()
 
 
@@ -63,10 +64,54 @@ def correlation(reference: list[float], actual: list[float]) -> float:
     return numerator / denominator
 
 
+def _polyline(values: list[float], left: int, top: int, width: int, height: int, low: float, high: float) -> str:
+    """Map a metric sequence to SVG polyline points."""
+    span = high - low or 1.0
+    last = max(len(values) - 1, 1)
+    return " ".join(
+        f"{left + width * index / last:.2f},{top + height * (high - value) / span:.2f}"
+        for index, value in enumerate(values)
+    )
+
+
+def write_svg(rows: list[dict], output: Path) -> None:
+    """Write total-loss overlays and their absolute difference as SVG."""
+    official = [row["official_loss"] for row in rows]
+    bridge = [row["bridge_loss"] for row in rows]
+    differences = [abs(left - right) for left, right in zip(official, bridge, strict=True)]
+    loss_low = min(official + bridge)
+    loss_high = max(official + bridge)
+    delta_high = max(differences) or 1.0
+    official_points = _polyline(official, 70, 45, 880, 330, loss_low, loss_high)
+    bridge_points = _polyline(bridge, 70, 45, 880, 330, loss_low, loss_high)
+    difference_points = _polyline(differences, 70, 440, 880, 100, 0.0, delta_high)
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="600" viewBox="0 0 1000 600">
+<rect width="1000" height="600" fill="white"/>
+<g font-family="sans-serif" font-size="14" fill="#222">
+<text x="70" y="24" font-size="18">BAGEL pretraining loss parity ({len(rows)} steps)</text>
+<text x="70" y="400">total loss: {loss_low:.4f} – {loss_high:.4f}</text>
+<text x="70" y="565">absolute difference: 0 – {delta_high:.4f}</text>
+<text x="760" y="24" fill="#1f77b4">official</text>
+<text x="840" y="24" fill="#d62728">Bridge</text>
+</g>
+<path d="M70 45V375H950" fill="none" stroke="#aaa"/>
+<path d="M70 440V540H950" fill="none" stroke="#aaa"/>
+<polyline points="{official_points}" fill="none" stroke="#1f77b4" stroke-width="1.5"/>
+<polyline points="{bridge_points}" fill="none" stroke="#d62728" stroke-width="1" stroke-dasharray="4 3"/>
+<polyline points="{difference_points}" fill="none" stroke="#9467bd" stroke-width="1"/>
+</svg>
+"""
+    output.write_text(svg, encoding="utf-8")
+
+
 def main() -> None:
     """Write per-step curve values and aggregate parity measurements."""
     args = parse_args()
-    if args.output.exists() or args.curve_output.exists():
+    if (
+        args.output.exists()
+        or args.curve_output.exists()
+        or (args.svg_output is not None and args.svg_output.exists())
+    ):
         raise ValueError("Loss-curve output already exists")
     official = load_trace(args.official)
     bridge = load_trace(args.bridge)
@@ -127,6 +172,8 @@ def main() -> None:
         writer = csv.DictWriter(stream, fieldnames=rows[0])
         writer.writeheader()
         writer.writerows(rows)
+    if args.svg_output is not None:
+        write_svg(rows, args.svg_output)
     logger.info("Wrote %d-step BAGEL loss-curve comparison to %s", len(rows), args.output)
 
 

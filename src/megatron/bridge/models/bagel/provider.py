@@ -76,6 +76,7 @@ class BagelModelProvider(GPTModelProvider):
     params_dtype: torch.dtype = torch.bfloat16
     pipeline_dtype: torch.dtype = torch.bfloat16
     use_flex_attention: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
     bagel_repo: str | None = None
     model_path: str | None = None
     vision_model_path: str | None = None
