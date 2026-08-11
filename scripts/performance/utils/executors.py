@@ -379,6 +379,7 @@ def xcalibur_executor(
     test_scale: Optional[str] = None,
     kubeconfig: Optional[str] = None,
     kube_context: Optional[str] = None,
+    gang_scheduler_name: Optional[str] = None,
 ):
     from nemo_run.core.execution.xcalibur import XCaliburExecutor
     return XCaliburExecutor(
@@ -397,4 +398,5 @@ def xcalibur_executor(
         test_scale=test_scale,
         kubeconfig=kubeconfig,
         kube_context=kube_context,
+        gang_scheduler_name=gang_scheduler_name,
     )

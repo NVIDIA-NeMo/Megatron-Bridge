@@ -766,6 +766,13 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    xcalibur_args.add_argument(
+        "--xcalibur_gang_scheduler_name",
+        type=str,
+        help="Gang scheduler name for the WorkloadRun (e.g. 'kai-scheduler').",
+        required=False,
+        default=None,
+    )
 
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
