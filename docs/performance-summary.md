@@ -98,10 +98,8 @@ The performance data includes:
 
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
-| DGX-GB300 | 256 | MXFP8 | 256 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 3552 | n/a |
-| DGX-GB300 | 256 | NVFP4 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | n/a | n/a |
+| DGX-GB300 | 256 | MXFP8 | 256 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 3552 | 1281 |
 | DGX-GB200 | 256 | MXFP8 | 256 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 2528 | 923 |
-| DGX-GB200 | 256 | NVFP4 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | n/a | n/a |
 
 [^moe-training-note]: In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
