@@ -8,8 +8,8 @@ summary: >
   results. GPT-OSS 20B H100 support verification has completed GPU
   HF-to-Megatron conversion, GPU Megatron-to-HF export, manual forward-pass
   correlation, deterministic Megatron inference, bounded pretraining, full SFT,
-  SFT export/inference, LoRA PEFT, and direct checkpoint resume; CPU conversion
-  and long-context SFT remain pending.
+  SFT export/inference, long-context SFT, LoRA PEFT, and direct checkpoint
+  resume; CPU conversion remains pending.
 verification_index:
   model_level:
     verified:
@@ -22,8 +22,7 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
-      unverified: [sft_long_context]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: openai/gpt-oss-20b
   hf_revision: 6cee5e81ee83917806bbde320786a8fb61efebee  # pragma: allowlist secret
@@ -264,18 +263,19 @@ items:
 
   sft_long_context:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-        --recipe gpt_oss_20b_sft_8gpu_h100_bf16_config --mode sft
+        --recipe gpt_oss_20b_sft_8gpu_h100_bf16_32k_config --mode sft
         --dataset tulu3
         --pretrained_checkpoint work/model-verification/gpt-oss-20b/imported-megatron/iter_0000000
-        --max_steps 100 --seq_length 32768
-        --lr 5e-6 --min_lr 0 --warmup_iters 10
+        --max_steps 20 --seq_length 32768
+        --tensor_model_parallel_size 4 --context_parallel_size 2
+        --lr 1e-6 --min_lr 0 --warmup_iters 2
         'dataset.hf_dataset.split="train[:10000]"'
         'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
         '++tokenizer.hf_tokenizer_kwargs.revision="6cee5e81ee83917806bbde320786a8fb61efebee"'
@@ -284,23 +284,27 @@ items:
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
         +dataset.offline_packing_specs.pad_seq_to_mult=4
-        model.context_parallel_size=2 model.cp_comm_type=a2a
-        scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
-        checkpoint.load=null
-        --save_dir work/model-verification/gpt-oss-20b/long-context-sft-checkpoints
-        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        model.sequence_parallel=true model.cp_comm_type=a2a
+        model.cross_entropy_loss_fusion=false
+        model.recompute_granularity=full model.recompute_method=uniform
+        model.recompute_num_layers=1
+        scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0
+        checkpoint.load=null checkpoint.save=null
+        logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-10
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 2.235548
+        final_loss: 1.175326
+        last_10_steps_step_time_ms_avg: 306108.170
+        last_10_steps_model_tflops_per_gpu_avg: 13.430
       expected_result: >
-        Future verification must complete a 100-step long-context SFT run with
-        offline packing and CP2, preserve zero loss mask on padded tokens, record
-        the derived packing alignment, produce finite loss without skipped or
-        NaN iterations, and save a reloadable final checkpoint.
+        Completed 20 optimizer steps using the 32K SFT recipe, immutable Tulu3
+        data selection, offline packing, TP4, CP2, sequence parallelism,
+        non-fused cross entropy, and full activation recompute. The run loaded
+        120 packed rows, recorded 99.79% packing efficiency with 83.333 source
+        sequences per pack on average, produced finite loss from 2.235548 to
+        1.175326, and reported zero skipped and zero NaN iterations.
 
   peft:
     H100:
