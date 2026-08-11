@@ -558,6 +558,7 @@ def main(
     xcalibur_test_scale: Optional[str] = None,
     xcalibur_kubeconfig: Optional[str] = None,
     xcalibur_kube_context: Optional[str] = None,
+    xcalibur_gang_scheduler_name: Optional[str] = None,
     deterministic: bool = False,
     config_variant: str | None = None,
     gres: Optional[str] = None,
@@ -727,6 +728,7 @@ def main(
             test_scale=xcalibur_test_scale,
             kubeconfig=xcalibur_kubeconfig,
             kube_context=xcalibur_kube_context,
+            gang_scheduler_name=xcalibur_gang_scheduler_name,
         )
         xcal_env = custom_env_vars.copy()
         if hf_token:
@@ -1149,6 +1151,7 @@ if __name__ == "__main__":
         xcalibur_test_scale=args.xcalibur_test_scale,
         xcalibur_kubeconfig=args.xcalibur_kubeconfig,
         xcalibur_kube_context=args.xcalibur_kube_context,
+        xcalibur_gang_scheduler_name=args.xcalibur_gang_scheduler_name,
         deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
