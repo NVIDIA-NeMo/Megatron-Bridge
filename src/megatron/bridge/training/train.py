@@ -24,10 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-    FullyShardedDataParallelV1,
-    FullyShardedDataParallelV2,
-)
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -77,6 +73,7 @@ from megatron.bridge.training.checkpointing import (
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -1696,9 +1693,6 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
     gc.collect()
 
 
-_MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
-
-
 def _maybe_register_fsdp_buffers(
     config: ConfigContainer,
     model: list[MegatronModule],
@@ -1712,7 +1706,7 @@ def _maybe_register_fsdp_buffers(
     ):
         print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
         for model_chunk in model:
-            if isinstance(model_chunk, _MEGATRON_FSDP_TYPES) and getattr(
+            if isinstance(model_chunk, MEGATRON_FSDP_TYPES) and getattr(
                 model_chunk.ddp_config, "fsdp_manual_registration", False
             ):
                 fsdp_param_and_grad_buffer = getattr(model_chunk, "param_and_grad_buffer", None)
