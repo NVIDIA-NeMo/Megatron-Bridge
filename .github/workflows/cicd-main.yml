@@ -503,13 +503,6 @@ jobs:
             echo "platforms=linux/amd64" | tee -a "$GITHUB_OUTPUT"
           fi
 
-      - name: Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ vars.BOT_ID }}
-          private-key: ${{ secrets.BOT_KEY }}
-
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
@@ -530,8 +523,6 @@ jobs:
           tags: |
             ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
             ${{ matrix.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
-          secrets: |
-            GH_TOKEN=${{ steps.app-token.outputs.token }}
 
   cicd-import-check:
     if: |
