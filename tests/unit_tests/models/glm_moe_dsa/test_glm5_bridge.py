@@ -74,13 +74,12 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
     return GLM5Bridge().provider_bridge(SimpleNamespace(config=SimpleNamespace(**config)))
 
 
-def test_hf_config_ignores_upstream_num_experts_default() -> None:
-    """GLM-5 ignores the num_experts default injected by affected Transformers versions."""
+def test_hf_config_maps_authoritative_routed_expert_count() -> None:
+    """GLM-5 maps the routed-expert count across supported Transformers config shapes."""
     hf_config = GlmMoeDsaConfig(n_routed_experts=8)
 
     provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
 
-    assert hf_config.num_experts == 256
     assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
 
 
