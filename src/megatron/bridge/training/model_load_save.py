@@ -571,16 +571,18 @@ def save_megatron_model(
             hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
-    # Get model config from the first model instance
-    model_config = get_model_config(model[0])
+    # Builder-backed models retain their complete outer ModelConfig for
+    # checkpoint reconstruction. Legacy provider models expose their provider
+    # through ``config`` as before.
+    model_config = getattr(model[0], "model_config", None)
+    if not isinstance(model_config, ModelConfig):
+        model_config = get_model_config(model[0])
 
-    # Validate that the model config is a model provider
-    if not isinstance(model_config, ModelProviderMixin):
+    if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         raise TypeError(
-            f"Expected model config to be an instance of ModelProviderMixin, "
+            "Expected model config to be an instance of ModelConfig or ModelProviderMixin, "
             f"but got {type(model_config).__name__}. "
-            f"Model configs must inherit from ModelProviderMixin to ensure proper "
-            f"model instantiation and configuration handling."
+            "Model configs must support builder- or provider-backed reconstruction."
         )
 
     # Create global state for checkpointing

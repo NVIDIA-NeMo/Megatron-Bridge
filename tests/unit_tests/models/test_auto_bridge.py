@@ -711,6 +711,7 @@ class TestAutoBridge:
             models = bridge.get_model(model_config, pg_collection=pg_sentinel)
 
         assert models == [model_sentinel]
+        assert model_sentinel.model_config is model_config
         assert call_order == ["load", "original"]
         assert build_kwargs["data_parallel_random_init"] is False
         assert model_config.transformer.perform_initialization is True
@@ -1858,6 +1859,7 @@ class TestAutoBridge:
         # Setup mocks
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
+        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
 
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
@@ -1889,6 +1891,7 @@ class TestAutoBridge:
         # Setup mocks
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
+        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
 
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
@@ -1933,6 +1936,7 @@ class TestAutoBridge:
         """Test import_ckpt low-memory save forwarding."""
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
+        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
@@ -1961,6 +1965,40 @@ class TestAutoBridge:
             low_memory_save=True,
         )
 
+    @patch.object(AutoBridge, "from_hf_pretrained")
+    def test_import_ckpt_uses_builder_for_migrated_model(self, mock_from_hf_pretrained):
+        """Migrated families import through ModelConfig without a legacy provider."""
+        mock_bridge = Mock(spec=AutoBridge)
+        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = object
+        model_config = Mock()
+        model_config.transformer = Mock(use_cpu_initialization=False)
+        mock_bridge.get_model_config.return_value = model_config
+        megatron_model = [Mock()]
+        mock_bridge.get_model.return_value = megatron_model
+        mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
+        mock_from_hf_pretrained.return_value = mock_bridge
+
+        with patch(
+            "megatron.bridge.training.model_load_save.temporary_distributed_context",
+            return_value=nullcontext(),
+        ):
+            AutoBridge.import_ckpt("hf/model", "/checkpoint")
+
+        assert model_config.transformer.use_cpu_initialization is True
+        mock_bridge.get_model.assert_called_once_with(
+            model_config,
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
+        )
+        mock_bridge.to_megatron_model.assert_not_called()
+        mock_bridge.save_megatron_model.assert_called_once_with(
+            megatron_model,
+            "/checkpoint",
+            hf_tokenizer_path="hf/model",
+            hf_tokenizer_kwargs={},
+            low_memory_save=False,
+        )
+
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.models.conversion.auto_bridge.dist.is_initialized", return_value=False)
     @patch.object(AutoBridge, "from_hf_pretrained")
@@ -1972,6 +2010,7 @@ class TestAutoBridge:
     ):
         """Standalone CPU import uses the shared temporary Gloo lifecycle."""
         mock_bridge = Mock(spec=AutoBridge)
+        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
         mock_bridge.to_megatron_model.return_value = [Mock()]
         mock_bridge.save_megatron_model = Mock()
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
@@ -1995,6 +2034,7 @@ class TestAutoBridge:
     ):
         """Import reuses distributed state owned by its caller."""
         mock_bridge = Mock(spec=AutoBridge)
+        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
         mock_bridge.to_megatron_model.return_value = [Mock()]
         mock_bridge.save_megatron_model = Mock()
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
