@@ -63,6 +63,7 @@ except (ImportError, ModuleNotFoundError):
 SCRIPT_DIR = Path(__file__).parent.resolve()
 REPO_ROOT = SCRIPT_DIR.parents[1]
 BRIDGE_SOURCE_DIR = REPO_ROOT / "src" / "megatron" / "bridge"
+COMMON_SCRIPTS_DIR = REPO_ROOT / "scripts" / "common"
 ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
@@ -641,6 +642,7 @@ def main(
         [
             f"{run_script_path}:{run_script_path}",
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
+            f"{COMMON_SCRIPTS_DIR}:{COMMON_SCRIPTS_DIR}",
             _bridge_source_mount(in_container_script_dir),
         ]
     )

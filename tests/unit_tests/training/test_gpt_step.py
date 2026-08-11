@@ -747,10 +747,9 @@ class TestGetPackedSeqParams:
         assert torch.equal(result.cu_seqlens_q, expected_cu_seqlens)
         assert torch.equal(result.cu_seqlens_kv, expected_cu_seqlens)
 
-        # Verify max_seqlen was squeezed
-        expected_max_seqlen = torch.tensor(15, dtype=torch.int32)
-        assert torch.equal(result.max_seqlen_q, expected_max_seqlen)
-        assert torch.equal(result.max_seqlen_kv, expected_max_seqlen)
+        # Verify max_seqlen was normalized to MCore's Python-int contract
+        assert result.max_seqlen_q == 15
+        assert result.max_seqlen_kv == 15
 
         # Verify qkv_format is correct
         assert result.qkv_format == "thd"
@@ -797,9 +796,8 @@ class TestGetPackedSeqParams:
         assert torch.equal(result.cu_seqlens_kv, expected_cu_seqlens)
 
         # Verify max_seqlen was processed correctly
-        expected_max_seqlen = torch.tensor(18, dtype=torch.int32)
-        assert torch.equal(result.max_seqlen_q, expected_max_seqlen)
-        assert torch.equal(result.max_seqlen_kv, expected_max_seqlen)
+        assert result.max_seqlen_q == 18
+        assert result.max_seqlen_kv == 18
 
     def test_packed_seq_params_with_cu_seqlens_argmin_zero(self):
         """Test edge case when cu_seqlens_argmin is 0."""
@@ -829,8 +827,7 @@ class TestGetPackedSeqParams:
         expected_cu_seqlens = torch.tensor([0, 6, 12], dtype=torch.int32)
         assert torch.equal(result.cu_seqlens_q, expected_cu_seqlens)
 
-        expected_max_seqlen = torch.tensor(20, dtype=torch.int32)
-        assert torch.equal(result.max_seqlen_q, expected_max_seqlen)
+        assert result.max_seqlen_q == 20
 
     def test_packed_seq_params_with_different_dtypes(self):
         """Test functionality with different tensor dtypes."""
@@ -845,8 +842,7 @@ class TestGetPackedSeqParams:
         expected_cu_seqlens = torch.tensor([0, 10, 20], dtype=torch.int64)
         assert torch.equal(result.cu_seqlens_q, expected_cu_seqlens)
 
-        expected_max_seqlen = torch.tensor(25, dtype=torch.int64)
-        assert torch.equal(result.max_seqlen_q, expected_max_seqlen)
+        assert result.max_seqlen_q == 25
 
     def test_packed_seq_params_all_fields_match(self):
         """Test that cu_seqlens_q/kv and max_seqlen_q/kv are identical."""
@@ -859,7 +855,7 @@ class TestGetPackedSeqParams:
 
         # Verify that q and kv parameters are identical (as expected for this function)
         assert torch.equal(result.cu_seqlens_q, result.cu_seqlens_kv)
-        assert torch.equal(result.max_seqlen_q, result.max_seqlen_kv)
+        assert result.max_seqlen_q == result.max_seqlen_kv
 
     def test_packed_seq_params_with_cu_seqlens_unpadded(self):
         """Test functionality with cu_seqlens_unpadded for THD CP support."""

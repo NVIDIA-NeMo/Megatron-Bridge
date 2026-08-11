@@ -126,6 +126,8 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config", "qwen3_omni_step"),
         ("qwen25_vl_7b_sft_config", "vlm_step"),
         ("qwen3_vl_8b_sft_config", "qwen3_vl_step"),
+        ("qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config", "vlm_step"),
+        ("qwen3_vl_8b_peft_energon_config", "vlm_step"),
         ("qwen35_vl_9b_sft_config", "qwen3_vl_step"),
         ("gemma3_vl_4b_sft_config", "vlm_step"),
         ("gemma4_vl_26b_sft_config", "vlm_step"),
@@ -143,6 +145,20 @@ def test_recipe_step_is_source_agnostic(recipe_name, step_name):
     assert module.recipe_step(recipe_name) == step_name
 
 
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        "qwen35_vl_35b_a3b_pretrain_mock_config",
+    ],
+)
+def test_qwen_vl_native_energon_packing_uses_canonical_vlm_step(recipe_name):
+    module = _load_module()
+
+    assert module.recipe_step(recipe_name) == "qwen3_vl_step"
+    assert module.recipe_step(recipe_name, native_energon_packing=True) == "vlm_step"
+
+
 def test_every_registered_non_text_prefix_covers_exported_library_recipes():
     module = _load_module()
     root = Path(__file__).resolve().parents[4] / "src" / "megatron" / "bridge" / "recipes"
@@ -157,9 +173,16 @@ def test_every_registered_non_text_prefix_covers_exported_library_recipes():
                 recipe_names.add(node.value)
 
     for prefix, step_name in module.RECIPE_FORWARD_STEP_PREFIXES:
-        matching_names = {name for name in recipe_names if name.startswith(prefix)}
+        matching_names = {
+            name for name in recipe_names if name.startswith(prefix) and name not in module.RECIPE_FORWARD_STEPS
+        }
         assert matching_names, f"No exported library recipes matched registered prefix {prefix!r}."
         assert {module.recipe_step(name) for name in matching_names} == {step_name}
+
+    assert module.RECIPE_FORWARD_STEPS.keys() <= recipe_names
+    assert {module.recipe_step(name) for name in module.RECIPE_FORWARD_STEPS} == set(
+        module.RECIPE_FORWARD_STEPS.values()
+    )
 
 
 def test_text_forward_step_aliases_are_compatible():

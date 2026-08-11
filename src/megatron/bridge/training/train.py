@@ -24,7 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -74,6 +73,7 @@ from megatron.bridge.training.checkpointing import (
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -467,6 +467,11 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        global_state._flops_vision_patch_sum = 0
+        global_state._flops_vision_patch_sq_sum = 0
+        global_state._flops_vision_merged_token_sum = 0
+        global_state._flops_cross_seqlen_sum = 0
+        global_state._flops_cross_seqlen_product_sum = 0
         global_state._flops_requires_global_reduce = False
 
         (
@@ -579,19 +584,32 @@ def train(
         # fixed-length stats from the local DP rank; THD batches request one exact SUM
         # all-reduce over the pure DP group because packed sub-sequence lengths can
         # differ by rank.
-        seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
+        flops_stats = flop_utils.resolve_global_flops_runtime_stats(
             global_state,
             data_parallel_size=dp_size,
             vp_size=config.model.virtual_pipeline_model_parallel_size,
             dp_group=pg_collection.dp,
+            include_vision_patch_stats=True,
+            include_cross_attention_stats=hasattr(
+                config.model, "_get_num_floating_point_operations_with_runtime_stats"
+            ),
         )
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
             config,
             batch_size=batch_size,
-            seqlen_sum=seqlen_sum,
-            seqlen_squared_sum=seqlen_squared_sum,
-            num_vision_patches=num_vision_patches,
+            seqlen_sum=flops_stats.seqlen_sum,
+            seqlen_squared_sum=flops_stats.seqlen_squared_sum,
+            num_vision_patches=0 if flops_stats.has_exact_vision_stats else flops_stats.num_vision_patches,
+            cross_seqlen_sum=flops_stats.cross_seqlen_sum,
+            cross_seqlen_product_sum=flops_stats.cross_seqlen_product_sum,
         )
+        if flops_stats.has_exact_vision_stats:
+            num_floating_point_operations_in_batch += flop_utils.vit_flops_from_patch_stats(
+                config,
+                patch_sum=flops_stats.vision_patch_sum,
+                patch_squared_sum=flops_stats.vision_patch_squared_sum,
+                merged_token_sum=flops_stats.vision_merged_token_sum,
+            )
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
@@ -928,8 +946,9 @@ def train_step(
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
     log_max_attention_logit = None
-    if hasattr(cfg.model, "qk_clip") and cfg.model.qk_clip:
-        log_max_attention_logit = clip_qk(model)
+    qk_clip_enabled = getattr(cfg.model, "qk_clip", False)
+    if qk_clip_enabled or getattr(cfg.model, "log_max_attention_logit", False):
+        log_max_attention_logit = clip_qk(model, log_max_only=not qk_clip_enabled)
 
     timers("optimizer").stop()
     nvtx_range_pop(suffix="optimizer_step")
@@ -1527,6 +1546,7 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
     if global_state._comet_logger:
         global_state._comet_logger.end()
 
+    _delete_cuda_graphs(None)
     destroy_global_state()
 
 
@@ -1636,7 +1656,7 @@ def _handle_mxfp8_param_buffer_copy(
                     optim_instance._copy_main_params_to_param_buffer()
 
 
-def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
+def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
     """
     Delete the CUDA graph object as they hold a reference to the some of the nccl buffers, thus blocking the
     process-destory (torch.dist.destroy_process_group()) at the end of the training loop.
@@ -1691,7 +1711,7 @@ def _maybe_register_fsdp_buffers(
     ):
         print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
         for model_chunk in model:
-            if isinstance(model_chunk, megatron_FSDP) and getattr(
+            if isinstance(model_chunk, MEGATRON_FSDP_TYPES) and getattr(
                 model_chunk.ddp_config, "fsdp_manual_registration", False
             ):
                 fsdp_param_and_grad_buffer = getattr(model_chunk, "param_and_grad_buffer", None)

@@ -71,6 +71,12 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
         config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
 
 
+_HYBRIDEP_PADDING_FIELDS = (
+    "moe_hybridep_pad_uneven_dispatch_inputs",
+    "moe_hybridep_pad_variable_tokens",
+)
+
+
 def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> None:
     """Default expert tensor parallelism to one when expert parallelism is enabled.
 
@@ -110,12 +116,18 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
         or _uses_legacy_full_iteration(getattr(config, "cuda_graph_scope", None))
     )
     if (
-        config.moe_token_dispatcher_type == "flex"
-        and config.moe_flex_dispatcher_backend == "hybridep"
-        and not config.moe_hybridep_pad_uneven_dispatch_inputs
-        and not cuda_graphs_enabled
+        config.moe_token_dispatcher_type != "flex"
+        or config.moe_flex_dispatcher_backend != "hybridep"
+        or cuda_graphs_enabled
     ):
-        config.moe_hybridep_pad_uneven_dispatch_inputs = True
+        return
+
+    padding_fields = tuple(field_name for field_name in _HYBRIDEP_PADDING_FIELDS if hasattr(config, field_name))
+    if not padding_fields:
+        raise AttributeError("Megatron Core TransformerConfig does not expose a HybridEP uneven-input padding field")
+    for padding_field in padding_fields:
+        if not getattr(config, padding_field):
+            setattr(config, padding_field, True)
 
 
 @dataclass
@@ -299,6 +311,8 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         _set_moe_expert_tensor_parallel_default(self)
         _enable_safe_hybridep_dispatch(self)
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
+        if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
+            self.variable_seq_lengths = True
 
     def get_config_for_layer(self, layer_number: int) -> MCoreTransformerConfig:
         """Return a layer-specific TransformerConfig without deep-copying process groups."""

@@ -34,8 +34,17 @@ TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 DATASET_UTILS = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "utils" / "dataset_utils.py"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
+RL_INTEGRATION_DOCS = (
+    REPO_ROOT / "docs" / "bridge-rl-integration.md",
+    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "bridge-rl-integration.mdx",
+    REPO_ROOT / "docs" / "fern" / "versions" / "0.4.2" / "pages" / "bridge-rl-integration.mdx",
+)
+MODEL_PROVIDER = REPO_ROOT / "src" / "megatron" / "bridge" / "models" / "model_provider.py"
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
 GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
+GEMMA3_DOCS = REPO_ROOT / "docs" / "models" / "gemma" / "gemma3.md"
+GEMMA3_ALIASES = RECIPES_DIR / "gemma" / "gemma3.py"
+GEMMA3_H100_RECIPES = RECIPES_DIR / "gemma" / "h100" / "gemma3.py"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
 MODEL_EXAMPLES = REPO_ROOT / "examples" / "models"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
@@ -205,6 +214,51 @@ def test_hf_path_flag_documented_if_implemented():
     assert "--hf_path" in _read(TRAINING_README), "--hf_path is implemented but not documented in README"
 
 
+def test_rl_integration_get_model_calls_supply_required_keyword_only_arguments():
+    """RL integration snippets must satisfy get_model's required keyword-only contract."""
+    provider_tree = ast.parse(_read(MODEL_PROVIDER), filename=str(MODEL_PROVIDER))
+    get_model_def = next(
+        node for node in provider_tree.body if isinstance(node, ast.FunctionDef) and node.name == "get_model"
+    )
+    required_keywords = {
+        arg.arg
+        for arg, default in zip(get_model_def.args.kwonlyargs, get_model_def.args.kw_defaults)
+        if default is None
+    }
+    assert required_keywords, "get_model has no required keyword-only arguments — update this contract test"
+
+    missing: dict[str, dict[int, list[str]]] = {}
+    for path in RL_INTEGRATION_DOCS:
+        text = _read(path)
+        documented_calls: list[tuple[int, set[str]]] = []
+        for match in re.finditer(r"```python\n(?P<code>.*?)```", text, re.DOTALL):
+            code = match.group("code")
+            if "get_model(" not in code:
+                continue
+            tree = ast.parse(code, filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                function_name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                if function_name != "get_model":
+                    continue
+                source_line = text.count("\n", 0, match.start("code")) + node.lineno
+                documented_calls.append(
+                    (source_line, {keyword.arg for keyword in node.keywords if keyword.arg is not None})
+                )
+
+        assert len(documented_calls) == 2, f"expected two RL integration get_model calls in {path}"
+        omitted = {
+            source_line: sorted(required_keywords - supplied_keywords)
+            for source_line, supplied_keywords in documented_calls
+            if required_keywords - supplied_keywords
+        }
+        if omitted:
+            missing[str(path.relative_to(REPO_ROOT))] = omitted
+
+    assert not missing, f"RL integration get_model calls omit required keyword-only arguments: {missing}"
+
+
 def test_model_examples_use_current_run_recipe_arguments():
     """Model examples that call run_recipe.py must not advertise removed arguments."""
     offenders: dict[str, list[str]] = {}
@@ -320,6 +374,51 @@ def test_multimodal_model_docs_use_current_launchers_and_conversion_flags():
     assert "--megatron-path /checkpoints/nemotron_omni" in valor
     assert "--hf_path" not in valor
     assert "--output_dir /checkpoints/nemotron_omni" not in valor
+
+
+def test_gemma3_recipe_examples_match_source_signatures():
+    """Gemma 3 examples must pass only keywords accepted by public recipe factories."""
+    recipe_names = {
+        "gemma3_1b_pretrain_config",
+        "gemma3_1b_sft_config",
+        "gemma3_1b_peft_config",
+    }
+    alias_targets: dict[str, str] = {}
+    for node in ast.parse(_read(GEMMA3_ALIASES), filename=str(GEMMA3_ALIASES)).body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for imported_name in node.names:
+            if imported_name.asname in recipe_names:
+                alias_targets[imported_name.asname] = imported_name.name
+    assert set(alias_targets) == recipe_names
+
+    accepted_keywords: dict[str, set[str]] = {}
+    for node in ast.parse(_read(GEMMA3_H100_RECIPES), filename=str(GEMMA3_H100_RECIPES)).body:
+        if not isinstance(node, ast.FunctionDef) or node.name not in alias_targets.values():
+            continue
+        assert node.args.kwarg is None
+        accepted_keywords[node.name] = {
+            argument.arg for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+        }
+    assert set(accepted_keywords) == set(alias_targets.values())
+
+    examples = _read(GEMMA3_DOCS).split("### Pre-training Example", 1)[1].split("### Command-Line Training", 1)[0]
+    calls: dict[str, list[set[str | None]]] = {name: [] for name in recipe_names}
+    for code in re.findall(r"```python\n(.*?)```", examples, re.DOTALL):
+        tree = ast.parse(code, filename=str(GEMMA3_DOCS))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in calls:
+                calls[node.func.id].append({keyword.arg for keyword in node.keywords})
+
+    unsupported_by_recipe: dict[str, list[str | None]] = {}
+    for recipe_name in recipe_names:
+        assert len(calls[recipe_name]) == 1, (
+            f"Gemma 3 docs should call {recipe_name} exactly once: {calls[recipe_name]}"
+        )
+        unsupported = calls[recipe_name][0] - accepted_keywords[alias_targets[recipe_name]]
+        if unsupported:
+            unsupported_by_recipe[recipe_name] = sorted(unsupported)
+    assert not unsupported_by_recipe, f"Gemma 3 docs use unsupported recipe keywords: {unsupported_by_recipe}"
 
 
 def test_qwen3_recipe_examples_use_current_factory_api():

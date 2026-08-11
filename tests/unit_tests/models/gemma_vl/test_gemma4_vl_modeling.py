@@ -36,12 +36,13 @@ IMAGE_TOKEN_ID = 258_880
 # ---------------------------------------------------------------------------
 
 
-def _make_model(image_token_id=IMAGE_TOKEN_ID):
+def _make_model(image_token_id=IMAGE_TOKEN_ID, use_bidirectional_attention="vision"):
     """Build a Gemma4VLModel with all heavy dependencies mocked out."""
     config = Mock()
     config.image_token_id = image_token_id
     config.vision_config = Mock()
     config.text_config = Mock()
+    config.text_config.use_bidirectional_attention = use_bidirectional_attention
     config.share_embeddings_and_output_weights = True
     config.sequence_parallel = False
     config._pg_collection = None
@@ -108,6 +109,15 @@ class TestComputeAttentionMask:
         for i in range(2, 5):
             for j in range(2, 5):
                 assert not mask[0, 0, i, j].item(), f"Image pos ({i},{j}) should be unblocked (bidirectional)"
+
+    def test_image_block_stays_causal_when_bidirectional_attention_is_disabled(self):
+        """Smaller Gemma 4 variants keep conventional causal attention for image tokens."""
+        model = _make_model(use_bidirectional_attention=None)
+        input_ids = self._make_ids([self.IMAGE_TOKEN, self.IMAGE_TOKEN])
+
+        mask = model._compute_attention_mask(input_ids)
+
+        assert mask[0, 0, 0, 1].item() is True
 
     def test_text_after_image_cannot_attend_back_to_image_beyond_causal(self):
         """Text token after image block uses causal attention (cannot look into future)."""

@@ -52,7 +52,7 @@ if grep -q 'MCORE_REF="${{ github.event.inputs.mcore_ref }}"' "$workflow"; then
   echo "Dispatch inputs must enter shell steps through env" >&2
   exit 1
 fi
-test "$(grep -c 'validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
+test "$(grep -c 'validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"' "$workflow")" = 2
 test "$(grep -c 'git fetch "$MCORE_REPO" "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'git checkout "$MCORE_REF"' "$workflow")" = 2
 test "$(grep -c 'test "$(git rev-parse HEAD)" = "$MCORE_REF"' "$workflow")" = 1
@@ -99,6 +99,13 @@ ancestor_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 printf 'main\n' >>"$revision_worktree/file"
 git -C "$revision_worktree" commit -qam main
 main_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" switch -q -c dev
+printf 'dev\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam dev
+dev_ancestor_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+printf 'dev tip\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam dev-tip
+dev_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" branch contributor "$ancestor_sha"
 git -C "$revision_worktree" switch -q contributor
 printf 'approved\n' >>"$revision_worktree/file"
@@ -107,6 +114,11 @@ mirror_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" switch -q --detach "$main_sha"
 git -C "$revision_worktree" merge -q --no-ff -s ours "$mirror_sha" -m merge
 merge_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+git -C "$revision_worktree" switch -q --detach "$main_sha"
+printf 'queue\n' >"$revision_worktree/queue"
+git -C "$revision_worktree" add queue
+git -C "$revision_worktree" commit -q -m queue
+queue_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" switch -q --detach "$main_sha"
 printf 'orphan\n' >"$revision_worktree/orphan"
 git -C "$revision_worktree" add orphan
@@ -117,8 +129,12 @@ git -C "$revision_worktree" add unapproved
 git -C "$revision_worktree" commit -q -m unapproved
 unapproved_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" push -q "$revision_repo" "$main_sha:refs/heads/main"
+git -C "$revision_worktree" push -q "$revision_repo" "$dev_sha:refs/heads/dev"
 git -C "$revision_worktree" push -q "$revision_repo" "$mirror_sha:refs/heads/pull-request/123"
 git -C "$revision_worktree" push -q "$revision_repo" "$merge_sha:refs/pull/123/merge"
+git -C "$revision_worktree" push -q \
+  "$revision_repo" \
+  "$queue_sha:refs/heads/gh-readonly-queue/main/pr-123-$main_sha"
 git -C "$revision_worktree" push -q "$revision_repo" "$orphan_sha:refs/pull/456/merge"
 git -C "$revision_worktree" push -q "$revision_repo" "$unapproved_sha:refs/heads/unapproved"
 
@@ -132,8 +148,73 @@ sed "s#\.github/scripts/validate_mcore_repo\.sh#$temporary_dir/revision-bin/repo
   "$revision_validator" >"$temporary_dir/revision-validator"
 chmod +x "$temporary_dir/revision-validator"
 "$temporary_dir/revision-validator" "$revision_repo" "$ancestor_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$dev_ancestor_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$dev_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$mirror_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$merge_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"
+git -C "$revision_worktree" push -q \
+  "$revision_repo" \
+  ":refs/heads/gh-readonly-queue/main/pr-123-$main_sha"
+if "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"; then
+  echo "MCore revision validation accepted a deleted queue ref without source-run evidence" >&2
+  exit 1
+fi
+cat >"$temporary_dir/revision-bin/gh" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == "api" && "$2" == "repos/NVIDIA/Megatron-LM/actions/runs/$TEST_RUN_ID" ]] || exit 1
+printf '%s\t%s\t%s\t%s\n' \
+  "${RUN_REPO:-NVIDIA/Megatron-LM}" \
+  "${RUN_EVENT:-merge_group}" \
+  "${RUN_SHA:-}" \
+  "${RUN_BRANCH:-gh-readonly-queue/main/pr-123-0000000000000000000000000000000000000000}"
+EOF
+chmod +x "$temporary_dir/revision-bin/gh"
+TEST_RUN_ID=123456
+trigger_url="https://github.com/NVIDIA/Megatron-LM/actions/runs/$TEST_RUN_ID"
+PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_SHA="$unapproved_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted source-run metadata for a different SHA" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="pull-request/123" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted a non-queue source run" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_REPO="example/Megatron-LM" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted an untrusted source-run repository" >&2
+  exit 1
+fi
+if PATH="$temporary_dir/revision-bin:$PATH" \
+  TEST_RUN_ID="$TEST_RUN_ID" \
+  RUN_EVENT="push" \
+  RUN_SHA="$queue_sha" \
+  RUN_BRANCH="gh-readonly-queue/main/pr-123-$main_sha" \
+  "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha" "$trigger_url"; then
+  echo "MCore revision validation accepted a non-merge-group source run" >&2
+  exit 1
+fi
+if "$temporary_dir/revision-validator" "$revision_repo" "$queue_sha"x; then
+  echo "MCore revision validation accepted a malformed queue SHA" >&2
+  exit 1
+fi
 if "$temporary_dir/revision-validator" "$revision_repo" "$orphan_sha"; then
   echo "MCore revision validation accepted a PR merge without an approved mirror parent" >&2
   exit 1
@@ -148,6 +229,12 @@ if "$temporary_dir/revision-validator" "$revision_repo" 000000000000000000000000
 fi
 if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
   echo "MCore revision validation accepted a malformed SHA" >&2
+  exit 1
+fi
+
+if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
+  grep -q '^name = "transformer-engine"$' pyproject.toml; then
+  echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
   exit 1
 fi
 

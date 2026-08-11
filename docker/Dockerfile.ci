@@ -48,7 +48,7 @@ ARG INSTALL_DEEPEP=True
 ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
 ARG REINSTALL_NVSHMEM=True
 
-ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
+ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     VIRTUAL_ENV=/opt/venv \
     UV_LINK_MODE=copy \
@@ -67,6 +67,7 @@ ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
 
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
     curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
+    install -m 0755 /root/.local/bin/uv /usr/local/bin/uv && \
     uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
     apt-get update && apt install -y --only-upgrade gnupg openssl libssl3t64 && \
     apt-get clean && \
@@ -171,5 +172,15 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Otherwise, the stub will be called in some cases and fail
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
+
+COPY scripts/install_diffusion_deps.sh scripts/diffusion-deps.lock /opt/Megatron-Bridge/scripts/
+
+# Opt in only for CI images that run diffusion tests. Framework images must keep the default so
+# CVE-carrying WAN codecs remain excluded from the shipped environment.
+ARG INSTALL_DIFFUSION_DEPS=false
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ "$INSTALL_DIFFUSION_DEPS" = "true" ]; then \
+        bash scripts/install_diffusion_deps.sh; \
+    fi
 
 COPY --chmod=644 . /opt/Megatron-Bridge

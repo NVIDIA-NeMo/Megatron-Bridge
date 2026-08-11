@@ -25,13 +25,20 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.utils import is_flash_attn_2_available
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 logger = logging.getLogger(__name__)
 
 
-def _split_on_cp_rank(val: Optional[Tensor], cp_size: int, cp_rank: int, seq_dim: int) -> Optional[Tensor]:
+def _split_on_cp_rank(
+    val: Optional[Tensor],
+    cp_size: int,
+    cp_rank: int,
+    seq_dim: int,
+    packed_indices: Optional[Tensor] = None,
+) -> Optional[Tensor]:
     """Slice a tensor along ``seq_dim`` into this context-parallel rank's zigzag chunks.
 
     The image merge runs on the full sequence because every ``<|media_pad|>`` placeholder must
@@ -40,6 +47,8 @@ def _split_on_cp_rank(val: Optional[Tensor], cp_size: int, cp_rank: int, seq_dim
     """
     if val is None or cp_size <= 1:
         return val
+    if packed_indices is not None:
+        return val.index_select(seq_dim, packed_indices.to(device=val.device))
     seq_len = val.shape[seq_dim]
     if seq_len % (2 * cp_size) != 0:
         raise ValueError(
@@ -61,15 +70,16 @@ def _split_attention_mask_on_cp_rank(
     attention_mask: Optional[Tensor],
     cp_size: int,
     cp_rank: int,
+    packed_indices: Optional[Tensor] = None,
 ) -> Optional[Tensor]:
     """Slice a 2D or 4D attention mask into this context-parallel rank's zigzag chunks."""
     if attention_mask is None or cp_size <= 1:
         return attention_mask
     if attention_mask.dim() == 2:
-        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=1)
+        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=1, packed_indices=packed_indices)
     if attention_mask.dim() == 4:
-        attention_mask = _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=2)
-        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=3)
+        attention_mask = _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=2, packed_indices=packed_indices)
+        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=3, packed_indices=packed_indices)
     raise ValueError(f"attention_mask must be 2D or 4D for CP slicing, got shape {tuple(attention_mask.shape)}.")
 
 
@@ -429,6 +439,7 @@ class KimiK25VLModel(MegatronModule):
         """
         cp_size = parallel_state.get_context_parallel_world_size()
         cp_rank = parallel_state.get_context_parallel_rank() if cp_size > 1 else 0
+        packed_cp_indices = None
         if self.pre_process:
             if inputs_embeds is None:
                 inputs_embeds = self.language_model.embedding(
@@ -465,21 +476,51 @@ class KimiK25VLModel(MegatronModule):
                 # Don't need attention mask for causal attention.
                 attention_mask = None
 
+            if cp_size > 1 and packed_seq_params is not None:
+                packed_cp_indices = get_packed_seq_cp_partition_indices(
+                    packed_seq_params,
+                    total_tokens=inputs_embeds.shape[1],
+                    cp_size=cp_size,
+                    cp_rank=cp_rank,
+                    device=inputs_embeds.device,
+                    cp_group=parallel_state.get_context_parallel_group(),
+                )
+
             # Transpose back to (T, B, D) for Megatron language model
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
             if cp_size > 1:
-                inputs_embeds = _split_on_cp_rank(inputs_embeds, cp_size, cp_rank, seq_dim=0)
+                inputs_embeds = _split_on_cp_rank(
+                    inputs_embeds, cp_size, cp_rank, seq_dim=0, packed_indices=packed_cp_indices
+                )
 
             if self.config.sequence_parallel:
                 tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         if cp_size > 1:
-            labels = _split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1)
-            loss_mask = _split_on_cp_rank(loss_mask, cp_size, cp_rank, seq_dim=1)
-            position_ids = _split_on_cp_rank(position_ids, cp_size, cp_rank, seq_dim=1)
-            attention_mask = _split_attention_mask_on_cp_rank(attention_mask, cp_size, cp_rank)
+            if packed_seq_params is not None and packed_cp_indices is None:
+                partition_source = next(
+                    (value for value in (labels, loss_mask, position_ids) if value is not None),
+                    None,
+                )
+                if partition_source is not None:
+                    packed_cp_indices = get_packed_seq_cp_partition_indices(
+                        packed_seq_params,
+                        total_tokens=partition_source.shape[1],
+                        cp_size=cp_size,
+                        cp_rank=cp_rank,
+                        device=partition_source.device,
+                        cp_group=parallel_state.get_context_parallel_group(),
+                    )
+            labels = _split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1, packed_indices=packed_cp_indices)
+            loss_mask = _split_on_cp_rank(loss_mask, cp_size, cp_rank, seq_dim=1, packed_indices=packed_cp_indices)
+            position_ids = _split_on_cp_rank(
+                position_ids, cp_size, cp_rank, seq_dim=1, packed_indices=packed_cp_indices
+            )
+            attention_mask = _split_attention_mask_on_cp_rank(
+                attention_mask, cp_size, cp_rank, packed_indices=packed_cp_indices
+            )
 
         outputs = self.language_model.forward(
             input_ids=None,
