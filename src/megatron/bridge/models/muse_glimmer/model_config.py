@@ -21,7 +21,7 @@ from typing import Any, ClassVar
 
 from megatron.training.models.hybrid import HybridModelConfig
 
-from megatron.bridge.models.common import ModelConfig
+from megatron.bridge.models.common import deserialize_model_config
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
 from megatron.bridge.utils.instantiate_utils import _resolve_target
@@ -118,7 +118,7 @@ class MuseGlimmerModelConfig(HybridModelConfig):
                 restored_transformer["activation_func"] = str_to_callable(activation_name)
             restored_data["transformer"] = restored_transformer
 
-        result = ModelConfig.from_dict(restored_data)
+        result = deserialize_model_config(restored_data)
         if not isinstance(result, cls):
             raise TypeError(f"Expected {cls.__name__}, got {type(result).__name__}.")
         return result

@@ -130,6 +130,25 @@ def test_autobridge_selects_string_registration_and_serializes_config() -> None:
     assert restored.get_builder_cls() is MuseGlimmerModelBuilder
 
 
+def test_model_config_restores_persisted_dtype_and_enum_values() -> None:
+    serialized = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).as_dict()
+    serialized["transformer"]["params_dtype"] = {
+        "_target_": "torch.bfloat16",
+        "_call_": False,
+    }
+    serialized["transformer"]["attention_backend"] = {
+        "_target_": "megatron.core.transformer.enums.AttnBackend",
+        "_call_": True,
+        "_args_": [5],
+        "_name_": "auto",
+    }
+
+    restored = MuseGlimmerModelConfig.from_dict(serialized)
+
+    assert restored.transformer.params_dtype is torch.bfloat16
+    assert restored.transformer.attention_backend.name == "auto"
+
+
 def test_config_export_preserves_nested_muse_architecture() -> None:
     model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
 
