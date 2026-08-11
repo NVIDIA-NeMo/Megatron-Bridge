@@ -23,12 +23,13 @@ import torch
 
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.utils.flop_utils import (
+    GlobalFlopsRuntimeStats,
     _lora_seq_stats_cache,
     _packed_data_exists,
     accumulate_flops_metadata,
     num_floating_point_operations,
+    resolve_global_flops_runtime_stats,
     resolve_global_flops_seqlen_stats,
-    resolve_global_flops_stats,
     vision_patch_stats_from_grid_thw,
     vit_flops,
     vit_flops_from_grid_thw,
@@ -2603,6 +2604,37 @@ class TestProviderOverride:
         # Override must have been invoked twice with the right batch_size args.
         assert captured == [1, 4], f"Override call log mismatch: {captured}"
 
+    def test_runtime_stats_override_short_circuits(self):
+        model = MockModelConfig()
+        sentinel = 7_654_321
+        captured = {}
+
+        def custom(**kwargs):
+            captured.update(kwargs)
+            return sentinel
+
+        model._get_num_floating_point_operations_with_runtime_stats = custom
+        cfg = MockConfigContainer(model=model)
+
+        assert (
+            num_floating_point_operations(
+                cfg,
+                batch_size=4,
+                seqlen_sum=100,
+                seqlen_squared_sum=2_500,
+                cross_seqlen_sum=20,
+                cross_seqlen_product_sum=500,
+            )
+            == sentinel
+        )
+        assert captured == {
+            "batch_size": 4,
+            "seqlen_sum": 100,
+            "seqlen_squared_sum": 2_500,
+            "cross_seqlen_sum": 20,
+            "cross_seqlen_product_sum": 500,
+        }
+
 
 class _State:
     """Minimal stand-in for GlobalState — just an attribute bag."""
@@ -2703,6 +2735,41 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_b)
         assert state._flops_seqlen_sum == 2 * 128
         assert state._flops_seqlen_sq_sum == (32**2 + 96**2) + (64**2 + 64**2)
+
+    def test_cross_attention_metadata_uses_matching_query_and_key_lengths(self):
+        state = _State()
+        tokens = torch.zeros(1, 12)
+        query_cu_seqlens = torch.tensor([0, 4, 12])
+        query_cu_seqlens_unpadded = torch.tensor([0, 3, 8])
+        key_value_cu_seqlens = torch.tensor([0, 4, 12])
+        key_value_cu_seqlens_unpadded = torch.tensor([0, 2, 9])
+
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            cu_seqlens=query_cu_seqlens,
+            cu_seqlens_unpadded=query_cu_seqlens_unpadded,
+            cross_cu_seqlens=key_value_cu_seqlens,
+            cross_cu_seqlens_unpadded=key_value_cu_seqlens_unpadded,
+        )
+
+        assert state._flops_seqlen_sum == 12
+        assert state._flops_seqlen_sq_sum == 3**2 + 5**2
+        assert state._flops_cross_seqlen_sum == 4 + 8
+        assert state._flops_cross_seqlen_product_sum == 3 * 2 + 5 * 7
+        assert state._flops_requires_global_reduce
+
+    def test_cross_attention_metadata_requires_matching_sequence_counts(self):
+        state = _State()
+        tokens = torch.zeros(1, 8)
+
+        with pytest.raises(ValueError, match="matching query and key/value sequences"):
+            accumulate_flops_metadata(
+                state,
+                tokens,
+                cu_seqlens=torch.tensor([0, 3, 8]),
+                cross_cu_seqlens=torch.tensor([0, 9]),
+            )
 
     @pytest.mark.parametrize("vp_size", [1, 2, 10])
     def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size):
@@ -2862,12 +2929,16 @@ class TestResolveGlobalFlopsSeqlenStats:
         state._flops_seqlen_sum = 1000
         state._flops_seqlen_sq_sum = 250_000
         state._flops_vision_patches = 64
-        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
-            state, data_parallel_size=4, dp_group=None
+        state._flops_cross_seqlen_sum = 32
+        state._flops_cross_seqlen_product_sum = 8_000
+        stats = resolve_global_flops_runtime_stats(state, data_parallel_size=4, dp_group=None)
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=1000 * 4,
+            seqlen_squared_sum=250_000 * 4,
+            num_vision_patches=64 * 4,
+            cross_seqlen_sum=32 * 4,
+            cross_seqlen_product_sum=8_000 * 4,
         )
-        assert seqlen_sum == 1000 * 4
-        assert seqlen_sq_sum == 250_000 * 4
-        assert vision == 64 * 4
 
     def test_dp_size_one_returns_local(self):
         state = _State()
@@ -2966,6 +3037,7 @@ class TestResolveGlobalFlopsSeqlenStats:
         )
 
         all_reduce.assert_called_once()
+        assert all_reduce.call_args.args[0].numel() == 3
         assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)
 
     def test_exact_vision_stats_share_integer_all_reduce_across_dp(self, monkeypatch):
@@ -2989,10 +3061,90 @@ class TestResolveGlobalFlopsSeqlenStats:
         monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
-        resolved = resolve_global_flops_stats(state, data_parallel_size=2, dp_group=object())
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=2,
+            dp_group=object(),
+            include_vision_patch_stats=True,
+        )
 
         all_reduce.assert_called_once()
-        assert resolved == (30, 500, 0, 300, 30_000, 75)
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=30,
+            seqlen_squared_sum=500,
+            vision_patch_sum=300,
+            vision_patch_squared_sum=30_000,
+            vision_merged_token_sum=75,
+        )
+
+    def test_cross_capability_extends_all_reduce_when_local_stats_are_zero(self, monkeypatch):
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        state._flops_cross_seqlen_sum = 0
+        state._flops_cross_seqlen_product_sum = 0
+        state._flops_requires_global_reduce = True
+
+        def fake_all_reduce(stats, op=None, group=None):
+            stats.mul_(4)
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=4,
+            dp_group=object(),
+            include_cross_attention_stats=True,
+        )
+
+        all_reduce.assert_called_once()
+        assert all_reduce.call_args.args[0].numel() == 5
+        assert stats == GlobalFlopsRuntimeStats(seqlen_sum=40, seqlen_squared_sum=400)
+
+    def test_vision_and_cross_stats_share_one_all_reduce(self, monkeypatch):
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        state._flops_vision_patch_sum = 20
+        state._flops_vision_patch_sq_sum = 400
+        state._flops_vision_merged_token_sum = 5
+        state._flops_cross_seqlen_sum = 30
+        state._flops_cross_seqlen_product_sum = 300
+        state._flops_requires_global_reduce = True
+
+        def fake_all_reduce(stats, op=None, group=None):
+            assert stats.dtype == torch.int64
+            assert stats.numel() == 8
+            stats.mul_(2)
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=2,
+            dp_group=object(),
+            include_vision_patch_stats=True,
+            include_cross_attention_stats=True,
+        )
+
+        all_reduce.assert_called_once()
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=20,
+            seqlen_squared_sum=200,
+            vision_patch_sum=40,
+            vision_patch_squared_sum=800,
+            vision_merged_token_sum=10,
+            cross_seqlen_sum=60,
+            cross_seqlen_product_sum=600,
+        )
 
 
 @pytest.mark.unit

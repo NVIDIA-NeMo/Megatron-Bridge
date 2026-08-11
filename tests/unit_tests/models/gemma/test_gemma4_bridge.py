@@ -205,6 +205,29 @@ class TestGemma4BridgeProviderBridgeMoE:
 
         assert runtime_layer_types == layer_types
 
+    def test_runtime_preserves_nonperiodic_attention_schedule(self, bridge):
+        layer_types = ["full_attention", "sliding_attention", "full_attention"]
+        hf_config = Gemma4TextConfig(
+            num_hidden_layers=len(layer_types),
+            enable_moe_block=True,
+            num_experts=2,
+            top_k_experts=1,
+            moe_intermediate_size=4,
+            layer_types=layer_types,
+        )
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = hf_config
+
+        provider = bridge.provider_bridge(pretrained)
+        runtime_layer_types = [
+            "sliding_attention"
+            if _is_local_attn_layer(layer_number, provider.interleaved_attn_pattern)
+            else "full_attention"
+            for layer_number in range(1, provider.num_layers + 1)
+        ]
+
+        assert runtime_layer_types == layer_types
+
     def test_logit_softcapping(self, bridge, mock_pretrained_moe):
         assert bridge.provider_bridge(mock_pretrained_moe).final_logit_softcapping == 30.0
 
@@ -383,7 +406,8 @@ class TestInferAttnPattern:
         assert _infer_attn_pattern(lt) == (3, 2)
 
     def test_global_at_start(self):
-        assert _infer_attn_pattern(["full_attention"] + ["sliding_attention"] * 5) == (0, 1)
+        layer_types = ["full_attention"] + ["sliding_attention"] * 5
+        assert _infer_attn_pattern(layer_types) == layer_types
 
 
 # ===========================================================================

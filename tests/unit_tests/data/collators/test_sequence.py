@@ -235,7 +235,7 @@ def test_prepare_sequence_batch_omits_padded_metadata_when_cp_rows_are_aligned()
 
     prepare_sequence_batch(
         batch,
-        sequence_length=12,
+        sequence_length=8,
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )

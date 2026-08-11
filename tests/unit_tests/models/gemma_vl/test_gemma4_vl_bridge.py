@@ -397,7 +397,8 @@ class TestInferAttnPattern:
         assert _infer_attn_pattern(lt) == (3, 2)
 
     def test_global_at_start(self):
-        assert _infer_attn_pattern(["full_attention"] + ["sliding_attention"] * 5) == (0, 1)
+        layer_types = ["full_attention"] + ["sliding_attention"] * 5
+        assert _infer_attn_pattern(layer_types) == layer_types
 
 
 class TestMaybeModifyLoadedHFWeightCausal:

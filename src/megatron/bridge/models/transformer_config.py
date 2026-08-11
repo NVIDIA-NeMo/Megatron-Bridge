@@ -311,6 +311,8 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         _set_moe_expert_tensor_parallel_default(self)
         _enable_safe_hybridep_dispatch(self)
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
+        if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
+            self.variable_seq_lengths = True
 
     def get_config_for_layer(self, layer_number: int) -> MCoreTransformerConfig:
         """Return a layer-specific TransformerConfig without deep-copying process groups."""

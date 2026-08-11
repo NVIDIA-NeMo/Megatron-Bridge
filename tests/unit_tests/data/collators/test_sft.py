@@ -378,20 +378,23 @@ def test_text_chat_collate_fn_packed_width_is_emergent_when_pad_to_max_length_is
     assert batch["total_tokens"] == 8
 
 
-def test_text_chat_collate_fn_rejects_packed_aggregate_over_max_length():
+def test_text_chat_collate_fn_allows_packed_aggregate_over_per_row_max_length():
     tokenizer = _TextChatTokenizer()
     examples = [
         {"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]},
         {"messages": [{"role": "user", "content": "later"}, {"role": "assistant", "content": "bye"}]},
     ]
 
-    with pytest.raises(ValueError, match="Packed sequence length 7 exceeds configured sequence_length 6"):
-        text_chat_collate_fn(
-            examples,
-            tokenizer,
-            max_length=6,
-            enable_in_batch_packing=True,
-        )
+    batch = text_chat_collate_fn(
+        examples,
+        tokenizer,
+        max_length=6,
+        enable_in_batch_packing=True,
+    )
+
+    assert batch["tokens"].shape == (1, 7)
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 7]
+    assert batch["total_tokens"] == 7
 
 
 @pytest.mark.parametrize("enable_in_batch_packing", [False, True])

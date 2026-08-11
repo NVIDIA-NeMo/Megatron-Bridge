@@ -35,6 +35,7 @@ from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 from vlm_generation_utils import (
+    decode_generated_tokens,
     pad_input_ids_to_tp_multiple,
     patch_kimi_vision_processor,
     process_image_inputs,
@@ -302,6 +303,7 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Greedy generation loop
     # ------------------------------------------------------------------
+    prompt_length = input_ids_raw.size(1)
     generated_ids = input_ids_raw.clone()
     stop_tokens = [tokenizer.eos_token_id]
 
@@ -384,7 +386,7 @@ def main(args) -> None:
             if next_token_ids.item() in stop_tokens:
                 break
 
-    generated_text = tokenizer.decode(list(generated_ids[0]))
+    generated_text = decode_generated_tokens(tokenizer, generated_ids, prompt_length)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")

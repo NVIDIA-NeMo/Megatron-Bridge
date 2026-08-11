@@ -1263,7 +1263,7 @@ def test_kimi_k25_packed_collate_builds_direct_rows():
     batch = collate.kimi_k25_vl_collate_fn(
         examples,
         processor,
-        sequence_length=16,
+        sequence_length=8,
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )
@@ -1736,7 +1736,7 @@ def test_ministral3_packed_collate_processes_unpadded_rows_directly():
     batch = collate.ministral3_collate_fn(
         examples,
         processor,
-        sequence_length=16,
+        sequence_length=8,
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )
