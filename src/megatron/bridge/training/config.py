@@ -1138,7 +1138,6 @@ class ConfigContainer(Container):
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
             "context_parallel_size",
-            "expert_model_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1147,11 +1146,33 @@ class ConfigContainer(Container):
         ]
         if configured_parallelisms:
             raise ValueError(
-                "MFSDP V2 currently supports DP-only training; unsupported settings: "
-                + ", ".join(configured_parallelisms)
+                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
             )
-        if self.model.num_moe_experts is not None:
-            raise ValueError("MFSDP V2 does not currently support MoE models.")
+        if self.model.num_moe_experts is not None and self.model.expert_model_parallel_size == 1:
+            raise ValueError("MFSDP V2 MoE models require expert_model_parallel_size > 1.")
+        if self.model.expert_model_parallel_size > 1:
+            if self.model.num_moe_experts is None:
+                raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
+            if self.model.moe_token_dispatcher_type != "alltoall":
+                raise ValueError("MFSDP V2 MoE support requires moe_token_dispatcher_type='alltoall'.")
+            unsupported_moe_features = (
+                "moe_permute_fusion",
+                "moe_router_fusion",
+                "moe_shared_expert_overlap",
+                "overlap_moe_expert_parallel_comm",
+                "fine_grained_activation_offloading",
+            )
+            enabled_moe_features = [
+                feature for feature in unsupported_moe_features if getattr(self.model, feature, False)
+            ]
+            if getattr(self.model, "moe_flex_dispatcher_backend", None) is not None:
+                enabled_moe_features.append("moe_flex_dispatcher_backend")
+            if enabled_moe_features:
+                raise ValueError(
+                    "MFSDP V2 does not support MoE performance features: " + ", ".join(enabled_moe_features)
+                )
+            if getattr(self.model, "recompute_granularity", None) is not None:
+                raise ValueError("MFSDP V2 MoE support does not support activation recomputation.")
         if self.model.virtual_pipeline_model_parallel_size is not None:
             raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
         if self.dist.use_tp_pp_dp_mapping:
