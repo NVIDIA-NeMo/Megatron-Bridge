@@ -111,12 +111,17 @@ def openai_server_entrypoint(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "cli_args",
-    [pytest.param([], id="default"), pytest.param(["--return-log-probs"], id="explicit")],
+    ("cli_args", "expected_return_log_probs"),
+    [
+        pytest.param([], True, id="default"),
+        pytest.param(["--return-log-probs"], True, id="explicit-enable"),
+        pytest.param(["--no-return-log-probs"], False, id="explicit-disable"),
+    ],
 )
-def test_server_materializes_logits_for_supported_logprob_requests(
+def test_server_configures_log_prob_materialization(
     openai_server_entrypoint: types.ModuleType,
     cli_args: list[str],
+    expected_return_log_probs: bool,
 ) -> None:
     args = openai_server_entrypoint.add_server_args(argparse.ArgumentParser()).parse_args(cli_args)
     args.max_seq_length = 32
@@ -130,4 +135,4 @@ def test_server_materializes_logits_for_supported_logprob_requests(
     asyncio.run(openai_server_entrypoint._serve(args, model=object(), tokenizer=object()))
 
     inference_config = _AsyncLLM.instances[-1].kwargs["inference_config"]
-    assert inference_config["return_log_probs"] is True
+    assert inference_config["return_log_probs"] is expected_return_log_probs

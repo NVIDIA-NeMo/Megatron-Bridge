@@ -78,9 +78,9 @@ def add_server_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     # engine context asserts on those requests and tears down the serving loop.
     group.add_argument(
         "--return-log-probs",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Materialize all logits for request-level log probs (enabled for server compatibility).",
+        help="Materialize all logits for request-level log probs (enabled by default for server compatibility).",
     )
 
     profiling = parser.add_argument_group(title="Profiling")
