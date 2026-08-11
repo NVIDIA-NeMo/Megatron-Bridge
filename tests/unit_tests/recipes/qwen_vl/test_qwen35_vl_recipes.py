@@ -27,6 +27,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -47,6 +48,7 @@ _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS = [
     _qwen35_vl_h100_module.qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config,
+    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config,
     _qwen35_vl_h100_module.qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config,
 ]
@@ -96,6 +98,7 @@ _QWEN35_VL_H100_PEFT_FUNCS = [
     _qwen35_vl_h100_module.qwen35_vl_9b_peft_1gpu_h100_bf16_config,
     _qwen35_vl_h100_module.qwen35_vl_27b_peft_2gpu_h100_bf16_config,
     _qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config,
     _qwen35_vl_h100_module.qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config,
     _qwen35_vl_h100_module.qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config,
 ]
@@ -405,6 +408,43 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 # ---------------------------------------------------------------------------
 
 
+def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The 16-H100 library pretrain recipe should own the measured execution policy."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 16
+    assert cfg.model.num_layers_in_last_pipeline_stage == 24
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is True
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out", "moe_act"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.vision_cuda_graph_impl == "none"
+    assert cfg.model.vision_cuda_graph_scope == []
+    assert cfg.model.max_vision_cuda_graph_seq_length is None
+    assert cfg.model.cross_entropy_loss_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+
+
 def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Shared Qwen3.5/Qwen3.6 35B-A3B SFT should have tuned H100 defaults."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
@@ -415,14 +455,22 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.num_layers_in_first_pipeline_stage == 17
+    assert cfg.model.num_layers_in_last_pipeline_stage == 23
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.model.sequence_parallel is False
-    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 16
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 16
     assert cfg.model.moe_router_fusion is True
     assert cfg.model.moe_grouped_gemm is True
     assert cfg.model.moe_permute_fusion is True
+    assert cfg.model.moe_permute_fusion_into_hybridep is True
     assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is True
     assert cfg.peft is None
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 1
@@ -431,6 +479,16 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.recompute_method == "uniform"
     assert cfg.model.recompute_num_layers == 1
     assert cfg.model.bias_activation_fusion is True
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.vision_cuda_graph_impl == "none"
+    assert cfg.model.vision_cuda_graph_scope == []
+    assert cfg.model.max_vision_cuda_graph_seq_length == 784
+    assert cfg.model.cross_entropy_loss_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.dataset.defer_in_batch_packing_to_step is True
     assert cfg.optimizer.use_precision_aware_optimizer is False
@@ -449,11 +507,13 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert cfg.model.batch_p2p_sync is False
     assert cfg.mixed_precision.grad_reduce_in_fp32 is True
     assert cfg.rerun_state_machine.check_for_nan_in_loss is True
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
-    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 0
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 0
     assert cfg.optimizer.lr == 2e-5
 
 
@@ -533,6 +593,33 @@ def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.rerun_state_machine.check_for_nan_in_loss is True
     assert cfg.optimizer.lr == 2e-4
     assert cfg.optimizer.min_lr == 3e-5
+
+
+def test_qwen35_vl_35b_a3b_peft_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The 16-H100 LoRA recipe should combine the prior optimizer contract with tuned execution."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.peft is not None
+    assert cfg.optimizer.lr == 2e-4
+    assert cfg.optimizer.min_lr == 3e-5
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 17
+    assert cfg.model.num_layers_in_last_pipeline_stage == 23
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is False
+    assert cfg.model.recompute_granularity is None
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
 
 
 @pytest.mark.parametrize(

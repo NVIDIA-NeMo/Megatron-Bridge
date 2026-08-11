@@ -35,6 +35,74 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
+
+
+def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -> None:
+    """Apply the measured 16-H100 execution policy for Qwen3.5/Qwen3.6-VL 35B-A3B."""
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.num_layers_in_first_pipeline_stage = 17
+    cfg.model.num_layers_in_last_pipeline_stage = 23
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
+
+    cfg.model.apply_rope_fusion = False
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_hybridep_num_sms_preprocessing = 16
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_permute_fusion_into_hybridep = True
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.overlap_dispatch_backward_with_experts_wgrad = True
+    cfg.model.batch_p2p_sync = False
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    cfg.model.vision_cuda_graph_impl = "transformer_engine"
+    cfg.model.vision_cuda_graph_scope = ["attn", "mlp"]
+    cfg.model.max_vision_cuda_graph_seq_length = 784
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_param_gather_with_optimizer_step=False,
+        overlap_moe_expert_parallel_comm=False,
+        delay_wgrad_compute=False,
+    )
+
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
 
 
 # =============================================================================
@@ -187,6 +255,75 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigContainer:
+    """Return the full-pretraining config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 H100 GPUs.
+
+    The recipe defaults to the mock VLM dataset, while maintained launchers may
+    select a real dataset without rebuilding the model execution policy.
+    """
+    cfg = qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config()
+
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    # Preserve the architecture vocabulary for checkpoint-backed functional
+    # training. Qwen's tokenizer may expose only its core vocabulary while
+    # multimodal tokens remain represented by the model vocabulary.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+
+    _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # The first pipeline stage also owns the vision encoder. Move one language
+    # layer to the loss stage to retain activation headroom for variable-shape
+    # DataComp images without checkpointing the complete MoE forward.
+    cfg.model.num_layers_in_first_pipeline_stage = 16
+    cfg.model.num_layers_in_last_pipeline_stage = 24
+    # Variable-shape DataComp images retain more activation memory than the
+    # fixed-shape benchmark. Recompute only the measured activation-heavy
+    # outputs while retaining the leader's scoped language CUDA graphs.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "gdn_norm_out", "moe_act"]
+    # DataComp preserves variable vision shapes, so only the vision stack must
+    # remain graph-free.
+    cfg.model.vision_cuda_graph_impl = "none"
+    cfg.model.vision_cuda_graph_scope = []
+    cfg.model.max_vision_cuda_graph_seq_length = None
+    # Native cross entropy materializes a full FP32 vocabulary buffer for the
+    # 248K-token language head. Keep real-data pretraining memory-bounded with
+    # the same TE loss kernel used by the verified full-SFT recipe.
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 
@@ -801,8 +938,8 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
+def _qwen35_vl_35b_a3b_sft_base_config() -> ConfigContainer:
+    """Build the convergence-preserving SFT base for Qwen3.5/Qwen3.6-VL 35B-A3B.
 
     Default configuration: 16 GPUs
     - TP=1, PP=2, EP=8
@@ -931,6 +1068,50 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the tuned full-SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 H100 GPUs."""
+    cfg = _qwen35_vl_35b_a3b_sft_base_config()
+    _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+
+    # Full SFT retains FP32 optimizer state for its convergence contract. The
+    # measured H100 execution policy only fits that state with activation
+    # recompute; pretraining and LoRA use their own memory policies.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
+
+    # Scoped CUDA graphs cannot be combined with full-layer recompute in
+    # Megatron Core. Full SFT needs recompute to retain its FP32 optimizer
+    # state, so keep both the language and vision stacks graph-free.
+    cfg.model.cuda_graph_impl = "none"
+    clear_cuda_graph_modules(cfg.model)
+    cfg.model.vision_cuda_graph_impl = "none"
+    cfg.model.vision_cuda_graph_scope = []
+
+    # Native fused cross entropy materializes a full FP32 vocabulary-sized
+    # softmax buffer for every live microbatch. Use the TE kernel to keep the
+    # 248K-vocabulary SFT loss memory-bounded on H100.
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return the shared long-context SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B.
 
@@ -939,7 +1120,7 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config() -> ConfigContain
     - MBS=2, GBS=512 with deferred in-batch packing
     - Sequence length: 8192
     """
-    cfg = qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config()
+    cfg = _qwen35_vl_35b_a3b_sft_base_config()
 
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 2
@@ -1928,6 +2109,32 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the tuned LoRA config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 H100 GPUs."""
+    cfg = qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config()
+    _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg)
+    # Delayed expert weight-gradient computation calls ``backward_dw`` on the
+    # expert linear modules. LoRA replaces those modules with ``LoRALinear``,
+    # which does not implement that Transformer Engine hook.
+    cfg.model.overlap_dispatch_backward_with_experts_wgrad = False
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
 def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 122B-A10B (MoE).
 
@@ -2164,7 +2371,9 @@ __all__ = [
     "qwen35_vl_2b_peft_1gpu_h100_bf16_config",
     "qwen35_vl_2b_sft_1gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config",
+    "qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
+    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config",
