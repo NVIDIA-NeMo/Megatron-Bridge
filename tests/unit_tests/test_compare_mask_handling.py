@@ -210,6 +210,50 @@ class TestCompareMaskHandling:
         mock_context.__exit__.assert_called_once()
         mock_forward.assert_called_once_with(forward_only=True)
 
+    def test_checkpoint_load_uses_builder_config_when_available(self):
+        """Hybrid checkpoints initialize model parallelism without a provider shim."""
+        transformer = SimpleNamespace()
+        model_config = SimpleNamespace(transformer=transformer, finalize=MagicMock())
+        model = MagicMock()
+        bridge = MagicMock()
+        bridge._model_bridge = SimpleNamespace(MODEL_CONFIG_CLASS=object)
+        bridge.get_model_config.return_value = model_config
+        bridge.load_megatron_model.return_value = [model]
+        args = SimpleNamespace(
+            hf_model_path="hf/model",
+            hf_revision="revision",
+            trust_remote_code=False,
+            megatron_model_path="/checkpoint",
+            tp=8,
+            pp=1,
+            ep=1,
+            etp=1,
+            enable_debug_hooks=False,
+        )
+
+        with (
+            patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge),
+            patch.object(compare, "is_safe_repo", return_value=False),
+            patch.object(compare, "disable_mtp_for_inference"),
+        ):
+            compare._load_megatron_model(args)
+
+        assert model_config.tensor_model_parallel_size == 8
+        assert model_config.params_dtype is torch.bfloat16
+        model_config.finalize.assert_called_once_with()
+        bridge._get_or_initialize_pg_collection.assert_called_once_with(transformer)
+        bridge.to_megatron_provider.assert_not_called()
+        bridge.load_megatron_model.assert_called_once_with(
+            "/checkpoint",
+            mp_overrides={
+                "tensor_model_parallel_size": 8,
+                "pipeline_model_parallel_size": 1,
+                "expert_model_parallel_size": 1,
+                "expert_tensor_parallel_size": 1,
+            },
+            wrap_with_ddp=False,
+        )
+
     def test_tp_logits_skip_gather_when_runtime_output_is_already_full(self):
         """Test that runtime-gathered text logits are not gathered a second time."""
         full_logits = torch.randn(1, 1, 128)
