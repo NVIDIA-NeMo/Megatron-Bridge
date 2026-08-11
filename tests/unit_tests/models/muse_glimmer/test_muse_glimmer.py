@@ -183,6 +183,34 @@ def test_centered_and_final_norms_use_their_native_expressions() -> None:
     torch.testing.assert_close(final(hidden_states), expected_final)
 
 
+def test_centered_norm_sharded_state_dict_identifies_tensor_parallel_replicas() -> None:
+    config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).transformer
+    norm = MuseGlimmerCenteredRMSNorm(config, hidden_size=4)
+    tp_group = object()
+    dp_cp_group = object()
+
+    with (
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.parallel_state.get_tensor_model_parallel_group",
+            return_value=tp_group,
+        ),
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.make_sharded_tensors_for_checkpoint",
+            return_value={"norm.weight": object()},
+        ) as make_sharded,
+    ):
+        result = norm.sharded_state_dict(prefix="norm.", metadata={"dp_cp_group": dp_cp_group})
+
+    assert set(result) == {"norm.weight"}
+    make_sharded.assert_called_once_with(
+        norm.state_dict(keep_vars=True),
+        "norm.",
+        sharded_offsets=(),
+        tp_group=tp_group,
+        dp_cp_group=dp_cp_group,
+    )
+
+
 def test_mapping_registry_covers_complete_checkpoint() -> None:
     registry = MuseGlimmerBridge().mapping_registry()
 

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from megatron.core import parallel_state
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.backends import LocalSpecProvider
 from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
@@ -34,6 +35,7 @@ from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
+from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
 from torch import Tensor
 
 from megatron.bridge.models.gemma.modules import extend_instance
@@ -78,6 +80,22 @@ class MuseGlimmerCenteredRMSNorm(nn.Module):
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         return _centered_rms_norm(hidden_states, self.eps) * (1.0 + self.weight.float()).to(hidden_states.dtype)
+
+    def sharded_state_dict(
+        self,
+        prefix: str = "",
+        sharded_offsets: tuple[tuple[int, int, int], ...] = (),
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Represent the replicated weight with a distinct writer on each TP rank."""
+        metadata = ensure_metadata_has_dp_cp_group(metadata)
+        return make_sharded_tensors_for_checkpoint(
+            self.state_dict(keep_vars=True),
+            prefix,
+            sharded_offsets=sharded_offsets,
+            tp_group=parallel_state.get_tensor_model_parallel_group(),
+            dp_cp_group=metadata["dp_cp_group"],
+        )
 
 
 class MuseGlimmerRMSNorm(nn.Module):
