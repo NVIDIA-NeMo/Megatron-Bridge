@@ -5,10 +5,14 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.training.models.hybrid import HybridModelConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.param_mapping import merge_qkv_weights, split_qkv_weights
@@ -94,6 +98,7 @@ def test_config_conversion_uses_model_config_path_only() -> None:
         model_config = bridge.hf_config_to_model_config(hf_config)
 
     assert isinstance(model_config, MuseGlimmerModelConfig)
+    assert isinstance(model_config, HybridModelConfig)
     assert model_config.get_builder_cls() is MuseGlimmerModelBuilder
     assert model_config.num_layers == 4
     assert model_config.hidden_size == 64
@@ -106,7 +111,7 @@ def test_config_conversion_uses_model_config_path_only() -> None:
     assert model_config.no_rope_freq == [False, False, False, True]
     assert model_config.attention_output_gate is True
     assert model_config.qk_layernorm is True
-    assert model_config.scatter_embedding_sequence_parallel is False
+    assert model_config.hybrid_layer_pattern == "****"
     assert model_config.special_token_ids == {"images": 120, "videos": 121}
 
 
@@ -181,7 +186,7 @@ def test_centered_and_final_norms_use_their_native_expressions() -> None:
 def test_mapping_registry_covers_complete_checkpoint() -> None:
     registry = MuseGlimmerBridge().mapping_registry()
 
-    qkvg = registry.megatron_to_hf_lookup("language_model.decoder.layers.2.self_attention.linear_qkv.weight")
+    qkvg = registry.megatron_to_hf_lookup("decoder.layers.2.self_attention.linear_qkv.weight")
     assert isinstance(qkvg, MuseGlimmerQKVGMapping)
     assert qkvg.hf_param["gate"] == "model.language_model.layers.2.self_attn.gate_proj.weight"
     assert (
@@ -202,7 +207,8 @@ def test_tiny_vision_model_preserves_expected_token_count() -> None:
     assert output.shape == (4, 64)
 
 
-def test_builder_constructs_combined_model_on_cpu() -> None:
+@pytest.fixture(scope="module")
+def tiny_hybrid_model() -> Iterator[MuseGlimmerModel]:
     auto_bridge = AutoBridge.from_hf_config(_tiny_hf_config())
     model_config = auto_bridge.get_model_config()
     model_config.use_cpu_initialization = True
@@ -222,69 +228,10 @@ def test_builder_constructs_combined_model_on_cpu() -> None:
         wrap_with_ddp=False,
         mixed_precision_wrapper=None,
     )
+    assert len(models) == 1
+    model = models[0]
     try:
-        assert len(models) == 1
-        model = models[0]
-        assert isinstance(model, MuseGlimmerModel)
-        names = dict(model.named_parameters())
-        assert "vision_tower.patch_embedder.patch_embedding.weight" in names
-        assert "language_model.decoder.layers.0.self_attention.post_layernorm.weight" in names
-        assert "language_model.decoder.layers.0.mlp.post_layernorm.weight" in names
-        assert isinstance(model.language_model.decoder.final_layernorm, MuseGlimmerRMSNorm)
-        assert names["vision_tower.patch_embedder.patch_embedding.weight"].dtype == torch.float32
-        assert all(
-            getattr(parameter, "average_gradients_across_tp_domain", False)
-            for name, parameter in names.items()
-            if name.startswith(("vision_tower.", "vision_adapter.", "vision_projection."))
-        )
-
-        inputs_embeds = torch.randn(2, 5, 64)
-        input_ids = torch.randint(0, 100, (2, 5))
-        expected_output = torch.randn(5, 2, 64)
-        with (
-            patch(
-                "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.slice_batch_for_context_parallel",
-                side_effect=lambda **kwargs: (
-                    kwargs["inputs_embeds"],
-                    kwargs["labels"],
-                    kwargs["loss_mask"],
-                    kwargs["position_ids"],
-                    kwargs["attention_mask"],
-                ),
-            ),
-            patch.object(model.language_model, "forward", return_value=expected_output) as language_forward,
-        ):
-            output = model(input_ids=input_ids, inputs_embeds=inputs_embeds)
-
-        assert output is expected_output
-        torch.testing.assert_close(language_forward.call_args.kwargs["decoder_input"], inputs_embeds.transpose(0, 1))
-
-        media_input_ids = input_ids.clone()
-        media_input_ids[0, 1] = model.model_config.image_token_id
-        media_input_ids[1, 3] = model.model_config.video_token_id
-        embedding_output = torch.randn(5, 2, 64)
-        with (
-            patch.object(
-                model.language_model.embedding, "forward", return_value=embedding_output
-            ) as embedding_forward,
-            patch.object(model.language_model, "forward", return_value=expected_output),
-            patch(
-                "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.slice_batch_for_context_parallel",
-                side_effect=lambda **kwargs: (
-                    kwargs["inputs_embeds"],
-                    kwargs["labels"],
-                    kwargs["loss_mask"],
-                    kwargs["position_ids"],
-                    kwargs["attention_mask"],
-                ),
-            ),
-        ):
-            model(input_ids=media_input_ids)
-
-        expected_embedding_ids = media_input_ids.clone()
-        expected_embedding_ids[expected_embedding_ids == model.model_config.image_token_id] = 0
-        expected_embedding_ids[expected_embedding_ids == model.model_config.video_token_id] = 0
-        torch.testing.assert_close(embedding_forward.call_args.kwargs["input_ids"], expected_embedding_ids)
+        yield model
     finally:
         from megatron.core import parallel_state
 
@@ -292,3 +239,93 @@ def test_builder_constructs_combined_model_on_cpu() -> None:
             parallel_state.destroy_model_parallel()
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
+
+
+def test_builder_constructs_native_hybrid_model_on_cpu(tiny_hybrid_model: MuseGlimmerModel) -> None:
+    model = tiny_hybrid_model
+
+    assert isinstance(model, MuseGlimmerModel)
+    assert isinstance(model, HybridModel)
+    assert not isinstance(model, GPTModel)
+    assert model.hybrid_layer_pattern == "****"
+    assert model.decoder.layer_type_list == ["*", "*", "*", "*"]
+    names = dict(model.named_parameters())
+    assert "vision_tower.patch_embedder.patch_embedding.weight" in names
+    assert "decoder.layers.0.self_attention.post_layernorm.weight" in names
+    assert "decoder.layers.0.mlp.post_layernorm.weight" in names
+    assert not any(name.startswith("language_model.") for name in names)
+    assert isinstance(model.decoder.final_norm, MuseGlimmerRMSNorm)
+    assert names["vision_tower.patch_embedder.patch_embedding.weight"].dtype == torch.float32
+    assert all(
+        getattr(parameter, "average_gradients_across_tp_domain", False)
+        for name, parameter in names.items()
+        if name.startswith(("vision_tower.", "vision_adapter.", "vision_projection."))
+    )
+
+    inputs_embeds = torch.randn(2, 5, 64)
+    input_ids = torch.randint(0, 100, (2, 5))
+    expected_output = torch.randn(5, 2, 64)
+    with (
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.slice_batch_for_context_parallel",
+            side_effect=lambda **kwargs: (
+                kwargs["inputs_embeds"],
+                kwargs["labels"],
+                kwargs["loss_mask"],
+                kwargs["position_ids"],
+                kwargs["attention_mask"],
+            ),
+        ),
+        patch.object(HybridModel, "forward", return_value=expected_output) as hybrid_forward,
+    ):
+        output = model(input_ids=input_ids, inputs_embeds=inputs_embeds)
+
+    assert output is expected_output
+    torch.testing.assert_close(hybrid_forward.call_args.kwargs["decoder_input"], inputs_embeds.transpose(0, 1))
+
+    media_input_ids = input_ids.clone()
+    media_input_ids[0, 1] = model.model_config.image_token_id
+    media_input_ids[1, 3] = model.model_config.video_token_id
+    embedding_output = torch.randn(5, 2, 64)
+    with (
+        patch.object(model.embedding, "forward", return_value=embedding_output) as embedding_forward,
+        patch.object(HybridModel, "forward", return_value=expected_output),
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.slice_batch_for_context_parallel",
+            side_effect=lambda **kwargs: (
+                kwargs["inputs_embeds"],
+                kwargs["labels"],
+                kwargs["loss_mask"],
+                kwargs["position_ids"],
+                kwargs["attention_mask"],
+            ),
+        ),
+    ):
+        model(input_ids=media_input_ids)
+
+    expected_embedding_ids = media_input_ids.clone()
+    expected_embedding_ids[expected_embedding_ids == model.model_config.image_token_id] = 0
+    expected_embedding_ids[expected_embedding_ids == model.model_config.video_token_id] = 0
+    torch.testing.assert_close(embedding_forward.call_args.kwargs["input_ids"], expected_embedding_ids)
+
+
+def test_qkvg_mapping_executes_against_hybrid_qkv_module(tiny_hybrid_model: MuseGlimmerModel) -> None:
+    model = tiny_hybrid_model
+    registry = MuseGlimmerBridge().mapping_registry()
+    for parameter_name, _ in model.named_parameters():
+        assert registry.megatron_to_hf_lookup(parameter_name) is not None
+
+    mapping = registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_qkv.weight")
+    qkv_module = model.decoder.layers[0].self_attention.linear_qkv
+    query = torch.arange(32 * 64, dtype=torch.float32).reshape(32, 64)
+    gate = query + 10_000
+    key = torch.arange(16 * 64, dtype=torch.float32).reshape(16, 64) + 20_000
+    value = key + 30_000
+
+    packed = mapping.hf_to_megatron({"q": query, "k": key, "v": value, "gate": gate}, qkv_module)
+    exported = mapping.megatron_to_hf(packed, qkv_module)
+
+    torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.q_proj.weight"], query)
+    torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.k_proj.weight"], key)
+    torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.v_proj.weight"], value)
+    torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.gate_proj.weight"], gate)

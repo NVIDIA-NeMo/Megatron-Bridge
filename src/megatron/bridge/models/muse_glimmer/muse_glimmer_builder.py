@@ -16,21 +16,20 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.training.models.gpt import GPTModelBuilder
+from megatron.training.models.hybrid import HybridModelBuilder
+from megatron.training.vocab_utils import calculate_padded_vocab_size
 
 from megatron.bridge.models.muse_glimmer.model_config import MuseGlimmerModelConfig
 from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
     MuseGlimmerModel,
-    customize_muse_glimmer_language_model,
-    get_muse_glimmer_layer_spec,
+    get_muse_glimmer_hybrid_stack_spec,
 )
 
 
-class MuseGlimmerModelBuilder(GPTModelBuilder):
-    """Construct the replicated vision stack around a builder-backed MCore decoder."""
+class MuseGlimmerModelBuilder(HybridModelBuilder):
+    """Construct the complete Muse Glimmer model on MCore HybridModel."""
 
     def __init__(self, model_config: MuseGlimmerModelConfig) -> None:
         super().__init__(model_config)
@@ -57,22 +56,26 @@ class MuseGlimmerModelBuilder(GPTModelBuilder):
         if not isinstance(model_config, MuseGlimmerModelConfig):
             raise TypeError(f"Expected MuseGlimmerModelConfig, got {type(model_config).__name__}.")
 
-        language_config = replace(
+        if model_config.vocab_size is None:
+            raise ValueError("Muse Glimmer vocab_size must be configured before model construction.")
+        if model_config.should_pad_vocab:
+            padded_vocab_size = calculate_padded_vocab_size(
+                model_config.vocab_size,
+                model_config.make_vocab_size_divisible_by,
+                model_config.transformer.tensor_model_parallel_size,
+            )
+        else:
+            padded_vocab_size = model_config.vocab_size
+
+        pre_process = pre_process if pre_process is not None else is_pp_first_stage(pg_collection.pp)
+        post_process = post_process if post_process is not None else is_pp_last_stage(pg_collection.pp)
+        return MuseGlimmerModel(
             model_config,
-            transformer_layer_spec=get_muse_glimmer_layer_spec(model_config.transformer),
-        )
-        language_model = GPTModelBuilder(language_config).build_model(
+            get_muse_glimmer_hybrid_stack_spec(model_config.transformer),
+            padded_vocab_size,
             pg_collection,
             pre_process=pre_process,
             post_process=post_process,
-            vp_stage=vp_stage,
-        )
-        customize_muse_glimmer_language_model(language_model)
-        return MuseGlimmerModel(
-            model_config,
-            language_model,
-            pre_process=language_model.pre_process,
-            post_process=language_model.post_process,
             vp_stage=vp_stage,
         )
 

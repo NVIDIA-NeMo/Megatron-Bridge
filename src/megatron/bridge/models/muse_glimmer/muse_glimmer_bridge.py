@@ -177,7 +177,7 @@ class MuseGlimmerBridge(MegatronModelBridge):
         return text_config, vision_config
 
     def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> MuseGlimmerModelConfig:
-        """Translate HF config directly into the new model-config/builder path."""
+        """Translate the nested HF config into a native HybridModel config."""
         text_config, vision_config = self._validate_architecture(hf_config)
         params_dtype = self.dtype_from_hf(hf_config, default=torch.bfloat16)
         head_dim = int(text_config.head_dim)
@@ -246,10 +246,10 @@ class MuseGlimmerBridge(MegatronModelBridge):
             seq_length=int(text_config.max_position_embeddings),
             parallel_output=True,
             share_embeddings_and_output_weights=bool(text_config.tie_word_embeddings),
+            hybrid_layer_pattern="*" * int(text_config.num_hidden_layers),
             position_embedding_type="rope",
             rotary_percent=1.0,
             rotary_base=rotary_base,
-            scatter_embedding_sequence_parallel=False,
             vision=vision,
             image_token_id=int(hf_config.image_token_id),
             video_token_id=int(hf_config.video_token_id),
@@ -344,50 +344,50 @@ class MuseGlimmerBridge(MegatronModelBridge):
         text_prefix = "model.language_model"
         mappings: list[MegatronParamMapping[Any]] = [
             AutoMapping(
-                megatron_param="language_model.embedding.word_embeddings.weight",
+                megatron_param="embedding.word_embeddings.weight",
                 hf_param=f"{text_prefix}.embed_tokens.weight",
             ),
             AutoMapping(
-                megatron_param="language_model.output_layer.weight",
+                megatron_param="output_layer.weight",
                 hf_param="lm_head.weight",
             ),
             ReplicatedMapping(
-                megatron_param="language_model.decoder.final_layernorm.weight",
+                megatron_param="decoder.final_norm.weight",
                 hf_param=f"{text_prefix}.norm.weight",
             ),
             ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.input_layernorm.weight",
+                megatron_param="decoder.layers.*.input_layernorm.weight",
                 hf_param=f"{text_prefix}.layers.*.input_layernorm.weight",
             ),
             ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.self_attention.post_layernorm.weight",
+                megatron_param="decoder.layers.*.self_attention.post_layernorm.weight",
                 hf_param=f"{text_prefix}.layers.*.post_attention_layernorm.weight",
             ),
             ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.pre_mlp_layernorm.weight",
+                megatron_param="decoder.layers.*.pre_mlp_layernorm.weight",
                 hf_param=f"{text_prefix}.layers.*.pre_feedforward_layernorm.weight",
             ),
             ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.post_layernorm.weight",
+                megatron_param="decoder.layers.*.mlp.post_layernorm.weight",
                 hf_param=f"{text_prefix}.layers.*.post_feedforward_layernorm.weight",
             ),
             AutoMapping(
-                megatron_param="language_model.decoder.layers.*.self_attention.linear_proj.weight",
+                megatron_param="decoder.layers.*.self_attention.linear_proj.weight",
                 hf_param=f"{text_prefix}.layers.*.self_attn.o_proj.weight",
             ),
             AutoMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.linear_fc2.weight",
+                megatron_param="decoder.layers.*.mlp.linear_fc2.weight",
                 hf_param=f"{text_prefix}.layers.*.mlp.down_proj.weight",
             ),
             MuseGlimmerQKVGMapping(
-                "language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                "decoder.layers.*.self_attention.linear_qkv.weight",
                 q=f"{text_prefix}.layers.*.self_attn.q_proj.weight",
                 k=f"{text_prefix}.layers.*.self_attn.k_proj.weight",
                 v=f"{text_prefix}.layers.*.self_attn.v_proj.weight",
                 gate=f"{text_prefix}.layers.*.self_attn.gate_proj.weight",
             ),
             GatedMLPMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                 gate=f"{text_prefix}.layers.*.mlp.gate_proj.weight",
                 up=f"{text_prefix}.layers.*.mlp.up_proj.weight",
             ),

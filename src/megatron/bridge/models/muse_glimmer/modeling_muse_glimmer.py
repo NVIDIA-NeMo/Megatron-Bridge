@@ -24,11 +24,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.backends import LocalSpecProvider
+from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
-from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
@@ -147,35 +149,40 @@ class MuseGlimmerMLP(MLP):
         return self.post_layernorm(output), bias
 
 
-def get_muse_glimmer_layer_spec(config: TransformerConfig) -> ModuleSpec:
-    """Build the local MCore layer spec used by the Muse decoder."""
+def get_muse_glimmer_hybrid_stack_spec(config: TransformerConfig) -> ModuleSpec:
+    """Build the native Hybrid stack spec used by the Muse decoder."""
     del config
     backend = LocalSpecProvider()
     return ModuleSpec(
-        module=TransformerLayer,
-        submodules=TransformerLayerSubmodules(
-            input_layernorm=MuseGlimmerCenteredRMSNorm,
-            self_attention=ModuleSpec(
-                module=MuseGlimmerSelfAttention,
-                params={"attn_mask_type": AttnMaskType.causal},
-                submodules=SelfAttentionSubmodules(
-                    linear_qkv=backend.column_parallel_linear(),
-                    core_attention=backend.core_attention(),
-                    linear_proj=backend.row_parallel_linear(),
-                    q_layernorm=MuseGlimmerWeightlessRMSNorm,
-                    k_layernorm=MuseGlimmerWeightlessRMSNorm,
+        module=HybridStack,
+        submodules=HybridStackSubmodules(
+            attention_layer=ModuleSpec(
+                module=TransformerLayer,
+                submodules=TransformerLayerSubmodules(
+                    input_layernorm=MuseGlimmerCenteredRMSNorm,
+                    self_attention=ModuleSpec(
+                        module=MuseGlimmerSelfAttention,
+                        params={"attn_mask_type": AttnMaskType.causal},
+                        submodules=SelfAttentionSubmodules(
+                            linear_qkv=backend.column_parallel_linear(),
+                            core_attention=backend.core_attention(),
+                            linear_proj=backend.row_parallel_linear(),
+                            q_layernorm=MuseGlimmerWeightlessRMSNorm,
+                            k_layernorm=MuseGlimmerWeightlessRMSNorm,
+                        ),
+                    ),
+                    self_attn_bda=get_bias_dropout_add,
+                    pre_mlp_layernorm=MuseGlimmerCenteredRMSNorm,
+                    mlp=functools.partial(
+                        MuseGlimmerMLP.as_mlp_submodule,
+                        submodules=MLPSubmodules(
+                            linear_fc1=backend.column_parallel_linear(),
+                            linear_fc2=backend.row_parallel_linear(),
+                        ),
+                    ),
+                    mlp_bda=get_bias_dropout_add,
                 ),
             ),
-            self_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=MuseGlimmerCenteredRMSNorm,
-            mlp=functools.partial(
-                MuseGlimmerMLP.as_mlp_submodule,
-                submodules=MLPSubmodules(
-                    linear_fc1=backend.column_parallel_linear(),
-                    linear_fc2=backend.row_parallel_linear(),
-                ),
-            ),
-            mlp_bda=get_bias_dropout_add,
         ),
     )
 
@@ -200,12 +207,12 @@ class MuseGlimmerOutputLayerMixin(nn.Module):
         return output, bias
 
 
-def customize_muse_glimmer_language_model(model: nn.Module) -> None:
-    """Install parameter-free Muse embedding/logit behavior on an MCore GPT model."""
+def customize_muse_glimmer_language_model(model: HybridModel) -> None:
+    """Install Muse embedding, final-norm, and logit behavior on a Hybrid model."""
     if hasattr(model, "embedding"):
         extend_instance(model.embedding, MuseGlimmerEmbeddingNormMixin)
-    if hasattr(model, "decoder") and model.decoder.final_layernorm is not None:
-        model.decoder.final_layernorm = MuseGlimmerRMSNorm(
+    if hasattr(model, "decoder") and getattr(model.decoder, "final_norm", None) is not None:
+        model.decoder.final_norm = MuseGlimmerRMSNorm(
             model.config,
             model.config.hidden_size,
             eps=model.config.layernorm_epsilon,
@@ -517,25 +524,41 @@ class MuseGlimmerVisionAdapter(nn.Module):
         return F.gelu(self.fc2(F.gelu(self.fc1(hidden_states))))
 
 
-class MuseGlimmerModel(MegatronModule):
-    """Combined Muse vision tower, adapter, and MCore language model."""
+class MuseGlimmerModel(HybridModel):
+    """Native MCore Hybrid model with the Muse vision modules attached."""
 
     def __init__(
         self,
         config: MuseGlimmerModelConfig,
-        language_model: MegatronModule,
+        hybrid_stack_spec: ModuleSpec,
+        vocab_size: int,
+        pg_collection: ProcessGroupCollection,
         *,
         pre_process: bool,
         post_process: bool,
         vp_stage: int | None,
     ) -> None:
-        super().__init__(config=config.transformer)
+        super().__init__(
+            config=config.transformer,
+            hybrid_stack_spec=hybrid_stack_spec,
+            vocab_size=vocab_size,
+            max_sequence_length=config.seq_length,
+            hybrid_layer_pattern=config.hybrid_layer_pattern,
+            fp16_lm_cross_entropy=config.fp16_lm_cross_entropy,
+            parallel_output=config.parallel_output,
+            share_embeddings_and_output_weights=config.share_embeddings_and_output_weights,
+            position_embedding_type=config.position_embedding_type,
+            rotary_percent=config.rotary_percent,
+            rotary_base=config.rotary_base,
+            scatter_embedding_sequence_parallel=False,
+            seq_len_interpolation_factor=config.seq_len_interpolation_factor,
+            pre_process=pre_process,
+            post_process=post_process,
+            pg_collection=pg_collection,
+            vp_stage=vp_stage,
+        )
         self.model_config = config
-        self.pre_process = pre_process
-        self.post_process = post_process
-        self.vp_stage = vp_stage
-        self.language_model = language_model
-        self.pg_collection = language_model.pg_collection
+        customize_muse_glimmer_language_model(self)
         if pre_process:
             self.vision_tower = MuseGlimmerVisionModel(config.vision)
             self.vision_adapter = MuseGlimmerVisionAdapter(config)
@@ -547,21 +570,11 @@ class MuseGlimmerModel(MegatronModule):
             for module in (self.vision_tower, self.vision_adapter, self.vision_projection):
                 module.to(dtype=config.transformer.params_dtype)
                 hook_hf_module_setattr_for_tp_grad_sync(module)
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
-        self.shared_embedding_or_output_weight = language_model.shared_embedding_or_output_weight
         self.freeze(
             freeze_language_model=config.freeze_language_model,
             freeze_vision_model=config.freeze_vision_model,
             freeze_vision_projection=config.freeze_vision_projection,
         )
-
-    @property
-    def decoder(self) -> nn.Module | None:
-        """Expose the text decoder to Megatron-Core inference utilities."""
-        return getattr(self.language_model, "decoder", None)
-
-    def set_input_tensor(self, input_tensor: Tensor | list[Tensor]) -> None:
-        self.language_model.set_input_tensor(input_tensor)
 
     def freeze(
         self,
@@ -572,7 +585,15 @@ class MuseGlimmerModel(MegatronModule):
     ) -> None:
         modules: list[nn.Module] = []
         if freeze_language_model:
-            modules.append(self.language_model)
+            modules.extend(
+                module
+                for module in (
+                    getattr(self, "embedding", None),
+                    self.decoder,
+                    getattr(self, "output_layer", None),
+                )
+                if module is not None
+            )
         if freeze_vision_model and hasattr(self, "vision_tower"):
             modules.append(self.vision_tower)
         if freeze_vision_projection and hasattr(self, "vision_adapter"):
@@ -610,10 +631,10 @@ class MuseGlimmerModel(MegatronModule):
         inference_context: BaseInferenceContext | None = None,
         runtime_gather_output: bool | None = None,
         packed_seq_params: PackedSeqParams | None = None,
-        extra_block_kwargs: dict[str, Any] | None = None,
         *,
         inference_params: BaseInferenceContext | None = None,
         loss_mask: Tensor | None = None,
+        padding_mask: Tensor | None = None,
     ) -> Tensor | tuple[Tensor, Tensor]:
         if self.pre_process:
             if inputs_embeds is None:
@@ -623,7 +644,7 @@ class MuseGlimmerModel(MegatronModule):
                     input_ids == self.model_config.video_token_id
                 )
                 llm_input_ids = input_ids.masked_fill(multimodal_mask, 0)
-                inputs_embeds = self.language_model.embedding(input_ids=llm_input_ids, position_ids=None)
+                inputs_embeds = self.embedding(input_ids=llm_input_ids, position_ids=None)
                 inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
             if pixel_values is not None:
                 if image_grid_thw is None or input_ids is None:
@@ -657,18 +678,18 @@ class MuseGlimmerModel(MegatronModule):
         if self.config.sequence_parallel and inputs_embeds is not None:
             inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=self.pg_collection.tp)
 
-        output = self.language_model(
+        output = super().forward(
             input_ids=None,
             position_ids=position_ids,
             attention_mask=attention_mask,
             decoder_input=inputs_embeds,
             labels=labels,
-            loss_mask=loss_mask,
             inference_context=inference_context,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
-            extra_block_kwargs=extra_block_kwargs,
             inference_params=inference_params,
+            loss_mask=loss_mask,
+            padding_mask=padding_mask,
         )
         if loss_mask is not None:
             return output, loss_mask
@@ -682,5 +703,5 @@ __all__ = [
     "MuseGlimmerVisionModel",
     "MuseGlimmerWeightlessRMSNorm",
     "customize_muse_glimmer_language_model",
-    "get_muse_glimmer_layer_spec",
+    "get_muse_glimmer_hybrid_stack_spec",
 ]

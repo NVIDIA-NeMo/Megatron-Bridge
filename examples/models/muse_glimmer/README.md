@@ -9,14 +9,17 @@ projection, and text decoder all participate in checkpoint conversion.
 
 Muse Glimmer uses the builder-backed API. `MuseGlimmerBridge` translates the Hugging
 Face configuration directly into `MuseGlimmerModelConfig`, and
-`MuseGlimmerModelBuilder` constructs `MuseGlimmerModel`; no model provider is involved.
+`MuseGlimmerModelBuilder` constructs `MuseGlimmerModel` as a native Megatron-Core
+`HybridModel`; no model provider or `GPTModel` wrapper is involved.
 
-The text decoder uses native Megatron-Core components for GQA, tensor/pipeline/context
-parallelism, 3:1 sliding/full attention, per-layer NoPE, weightless Q/K RMSNorm, and the
-full-head sigmoid attention output gate. Muse-specific residual-branch RMSNorms wrap the
-attention and MLP outputs without replacing Megatron-Core's TransformerLayer execution
-path. The embedding norm, final scaled RMSNorm, output multiplier, and tanh logit
-soft-cap reproduce the published decoder math.
+The text decoder uses a native Megatron-Core `HybridStack` whose layer pattern selects
+the Muse transformer-layer spec at every depth. It preserves GQA,
+tensor/pipeline/context parallelism, 3:1 sliding/full attention, per-layer NoPE,
+weightless Q/K RMSNorm, and the full-head sigmoid attention output gate. Muse-specific
+residual-branch RMSNorms wrap the attention and MLP outputs without replacing
+Megatron-Core's `TransformerLayer` execution path. The embedding norm, final scaled
+RMSNorm, output multiplier, and tanh logit soft-cap reproduce the published decoder
+math.
 
 The replicated vision path implements the published 50-layer encoder, half-pixel
 bilinear learned-position lookup with zero padding, 2-D RoPE, 3:1 window/full attention,
@@ -30,7 +33,7 @@ from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained(
     "meta-models/Muse-Glimmer-30B",
-    revision="f84ecc3a0ea984a4c04542a84269e3d065350a6e",
+    revision="f84ecc3a0ea984a4c04542a84269e3d065350a6e",  # pragma: allowlist secret
 )
 model_config = bridge.get_model_config()
 

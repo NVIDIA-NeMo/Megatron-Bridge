@@ -8,7 +8,8 @@ summary: >
   results. This card covers the complete Muse Glimmer 30B vision-language
   checkpoint through the builder-backed model-config, model-builder, and model
   bridge path. The modeled architecture includes the vision tower, adapter,
-  projection, and dense text decoder; it does not use a legacy model provider.
+  projection, and a native Megatron-Core HybridModel text decoder; it does not
+  use a legacy model provider or GPTModel wrapper.
   Conversion, numerical parity, inference, and training remain unverified until
   the corresponding pinned public commands complete their declared gates.
 verification_index:

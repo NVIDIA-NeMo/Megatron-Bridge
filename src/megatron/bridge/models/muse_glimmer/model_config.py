@@ -17,10 +17,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import Any, ClassVar
 
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.training.models.hybrid import HybridModelConfig
+
+from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
+from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
 @dataclass
@@ -53,7 +57,7 @@ class MuseGlimmerVisionModelConfig:
 
 
 @dataclass(kw_only=True)
-class MuseGlimmerModelConfig(BridgeGPTModelConfig):
+class MuseGlimmerModelConfig(HybridModelConfig):
     """Complete builder configuration for Muse Glimmer."""
 
     builder: ClassVar[str] = "megatron.bridge.models.muse_glimmer.MuseGlimmerModelBuilder"
@@ -75,6 +79,49 @@ class MuseGlimmerModelConfig(BridgeGPTModelConfig):
     def special_token_ids(self) -> dict[str, int]:
         """Return media token IDs used by multimodal data pipelines."""
         return {"images": self.image_token_id, "videos": self.video_token_id}
+
+    def get_builder_cls(self) -> type:
+        """Resolve the Muse builder through Bridge's target allowlist."""
+        builder_cls = _resolve_target(self.builder, full_key="_builder_")
+        if not isinstance(builder_cls, type):
+            raise TypeError(f"Builder target '{self.builder}' did not resolve to a class.")
+        return builder_cls
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize the Hybrid config with a symbolic activation function."""
+        data = super().as_dict()
+        transformer_data = data.get("transformer")
+        if not isinstance(transformer_data, dict):
+            raise TypeError("Serialized Muse Glimmer config must contain a transformer mapping.")
+
+        activation_func = self.transformer.activation_func
+        if isinstance(activation_func, str):
+            str_to_callable(activation_func)
+            activation_name = activation_func
+        else:
+            activation_name = callable_to_str(activation_func)
+        if activation_name is None:
+            raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
+
+        transformer_data["activation_func"] = activation_name
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MuseGlimmerModelConfig":
+        """Deserialize a Muse Hybrid config and restore its activation callable."""
+        restored_data = dict(data)
+        transformer_data = restored_data.get("transformer")
+        if isinstance(transformer_data, dict):
+            restored_transformer = dict(transformer_data)
+            activation_name = restored_transformer.get("activation_func")
+            if isinstance(activation_name, str):
+                restored_transformer["activation_func"] = str_to_callable(activation_name)
+            restored_data["transformer"] = restored_transformer
+
+        result = ModelConfig.from_dict(restored_data)
+        if not isinstance(result, cls):
+            raise TypeError(f"Expected {cls.__name__}, got {type(result).__name__}.")
+        return result
 
 
 __all__ = [
