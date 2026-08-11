@@ -21,6 +21,7 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -80,6 +81,35 @@ class Llama3FSDPTestModelProvider(GPTModelProvider):
     gradient_accumulation_fusion: bool = False
 
 
+@dataclass
+class DenseHybridSmokeModelProvider(HybridModelProvider):
+    """Small dense HybridModel configuration for the training smoke test."""
+
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    position_embedding_type: str = "rope"
+    add_bias_linear: bool = False
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+    share_embeddings_and_output_weights: bool = False
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
+    num_query_groups: int = 8
+    init_method_std: float = 0.01
+    layernorm_epsilon: float = 1e-5
+    rotary_percent: float = 1.0
+    rotary_base: int = 500_000
+    seq_length: int = 128
+    num_layers: int | None = 2
+    hidden_size: int = 128
+    ffn_hidden_size: int = 512
+    num_attention_heads: int = 8
+    hybrid_layer_pattern: str | None = "**"
+    vocab_size: int | None = None
+    gradient_accumulation_fusion: bool = False
+
+
 def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3FSDPTestModelProvider:
     """Create a standardized FSDP model configuration."""
     base_config = {
@@ -101,6 +131,23 @@ def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Ll
         )
     base_config.update(kwargs)
     return Llama3FSDPTestModelProvider(**base_config)
+
+
+def create_dense_hybrid_smoke_model_config(**kwargs) -> DenseHybridSmokeModelProvider:
+    """Create the dense two-layer HybridModel configuration used by the smoke test."""
+    base_config = {
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
+        "attention_softmax_in_fp32": True,
+        "make_vocab_size_divisible_by": 128,
+        "vocab_size": None,
+        "bf16": True,
+        "pipeline_dtype": torch.bfloat16,
+    }
+    base_config.update(kwargs)
+    return DenseHybridSmokeModelProvider(**base_config)
 
 
 def create_base_training_config(
@@ -339,7 +386,7 @@ class TestMegatronFSDP:
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_fsdp_pretrain_basic(self, tmp_path):
+    def test_fsdp_pretrain_basic(self):
         """
         Test basic FSDP training without checkpointing.
         """
@@ -347,22 +394,36 @@ class TestMegatronFSDP:
 
         torch.distributed.barrier()
 
-        try:
-            seq_length = 512
-            total_iters = 10
+        seq_length = 512
+        total_iters = 10
 
-            cfg = create_fsdp_config_container(
-                seq_length=seq_length,
-                train_iters=total_iters,
-            )
+        cfg = create_fsdp_config_container(
+            seq_length=seq_length,
+            train_iters=total_iters,
+        )
 
-            # Run training
-            pretrain(cfg, forward_step)
+        # Run training
+        pretrain(cfg, forward_step)
 
-            torch.distributed.barrier()
+        torch.distributed.barrier()
 
-        finally:
-            clear_directories(tmp_path)
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
+        """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
+        initialize_distributed()
+        torch.distributed.barrier()
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            optimizer={"clip_grad": 0.0},
+        )
+        cfg.model = create_dense_hybrid_smoke_model_config()
+        cfg.ddp.megatron_fsdp_version = 2
+
+        pretrain(cfg, forward_step)
+
+        torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_pretrain_save_resume(self, tmp_path):
@@ -479,7 +540,7 @@ class TestMegatronFSDP:
             clear_directories(shared_base_dir)
 
     @pytest.mark.run_only_on("GPU")
-    def test_fsdp_precision_aware_optimizer_decoupled_grad_consistency(self, tmp_path):
+    def test_fsdp_precision_aware_optimizer_decoupled_grad_consistency(self):
         """Verify that MFSDP + precision-aware optimizer keeps decoupled_grad
         consistent across ParamAndGradBuffer, FusedAdam, and clip_grad_norm.
 
@@ -499,58 +560,54 @@ class TestMegatronFSDP:
 
         torch.distributed.barrier()
 
-        try:
-            seq_length = 512
-            train_iters = 1
+        seq_length = 512
+        train_iters = 1
 
-            cfg = create_fsdp_config_container(
-                seq_length=seq_length,
-                train_iters=train_iters,
-                optimizer={"use_precision_aware_optimizer": True},
-            )
-            runtime_config_update(cfg)
+        cfg = create_fsdp_config_container(
+            seq_length=seq_length,
+            train_iters=train_iters,
+            optimizer={"use_precision_aware_optimizer": True},
+        )
+        runtime_config_update(cfg)
 
-            state = GlobalState()
-            state.cfg = cfg
-            setup_out = setup(state, get_dataset_provider(cfg.dataset))
+        state = GlobalState()
+        state.cfg = cfg
+        setup_out = setup(state, get_dataset_provider(cfg.dataset))
 
-            model_list = setup_out.model
-            optimizer = setup_out.optimizer
+        model_list = setup_out.model
+        optimizer = setup_out.optimizer
 
-            # --- Run one training iteration ---
-            run_training(
-                forward_step,
-                model_list,
-                optimizer,
-                setup_out.scheduler,
-                setup_out.train_data_iterator,
-                setup_out.valid_data_iterator,
-                setup_out.state,
-                setup_out.checkpoint_manager,
-                setup_out.pg_collection,
-            )
+        # --- Run one training iteration ---
+        run_training(
+            forward_step,
+            model_list,
+            optimizer,
+            setup_out.scheduler,
+            setup_out.train_data_iterator,
+            setup_out.valid_data_iterator,
+            setup_out.state,
+            setup_out.checkpoint_manager,
+            setup_out.pg_collection,
+        )
 
-            # --- (a) MFSDP ParamAndGradBuffer has use_decoupled_grad=True ---
-            mfsdp_model = model_list[0].module
-            assert isinstance(mfsdp_model, MegatronFSDP), f"Expected MegatronFSDP, got {type(mfsdp_model)}"
-            pgb = mfsdp_model.param_and_grad_buffer
-            assert pgb.use_decoupled_grad is True, (
-                "ParamAndGradBuffer.use_decoupled_grad should be True when use_precision_aware_optimizer is enabled"
-            )
+        # --- (a) MFSDP ParamAndGradBuffer has use_decoupled_grad=True ---
+        mfsdp_model = model_list[0].module
+        assert isinstance(mfsdp_model, MegatronFSDP), f"Expected MegatronFSDP, got {type(mfsdp_model)}"
+        pgb = mfsdp_model.param_and_grad_buffer
+        assert pgb.use_decoupled_grad is True, (
+            "ParamAndGradBuffer.use_decoupled_grad should be True when use_precision_aware_optimizer is enabled"
+        )
 
-            # --- (b) Underlying FusedAdam has use_decoupled_grad=True ---
-            inner_opt = _get_inner_optimizer(optimizer)
-            assert getattr(inner_opt, "use_decoupled_grad", False), (
-                f"FusedAdam.use_decoupled_grad should be True, "
-                f"got {getattr(inner_opt, 'use_decoupled_grad', 'MISSING')} "
-                f"on {type(inner_opt).__name__}"
-            )
+        # --- (b) Underlying FusedAdam has use_decoupled_grad=True ---
+        inner_opt = _get_inner_optimizer(optimizer)
+        assert getattr(inner_opt, "use_decoupled_grad", False), (
+            f"FusedAdam.use_decoupled_grad should be True, "
+            f"got {getattr(inner_opt, 'use_decoupled_grad', 'MISSING')} "
+            f"on {type(inner_opt).__name__}"
+        )
 
-            # --- (c) clip_grad_norm does not segfault / has non-zero grad norm ---
-            grad_norm = optimizer.clip_grad_norm(cfg.optimizer.clip_grad)
-            assert torch.isfinite(torch.tensor(grad_norm)), f"clip_grad_norm returned non-finite grad_norm={grad_norm}"
+        # --- (c) clip_grad_norm does not segfault / has non-zero grad norm ---
+        grad_norm = optimizer.clip_grad_norm(cfg.optimizer.clip_grad)
+        assert torch.isfinite(torch.tensor(grad_norm)), f"clip_grad_norm returned non-finite grad_norm={grad_norm}"
 
-            _finish_train(setup_out.state, setup_out.checkpoint_manager)
-
-        finally:
-            clear_directories(tmp_path)
+        _finish_train(setup_out.state, setup_out.checkpoint_manager)

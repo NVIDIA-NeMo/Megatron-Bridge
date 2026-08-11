@@ -12,25 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+"""Megatron-FSDP wrapper compatibility helpers."""
 
-from megatron.bridge.models.conversion.utils import unwrap_model
-
-
-def test_unwrap_model_uses_fsdp_wrapper_types(monkeypatch):
-    class FSDPV1(torch.nn.Module):
-        def __init__(self, module):
-            super().__init__()
-            self.module = module
-
-    class FSDPV2(FSDPV1):
-        pass
-
-    monkeypatch.setattr(
-        "megatron.bridge.training.fsdp_compat.MEGATRON_FSDP_TYPES",
-        (FSDPV1, FSDPV2),
+try:
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+        FullyShardedDataParallelV1,
+        FullyShardedDataParallelV2,
     )
 
-    module = torch.nn.Linear(1, 1)
+    MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
+except ImportError:
+    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 
-    assert unwrap_model(FSDPV2(FSDPV1(module))) is module
+    MEGATRON_FSDP_TYPES = (FullyShardedDataParallel,)

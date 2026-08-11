@@ -561,6 +561,12 @@ def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.sequence_parallel is False
     assert cfg.model.moe_token_dispatcher_type == "alltoall"
     assert cfg.model.moe_router_fusion is True
+    assert cfg.model.cross_entropy_loss_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.fsdp_double_buffer is True
     assert cfg.ddp.megatron_fsdp_max_pool_double_buffer is True

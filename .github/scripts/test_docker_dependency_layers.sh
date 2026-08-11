@@ -102,6 +102,9 @@ main_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" switch -q -c dev
 printf 'dev\n' >>"$revision_worktree/file"
 git -C "$revision_worktree" commit -qam dev
+dev_ancestor_sha=$(git -C "$revision_worktree" rev-parse HEAD)
+printf 'dev tip\n' >>"$revision_worktree/file"
+git -C "$revision_worktree" commit -qam dev-tip
 dev_sha=$(git -C "$revision_worktree" rev-parse HEAD)
 git -C "$revision_worktree" branch contributor "$ancestor_sha"
 git -C "$revision_worktree" switch -q contributor
@@ -145,6 +148,7 @@ sed "s#\.github/scripts/validate_mcore_repo\.sh#$temporary_dir/revision-bin/repo
   "$revision_validator" >"$temporary_dir/revision-validator"
 chmod +x "$temporary_dir/revision-validator"
 "$temporary_dir/revision-validator" "$revision_repo" "$ancestor_sha"
+"$temporary_dir/revision-validator" "$revision_repo" "$dev_ancestor_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$dev_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$mirror_sha"
 "$temporary_dir/revision-validator" "$revision_repo" "$merge_sha"
