@@ -1036,13 +1036,19 @@ class MegatronModelBridge(
     @staticmethod
     def _is_vocab_export_task(task: WeightConversionTask[Any]) -> bool:
         """Return whether a conversion task emits an HF token embedding or language-model head."""
-        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight")
+        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight", "output_layer.bias")
         global_param_name = task.global_param_name.removesuffix("_scale_inv")
         if not global_param_name.endswith(vocab_param_suffixes):
             return False
 
         hf_param = getattr(task.mapping, "hf_param", None)
-        vocab_hf_param_suffixes = ("embed_tokens.weight", "word_embeddings.weight", "lm_head.weight", "head.weight")
+        vocab_hf_param_suffixes = (
+            "embed_tokens.weight",
+            "word_embeddings.weight",
+            "lm_head.weight",
+            "head.weight",
+            "predictions.bias",
+        )
         return isinstance(hf_param, str) and hf_param.endswith(vocab_hf_param_suffixes)
 
     def _truncate_vocab_padding(

@@ -57,6 +57,12 @@ class BertBridge(MegatronModelBridge):
             )
         if getattr(hf_config, "is_decoder", False) or getattr(hf_config, "add_cross_attention", False):
             raise ValueError("BertBridge only supports encoder-only MegatronBertForMaskedLM configurations.")
+        if not getattr(hf_config, "tie_word_embeddings", True):
+            raise ValueError(
+                "BertBridge requires tie_word_embeddings=True because Hugging Face keeps "
+                "cls.predictions.bias and cls.predictions.decoder.bias independent when embeddings are untied, "
+                "while Megatron-Core has only one output-layer bias."
+            )
 
     def provider_bridge(self, hf_pretrained: PreTrainedMaskedLM) -> BertModelProvider:
         hf_config = hf_pretrained.config
@@ -76,8 +82,8 @@ class BertBridge(MegatronModelBridge):
             num_tokentypes=hf_config.type_vocab_size,
             vocab_size=hf_config.vocab_size,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            should_pad_vocab=False,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", True),
+            should_pad_vocab=True,
+            share_embeddings_and_output_weights=True,
             add_binary_head=False,
             activation_func=self.hf_to_megatron_activation(hf_config.hidden_act),
             hidden_dropout=hf_config.hidden_dropout_prob,
@@ -96,6 +102,12 @@ class BertBridge(MegatronModelBridge):
         `rms_norm_eps` to `layernorm_epsilon`, neither of which apply to BERT)
         -- BERT's config fields are mapped directly instead.
         """
+        if not provider.share_embeddings_and_output_weights:
+            raise ValueError(
+                "BertBridge requires share_embeddings_and_output_weights=True because Hugging Face keeps "
+                "two independent MLM biases when embeddings are untied, while Megatron-Core has only one."
+            )
+
         hidden_act = cls.megatron_to_hf_activation(provider.activation_func)
         if hidden_act != "gelu":
             raise ValueError(

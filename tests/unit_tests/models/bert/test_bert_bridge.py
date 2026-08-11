@@ -69,13 +69,11 @@ class TestBertBridge:
 
         assert isinstance(bridge, BertBridge)
 
-    @pytest.mark.parametrize("tie_word_embeddings", [True, False])
-    def test_provider_bridge_field_mapping(self, tie_word_embeddings):
+    def test_provider_bridge_field_mapping(self):
         """Test that HF config fields land correctly on the BertModelProvider."""
         hf_config = self._hf_config(
             hidden_dropout_prob=0.2,
             attention_probs_dropout_prob=0.3,
-            tie_word_embeddings=tie_word_embeddings,
         )
         provider = BertBridge().provider_bridge(self._mock_pretrained(hf_config))
 
@@ -95,16 +93,12 @@ class TestBertBridge:
         assert provider.hidden_dropout == hf_config.hidden_dropout_prob
         assert provider.attention_dropout == hf_config.attention_probs_dropout_prob
 
-    def test_provider_bridge_vocab_padding_is_disabled(self):
-        """Test that the provider keeps the HF vocabulary size verbatim.
-
-        BERT's masked-LM head is tied to the embedding, so padding the vocabulary would
-        silently change the exported `vocab_size` and break HF round-trips.
-        """
+    def test_provider_bridge_enables_megatron_only_vocab_padding(self):
+        """Test that non-divisible HF vocabularies can be used with tensor parallelism."""
         hf_config = self._hf_config(vocab_size=30_522)
         provider = BertBridge().provider_bridge(self._mock_pretrained(hf_config))
 
-        assert provider.should_pad_vocab is False
+        assert provider.should_pad_vocab is True
         assert provider.vocab_size == 30_522
         # 30522 = 2 x 3 x 5087, so the largest power-of-two divisor is 2.
         assert provider.make_vocab_size_divisible_by == 2
@@ -174,6 +168,7 @@ class TestBertBridge:
             ({"is_decoder": True}, "encoder-only"),
             ({"add_cross_attention": True}, "encoder-only"),
             ({"is_decoder": True, "add_cross_attention": True}, "encoder-only"),
+            ({"tie_word_embeddings": False}, "tie_word_embeddings=True"),
         ],
     )
     def test_provider_bridge_rejects_unsupported_architectures(self, overrides, match):
@@ -189,6 +184,14 @@ class TestBertBridge:
         provider.activation_func = torch.nn.functional.relu
 
         with pytest.raises(ValueError, match="hardcodes GELU"):
+            BertBridge.megatron_to_hf_config(provider)
+
+    def test_megatron_to_hf_config_rejects_untied_provider(self):
+        """Test that export cannot claim parity for an unrepresentable untied MLM head."""
+        provider = BertBridge().provider_bridge(self._mock_pretrained(self._hf_config()))
+        provider.share_embeddings_and_output_weights = False
+
+        with pytest.raises(ValueError, match="share_embeddings_and_output_weights=True"):
             BertBridge.megatron_to_hf_config(provider)
 
     def test_mapping_registry_resolves_known_params(self):

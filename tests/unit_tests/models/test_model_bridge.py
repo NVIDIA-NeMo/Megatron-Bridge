@@ -256,6 +256,28 @@ def test_truncate_vocab_padding_handles_nested_config_and_vocab_aliases():
     assert result["unrelated.weight"].shape == (4, 2)
 
 
+def test_truncate_vocab_padding_handles_output_bias_and_alias():
+    """Padded vocabulary biases and their tied HF aliases are restored to the HF vocabulary size."""
+    bridge = DummyBridge()
+    bridge.hf_config = SimpleNamespace(vocab_size=3)
+    task = SimpleNamespace(
+        global_param_name="output_layer.bias",
+        mapping=SimpleNamespace(hf_param="cls.predictions.bias"),
+    )
+    padded_bias = torch.arange(5)
+
+    result = bridge._truncate_vocab_padding(
+        task,
+        {
+            "cls.predictions.bias": padded_bias,
+            "cls.predictions.decoder.bias": padded_bias.clone(),
+        },
+    )
+
+    assert result["cls.predictions.bias"].shape == (3,)
+    assert result["cls.predictions.decoder.bias"].shape == (3,)
+
+
 @pytest.mark.parametrize("is_remote_pp", [False, True])
 def test_truncate_vocab_padding_handles_fp8_scale_task(is_remote_pp):
     bridge = DummyBridge()

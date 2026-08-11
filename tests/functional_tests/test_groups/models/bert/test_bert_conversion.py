@@ -31,7 +31,10 @@ from megatron.bridge import AutoBridge
 HF_BERT_TOY_MODEL_CONFIG = {
     "architectures": ["MegatronBertForMaskedLM"],
     "model_type": "megatron-bert",
-    "vocab_size": 128,
+    # Deliberately not divisible by TP=2. Production BERT vocabularies are not
+    # generally divisible by every requested tensor-parallel size either, so
+    # this exercises Megatron-only vocabulary padding during conversion.
+    "vocab_size": 129,
     "hidden_size": 32,
     "num_hidden_layers": 2,
     "num_attention_heads": 4,
@@ -103,7 +106,7 @@ class TestBertConversion:
         assert config_data["hidden_size"] == 32
         assert config_data["num_hidden_layers"] == 2
         assert config_data["num_attention_heads"] == 4
-        assert config_data["vocab_size"] == 128
+        assert config_data["vocab_size"] == 129
 
         model = MegatronBertForMaskedLM.from_pretrained(bert_toy_model_path, torch_dtype=torch.bfloat16)
         assert len(model.bert.encoder.layer) == 2
@@ -161,8 +164,8 @@ class TestBertConversion:
         """Test BERT single-GPU roundtrip conversion (HF -> Megatron -> HF).
 
         This exercises the exact-parity (Level 1) check from the parity-testing skill:
-        `hf_megatron_roundtrip.py` fails outright unless every independently serialized
-        HF tensor round-trips correctly.
+        the distributed verifier fails unless every independently serialized HF tensor
+        is emitted and has exactly equal values.
 
         Args:
             bert_toy_model_path: Path to the toy BERT model (from fixture).
@@ -170,11 +173,20 @@ class TestBertConversion:
         """
         cmd = [
             sys.executable,
-            "examples/conversion/hf_megatron_roundtrip.py",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=1",
+            "--nnodes=1",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
             bert_toy_model_path,
             "--output-dir",
             str(tmp_path / "bert_roundtrip"),
+            "--strict",
+            "--atol",
+            "0",
+            "--rtol",
+            "0",
         ]
 
         result = subprocess.run(
