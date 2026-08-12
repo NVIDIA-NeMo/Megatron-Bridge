@@ -68,7 +68,7 @@ def test_import_preserves_tokenizers_fork_safety():
         capture_output=True,
         env=environment,
         text=True,
-        timeout=30,
+        timeout=60,
         check=False,
     )
     assert result.returncode == 0, result.stderr

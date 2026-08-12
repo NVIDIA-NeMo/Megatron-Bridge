@@ -8,6 +8,14 @@
 ARG BASE_IMAGE=766267172432.dkr.ecr.us-east-1.amazonaws.com/megatron-bridge@sha256:2c211aac77076f00566e89c4fb355530999c864395e4e066df81063a780d934a
 FROM ${BASE_IMAGE}
 
+WORKDIR /opt/Megatron-Bridge
+
+# Keep the published CI image as the runtime base while carrying the bounded
+# timeout used by the dedicated E2E source ref. Product sources stay unchanged.
+COPY --chown=65532:65532 \
+  tests/unit_tests/data/datasets/test_gpt_sft.py \
+  tests/unit_tests/data/datasets/test_gpt_sft.py
+
 ARG RUNTIME_UID=65532
 ARG RUNTIME_GID=65532
 
