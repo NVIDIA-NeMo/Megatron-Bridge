@@ -59,6 +59,7 @@ class _NemotronLightningTokenizer:
 
     def __init__(self) -> None:
         self.template_kwargs: list[dict[str, Any]] = []
+        self.tool_call_arguments: list[dict[str, Any]] = []
 
     def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
         assert add_special_tokens is False
@@ -109,7 +110,9 @@ class _NemotronLightningTokenizer:
                 content = message.get("content")
                 if isinstance(content, str) and content:
                     input_ids.append(TEXT_IDS[content])
-                if message.get("tool_calls"):
+                for tool_call in message.get("tool_calls", []):
+                    arguments = tool_call["function"]["arguments"]
+                    self.tool_call_arguments.append(dict(arguments.items()))
                     input_ids.extend([NEWLINE, TOOL_CALL_OPEN, TOOL_NAME, TOOL_ARGUMENT, TOOL_CALL_CLOSE])
                 input_ids.extend([IM_END, NEWLINE])
             elif role == "tool":
@@ -217,7 +220,7 @@ def test_nemotron_lightning_tool_reasoning_and_calls_are_supervised() -> None:
                 "role": "assistant",
                 "reasoning_content": "reason one",
                 "content": "",
-                "tool_calls": [{"function": {"name": "get_weather", "arguments": {"city": "Seattle"}}}],
+                "tool_calls": [{"function": {"name": "get_weather", "arguments": '{"city":"Seattle"}'}}],
             },
             {"role": "tool", "content": "12 C"},
             {"role": "assistant", "reasoning_content": "reason two", "content": "Seattle is 12 C."},
@@ -248,5 +251,7 @@ def test_nemotron_lightning_tool_reasoning_and_calls_are_supervised() -> None:
         NEWLINE,
     ]
     assert _supervised_ids(tokenized) == expected_targets
+    assert tokenizer.tool_call_arguments
+    assert all(arguments == {"city": "Seattle"} for arguments in tokenizer.tool_call_arguments)
     assert TOOL_RESPONSE_OPEN not in expected_targets
     assert batch["labels"][0][batch["loss_mask"][0].bool()].tolist() == expected_targets
