@@ -51,6 +51,14 @@ HF_DEEPSEEK_V3_TOY_MODEL_CONFIG = {
 }
 
 
+# The fixture above is the control. Without a query LoRA the HF architecture builds a bare
+# `q_proj` and defines no query-side norm, which is the branch this PR corrects.
+HF_DEEPSEEK_V3_NO_Q_LORA_CONFIG = {
+    **HF_DEEPSEEK_V3_TOY_MODEL_CONFIG,
+    "q_lora_rank": None,
+}
+
+
 class TestDeepSeekConversion:
     """Functional tests for DeepSeek toy conversion paths."""
 
@@ -170,3 +178,71 @@ class TestDeepSeekConversion:
         from tests.functional_tests.utils import autoconfig_roundtrip
 
         autoconfig_roundtrip(deepseek_toy_model_path, tmp_path)
+
+
+class TestDeepSeekWithoutQueryLoRA:
+    """Cover the `q_lora_rank=None` branch end to end, not only at the spec level."""
+
+    @pytest.fixture(scope="class")
+    def deepseek_no_q_lora_model_path(self, tmp_path_factory):
+        temp_dir = tmp_path_factory.mktemp("deepseek_no_q_lora_model")
+        model_dir = temp_dir / "deepseek_no_q_lora"
+
+        config = DeepseekV3Config(**HF_DEEPSEEK_V3_NO_Q_LORA_CONFIG)
+        config.torch_dtype = torch.bfloat16
+
+        torch.manual_seed(1234)
+        model = DeepseekV3ForCausalLM(config).bfloat16()
+        model.save_pretrained(model_dir, safe_serialization=True)
+
+        with open(model_dir / "config.json", "w") as f:
+            json.dump(model.config.to_dict(), f, indent=2)
+
+        return str(model_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_state_dict_round_trip_without_a_query_norm(self, deepseek_no_q_lora_model_path):
+        """HF to Megatron to HF must preserve every weight and invent none.
+
+        The structural assertions come from the HF architecture rather than from the
+        conversion registry, so the registry cannot act as its own oracle. HF has
+        `q_proj.weight` and `kv_a_layernorm.weight` and no query LoRA; Megatron must have
+        `linear_q_proj.weight` and `linear_kv_up_proj.layer_norm_weight` and no
+        `linear_q_proj.layer_norm_weight`, which is the phantom parameter this PR removes.
+        """
+        from safetensors.torch import load_file
+
+        from megatron.bridge import AutoBridge
+
+        hf_state = load_file(Path(deepseek_no_q_lora_model_path) / "model.safetensors")
+        assert "model.layers.1.self_attn.q_proj.weight" in hf_state
+        assert "model.layers.1.self_attn.kv_a_layernorm.weight" in hf_state
+        assert not [key for key in hf_state if "q_a_proj" in key or "q_a_layernorm" in key]
+
+        # `get_model` is the builder-backed path and DeepSeek has not migrated to it; its
+        # config conversion rejects the MLA fields before any weight handling happens.
+        bridge = AutoBridge.from_hf_pretrained(deepseek_no_q_lora_model_path, torch_dtype=torch.bfloat16)
+        model = bridge.to_megatron_model(load_weights=True, wrap_with_ddp=False)
+        try:
+            megatron_names = {name for stage in model for name, _ in stage.named_parameters()}
+            assert any(name.endswith("self_attention.linear_q_proj.weight") for name in megatron_names)
+            assert any(name.endswith("self_attention.linear_kv_up_proj.layer_norm_weight") for name in megatron_names)
+            assert not [name for name in megatron_names if "linear_q_proj.layer_norm_weight" in name]
+
+            exported = {name: tensor.cpu() for name, tensor in bridge.export_hf_weights(model, cpu=True)}
+        finally:
+            _teardown_distributed()
+
+        assert not [key for key in exported if "q_a_proj" in key or "q_a_layernorm" in key]
+        assert not sorted(set(hf_state) - set(exported)), "export dropped weights"
+        mismatched = sorted(key for key in hf_state if not torch.equal(exported[key], hf_state[key]))
+        assert not mismatched, f"round trip changed {len(mismatched)} weights, e.g. {mismatched[:3]}"
+
+
+def _teardown_distributed():
+    """Release the standalone process groups `get_model` sets up for a single process."""
+    from megatron.core import parallel_state
+
+    parallel_state.destroy_model_parallel()
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

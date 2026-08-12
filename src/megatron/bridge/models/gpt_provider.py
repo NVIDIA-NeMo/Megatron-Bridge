@@ -169,6 +169,15 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     dense_grouped_gemm: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
 
+    mtp_layer_spec_transform: Optional[Callable[["GPTModelProvider", ModuleSpec], ModuleSpec]] = None
+    """Optional fix-up applied to an MTP layer spec re-derived straight from MCore.
+
+    A standalone MTP pipeline stage owns no decoder layers, so ``mtp_block_spec`` cannot
+    reuse ``transformer_layer_spec``'s output and calls ``get_gpt_decoder_layer_specs``
+    instead. Any model whose layer spec is not plain MCore therefore loses its
+    customisation on exactly that stage. Set this to re-apply it.
+    """
+
     hf_model_id: str | None = None
     """Optional HuggingFace model identifier associated with this provider."""
 
@@ -373,6 +382,11 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
                 qk_l2_norm=config.qk_l2_norm,
             )
             spec = decoder_layer_specs[-1]
+            # This spec came from MCore directly, so anything transformer_layer_spec would
+            # have changed is absent from it. Give the model a chance to re-apply it.
+            transform = getattr(config, "mtp_layer_spec_transform", None)
+            if transform is not None:
+                spec = transform(config, spec)
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None

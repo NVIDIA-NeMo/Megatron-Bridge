@@ -1836,8 +1836,14 @@ class MegatronModelBridge(
                 mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
 
                 if not mapping:
-                    logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
-                    continue
+                    raise ValueError(
+                        f"No mapping found for megatron_param: {global_name}. Every parameter the "
+                        "Megatron model owns has to be accounted for, otherwise it stays at its "
+                        "initial value on import and is dropped on export. Add a mapping for it, "
+                        "or register an explicit no-op mapping when the HF architecture "
+                        "deliberately has no counterpart (see _HCAlphaSecondaryMapping in "
+                        "deepseek_v4_bridge.py)."
+                    )
                 # Ensure hf weights exist (skip for config-only export where hf_keys is None)
                 if hf_keys is not None and not mapping.allow_hf_name_mismatch:
                     if isinstance(mapping.hf_param, str):
@@ -2035,8 +2041,14 @@ class MegatronModelBridge(
 
                 mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
                 if not mapping:
-                    logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
-                    continue
+                    raise ValueError(
+                        f"No mapping found for megatron_param: {global_name}. Every parameter the "
+                        "Megatron model owns has to be accounted for, otherwise it stays at its "
+                        "initial value on import and is dropped on export. Add a mapping for it, "
+                        "or register an explicit no-op mapping when the HF architecture "
+                        "deliberately has no counterpart (see _HCAlphaSecondaryMapping in "
+                        "deepseek_v4_bridge.py)."
+                    )
                 local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
                 if local_module is not None and not hasattr(local_module, "config"):
                     setattr(local_module, "config", model_config)

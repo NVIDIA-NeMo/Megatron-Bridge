@@ -544,7 +544,12 @@ def test_stream_weights_megatron_to_hf_does_not_invent_tied_output_alias(monkeyp
 
 
 def test_stream_weights_hf_to_megatron_skips_unmapped_task_slots():
-    """build_conversion_tasks leaves a None slot per unmapped parameter; consumers must skip them."""
+    """build_conversion_tasks leaves a None slot when the HF checkpoint lacks a mapped
+    weight, so consumers must skip them.
+
+    A parameter with no mapping at all is a different condition and raises; see
+    test_build_conversion_tasks_rejects_an_unmapped_parameter.
+    """
     bridge = DummyBridge()
 
     mapped_task = WeightConversionTask(
@@ -615,3 +620,55 @@ def test_stream_weights_megatron_to_hf_skips_unmapped_task_slots(monkeypatch):
     )
 
     assert weights == [("hf.weight", source)]
+
+
+def _patch(monkeypatch, name, value):
+    """Replace a module-level name in the bridge module under test."""
+    monkeypatch.setattr(f"megatron.bridge.models.conversion.model_bridge.{name}", value)
+
+
+def test_build_conversion_tasks_rejects_an_unmapped_parameter(monkeypatch):
+    """A Megatron parameter with no registry entry must stop the conversion by name.
+
+    Skipping it would leave the parameter at its initial value on import and drop it on
+    export, which is a wrong model rather than a missing file. The message has to name the
+    parameter, because that name is the only way to find which mapping is missing.
+    """
+    bridge = DummyBridge()
+    monkeypatch.setattr(
+        DummyBridge,
+        "mapping_registry",
+        lambda self: MegatronMappingRegistry(AutoMapping("decoder.weight", "hf.weight")),
+    )
+
+    model = Mock()
+    model.named_parameters = lambda: [("orphan.weight", torch.ones(2))]
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+
+    # The builder collects process groups and gathers parameter names across pipeline
+    # ranks before it reaches the registry lookup. None of that is under test here, and
+    # on a single process it fails first, so stand in for it at single-rank values.
+    _patch(monkeypatch, "_get_pg_collection_from_model", lambda *_a, **_kw: Mock())
+    _patch(monkeypatch, "_get_pp_rank", lambda *_a, **_kw: 0)
+    _patch(monkeypatch, "unwrap_model", lambda *_a, **_kw: [model])
+    _patch(monkeypatch, "persistent_buffers", lambda *_a, **_kw: [])
+    _patch(
+        monkeypatch,
+        "_megatron_local_name_to_global",
+        lambda _models, _config, local_name, _vp_stage: local_name,
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "_megatron_global_param_names_all_pp_ranks",
+        lambda self, *_a, **_kw: ["orphan.weight"],
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "_share_embeddings_and_output_weights",
+        lambda self, *_a, **_kw: False,
+    )
+
+    hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: ["hf.weight"])))
+
+    with pytest.raises(ValueError, match="orphan.weight"):
+        bridge.build_conversion_tasks(hf_pretrained, [model])
