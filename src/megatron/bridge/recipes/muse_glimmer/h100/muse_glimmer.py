@@ -89,7 +89,7 @@ def _apply_model_and_data(
     cfg.validation.eval_iters = 0
     cfg.logger.log_interval = 1
     cfg.logger.log_throughput = True
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 10
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}

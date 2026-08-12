@@ -90,7 +90,7 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.dataset.enable_in_batch_packing is is_long_context
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == global_batch_size
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == (2 if is_long_context else 1)
     assert cfg.validation.eval_iters == 0
     assert cfg.validation.eval_interval == 0
     assert cfg.logger.log_throughput is True
@@ -117,6 +117,7 @@ def test_muse_glimmer_long_context_uses_te_supported_packed_cp_layout() -> None:
     assert cfg.model.cp_comm_type == "a2a"
     assert cfg.model.num_query_groups == 2
     assert cfg.model.hybrid_layer_pattern == "|".join("*" * layers for layers in (9, 15, 15, 13))
+    assert cfg.train.micro_batch_size == 2
 
 
 def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
