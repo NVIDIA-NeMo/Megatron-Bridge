@@ -69,6 +69,7 @@ def test_muse_glimmer_recipe_contracts(
     }
     assert getattr(cfg.model, "pipeline_model_parallel_layout", None) is None
     assert cfg.model.context_parallel_size == context_parallel_size
+    assert getattr(cfg.model, "cp_comm_type", "p2p") == ("all_gather" if context_parallel_size > 1 else "p2p")
     assert cfg.model.sequence_parallel is True
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["core_attn"]

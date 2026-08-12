@@ -51,6 +51,8 @@ def _apply_model_and_data(
     if pipeline_parallel_size == 2:
         cfg.model.hybrid_layer_pattern = f"{'*' * 20}|{'*' * 32}"
     cfg.model.context_parallel_size = context_parallel_size
+    if context_parallel_size > 1:
+        cfg.model.cp_comm_type = "all_gather"
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
