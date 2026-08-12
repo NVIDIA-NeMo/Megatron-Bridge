@@ -55,7 +55,7 @@ def _apply_model_and_data(
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
-    cfg.model.recompute_vision_layers = True
+    cfg.model.recompute_vision_layers = False
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
@@ -67,7 +67,7 @@ def _apply_model_and_data(
     cfg.dataset.hf_processor_path = _MODEL_ID
     cfg.dataset.hf_processor_kwargs = {
         "revision": _MODEL_REVISION,
-        "max_image_tokens": 3_072,
+        "max_image_tokens": 256,
     }
     cfg.dataset.source.split = "train"
     cfg.dataset.source.load_kwargs = {"revision": _CORD_V2_REVISION}

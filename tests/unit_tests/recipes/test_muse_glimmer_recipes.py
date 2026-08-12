@@ -61,10 +61,10 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.model.pipeline_dtype is (torch.bfloat16 if pipeline_parallel_size > 1 else None)
     expected_pattern = f"{'*' * 20}|{'*' * 32}" if pipeline_parallel_size == 2 else "*" * 52
     assert getattr(cfg.model, "hybrid_layer_pattern", "*" * 52) == expected_pattern
-    assert cfg.model.recompute_vision_layers is True
+    assert cfg.model.recompute_vision_layers is False
     assert cfg.dataset.hf_processor_kwargs == {
         "revision": muse_glimmer_recipes._MODEL_REVISION,
-        "max_image_tokens": 3_072,
+        "max_image_tokens": 256,
     }
     assert getattr(cfg.model, "pipeline_model_parallel_layout", None) is None
     assert cfg.model.context_parallel_size == context_parallel_size
