@@ -245,7 +245,9 @@ class MuseGlimmerBridge(MegatronModelBridge):
             should_pad_vocab=False,
             seq_length=int(text_config.max_position_embeddings),
             parallel_output=True,
-            share_embeddings_and_output_weights=bool(hf_config.tie_word_embeddings),
+            share_embeddings_and_output_weights=bool(
+                getattr(hf_config, "tie_word_embeddings", text_config.tie_word_embeddings)
+            ),
             hybrid_layer_pattern="*" * int(text_config.num_hidden_layers),
             position_embedding_type="rope",
             rotary_percent=1.0,

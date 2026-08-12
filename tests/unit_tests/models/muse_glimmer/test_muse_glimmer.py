@@ -136,6 +136,17 @@ def test_config_conversion_uses_top_level_embedding_sharing_contract() -> None:
     assert model_config.share_embeddings_and_output_weights is True
 
 
+def test_config_conversion_falls_back_to_nested_embedding_sharing_contract() -> None:
+    """Released Muse configs without a top-level field retain text weight tying."""
+    hf_config = _tiny_hf_config()
+    del hf_config.tie_word_embeddings
+    hf_config.text_config.tie_word_embeddings = True
+
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(hf_config)
+
+    assert model_config.share_embeddings_and_output_weights is True
+
+
 def test_vision_config_contributes_to_runtime_flops() -> None:
     model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
     cfg = SimpleNamespace(model=model_config)
