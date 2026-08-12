@@ -145,8 +145,8 @@ def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigCont
         skip_getting_attention_mask_from_dataset=True,
     )
     cfg.train.train_iters = 50
-    cfg.train.global_batch_size = 256
-    cfg.train.micro_batch_size = 4
+    cfg.train.global_batch_size = 192
+    cfg.train.micro_batch_size = 3
     cfg.scheduler.lr_warmup_iters = 5
     cfg.scheduler.lr_decay_iters = 50
     cfg.ddp.overlap_grad_reduce = True

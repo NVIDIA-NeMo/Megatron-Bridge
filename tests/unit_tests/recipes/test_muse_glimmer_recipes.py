@@ -112,8 +112,8 @@ def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
     assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.train.train_iters == 50
-    assert cfg.train.global_batch_size == 256
-    assert cfg.train.micro_batch_size == 4
+    assert cfg.train.global_batch_size == 192
+    assert cfg.train.micro_batch_size == 3
     assert cfg.scheduler.lr_warmup_iters == 5
     assert cfg.scheduler.lr_decay_iters == 50
     assert cfg.ddp.overlap_grad_reduce is True
