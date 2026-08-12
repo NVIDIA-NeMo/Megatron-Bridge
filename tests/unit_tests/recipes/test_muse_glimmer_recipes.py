@@ -16,7 +16,7 @@ from megatron.bridge.perf_recipes.muse_glimmer.h100 import (
 from megatron.bridge.recipes.muse_glimmer.h100 import muse_glimmer as muse_glimmer_recipes
 from megatron.bridge.recipes.muse_glimmer.h100 import (
     muse_glimmer_30b_peft_8gpu_h100_bf16_config,
-    muse_glimmer_30b_pretrain_128gpu_h100_bf16_config,
+    muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config,
     muse_glimmer_30b_sft_32gpu_h100_bf16_config,
     muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config,
 )
@@ -42,7 +42,7 @@ def _offline_recipe_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         "global_batch_size",
     ),
     [
-        (muse_glimmer_30b_pretrain_128gpu_h100_bf16_config, 4096, 8, 2, 1, 1024),
+        (muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config, 4096, 8, 2, 1, 256),
         (muse_glimmer_30b_sft_32gpu_h100_bf16_config, 4096, 8, 2, 1, 8),
         (muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config, 8192, 8, 2, 2, 8),
         (muse_glimmer_30b_peft_8gpu_h100_bf16_config, 8192, 8, 1, 1, 8),
@@ -91,7 +91,7 @@ def test_muse_glimmer_recipe_contracts(
 
 
 def test_muse_glimmer_pretrain_owns_resume_checkpoint_contract() -> None:
-    cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
+    cfg = muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config()
 
     assert cfg.rng.seed == 1234
     assert cfg.scheduler.lr_warmup_iters == 40
@@ -166,6 +166,6 @@ def test_muse_glimmer_recipes_use_builder_model_config_api(monkeypatch: pytest.M
 
     monkeypatch.setattr(muse_glimmer_recipes, "AutoBridge", _AutoBridge)
 
-    cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
+    cfg = muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config()
 
     assert cfg.model is not None

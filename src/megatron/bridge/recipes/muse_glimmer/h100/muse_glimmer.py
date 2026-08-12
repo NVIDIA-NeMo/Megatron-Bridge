@@ -103,8 +103,8 @@ def _set_optimizer(cfg: ConfigContainer, *, max_lr: float, warmup_iters: int) ->
     cfg.scheduler.lr_decay_iters = 100
 
 
-def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a 100-step random-init multimodal pretraining config on 128 H100 GPUs."""
+def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigContainer:
+    """Return a 100-step random-init multimodal pretraining config on 32 H100 GPUs."""
     cfg = _sft_common_vlm()
     _apply_model_and_data(
         cfg,
@@ -117,7 +117,7 @@ def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.enable_in_batch_packing = False
     cfg.rng.seed = 1234
     cfg.train.train_iters = 100
-    cfg.train.global_batch_size = 1024
+    cfg.train.global_batch_size = 256
     _set_optimizer(cfg, max_lr=3e-4, warmup_iters=40)
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
@@ -203,7 +203,7 @@ def muse_glimmer_30b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
 
 __all__ = [
     "muse_glimmer_30b_peft_8gpu_h100_bf16_config",
-    "muse_glimmer_30b_pretrain_128gpu_h100_bf16_config",
+    "muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config",
 ]

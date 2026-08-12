@@ -16,14 +16,16 @@
 
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
-from megatron.bridge.recipes.muse_glimmer.h100 import muse_glimmer_30b_pretrain_128gpu_h100_bf16_config
+from megatron.bridge.recipes.muse_glimmer.h100 import (
+    muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer, MockGPTDatasetConfig
 
 
 def muse_glimmer_30b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Muse Glimmer dense decoder pretrain: 32× H100, BF16, TP=4 PP=4 CP=2."""
-    cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
+    cfg = muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config()
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 2
