@@ -251,14 +251,25 @@ jobs:
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MCORE_BRANCH: ${{ github.event.inputs.mcore_branch || 'unknown' }}
+          MCORE_REF: ${{ github.event.inputs.mcore_ref }}
+          MCORE_REPO: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}
+          TRIGGERED_BY: ${{ github.event.inputs.triggered_by }}
         run: |
-          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_ref }}"
-          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
-          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+          echo "🔄 Updating MCore submodule to commit: $MCORE_REF"
+          echo "📍 MCore repo: $MCORE_REPO"
+          echo "🎯 Triggered by: $TRIGGERED_BY"
 
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"; then
+            echo "MCore revision is not an approved NVIDIA branch head: $MCORE_REF" >&2
+            exit 1
+          fi
           cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
+          git fetch "$MCORE_REPO" "$MCORE_REF"
+          git checkout "$MCORE_REF"
+          test "$(git rev-parse HEAD)" = "$MCORE_REF"
 
       - name: Set environment for MCore testing
         if: ${{ github.event.inputs.mcore_ref != '' }}
@@ -267,7 +278,9 @@ jobs:
           echo "⚙️ MCore testing mode: skipping --locked flag because lockfile was generated with different MCore version"
 
       - name: Test CI cache keys
-        run: .github/scripts/test_cache_keys.sh
+        run: |
+          .github/scripts/test_cache_keys.sh
+          .github/scripts/test_docker_dependency_layers.sh
 
       - name: Check lint
         run: |
@@ -354,21 +367,41 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Record baseline MCore revision
+        run: |
+          BASELINE_MCORE_REF=$(git -C 3rdparty/Megatron-LM rev-parse HEAD)
+          if ! .github/scripts/validate_mcore_revision.sh \
+            https://github.com/NVIDIA/Megatron-LM.git "$BASELINE_MCORE_REF"; then
+            echo "Baseline MCore revision is not approved: $BASELINE_MCORE_REF" >&2
+            exit 1
+          fi
+          echo "BASELINE_MCORE_REF=$BASELINE_MCORE_REF" | tee -a "$GITHUB_ENV"
+
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MCORE_BRANCH: ${{ github.event.inputs.mcore_branch || 'unknown' }}
+          MCORE_REF: ${{ github.event.inputs.mcore_ref }}
+          MCORE_REPO: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}
+          TRIGGERED_BY: ${{ github.event.inputs.triggered_by }}
         run: |
-          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_ref }}"
-          echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
-          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
-          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+          echo "🔄 Updating MCore submodule to commit: $MCORE_REF"
+          echo "📌 MCore branch: $MCORE_BRANCH"
+          echo "📍 MCore repo: $MCORE_REPO"
+          echo "🎯 Triggered by: $TRIGGERED_BY"
 
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"; then
+            echo "MCore revision is not an approved NVIDIA branch head: $MCORE_REF" >&2
+            exit 1
+          fi
           cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_ref }}
-          git checkout ${{ github.event.inputs.mcore_ref }}
+          git fetch "$MCORE_REPO" "$MCORE_REF"
+          git checkout "$MCORE_REF"
 
           # Verify the checkout was successful
           ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_ref }}"
+          EXPECTED_COMMIT="$MCORE_REF"
 
           echo "✅ MCore submodule updated successfully"
           echo "Expected: ${EXPECTED_COMMIT}"
@@ -423,6 +456,10 @@ jobs:
             KEY="${CACHE_NAMESPACE}-${PR_NUMBER}"
           elif [[ -n "$MCORE_REF" ]]; then
             KEY="${CACHE_NAMESPACE}-mcore-${MCORE_REF:0:12}-${MBRIDGE_SHA:0:12}"
+            # MCore-triggered runs share the baseline cache so the expensive
+            # dependency layers (DeepEP, uv sync ~92 min) are reused across
+            # triggers with different MCORE_REF. The image tag stays unique.
+            CACHE_KEY="$BASELINE_KEY"
           elif [[ "$REF" == "refs/heads/$BASE_REF" || "$EVENT_NAME" == "schedule" ]]; then
             KEY="$BASELINE_KEY"
           else
@@ -437,9 +474,14 @@ jobs:
             BASELINE_KEY="${BASELINE_KEY:0:83}-$(printf '%s' "$BASELINE_KEY" | sha256sum | cut -c1-16)"
           fi
 
+          if [[ -z "${CACHE_KEY:-}" ]]; then
+            CACHE_KEY="$KEY"
+          fi
+
           echo "key=$KEY" | tee -a "$GITHUB_OUTPUT"
           echo "baseline=$BASELINE_KEY" | tee -a "$GITHUB_OUTPUT"
-          echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
+          echo "cache_key=$CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+          echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${CACHE_KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
 
       - name: Select cache donor
         id: cache_from
@@ -447,15 +489,9 @@ jobs:
         env:
           BASELINE_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.baseline }}-buildcache
           LEGACY_CACHE: ${{ matrix.registry }}/megatron-bridge:main-buildcache
-          RUN_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache
+          RUN_CACHE: ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.cache_key }}-buildcache
         run: |
-          DONOR_CACHE="$RUN_CACHE"
-          if ! docker buildx imagetools inspect "$DONOR_CACHE" >/dev/null 2>&1; then
-            DONOR_CACHE="$BASELINE_CACHE"
-          fi
-          if ! docker buildx imagetools inspect "$DONOR_CACHE" >/dev/null 2>&1; then
-            DONOR_CACHE="$LEGACY_CACHE"
-          fi
+          DONOR_CACHE=$(.github/scripts/select_cache_donor.sh "$RUN_CACHE" "$BASELINE_CACHE" "$LEGACY_CACHE")
           echo "donor=$DONOR_CACHE" | tee -a "$GITHUB_OUTPUT"
 
       - name: Compute platform
@@ -476,16 +512,17 @@ jobs:
           platforms: ${{ steps.platform.outputs.platforms }}
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
+            # Test images run the diffusion unit job; install its hash-locked codecs while building as root.
+            INSTALL_DIFFUSION_DEPS=true
           cache-from: type=registry,ref=${{ steps.cache_from.outputs.donor }},mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
             ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
             ${{ matrix.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
-          secrets: |
-            GH_TOKEN=${{ secrets.PAT }}
 
   cicd-import-check:
     if: |
@@ -541,13 +578,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Core
           timeout: 18
           is_unit_test: "true"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
@@ -575,13 +619,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Diffusion
           timeout: 18
           is_unit_test: "true"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
@@ -677,13 +728,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -718,13 +776,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -759,13 +824,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -790,6 +862,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -797,7 +876,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -896,6 +975,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -907,7 +993,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -945,6 +1031,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -956,7 +1049,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -994,6 +1087,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -1005,7 +1105,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1031,6 +1131,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -1042,7 +1149,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1137,10 +1244,17 @@ jobs:
         || needs.configure.outputs.perf_scripts_only == 'true'
       )
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: Generate fake coverage report
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
-          github-token: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,

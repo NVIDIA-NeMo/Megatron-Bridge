@@ -202,6 +202,84 @@ def test_cp_split_attention_mask_slices_query_and_key_positions():
     assert torch.equal(rank0_mask, expected)
 
 
+def test_packed_cp_forward_partitions_each_logical_row(monkeypatch):
+    """Packed THD tensors must use MCore's per-row CP token ordering."""
+    from types import SimpleNamespace
+
+    from megatron.core.packed_seq_params import PackedSeqParams
+
+    from megatron.bridge.models.kimi_vl import modeling_kimi_k25_vl as kimi_model
+    from megatron.bridge.training.utils import packed_seq_utils
+
+    class _ProcessGroup:
+        def rank(self):
+            return 0
+
+        def size(self):
+            return 2
+
+    class _LanguageModel:
+        def __init__(self):
+            self.forward_kwargs = None
+
+        def embedding(self, input_ids, position_ids):  # noqa: ARG002
+            return input_ids.transpose(0, 1).unsqueeze(-1).float()
+
+        def forward(self, **kwargs):
+            self.forward_kwargs = kwargs
+            return torch.zeros_like(kwargs["labels"], dtype=torch.float32)
+
+    def _partition_each_row(batch, *, is_hybrid_cp, cp_group):
+        assert is_hybrid_cp is False
+        assert cp_group.size() == 2
+        boundaries = batch["cu_seqlens"].squeeze(0).tolist()
+        indices = []
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            chunk = (end - start) // (2 * cp_group.size())
+            indices.extend(range(start, start + chunk))
+            indices.extend(range(end - chunk, end))
+        result = dict(batch)
+        result["tokens"] = batch["tokens"].index_select(1, torch.tensor(indices))
+        return result
+
+    cp_group = _ProcessGroup()
+    monkeypatch.setattr(kimi_model.parallel_state, "get_context_parallel_world_size", lambda: cp_group.size())
+    monkeypatch.setattr(kimi_model.parallel_state, "get_context_parallel_rank", cp_group.rank)
+    monkeypatch.setattr(kimi_model.parallel_state, "get_context_parallel_group", lambda: cp_group)
+    monkeypatch.setattr(packed_seq_utils, "get_batch_on_this_cp_rank", _partition_each_row)
+
+    language_model = _LanguageModel()
+    model = SimpleNamespace(
+        pre_process=True,
+        language_model=language_model,
+        config=SimpleNamespace(sequence_parallel=False),
+    )
+    positions = torch.arange(12).unsqueeze(0)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=torch.tensor([0, 4, 12], dtype=torch.int32),
+        cu_seqlens_kv=torch.tensor([0, 4, 12], dtype=torch.int32),
+        max_seqlen_q=8,
+        max_seqlen_kv=8,
+    )
+
+    kimi_model.KimiK25VLModel.forward(
+        model,
+        input_ids=positions,
+        position_ids=positions,
+        labels=positions,
+        loss_mask=positions.float() + 100,
+        packed_seq_params=packed_seq_params,
+    )
+
+    expected_indices = torch.tensor([0, 3, 4, 5, 10, 11])
+    assert language_model.forward_kwargs is not None
+    assert torch.equal(language_model.forward_kwargs["decoder_input"].squeeze(), expected_indices.float())
+    assert torch.equal(language_model.forward_kwargs["labels"].squeeze(), expected_indices)
+    assert torch.equal(language_model.forward_kwargs["position_ids"].squeeze(), expected_indices)
+    assert torch.equal(language_model.forward_kwargs["loss_mask"].squeeze(), expected_indices.float() + 100)
+
+
 # ===========================================================================
 # Pre-expanded mode: num_placeholders == total_image_features
 # ===========================================================================

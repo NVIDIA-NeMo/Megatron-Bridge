@@ -25,7 +25,7 @@ from megatron.bridge.data.builders import (
     NemotronOmniEnergonTaskEncoderConfig,
 )
 from megatron.bridge.data.collators.registry import resolve_model_collate
-from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_collate_fn
+from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_expanded_collate_fn
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -46,6 +46,7 @@ _RECIPE_FUNCS = [
 
 class _FakeModelCfg:
     dynamic_resolution = True
+    has_sound = True
 
     def finalize(self):
         return None
@@ -145,13 +146,41 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
+    assert cfg.dataset.trust_remote_code is True
     assert cfg.dataset.source.dataset_name == "cord_v2"
-    assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_collate_fn
+    assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_expanded_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.model.temporal_patch_dim == 1
+    assert cfg.model.has_sound is False
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
+
+
+def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
+    cfg = _build_config(
+        _h100_recipe_module.nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.dataset.trust_remote_code is True
+    assert cfg.model.seq_length == 8192
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.train.global_batch_size == 64
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.main_params_dtype == torch.float16
+    assert cfg.optimizer.store_param_remainders is True
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.dataset.enable_in_batch_packing is True
+    assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 8
 
 
 def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
@@ -159,6 +188,7 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
 
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.dataset.trust_remote_code is True
     assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.peft is not None
     assert cfg.peft.target_modules == [
@@ -173,6 +203,7 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None
     assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.has_sound is False
     assert cfg.model.freeze_sound_projection is True
 
 
@@ -189,9 +220,11 @@ def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder_config(fake_process
     assert cfg.dataset.task_encoder.num_mel_bins == 128
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.dataset.task_encoder.patch_dim == 16
+    assert cfg.dataset.task_encoder.collapse_image_tokens is False
     assert cfg.model.temporal_patch_dim == 2
     assert cfg.model.separate_video_embedder is True
     assert cfg.model.temporal_ckpt_compat is True
+    assert cfg.model.has_sound is True
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
 
@@ -216,4 +249,5 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None
     assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.has_sound is True
     assert cfg.model.freeze_sound_projection is True

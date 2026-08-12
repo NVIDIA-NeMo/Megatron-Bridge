@@ -35,6 +35,7 @@ from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 from vlm_generation_utils import (
+    decode_generated_tokens,
     pad_input_ids_to_tp_multiple,
     patch_kimi_vision_processor,
     process_image_inputs,
@@ -45,7 +46,12 @@ from vlm_generation_utils import (
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import (
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+    print_rank_last,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +150,7 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
 
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
+    maybe_initialize_distributed()
     tp = args.tp
     pp = args.pp
     ep = args.ep
@@ -296,6 +303,7 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Greedy generation loop
     # ------------------------------------------------------------------
+    prompt_length = input_ids_raw.size(1)
     generated_ids = input_ids_raw.clone()
     stop_tokens = [tokenizer.eos_token_id]
 
@@ -378,7 +386,7 @@ def main(args) -> None:
             if next_token_ids.item() in stop_tokens:
                 break
 
-    generated_text = tokenizer.decode(list(generated_ids[0]))
+    generated_text = decode_generated_tokens(tokenizer, generated_ids, prompt_length)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")

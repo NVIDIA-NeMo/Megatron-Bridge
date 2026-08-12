@@ -72,6 +72,22 @@ get_current_commit() {
     git -C "$SUBMODULE_PATH" rev-parse HEAD 2>/dev/null || echo "unknown"
 }
 
+ensure_commit() {
+    local target_name="$1"
+    local target_commit="$2"
+
+    if git -C "$SUBMODULE_PATH" cat-file -e "${target_commit}^{commit}" 2>/dev/null; then
+        return 0
+    fi
+
+    log "Pinned $target_name commit ${target_commit:0:12} is not available locally. Fetching from origin..."
+    git -C "$SUBMODULE_PATH" fetch --no-tags origin "$target_commit" \
+        || err "Failed to fetch $target_name commit $target_commit from origin"
+
+    git -C "$SUBMODULE_PATH" cat-file -e "${target_commit}^{commit}" 2>/dev/null \
+        || err "Fetched from origin, but $target_name commit $target_commit is still unavailable"
+}
+
 do_status() {
     check_submodule
     local current
@@ -106,6 +122,7 @@ do_switch() {
     log "Before: ${current:0:12}"
     log "Switching to $target_name commit: ${target_commit:0:12}"
 
+    ensure_commit "$target_name" "$target_commit"
     git -C "$SUBMODULE_PATH" checkout "$target_commit" || err "Failed to checkout $target_commit"
 
     log "After:  $(get_current_commit | cut -c1-12)"

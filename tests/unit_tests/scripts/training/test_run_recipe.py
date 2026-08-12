@@ -66,6 +66,7 @@ def _load_module():
     pretraining_datasets = {"mock", "megatron-indexed"}
     dataset_names = {
         *pretraining_datasets,
+        "energon",
         "squad",
         "tulu3",
         "openmathinstruct2",
@@ -89,9 +90,13 @@ def _load_module():
             split=None,
         )
     )
-    dataset_utils.dataset_train_mode = Mock(
-        side_effect=lambda dataset: "pretrain" if dataset.dataset_name in pretraining_datasets else "finetune"
-    )
+
+    def dataset_train_mode(dataset):
+        if dataset.dataset_name == "energon":
+            return None
+        return "pretrain" if dataset.dataset_name in pretraining_datasets else "finetune"
+
+    dataset_utils.dataset_train_mode = Mock(side_effect=dataset_train_mode)
     config_module = types.ModuleType("megatron.bridge.training.config")
     config_module.ConfigContainer = object
     stub_modules = {
@@ -213,6 +218,27 @@ def test_model_adapter_modes_select_peft_recipe_and_scheme(mode):
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "finetune"
 
 
+@pytest.mark.parametrize(
+    ("mode", "recipe_name", "peft_scheme"),
+    [
+        ("pretrain", "exaone_moe_pretrain_config", None),
+        ("sft", "exaone_moe_sft_config", None),
+        ("lora", "exaone_moe_peft_config", "lora"),
+        ("dora", "exaone_moe_peft_config", "dora"),
+    ],
+)
+def test_exaone_moe_short_model_name_selects_k_exaone_2_recipe(mode, recipe_name, peft_scheme):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+
+    module.main(["--model", "exaone_moe", "--mode", mode])
+
+    handles.recipe_runner.load_recipe.assert_called_once_with(
+        recipe_name,
+        peft_scheme=peft_scheme,
+    )
+
+
 def test_full_recipe_uses_library_recipe_and_default_llm_step():
     module, handles = _load_module()
     handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
@@ -235,9 +261,9 @@ def test_kimi_supported_pp_vp_override_refreshes_pipeline_layout():
             pipeline_model_parallel_size=16,
             virtual_pipeline_model_parallel_size=None,
             pipeline_model_parallel_layout=default_layout,
-            _pipeline_model_parallel_layout_builder=lambda pp, vp: overridden_layout
-            if (pp, vp) == (4, 1)
-            else default_layout,
+            _pipeline_model_parallel_layout_builder=lambda pp, vp: (
+                overridden_layout if (pp, vp) == (4, 1) else default_layout
+            ),
         )
     )
     handles.recipe_runner.load_recipe.return_value = config
@@ -284,6 +310,8 @@ def test_kimi_supported_pp_vp_override_refreshes_pipeline_layout():
     [
         ("qwen25_vl_7b_sft_config", "sft", "vlm_step"),
         ("qwen3_vl_8b_sft_config", "sft", "qwen3_vl_step"),
+        ("qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config", "lora", "vlm_step"),
+        ("qwen3_vl_8b_peft_energon_config", "lora", "vlm_step"),
         ("qwen2_audio_7b_sft_config", "sft", "audio_lm_step"),
         ("flux_12b_pretrain_config", "pretrain", "flux_step"),
     ],
@@ -336,6 +364,17 @@ def test_full_recipe_auto_detects_benchmark_recipe(monkeypatch):
         dryrun_world_size=16,
         dump_environment=False,
     )
+
+
+def test_main_resolves_relative_paths_from_repository_root(monkeypatch):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+    change_directory = Mock()
+    monkeypatch.setattr(module.os, "chdir", change_directory)
+
+    module.main(["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"])
+
+    change_directory.assert_called_once_with(module.REPO_ROOT)
 
 
 @pytest.mark.parametrize(
@@ -501,25 +540,179 @@ def test_benchmark_dry_run_accepts_config_overrides(monkeypatch):
     )
 
 
-def test_benchmark_recipe_rejects_noncanonical_world_size(monkeypatch):
+def test_benchmark_recipe_weak_scales_noncanonical_world_size(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "8")
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
-    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
-        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False)
+    config = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+        ),
+        train=SimpleNamespace(global_batch_size=192),
+    )
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--recipe",
+            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "--mode",
+            "pretrain",
+        ]
     )
 
-    with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
+    assert config.train.global_batch_size == 24
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+
+
+def test_benchmark_recipe_weak_scales_by_data_parallel_ratio_after_topology_override(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    config = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=None,
+        ),
+        train=SimpleNamespace(global_batch_size=192),
+    )
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_overrides(recipe, overrides):
+        assert "model.tensor_model_parallel_size=1" in overrides
+        recipe.model.tensor_model_parallel_size = 1
+        return recipe
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
+
+    module.main(
+        [
+            "--recipe",
+            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "--mode",
+            "pretrain",
+            "--tensor_model_parallel_size",
+            "1",
+        ]
+    )
+
+    # Canonical DP is 64 / TP2 = 32; requested DP is 8 / TP1 = 8.
+    assert config.train.global_batch_size == 48
+
+
+def test_benchmark_recipe_rejects_world_size_incompatible_with_expert_grid(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+            expert_tensor_parallel_size=1,
+        ),
+        train=SimpleNamespace(global_batch_size=1280),
+    )
+
+    with pytest.raises(ValueError, match=r"expert.*8 GPUs.*ETP \* EP \* PP.*1 \* 8 \* 4 = 32"):
         module.main(
             [
                 "--recipe",
-                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "gpt_oss_120b_pretrain_64gpu_h100_bf16_config",
                 "--mode",
                 "pretrain",
             ]
         )
 
-    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+def test_benchmark_recipe_explicit_global_batch_size_disables_weak_scaling(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    config = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+        ),
+        train=SimpleNamespace(global_batch_size=192),
+    )
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_overrides(recipe, overrides):
+        assert "train.global_batch_size=7" in overrides
+        recipe.train.global_batch_size = 7
+        return recipe
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
+
+    module.main(
+        [
+            "--recipe",
+            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "--mode",
+            "pretrain",
+            "--global_batch_size",
+            "7",
+        ]
+    )
+
+    assert config.train.global_batch_size == 7
+
+
+def test_benchmark_recipe_rejects_world_size_incompatible_with_model_parallelism(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "7")
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+        ),
+        train=SimpleNamespace(global_batch_size=192),
+    )
+
+    with pytest.raises(ValueError, match=r"7 GPUs.*TP \* PP \* CP.*2 \* 1 \* 1"):
+        module.main(
+            [
+                "--recipe",
+                "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+                "--mode",
+                "pretrain",
+            ]
+        )
+
+
+def test_benchmark_recipe_rejects_fractional_weak_scaled_global_batch_size(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+        ),
+        train=SimpleNamespace(global_batch_size=190),
+    )
+
+    with pytest.raises(ValueError, match="does not produce an integer global batch size"):
+        module.main(
+            [
+                "--recipe",
+                "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+                "--mode",
+                "pretrain",
+            ]
+        )
 
 
 def test_benchmark_recipe_accepts_user_selected_per_node_topology(monkeypatch):
@@ -735,6 +928,77 @@ def test_local_dataset_names_use_presets_then_apply_config_overrides(public_name
 
     handles.build_dataset_config.assert_called_once_with(config, public_name)
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, options)
+
+
+def test_energon_uses_requested_pretrain_mode_and_qwen_step():
+    module, handles = _load_module()
+    config = SimpleNamespace()
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+            "--dataset",
+            "energon",
+            "--step-func",
+            "qwen3_vl_step",
+            "dataset.path=/data/datacomp-energon",
+        ]
+    )
+
+    handles.build_dataset_config.assert_called_once_with(config, "energon")
+    handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
+    assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
+
+
+def test_qwen35_native_energon_packing_defaults_to_vlm_step():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        dataset=SimpleNamespace(packing_buffer_size=8),
+    )
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    handles.recipe_runner.load_forward_step.assert_called_once_with("vlm_step", mode="pretrain")
+
+
+def test_explicit_step_overrides_qwen35_native_energon_default():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        dataset=SimpleNamespace(packing_buffer_size=8),
+    )
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
+            "--mode",
+            "pretrain",
+            "--step-func",
+            "qwen3_vl_step",
+        ]
+    )
+
+    handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
+
+
+@pytest.mark.parametrize("mode", ["pretrain", "sft", "lora", "dora"])
+def test_energon_is_compatible_with_all_training_modes(mode):
+    module, handles = _load_module()
+    config = SimpleNamespace()
+
+    assert module._apply_dataset(config, SimpleNamespace(dataset="energon", mode=mode)) is config
+    handles.build_dataset_config.assert_called_once_with(config, "energon")
 
 
 @pytest.mark.parametrize(

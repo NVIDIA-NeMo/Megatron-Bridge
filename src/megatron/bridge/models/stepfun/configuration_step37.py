@@ -88,6 +88,9 @@ class Step37TextConfig(Step35Config):
 
     model_type = "step3p5"
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+
 
 class Step37Config(PretrainedConfig):
     """Top-level HF-style config for Step3.7 (the multimodal wrapper)."""

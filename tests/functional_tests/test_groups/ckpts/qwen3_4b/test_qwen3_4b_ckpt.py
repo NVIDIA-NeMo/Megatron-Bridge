@@ -17,6 +17,7 @@
 import os
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 from torch.distributed.run import main as torchrun_main
@@ -82,7 +83,7 @@ class TestQwen3Ckpt:
             [
                 "torchrun",
                 "--nproc_per_node=2",
-                "/opt/Megatron-Bridge/3rdparty/Megatron-LM/pretrain_gpt.py",
+                str(Path(__file__).resolve().parents[5] / "3rdparty/Megatron-LM/pretrain_gpt.py"),
                 "--init-method-std",
                 "0.014",
                 "--disable-bias-linear",

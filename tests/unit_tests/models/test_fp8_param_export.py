@@ -352,6 +352,7 @@ class TestFp8ParamExport:
             registry_factory=lambda: MegatronMappingRegistry(MappingT()),
             pp_rank=1,
             pp_size=2,
+            detect_fp8=lambda *_a, **_k: {gname: 1},
         )
 
         model = SimpleNamespace(
@@ -364,6 +365,7 @@ class TestFp8ParamExport:
         assert len(tasks) == 2
         assert tasks[0].megatron_module is None and isinstance(tasks[0].mapping, MappingT)
         assert tasks[1].megatron_module is None and isinstance(tasks[1].mapping, _HFNameSuffixMapping)
+        assert tasks[1].mapping.scale_block_size == 1
 
     def test_build_export_fp8_tasks_rejects_missing_mapping_on_remote_pp_rank(self, monkeypatch):
         bridge = DummyBridge()

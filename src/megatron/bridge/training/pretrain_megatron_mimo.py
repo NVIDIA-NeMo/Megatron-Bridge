@@ -30,7 +30,7 @@ from typing import Callable, Optional
 import torch.distributed as dist
 
 from megatron.bridge.training.config import ConfigContainer, megatron_mimo_runtime_config_update
-from megatron.bridge.training.pretrain import _maybe_destroy_process_group
+from megatron.bridge.training.pretrain import _cleanup_after_pretrain_failure, _maybe_destroy_process_group
 from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train
@@ -75,33 +75,37 @@ def pretrain_megatron_mimo(
     state = global_state if global_state is not None else GlobalState()
     state.cfg = cfg
 
-    # Setup: model, optimizer, schedulers, MPU bridging, checkpoint load, data iterators.
-    setup_output = setup_megatron_mimo(
-        state=state,
-        build_data_iterators_fn=build_data_iterators_fn,
-    )
+    try:
+        # Setup: model, optimizer, schedulers, MPU bridging, checkpoint load, data iterators.
+        setup_output = setup_megatron_mimo(
+            state=state,
+            build_data_iterators_fn=build_data_iterators_fn,
+        )
 
-    logger.info(f"Rank {dist.get_rank()}: Starting training loop")
+        logger.info(f"Rank {dist.get_rank()}: Starting training loop")
 
-    # Run training loop
-    train_megatron_mimo(
-        forward_step_func=forward_step_func,
-        model=setup_output.model,
-        optimizer=setup_output.optimizer,
-        schedulers=setup_output.schedulers,
-        train_data_iterator=setup_output.train_data_iterator,
-        valid_data_iterator=setup_output.valid_data_iterator,
-        global_state=setup_output.global_state,
-        megatron_mimo_infra=setup_output.megatron_mimo_infra,
-        multimodule_communicator=setup_output.multimodule_communicator,
-        checkpoint_manager=setup_output.checkpoint_manager,
-        multimodule_pg_collection=setup_output.multimodule_pg_collection,
-        module_to_grid_tuple=setup_output.module_to_grid_tuple,
-    )
+        # Run training loop
+        train_megatron_mimo(
+            forward_step_func=forward_step_func,
+            model=setup_output.model,
+            optimizer=setup_output.optimizer,
+            schedulers=setup_output.schedulers,
+            train_data_iterator=setup_output.train_data_iterator,
+            valid_data_iterator=setup_output.valid_data_iterator,
+            global_state=setup_output.global_state,
+            megatron_mimo_infra=setup_output.megatron_mimo_infra,
+            multimodule_communicator=setup_output.multimodule_communicator,
+            checkpoint_manager=setup_output.checkpoint_manager,
+            multimodule_pg_collection=setup_output.multimodule_pg_collection,
+            module_to_grid_tuple=setup_output.module_to_grid_tuple,
+        )
 
-    # Post-training cleanup: finalize async saves, shut down NVRx/FT, flush
-    # loggers, destroy GlobalState (which calls destroy_model_parallel internally).
-    _finish_train(setup_output.global_state, setup_output.checkpoint_manager)
+        # Post-training cleanup: finalize async saves, shut down NVRx/FT, flush
+        # loggers, destroy GlobalState (which calls destroy_model_parallel internally).
+        _finish_train(setup_output.global_state, setup_output.checkpoint_manager)
+    except BaseException:
+        _cleanup_after_pretrain_failure(state, should_destroy_process_group)
+        raise
 
     _maybe_destroy_process_group(should_destroy_process_group)
 

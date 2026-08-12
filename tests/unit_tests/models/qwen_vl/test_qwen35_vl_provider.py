@@ -293,6 +293,9 @@ class TestQwen35VLMoEModelProvider:
         assert provider.mrope_section == [11, 11, 10]
         assert provider.bos_token_id == 248045
         assert provider.eos_token_id == 248046
+        assert provider.vision_cuda_graph_impl == "none"
+        assert provider.vision_cuda_graph_scope == []
+        assert provider.max_vision_cuda_graph_seq_length is None
 
     def test_inherits_from_gpt_provider(self):
         assert issubclass(Qwen35VLMoEModelProvider, GPTModelProvider)
