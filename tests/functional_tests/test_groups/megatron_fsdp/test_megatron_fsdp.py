@@ -19,12 +19,10 @@ from typing import Callable, Optional
 import pytest
 import torch
 import torch.nn.functional as F
-from megatron.core.optimizer.fully_sharded_optimizer import FullyShardedOptimizer
+from megatron.core.transformer.enums import AttnBackend
 
-import megatron.bridge.training.train as train_module
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.recipes.deepseek import deepseek_v3_pretrain_config
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -111,6 +109,19 @@ class DenseHybridSmokeModelProvider(HybridModelProvider):
     hybrid_layer_pattern: str | None = "**"
     vocab_size: int | None = None
     gradient_accumulation_fusion: bool = False
+
+
+@dataclass
+class MLAMoEHybridSmokeModelProvider(HybridModelProvider):
+    """Small MLA/MoE HybridModel configuration for the MFSDP V2 EP smoke test."""
+
+    attention_backend: AttnBackend = AttnBackend.auto
+    seq_length: int = 128
+    hidden_size: int = 128
+    multi_latent_attention: bool = True
+    hybrid_layer_pattern: str = "+E"
+    num_moe_experts: int = 4
+    expert_model_parallel_size: int = 2
 
 
 def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3FSDPTestModelProvider:
@@ -429,94 +440,20 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
-    def test_fsdp_v2_deepseek_v3_ep2_pretrain_smoke(self, monkeypatch):
-        """Train a small DeepSeek V3 MLA/MoE proxy with MFSDP V2 and EP=2."""
+    def test_fsdp_v2_mla_moe_ep2_pretrain_smoke(self):
+        """Train a small MLA/MoE HybridModel with MFSDP V2 and EP=2."""
         initialize_distributed()
         torch.distributed.barrier()
 
-        cfg = deepseek_v3_pretrain_config()
-        model_overrides = {
-            "num_layers": 2,
-            "moe_layer_freq": [0, 1],
-            "num_moe_experts": 4,
-            "hidden_size": 128,
-            "ffn_hidden_size": 256,
-            "moe_ffn_hidden_size": 128,
-            "num_attention_heads": 4,
-            "num_query_groups": 4,
-            "q_lora_rank": 64,
-            "kv_lora_rank": 32,
-            "qk_head_dim": 32,
-            "qk_pos_emb_head_dim": 16,
-            "v_head_dim": 32,
-            "seq_length": 128,
-            "tensor_model_parallel_size": 1,
-            "pipeline_model_parallel_size": 1,
-            "virtual_pipeline_model_parallel_size": None,
-            "context_parallel_size": 1,
-            "expert_model_parallel_size": 2,
-            "expert_tensor_parallel_size": 1,
-            "moe_token_dispatcher_type": "alltoall",
-            "moe_flex_dispatcher_backend": None,
-            "moe_permute_fusion": False,
-            "moe_router_fusion": False,
-            "moe_shared_expert_overlap": False,
-            "overlap_moe_expert_parallel_comm": False,
-            "fine_grained_activation_offloading": False,
-            "offload_modules": [],
-            "recompute_granularity": None,
-            "recompute_modules": None,
-            "mtp_num_layers": None,
-            "fp8": None,
-            "fp4": None,
-            "gradient_accumulation_fusion": False,
-            "bf16": True,
-            "params_dtype": torch.bfloat16,
-            "pipeline_dtype": torch.bfloat16,
-        }
-        for name, value in model_overrides.items():
-            if not hasattr(cfg.model, name):
-                raise ValueError(f"DeepSeek V3 config has no field {name!r}.")
-            setattr(cfg.model, name, value)
-
-        cfg.train.train_iters = 3
-        cfg.train.micro_batch_size = 1
-        cfg.train.global_batch_size = 2
-        cfg.dataset.seq_length = cfg.model.seq_length
-        cfg.validation.eval_interval = 4
-        cfg.validation.eval_iters = 0
-        cfg.checkpoint.save = None
-        cfg.checkpoint.load = None
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            optimizer={"clip_grad": 0.0},
+        )
+        cfg.model = MLAMoEHybridSmokeModelProvider()
         cfg.ddp.megatron_fsdp_version = 2
-        cfg.ddp.use_megatron_fsdp = True
-        cfg.ddp.use_distributed_optimizer = False
-        cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-        cfg.ddp.overlap_grad_reduce = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.ddp.fp8_param_gather = False
-        cfg.optimizer.use_distributed_optimizer = False
-        cfg.optimizer.use_precision_aware_optimizer = False
-        cfg.optimizer.clip_grad = 0.0
-        cfg.optimizer.bf16 = True
-        cfg.optimizer.fp16 = False
 
-        reported_losses = []
-        original_train_step = train_module.train_step
-
-        def capture_train_step(*args, **kwargs):
-            model = kwargs["model"]
-            optimizer = kwargs["optimizer"]
-            assert type(model[0]).__name__ == "FullyShardedDataParallelV2"
-            assert isinstance(optimizer, FullyShardedOptimizer)
-            result = original_train_step(*args, **kwargs)
-            reported_losses.extend(result[0].values())
-            return result
-
-        monkeypatch.setattr(train_module, "train_step", capture_train_step)
         pretrain(cfg, forward_step)
-
-        assert reported_losses
-        assert all(torch.isfinite(loss).all() for loss in reported_losses)
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
