@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 import torch
-from megatron.core.extensions.transformer_engine import TEColumnParallelLinear, TEDotProductAttention
+from megatron.core.extensions.transformer_engine import TEColumnParallelLinear, TEDotProductAttention, TENorm
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear
@@ -159,16 +159,17 @@ def test_hybrid_attention_layers_use_full_transformer_flops() -> None:
 
 
 @pytest.mark.parametrize(
-    ("transformer_impl", "expected_qkv", "expected_attention"),
+    ("transformer_impl", "expected_qkv", "expected_attention", "expected_norm"),
     [
-        ("local", ColumnParallelLinear, DotProductAttention),
-        ("transformer_engine", TEColumnParallelLinear, TEDotProductAttention),
+        ("local", ColumnParallelLinear, DotProductAttention, MuseGlimmerCenteredRMSNorm),
+        ("transformer_engine", TEColumnParallelLinear, TEDotProductAttention, TENorm),
     ],
 )
 def test_decoder_stack_honors_transformer_backend(
     transformer_impl: str,
     expected_qkv: type,
     expected_attention: type,
+    expected_norm: type,
 ) -> None:
     config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).transformer
     config.transformer_impl = transformer_impl
@@ -178,6 +179,8 @@ def test_decoder_stack_honors_transformer_backend(
 
     assert attention.linear_qkv is expected_qkv
     assert attention.core_attention is expected_attention
+    assert stack_spec.submodules.attention_layer.submodules.input_layernorm is expected_norm
+    assert stack_spec.submodules.attention_layer.submodules.pre_mlp_layernorm is expected_norm
 
 
 def test_autobridge_selects_string_registration_and_serializes_config() -> None:

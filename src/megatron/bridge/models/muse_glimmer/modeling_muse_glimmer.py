@@ -124,12 +124,19 @@ class MuseGlimmerWeightlessRMSNorm(nn.Module):
         return _rms_norm(hidden_states, self.eps)
 
 
+def _centered_rms_norm_cls(config: TransformerConfig) -> type[nn.Module]:
+    """Select the backend-native centered RMSNorm when it supports Muse semantics."""
+    if config.transformer_impl == "local":
+        return MuseGlimmerCenteredRMSNorm
+    return get_backend(config.transformer_impl).layer_norm(rms_norm=True)
+
+
 class MuseGlimmerSelfAttention(SelfAttention):
     """MCore self-attention with Muse's residual-branch post norm."""
 
     def __init__(self, config: TransformerConfig, *args: Any, **kwargs: Any) -> None:
         super().__init__(config, *args, **kwargs)
-        self.post_layernorm = MuseGlimmerCenteredRMSNorm(
+        self.post_layernorm = _centered_rms_norm_cls(config)(
             config,
             config.hidden_size,
             eps=float(getattr(config, "post_norm_epsilon", 1e-8)),
@@ -157,7 +164,7 @@ class MuseGlimmerMLP(MLP):
             ffn_hidden_size=ffn_hidden_size,
             **kwargs,
         )
-        self.post_layernorm = MuseGlimmerCenteredRMSNorm(
+        self.post_layernorm = _centered_rms_norm_cls(config)(
             config,
             config.hidden_size,
             eps=float(getattr(config, "post_norm_epsilon", 1e-8)),
@@ -171,13 +178,14 @@ class MuseGlimmerMLP(MLP):
 def get_muse_glimmer_hybrid_stack_spec(config: TransformerConfig) -> ModuleSpec:
     """Build the native Hybrid stack spec used by the Muse decoder."""
     backend = get_backend(config.transformer_impl)
+    centered_rms_norm = _centered_rms_norm_cls(config)
     return ModuleSpec(
         module=HybridStack,
         submodules=HybridStackSubmodules(
             attention_layer=ModuleSpec(
                 module=TransformerLayer,
                 submodules=TransformerLayerSubmodules(
-                    input_layernorm=MuseGlimmerCenteredRMSNorm,
+                    input_layernorm=centered_rms_norm,
                     self_attention=ModuleSpec(
                         module=MuseGlimmerSelfAttention,
                         params={"attn_mask_type": AttnMaskType.causal},
@@ -190,7 +198,7 @@ def get_muse_glimmer_hybrid_stack_spec(config: TransformerConfig) -> ModuleSpec:
                         ),
                     ),
                     self_attn_bda=get_bias_dropout_add,
-                    pre_mlp_layernorm=MuseGlimmerCenteredRMSNorm,
+                    pre_mlp_layernorm=centered_rms_norm,
                     mlp=functools.partial(
                         MuseGlimmerMLP.as_mlp_submodule,
                         submodules=MLPSubmodules(
