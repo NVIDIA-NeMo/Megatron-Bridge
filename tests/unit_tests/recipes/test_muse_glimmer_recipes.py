@@ -108,7 +108,7 @@ def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
 
     assert isinstance(cfg.dataset, MockGPTDatasetConfig)
     assert cfg.dataset.seq_length == 4096
-    assert cfg.model.hybrid_layer_pattern == "|".join(["*" * 13] * 4)
+    assert cfg.model.hybrid_layer_pattern == "|".join("*" * layers for layers in (9, 15, 15, 13))
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is True
@@ -146,8 +146,8 @@ def test_muse_glimmer_fp8_performance_recipe_uses_current_scaling() -> None:
     assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.context_parallel_size == 2
-    assert cfg.train.global_batch_size == 128
-    assert cfg.train.micro_batch_size == 4
+    assert cfg.train.global_batch_size == 192
+    assert cfg.train.micro_batch_size == 6
 
 
 def test_muse_glimmer_lora_targets_native_attention_projections() -> None:

@@ -30,7 +30,7 @@ def _muse_glimmer_30b_pretrain_32gpu_h100_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 2
     cfg.model.cp_comm_type = "all_gather"
-    cfg.model.hybrid_layer_pattern = "|".join(["*" * 13] * 4)
+    cfg.model.hybrid_layer_pattern = "|".join("*" * layers for layers in (9, 15, 15, 13))
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_vision_projection = True
     cfg.model.recompute_vision_layers = False
@@ -78,8 +78,8 @@ def muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config() -> ConfigContainer:
     """Muse Glimmer dense decoder pretrain: 32× H100, FP8 current scaling."""
     cfg = _muse_glimmer_30b_pretrain_32gpu_h100_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 4
+    cfg.train.global_batch_size = 192
+    cfg.train.micro_batch_size = 6
     return cfg
 
 
