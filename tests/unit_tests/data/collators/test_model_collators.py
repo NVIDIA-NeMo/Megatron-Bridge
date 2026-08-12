@@ -1362,7 +1362,7 @@ def test_kimi_k25_vl_collate_fn_forwards_tools_to_chat_template():
     assert proc.template_kwargs[0]["tools"] == tools
 
 
-def test_kimi_k25_vl_collate_fn_preserves_thinking_and_passes_empty_medias():
+def test_kimi_k25_vl_collate_fn_keeps_history_thinking_and_passes_empty_medias():
     proc = _KimiDummyProcessor(include_image=False)
     examples = [
         {
@@ -1375,7 +1375,7 @@ def test_kimi_k25_vl_collate_fn_preserves_thinking_and_passes_empty_medias():
 
     collate.kimi_k25_vl_collate_fn(examples, proc)
 
-    assert proc.template_kwargs[0]["preserve_thinking"] is True
+    assert proc.template_kwargs[0]["truncate_history_thinking"] is False
     assert proc.processor_kwargs[0]["medias"] == []
 
 

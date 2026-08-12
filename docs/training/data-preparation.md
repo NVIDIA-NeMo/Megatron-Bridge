@@ -190,10 +190,11 @@ dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
 Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
 
 Model-specific Jinja controls can be supplied per row under `chat_template_kwargs`, for example
-`{"preserve_thinking": true}` for a Qwen 3.6 conversation. The data pipeline owns tokenization, truncation,
-padding, and template selection, so those controls cannot be overridden from a dataset row. Tool schemas remain
-in the top-level `tools` field. Processor-batched VLM rows must use identical template kwargs and tools within a
-microbatch.
+`{"truncate_history_thinking": false}` to retain all historical reasoning. MBridge translates this canonical
+control to model-template-specific parameter names where necessary. The data pipeline owns tokenization,
+truncation, padding, and template selection, so those controls cannot be overridden from a dataset row. Tool
+schemas remain in the top-level `tools` field. Processor-batched VLM rows must use identical template kwargs and
+tools within a microbatch.
 
 Known semantic datasets should use their preset name, for example `squad`, `gsm8k`, `openmathinstruct2`, `cord_v2`, `raven`, `rdr`, `medpix`, `cv17`, or `llava_video_178k`. Do not combine `dataset_name` with `path_or_dataset`, `subset`, or `schema_adapter`; a preset owns those coupled fields. `split`, `load_kwargs`, and `adapter_kwargs` remain available for split selection and declarative runtime options such as a video root. Presets validate published split support: `raven`, `rdr`, and `llava_video_178k` are train-only; `medpix` and `squad` have no test split; `gsm8k` has no validation split; and OpenMathInstruct-2 exposes training variants only. Disable unsupported derived validation/test splits or supply explicit compatible sources.
 

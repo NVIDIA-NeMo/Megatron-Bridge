@@ -147,6 +147,8 @@ def test_get_processor_tokenizer_does_not_probe_dynamic_wrapper_attributes():
 
 
 class _ToolsGenerationMaskTokenizer(_GenerationMaskTokenizer):
+    chat_template = _GenerationMaskTokenizer.chat_template + "{% if preserve_thinking %}history{% endif %}"
+
     def __init__(self):
         self.template_kwargs = []
 
@@ -571,14 +573,24 @@ def test_build_assistant_loss_mask_aligns_hf_generation_mask_to_batch_padding(in
     assert mask.tolist() == expected_mask
 
 
-def test_build_assistant_loss_mask_forwards_template_kwargs_to_hf_generation_mask():
+@pytest.mark.parametrize(
+    ("truncate_history_thinking", "native_preserve_thinking"),
+    [(True, False), (False, True)],
+)
+def test_build_assistant_loss_mask_adapts_history_thinking_kwarg_to_native_template(
+    truncate_history_thinking,
+    native_preserve_thinking,
+):
     tools = [{"type": "function", "function": {"name": "lookup"}}]
     example = {
         "conversation": [
             {"role": "user", "content": "question"},
             {"role": "assistant", "content": "answer"},
         ],
-        "chat_template_kwargs": {"enable_thinking": True, "preserve_thinking": True},
+        "chat_template_kwargs": {
+            "enable_thinking": True,
+            "truncate_history_thinking": truncate_history_thinking,
+        },
         "tools": tools,
     }
 
@@ -588,32 +600,36 @@ def test_build_assistant_loss_mask_forwards_template_kwargs_to_hf_generation_mas
 
     assert mask.tolist() == [0.0, 0.0, 1.0, 0.0]
     assert processor.tokenizer.template_kwargs == [
-        {"enable_thinking": True, "preserve_thinking": True, "tools": tools}
+        {"enable_thinking": True, "preserve_thinking": native_preserve_thinking, "tools": tools}
     ]
 
 
 def test_chat_template_kwargs_from_example_rejects_invalid_or_pipeline_controlled_values():
     with pytest.raises(ValueError, match="string-keyed mapping"):
-        chat_template_kwargs_from_example({"chat_template_kwargs": ["preserve_thinking"]})
+        chat_template_kwargs_from_example({"chat_template_kwargs": ["truncate_history_thinking"]})
     with pytest.raises(ValueError, match="pipeline-controlled arguments: tokenize, tools"):
         chat_template_kwargs_from_example({"chat_template_kwargs": {"tokenize": False, "tools": []}})
+    with pytest.raises(ValueError, match="uses truncate_history_thinking instead of legacy option"):
+        chat_template_kwargs_from_example({"chat_template_kwargs": {"preserve_thinking": True}})
+    with pytest.raises(ValueError, match="truncate_history_thinking must be a boolean"):
+        chat_template_kwargs_from_example({"chat_template_kwargs": {"truncate_history_thinking": "yes"}})
 
 
 def test_shared_chat_template_kwargs_from_examples_requires_shared_values():
     tools = [{"type": "function", "function": {"name": "lookup"}}]
-    kwargs = {"preserve_thinking": True}
+    kwargs = {"truncate_history_thinking": False}
 
     assert shared_chat_template_kwargs_from_examples(
         [
             {"chat_template_kwargs": kwargs, "tools": tools},
             {"chat_template_kwargs": kwargs, "tools": tools},
         ]
-    ) == {"preserve_thinking": True, "tools": tools}
+    ) == {"truncate_history_thinking": False, "tools": tools}
     with pytest.raises(ValueError, match="same chat-template kwargs and tools"):
         shared_chat_template_kwargs_from_examples(
             [
-                {"chat_template_kwargs": {"preserve_thinking": True}, "tools": tools},
-                {"chat_template_kwargs": {"preserve_thinking": False}, "tools": tools},
+                {"chat_template_kwargs": {"truncate_history_thinking": True}, "tools": tools},
+                {"chat_template_kwargs": {"truncate_history_thinking": False}, "tools": tools},
             ]
         )
 
