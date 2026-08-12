@@ -208,7 +208,7 @@ def test_cord_v2_8gpu_recipes_use_natural_routing_hybridep(
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.optimizer.main_grads_dtype == torch.bfloat16
     assert cfg.optimizer.main_params_dtype == torch.float16
-    assert cfg.optimizer.store_param_remainders is True
+    assert cfg.optimizer.store_param_remainders is False
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
@@ -243,7 +243,7 @@ def test_cord_v2_8gpu_recipes_use_lower_precision_optimizer_state(
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.optimizer.main_grads_dtype == torch.bfloat16
     assert cfg.optimizer.main_params_dtype == torch.float16
-    assert cfg.optimizer.store_param_remainders is True
+    assert cfg.optimizer.store_param_remainders is False
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False

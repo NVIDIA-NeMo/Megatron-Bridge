@@ -24,6 +24,7 @@ from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKe
 
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.optim import (
+    _validate_precision_aware_optimizer_runtime_state,
     memory_efficient_fp32_optimizer_state_loading,
     memory_efficient_precision_aware_optimizer_state_checkpointing,
     sync_hybrid_device_optimizer_fp32_master_copies,
@@ -169,11 +170,16 @@ class _FakeFusedAdam(torch.optim.Optimizer):
         param: torch.Tensor,
         *,
         master_weights: bool = False,
+        master_weight_dtype: torch.dtype = torch.float32,
         exp_avg_dtype: torch.dtype = torch.float32,
+        store_param_remainders: bool = False,
     ) -> None:
         super().__init__([param], {"lr": 1e-3})
         self.master_weights = master_weights
-        self.store_param_remainders = False
+        self.master_weight_dtype = master_weight_dtype
+        self.exp_avg_dtype = exp_avg_dtype
+        self.exp_avg_sq_dtype = exp_avg_dtype
+        self.store_param_remainders = store_param_remainders
         self.name_to_dtype_map = {"exp_avg": exp_avg_dtype, "exp_avg_sq": exp_avg_dtype}
         self.override_load_calls = 0
         self.get_unscaled_state_calls = 0
@@ -234,6 +240,54 @@ class _FakeLayerWiseChildOpt:
 
     def __init__(self, inner: torch.optim.Optimizer) -> None:
         self.optimizer = inner
+
+
+class TestValidatePrecisionAwareOptimizerRuntimeState:
+    """Tests for validation of effective Transformer Engine Adam state."""
+
+    @staticmethod
+    def _config() -> SimpleNamespace:
+        return SimpleNamespace(
+            use_precision_aware_optimizer=True,
+            main_params_dtype=torch.float16,
+            main_grads_dtype=torch.bfloat16,
+            exp_avg_dtype=torch.bfloat16,
+            exp_avg_sq_dtype=torch.bfloat16,
+            store_param_remainders=False,
+        )
+
+    def test_accepts_matching_effective_state(self):
+        param = torch.zeros(4, dtype=torch.bfloat16)
+        inner = _FakeFusedAdam(
+            param,
+            master_weights=True,
+            master_weight_dtype=torch.float16,
+            exp_avg_dtype=torch.bfloat16,
+            store_param_remainders=False,
+        )
+        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            assert _validate_precision_aware_optimizer_runtime_state(distributed, self._config()) == 1
+
+    def test_rejects_silently_disabled_param_remainders(self):
+        param = torch.zeros(4, dtype=torch.bfloat16)
+        inner = _FakeFusedAdam(
+            param,
+            master_weights=True,
+            master_weight_dtype=torch.float16,
+            exp_avg_dtype=torch.bfloat16,
+            store_param_remainders=False,
+        )
+        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
+        config = self._config()
+        config.store_param_remainders = True
+
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            pytest.raises(RuntimeError, match="param_remainders: requested=True, effective=False"),
+        ):
+            _validate_precision_aware_optimizer_runtime_state(distributed, config)
 
 
 class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:

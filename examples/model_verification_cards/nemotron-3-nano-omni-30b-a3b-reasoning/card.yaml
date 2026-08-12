@@ -208,8 +208,8 @@ items:
         The immutable-revision, real image-text CORD v2 run completes exactly
         100 full-SFT optimizer steps on eight H100 GPUs at
         TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/1 with natural-routing HybridEP.
-        Model parameters, main gradients, and Adam moments use BF16; main
-        parameters use FP16 plus stored int16 low-bit remainders. LM loss is
+        Model parameters, main gradients, and Adam moments use BF16; optimizer
+        main parameters use scaled FP16 without parameter remainders. LM loss is
         finite from 1.285819 to 0.03671239, the final ten steps average 6,394.68
         ms and 111.15 TFLOP/s/GPU, sampled peak memory is 76,995 MiB, and no
         iteration is skipped or NaN. Complete optimizer and RNG checkpoints are
@@ -283,8 +283,8 @@ items:
         100 full-SFT optimizer steps on eight H100 GPUs at
         TP4/PP1/CP2/EP8/ETP1 and GBS/MBS 64/2 with 8K in-batch packing and the
         standard all-to-all dispatcher. Model parameters, main gradients, and
-        Adam moments use BF16; main parameters use FP16 plus stored int16
-        low-bit remainders. LM loss is finite from 1.251364 to 0.01020405, the
+        Adam moments use BF16; optimizer main parameters use scaled FP16 without
+        parameter remainders. LM loss is finite from 1.251364 to 0.01020405, the
         final ten steps average 15,577.9 ms and 93.73 TFLOP/s/GPU, sampled peak
         memory is 75,197 MiB, and no iteration is skipped or NaN. Complete
         optimizer and RNG checkpoints are saved at steps 50 and 100. Direct
@@ -322,8 +322,8 @@ items:
         The immutable-revision, real image-text CORD v2 run completes exactly
         100 LoRA optimizer steps on eight H100 GPUs at
         TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/1 with natural-routing HybridEP.
-        Model parameters, main gradients, and Adam moments use BF16; main
-        parameters use FP16 plus stored int16 low-bit remainders. LM loss is
+        Model parameters, main gradients, and Adam moments use BF16; optimizer
+        main parameters use scaled FP16 without parameter remainders. LM loss is
         finite from 1.282941 to 0.02634745, the final ten steps average
         11,621.42 ms and 61.25 TFLOP/s/GPU, sampled peak memory is 44,873 MiB,
         and no iteration is skipped or NaN. Complete optimizer and RNG
