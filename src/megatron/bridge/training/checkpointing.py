@@ -79,6 +79,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_train_state_filename,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
+    join_paths,
     read_run_config,
     read_train_state,
 )
@@ -1814,15 +1815,24 @@ def maybe_load_dataloader_state(
     if iterable is None or not hasattr(iterable, "restore_state"):
         return
 
-    if not os.path.isdir(dataloader_load_path):
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        is_dir = msc.os.path.isdir
+        is_file = msc.os.path.isfile
+    else:
+        msc = None
+        is_dir = os.path.isdir
+        is_file = os.path.isfile
+
+    if not is_dir(dataloader_load_path):
         # No dataloader state dir at all: the checkpoint predates this feature. Start from scratch.
         print_rank_0(f"no dataloader state under {dataloader_load_path}; dataloader starts from the beginning")
         return
 
     dp_rank = get_pg_rank(pg_collection.dp)
     iter_dir = get_checkpoint_name(dataloader_load_path, iteration)
-    data_state_load_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
-    if not os.path.isfile(data_state_load_path):
+    data_state_load_path = join_paths(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
+    if not is_file(data_state_load_path):
         raise RuntimeError(
             f"Dataloader state directory {dataloader_load_path} exists but {data_state_load_path} is "
             f"missing. The data-parallel size likely changed since the checkpoint was saved (expected "
@@ -1831,7 +1841,11 @@ def maybe_load_dataloader_state(
         )
 
     print_rank_0(f"restoring dataloader state at iteration {iteration} from {data_state_load_path}")
-    loaded = energon_torch_load(data_state_load_path)
+    if msc is not None:
+        with msc.open(data_state_load_path, "rb") as state_file:
+            loaded = energon_torch_load(state_file)
+    else:
+        loaded = energon_torch_load(data_state_load_path)
     iterable.restore_state(loaded["dataloader_state_dict"])
 
 
@@ -3563,7 +3577,8 @@ def _load_base_checkpoint(
         checkpoint_path = load_dir
         # load_dir is the iter_N dir itself, so the checkpoint root (holding the energon/ sibling) is
         # one level up.
-        _record_dataloader_state_dir(checkpointing_context, os.path.dirname(os.path.normpath(load_dir)))
+        checkpoint_root = os.path.dirname(load_dir.rstrip(os.sep))
+        _record_dataloader_state_dir(checkpointing_context, checkpoint_root)
         ckpt_format = _get_checkpoint_format(checkpoint_path)
         if not rank0:
             print_rank_0(f" loading {ckpt_format} checkpoint directly from {checkpoint_path}")

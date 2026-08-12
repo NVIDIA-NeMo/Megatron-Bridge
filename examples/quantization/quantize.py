@@ -17,78 +17,53 @@ This example demonstrates how to use the AutoBridge to perform quantization
 from a Hugging Face model to a quantized Megatron-LM model on multiple GPUs.
 
 The process is as follows:
-1. An AutoBridge is initialized from a pretrained Hugging Face model
-    (e.g., "meta-llama/Llama-3.2-1B"). This downloads the model from the Hub and loads it.
+1. An AutoBridge is initialized from the pretrained Hugging Face model given by `--hf-model-id`.
+    This downloads the model from the Hub (or loads it from a local path) and loads it.
 2. ModelOpt quantization is applied to the Megatron-LM model using the specified configuration.
 3. The quantized Megatron-LM model is saved in Megatron's native checkpoint format
     using the `--megatron-save-path` argument.
 
 Usage:
-torchrun --nproc_per_node 2 examples/models/quantize.py --export-quant-cfg fp8
-torchrun --nproc_per_node 2 examples/models/quantize.py --export-quant-cfg fp8 --megatron-save-path ./megatron_checkpoint
+torchrun --nproc_per_node 2 examples/quantization/quantize.py \
+    --hf-model-id meta-llama/Llama-3.2-1B --export-quant-cfg fp8
+torchrun --nproc_per_node 2 examples/quantization/quantize.py \
+    --hf-model-id meta-llama/Llama-3.2-1B --export-quant-cfg fp8 --megatron-save-path ./megatron_checkpoint
 """
 
 import argparse
-import os
-import sys
 import warnings
 
 import modelopt.torch.quantization as mtq
+import modelopt.torch.utils.distributed as dist
 import torch
-from datasets import load_dataset
 from megatron.core.utils import unwrap_model
+from modelopt.torch.utils.plugins.megatron_calibration import get_megatron_calibration_forward_loop
 from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
 from quantize_utils import (
     QUANT_CFG_CHOICES,
     add_common_quantization_args,
+    build_bridge_and_provider,
     console,
     create_quantization_stats_table,
     get_modelopt_torch_quantization_config,
+    print_parallelism_summary,
+    require_torchrun,
 )
-from tqdm import tqdm
 
-from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 warnings.filterwarnings("ignore")
 
-HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
-
-
-def get_calib_dataloader(calib_size=512, max_sequence_length=512):
-    """Return a dataloader for calibration."""
-    # Only rank 0 downloads/prepares the dataset to avoid race conditions when multiple
-    # ranks simultaneously write to the same HuggingFace cache directory.
-    rank = torch.distributed.get_rank()
-    if rank == 0:
-        dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
-    torch.distributed.barrier()
-    if rank != 0:
-        dataset = load_dataset("cnn_dailymail", name="3.0.0", split="train")
-
-    text_column = "article"
-
-    calib_size = min(len(dataset), calib_size)
-    for i in range(calib_size):
-        yield dataset[i][text_column][:max_sequence_length]
-
-
-def _hf_dataset_forward_loop_func(model, tokenizer, calib_size):
-    """Forward loop function for calibration using HuggingFace dataset."""
-    dataloader = get_calib_dataloader(calib_size)
-
-    for prompt in tqdm(dataloader, total=calib_size, disable=torch.distributed.get_rank()):
-        tokens = tokenizer(prompt, return_tensors="pt")
-        megatron_generate(model, tokens.input_ids.cuda(), osl=1)
+# Resolved by ModelOpt's dataset registry, which pins the concrete namespaced Hub id.
+DEFAULT_CALIB_DATASET = "cnn_dailymail"
 
 
 def _custom_prompt_forward_loop_func(model, prompts, tokenizer, is_rank_0, osl=32):
     """Forward loop function for testing quantized model with custom prompts."""
     all_prompts = prompts.split("|")
 
-    for idx, prompt in tqdm(enumerate(all_prompts), disable=torch.distributed.get_rank()):
+    for idx, prompt in enumerate(all_prompts):
         tokens = tokenizer(prompt, return_tensors="pt")
         generated_ids = megatron_generate(model, tokens.input_ids.cuda(), osl=osl, enable_kv_cache=False)
         generated_texts = tokenizer.batch_decode(generated_ids)
@@ -99,7 +74,7 @@ def _custom_prompt_forward_loop_func(model, prompts, tokenizer, is_rank_0, osl=3
 
 @torchrun_main
 def main(
-    hf_model_id: str = HF_MODEL_ID,
+    hf_model_id: str,
     tp: int = 1,
     pp: int = 1,
     ep: int = 1,
@@ -107,6 +82,9 @@ def main(
     megatron_save_path: str | None = None,
     export_quant_cfg: str = "fp8",
     calib_size: int = 512,
+    calib_seq_length: int = 512,
+    calib_batch_size: int = 1,
+    calib_dataset: str = DEFAULT_CALIB_DATASET,
     compress: bool = False,
     weight_only: bool = False,
     export_kv_cache_quant: bool = False,
@@ -114,40 +92,24 @@ def main(
     trust_remote_code: bool | None = None,
 ) -> None:
     """Perform quantization from HuggingFace model to quantized Megatron-LM model on multiple GPUs."""
-    if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
-        sys.exit(1)
+    require_torchrun()
 
-    bridge = AutoBridge.from_hf_pretrained(
+    bridge, model_provider = build_bridge_and_provider(
         hf_model_id,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=trust_remote_code,
-            hf_path=hf_model_id,
-        ),
+        tp=tp,
+        pp=pp,
+        ep=ep,
+        etp=etp,
+        load_weights=True,
+        pipeline_dtype=torch.bfloat16,
+        trust_remote_code=trust_remote_code,
     )
-
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = torch.bfloat16
-
-    # All models use TE spec (default) for quantization
-    # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
     megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     # Now we can check for rank
-    is_rank_0 = torch.distributed.get_rank() == 0
+    is_rank_0 = dist.is_master()
 
-    if is_rank_0:
-        console.print(f"[green]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/green]")
-        console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
-        console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
-        console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
+    print_parallelism_summary(model_provider)
 
     # Formatting
     if is_rank_0:
@@ -164,15 +126,23 @@ def main(
         # Get quantization configuration
         mtq_config = get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant, weight_only)
 
-        # Define forward loop function for calibration
-        ptq_forward_loop_func = lambda model: _hf_dataset_forward_loop_func(
-            model, bridge.hf_pretrained.tokenizer, calib_size
-        )
+        # These configs derive scales from weights alone, so skip the dataset download and forward pass.
+        if weight_only or not mtq.need_calibration(mtq_config):
+            if is_rank_0:
+                console.print("[yellow]Weight-only or dynamic quantization: skipping calibration.[/yellow]")
+            ptq_forward_loop_func = None
+        else:
+            ptq_forward_loop_func = get_megatron_calibration_forward_loop(
+                bridge.hf_pretrained.tokenizer,
+                dataset_name=calib_dataset,
+                num_samples=calib_size,
+                seq_length=calib_seq_length,
+                batch_size=calib_batch_size,
+                pack=True,
+            )
 
         # Apply quantization
-        if weight_only:
-            mtq.quantize(unwrapped_model, mtq_config)
-        elif hasattr(unwrapped_model, "calibration_mode"):
+        if hasattr(unwrapped_model, "calibration_mode"):
             unwrapped_model.calibration_mode = True
             mtq.quantize(unwrapped_model, mtq_config, ptq_forward_loop_func)
             unwrapped_model.calibration_mode = False
@@ -198,7 +168,7 @@ def main(
 
             console.print(table)
 
-    torch.distributed.barrier()
+    dist.barrier()
 
     # Save quantized model in Megatron format
     if megatron_save_path:
@@ -213,7 +183,7 @@ def main(
         console.print(f"Saving quantized Megatron checkpoint in {save_path}...")
     bridge.save_megatron_model(megatron_model, save_path)
 
-    torch.distributed.barrier()
+    dist.barrier()
 
     # Test quantized model with custom prompts
     if export_quant_cfg in QUANT_CFG_CHOICES:
@@ -227,9 +197,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Quantize HuggingFace model to Megatron-LM format using ModelOpt on multiple GPUs"
     )
-    parser.add_argument("--hf-model-id", type=str, default=HF_MODEL_ID, help="HuggingFace model ID to quantize")
-
-    # Add common quantization arguments
     add_common_quantization_args(parser)
 
     # LLM-specific arguments
@@ -238,6 +205,25 @@ if __name__ == "__main__":
         type=str,
         default="Hello!|Born in California, Soyer trained as a",
         help="Input texts for testing quantized model. Please use | to separate different batches.",
+    )
+    parser.add_argument(
+        "--calib-seq-length",
+        type=int,
+        default=512,
+        help="Calibration sequence length in tokens.",
+    )
+    parser.add_argument(
+        "--calib-batch-size",
+        type=int,
+        default=1,
+        help="Calibration batch size. Raise it to speed up calibration when memory allows.",
+    )
+    parser.add_argument(
+        "--calib-dataset",
+        type=str,
+        default=DEFAULT_CALIB_DATASET,
+        help="Calibration dataset: a ModelOpt registered dataset name, a HuggingFace dataset path, "
+        "a local directory, or a .jsonl file. Use a local path when running without Hub access.",
     )
     parser.add_argument(
         "--disable-hf-datasets-file-lock",
@@ -254,20 +240,22 @@ if __name__ == "__main__":
         datasets.builder.FileLock = MagicMock()
 
     main(
-        args.hf_model_id,
-        args.tp,
-        args.pp,
-        args.ep,
-        args.etp,
-        args.megatron_save_path,
-        args.export_quant_cfg,
-        args.calib_size,
-        args.compress,
-        args.weight_only,
-        args.export_kv_cache_quant,
-        args.prompts,
-        args.trust_remote_code,
+        hf_model_id=args.hf_model_id,
+        tp=args.tp,
+        pp=args.pp,
+        ep=args.ep,
+        etp=args.etp,
+        megatron_save_path=args.megatron_save_path,
+        export_quant_cfg=args.export_quant_cfg,
+        calib_size=args.calib_size,
+        calib_seq_length=args.calib_seq_length,
+        calib_batch_size=args.calib_batch_size,
+        calib_dataset=args.calib_dataset,
+        compress=args.compress,
+        weight_only=args.weight_only,
+        export_kv_cache_quant=args.export_kv_cache_quant,
+        prompts=args.prompts,
+        trust_remote_code=args.trust_remote_code,
     )
 
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
+    dist.cleanup()
