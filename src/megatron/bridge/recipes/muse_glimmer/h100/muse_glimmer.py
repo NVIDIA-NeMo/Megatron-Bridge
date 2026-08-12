@@ -130,6 +130,8 @@ def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigCont
     cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 2
+    cfg.model.cp_comm_type = "all_gather"
     cfg.model.hybrid_layer_pattern = "|".join(["*" * 13] * 4)
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_vision_projection = True
@@ -147,8 +149,8 @@ def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigCont
         skip_getting_attention_mask_from_dataset=True,
     )
     cfg.train.train_iters = 50
-    cfg.train.global_batch_size = 192
-    cfg.train.micro_batch_size = 3
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
     cfg.scheduler.lr_warmup_iters = 5
     cfg.scheduler.lr_decay_iters = 50
     cfg.ddp.overlap_grad_reduce = True
