@@ -35,6 +35,66 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
+_DEFAULT_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: allowlist secret
+_CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
+
+
+def _apply_8gpu_h100_execution(cfg: ConfigContainer, *, use_hybridep: bool) -> None:
+    """Apply the validated execution layout for one H100 node."""
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.moe_hybridep_num_sms = None
+    if use_hybridep:
+        cfg.model.moe_token_dispatcher_type = "flex"
+        cfg.model.moe_flex_dispatcher_backend = "hybridep"
+        cfg.model.moe_flex_dispatcher_num_sms = 16
+        # Eager Bridge HybridEP requires rank-aligned dispatch shapes. Padding
+        # uses zero routing weights and is removed after combine, so dynamic
+        # media-token counts remain safe without changing routed outputs.
+        cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+    else:
+        cfg.model.moe_token_dispatcher_type = "alltoall"
+        cfg.model.moe_flex_dispatcher_backend = None
+        cfg.model.moe_flex_dispatcher_num_sms = None
+        cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_expert_capacity_factor = None
+    cfg.model.moe_expert_rank_capacity_factor = None
+    cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.moe_paged_stash = False
+
+    # PEFT exercises parameters shared by multiple media-expanded microbatches.
+    # Keep DDP overlap disabled: the matched runtime A/B hit a second in-flight
+    # gradient communication and aborted before step three.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    # FP16 main parameters retain FP32-equivalent update resolution through
+    # stored remainders while BF16 gradients and moments avoid full FP32 Adam
+    # state for the H100-specific variants.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.store_param_remainders = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, "CUDA_DEVICE_MAX_CONNECTIONS": 32}
+    if use_hybridep:
+        cfg.env_vars.update(
+            {
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+                "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+                "NVLINK_DOMAIN_SIZE": 8,
+                "USE_MNNVL": 0,
+            }
+        )
 
 
 def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDatasetConfig:
@@ -75,8 +135,12 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
         seq_length=4096,
         preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=_DEFAULT_HF_PATH,
+        hf_processor_kwargs={"revision": _DEFAULT_HF_REVISION},
         trust_remote_code=True,
-        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
+        source=HFDatasetSourceConfig(
+            dataset_name="cord_v2",
+            load_kwargs={"revision": _CORD_V2_REVISION},
+        ),
         num_workers=2,
         dataloader_type="cyclic",
         data_sharding=True,
@@ -92,6 +156,21 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the one-node H100 CORD v2 SFT config with natural-routing HybridEP.
+
+    This variant preserves the 4-GPU recipe's real image-text samples,
+    objective, batch sizes, optimizer hyperparameters, and BF16 model
+    arithmetic. TP2 and EP8 fold over the same eight ranks so dense
+    projections and experts are both sharded. Precision-aware Adam stores
+    BF16 gradients/moments and FP16 main parameters with FP32 remainders.
+    """
+    cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
+    cfg.model.tensor_model_parallel_size = 2
+    _apply_8gpu_h100_execution(cfg, use_hybridep=True)
+    return cfg
+
+
 def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return an 8K CORD v2 SFT config with in-batch packing and CP2.
 
@@ -99,30 +178,19 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     topology needs at least eight GPUs and aligns every packed row to the
     combined CP/SP multiple. Precision-aware Adam uses FP16 main parameters
     with stored FP32 remainders, BF16 gradients, and BF16 moments so first-step
-    optimizer-state initialization fits within 80 GB H100 memory.
+    optimizer-state initialization fits within 80 GB H100 memory. The standard
+    all-to-all dispatcher is used because HybridEP did not make forward progress
+    for the packed CP2 workload in the controlled backend screen.
     """
     cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
     cfg.model.seq_length = 8192
     cfg.model.context_parallel_size = 2
     cfg.model.calculate_per_token_loss = True
     cfg.train.micro_batch_size = 2
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.float16
-    cfg.optimizer.store_param_remainders = True
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-    cfg.mixed_precision = bf16_mixed()
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.dataset.seq_length = 8192
     cfg.dataset.enable_in_batch_packing = True
     cfg.dataset.in_batch_packing_pad_to_multiple_of = 8
-
-    # Keep the complete process environment visible on the recipe.
-    cfg.env_vars = {
-        **COMMON_RECIPE_ENV_VARS,
-    }
+    _apply_8gpu_h100_execution(cfg, use_hybridep=False)
     return cfg
 
 
@@ -164,8 +232,12 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         seq_length=4096,
         preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=_DEFAULT_HF_PATH,
+        hf_processor_kwargs={"revision": _DEFAULT_HF_REVISION},
         trust_remote_code=True,
-        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
+        source=HFDatasetSourceConfig(
+            dataset_name="cord_v2",
+            load_kwargs={"revision": _CORD_V2_REVISION},
+        ),
         num_workers=2,
         dataloader_type="cyclic",
         data_sharding=True,
@@ -181,12 +253,28 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the one-node H100 CORD v2 PEFT config with natural-routing HybridEP.
+
+    The adapter set, freezing policy, real image-text samples, batch sizes,
+    optimizer hyperparameters, and BF16 model arithmetic match the portable
+    4-GPU recipe. Precision-aware Adam stores BF16 gradients/moments and FP16
+    main parameters with FP32 remainders.
+    """
+    cfg = nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config()
+    cfg.model.tensor_model_parallel_size = 2
+    _apply_8gpu_h100_execution(cfg, use_hybridep=True)
+    return cfg
+
+
 def _nemotron_omni_base() -> ConfigContainer:
     """Shared model/training config for all Nemotron Omni recipes."""
     cfg = _sft_common_vlm()
-    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _DEFAULT_HF_PATH,
+        revision=_DEFAULT_HF_REVISION,
+        trust_remote_code=True,
+    ).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
     cfg.model.tensor_model_parallel_size = 4
@@ -320,7 +408,9 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 __all__ = [
     "nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config",
+    "nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config",
+    "nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config",
     "nemotron_omni_valor32k_peft_4gpu_h100_bf16_config",
     "nemotron_omni_valor32k_sft_4gpu_h100_bf16_config",
 ]
