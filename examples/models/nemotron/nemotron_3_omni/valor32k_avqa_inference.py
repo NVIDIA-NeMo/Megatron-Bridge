@@ -49,6 +49,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     patchify_temporal_frame,
     select_inference_next_token,
     temporal_model_frames,
+    valid_audio_feature_lengths,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
     adjust_image_tokens,
@@ -310,12 +311,20 @@ def process_sample(
             waveform = librosa.resample(waveform, orig_sr=sr, target_sr=16000)
         waveform = waveform[: int(10.0 * 16000)]  # max 10s
 
-        audio_features = feature_extractor([waveform], sampling_rate=16000, return_tensors="pt")
+        audio_features = feature_extractor(
+            [waveform],
+            sampling_rate=16000,
+            return_tensors="pt",
+            return_attention_mask=True,
+        )
         sound_clips = audio_features.input_features.bfloat16()
-        sound_length = torch.tensor([sound_clips.shape[1]], dtype=torch.long)
+        sound_length = valid_audio_feature_lengths(
+            audio_features.attention_mask,
+            num_frames=sound_clips.shape[1],
+        )
 
         # Compute audio token count and insert into input_ids
-        mel_len = sound_clips.shape[1]
+        mel_len = int(sound_length.item())
         token_len = float(mel_len)
         for _ in range(3):
             token_len = math.floor((token_len + 2 - 3) / 2 + 1)
