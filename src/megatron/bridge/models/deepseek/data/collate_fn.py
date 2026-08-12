@@ -42,17 +42,21 @@ from megatron.bridge.models.deepseek.data.encoding_v4 import (
 def _deepseek_v4_options(
     example: Mapping[str, Any],
 ) -> tuple[Literal["chat", "thinking"], bool, Literal["high", "max"] | None]:
+    legacy_history_keys = sorted({"drop_thinking", "preserve_thinking"}.intersection(example))
+    if legacy_history_keys:
+        joined_keys = ", ".join(legacy_history_keys)
+        raise ValueError(f"DeepSeek-V4 rows use truncate_history_thinking instead of legacy option(s): {joined_keys}.")
     thinking_mode = example.get("thinking_mode")
     if thinking_mode is None:
         enable_thinking = example.get("enable_thinking")
         if not isinstance(enable_thinking, bool):
             raise ValueError("DeepSeek-V4 rows require thinking_mode or enable_thinking.")
         thinking_mode = "thinking" if enable_thinking else "chat"
-    drop_thinking = example.get("drop_thinking")
-    if drop_thinking is None:
-        drop_thinking = not example.get("preserve_thinking", False)
+    truncate_history_thinking = example.get("truncate_history_thinking", True)
+    if not isinstance(truncate_history_thinking, bool):
+        raise ValueError("DeepSeek-V4 truncate_history_thinking must be a boolean.")
     reasoning_effort = example.get("reasoning_effort")
-    return thinking_mode, drop_thinking, reasoning_effort
+    return thinking_mode, truncate_history_thinking, reasoning_effort
 
 
 def _normalize_deepseek_v4_conversation(
@@ -116,11 +120,11 @@ def tokenize_deepseek_v4_example(
     ):
         raise TypeError("DeepSeek-V4 tools must be a sequence of OpenAI-format tool dictionaries.")
     conversation = _attach_tools(conversation, tools)
-    thinking_mode, drop_thinking, reasoning_effort = _deepseek_v4_options(source)
+    thinking_mode, truncate_history_thinking, reasoning_effort = _deepseek_v4_options(source)
     rendered = encode_deepseek_v4_messages(
         conversation,
         thinking_mode=thinking_mode,
-        drop_thinking=drop_thinking,
+        truncate_history_thinking=truncate_history_thinking,
         reasoning_effort=reasoning_effort,
     )
 

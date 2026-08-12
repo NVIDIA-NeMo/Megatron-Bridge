@@ -75,8 +75,10 @@ def _decode_character_ids(input_ids: list[int]) -> str:
 
 
 def test_deepseek_v4_encoder_matches_official_ordinary_modes():
-    chat = encode_deepseek_v4_messages(ORDINARY_MESSAGES, thinking_mode="chat", drop_thinking=False)
-    thinking = encode_deepseek_v4_messages(ORDINARY_MESSAGES, thinking_mode="thinking", drop_thinking=False)
+    chat = encode_deepseek_v4_messages(ORDINARY_MESSAGES, thinking_mode="chat", truncate_history_thinking=False)
+    thinking = encode_deepseek_v4_messages(
+        ORDINARY_MESSAGES, thinking_mode="thinking", truncate_history_thinking=False
+    )
 
     assert chat == (
         f"{BOS_TOKEN}You are concise.{USER_TOKEN}First?{ASSISTANT_TOKEN}{THINKING_END_TOKEN}One.{EOS_TOKEN}"
@@ -156,7 +158,7 @@ def test_deepseek_v4_encoder_formats_non_thinking_tool_followup():
 def test_deepseek_v4_tokenizer_builds_content_plus_eos_mask(mode, expected_assistant_text):
     tokenizer = _DeepSeekV4CharacterTokenizer()
     tokenized = tokenize_deepseek_v4_example(
-        {"messages": REASONING_MESSAGES, "thinking_mode": mode, "preserve_thinking": True},
+        {"messages": REASONING_MESSAGES, "thinking_mode": mode, "truncate_history_thinking": False},
         tokenizer,
     )
 
@@ -211,7 +213,7 @@ def test_deepseek_v4_collator_shifts_labels_and_pads_rows():
     tokenizer = _DeepSeekV4CharacterTokenizer()
     examples = [
         {"messages": ORDINARY_MESSAGES, "enable_thinking": False},
-        {"messages": REASONING_MESSAGES, "enable_thinking": True, "preserve_thinking": True},
+        {"messages": REASONING_MESSAGES, "enable_thinking": True, "truncate_history_thinking": False},
     ]
 
     batch = deepseek_v4_collate_fn(examples, tokenizer, pad_to_multiple_of=8)
@@ -227,3 +229,11 @@ def test_deepseek_v4_collator_shifts_labels_and_pads_rows():
 def test_deepseek_v4_collator_requires_explicit_thinking_mode():
     with pytest.raises(ValueError, match="require thinking_mode"):
         deepseek_v4_collate_fn([{"messages": ORDINARY_MESSAGES}], _DeepSeekV4CharacterTokenizer())
+
+
+@pytest.mark.parametrize("legacy_key", ["drop_thinking", "preserve_thinking"])
+def test_deepseek_v4_collator_rejects_legacy_history_thinking_options(legacy_key):
+    example = {"messages": ORDINARY_MESSAGES, "enable_thinking": True, legacy_key: True}
+
+    with pytest.raises(ValueError, match="use truncate_history_thinking"):
+        deepseek_v4_collate_fn([example], _DeepSeekV4CharacterTokenizer())

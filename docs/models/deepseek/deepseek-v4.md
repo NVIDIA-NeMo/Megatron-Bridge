@@ -18,13 +18,13 @@ explicitly with either `enable_thinking` or `thinking_mode`:
     {"role": "assistant", "reasoning_content": "Add the terms.", "content": "2"}
   ],
   "enable_thinking": true,
-  "preserve_thinking": true
+  "truncate_history_thinking": false
 }
 ```
 
-Use `enable_thinking: false` for chat mode. Historical reasoning is dropped by
-default in thinking mode; set `preserve_thinking: true` (or
-`drop_thinking: false`) to retain it. OpenAI-format tool definitions can be
+Use `enable_thinking: false` for chat mode. Historical reasoning is truncated by
+default in thinking mode; set `truncate_history_thinking: false` to retain it.
+OpenAI-format tool definitions can be
 provided in the row's top-level `tools` field, and tool calls/results remain in
 the structured `messages` list.
 

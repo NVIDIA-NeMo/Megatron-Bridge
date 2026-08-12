@@ -168,7 +168,7 @@ def _render_message(
     messages: Sequence[Mapping[str, Any]],
     *,
     thinking_mode: Literal["chat", "thinking"],
-    drop_thinking: bool,
+    truncate_history_thinking: bool,
     reasoning_effort: Literal["high", "max"] | None,
 ) -> str:
     if not 0 <= index < len(messages):
@@ -237,7 +237,7 @@ def _render_message(
     elif role == "assistant":
         thinking_part = ""
         if thinking_mode == "thinking" and not (index > 0 and messages[index - 1].get("task") is not None):
-            if not drop_thinking or index > _last_user_index(messages):
+            if not truncate_history_thinking or index > _last_user_index(messages):
                 thinking_part = str(reasoning_content or "") + THINKING_END_TOKEN
 
         tool_call_content = ""
@@ -275,7 +275,7 @@ def _render_message(
         prompt += _TASK_TOKENS[task]
     elif role in {"user", "developer"}:
         prompt += ASSISTANT_TOKEN
-        if thinking_mode == "thinking" and (not drop_thinking or index >= _last_user_index(messages)):
+        if thinking_mode == "thinking" and (not truncate_history_thinking or index >= _last_user_index(messages)):
             prompt += THINKING_START_TOKEN
         else:
             prompt += THINKING_END_TOKEN
@@ -361,7 +361,7 @@ def encode_deepseek_v4_messages(
     messages: Sequence[Mapping[str, Any]],
     *,
     thinking_mode: Literal["chat", "thinking"],
-    drop_thinking: bool = True,
+    truncate_history_thinking: bool = True,
     reasoning_effort: Literal["high", "max"] | None = None,
     add_bos: bool = True,
 ) -> str:
@@ -372,8 +372,9 @@ def encode_deepseek_v4_messages(
             developer message; standalone tool results are merged automatically.
         thinking_mode: ``chat`` emits ``</think>`` immediately after the
             assistant marker; ``thinking`` emits explicit reasoning spans.
-        drop_thinking: Drop reasoning from historical assistant turns. The
-            official contract disables this automatically when tools are present.
+        truncate_history_thinking: Remove reasoning from historical assistant
+            turns. The official contract disables this automatically when tools
+            are present.
         reasoning_effort: Optional ``high`` or ``max`` reasoning policy.
         add_bos: Prepend the DeepSeek beginning-of-sequence token.
 
@@ -386,8 +387,8 @@ def encode_deepseek_v4_messages(
         raise ValueError("DeepSeek-V4 reasoning_effort must be 'high', 'max', or None.")
 
     normalized = _sort_tool_results(_merge_tool_messages(messages))
-    effective_drop_thinking = drop_thinking and not any(message.get("tools") for message in normalized)
-    if thinking_mode == "thinking" and effective_drop_thinking:
+    effective_truncate_history = truncate_history_thinking and not any(message.get("tools") for message in normalized)
+    if thinking_mode == "thinking" and effective_truncate_history:
         normalized = _drop_historical_thinking(normalized)
 
     prompt = BOS_TOKEN if add_bos else ""
@@ -396,7 +397,7 @@ def encode_deepseek_v4_messages(
             index,
             normalized,
             thinking_mode=thinking_mode,
-            drop_thinking=effective_drop_thinking,
+            truncate_history_thinking=effective_truncate_history,
             reasoning_effort=reasoning_effort,
         )
     return prompt
