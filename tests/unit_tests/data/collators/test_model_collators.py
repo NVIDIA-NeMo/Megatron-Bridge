@@ -2177,14 +2177,15 @@ def test_nemotron_omni_llava_collate_fixed_packing_rejects_misaligned_sequence_l
         )
 
 
-def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
+@pytest.mark.parametrize("collate_fn_name", ["nemotron_omni_expanded_collate_fn", "nemotron_omni_llava_collate_fn"])
+def test_nemotron_omni_collators_use_mask_length_for_audio_placeholders(monkeypatch, collate_fn_name):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(
         omni_utils,
-        "compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(9, num_mel_bins),
+        "compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: (torch.ones(9, num_mel_bins), 8),
     )
 
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, 7]])
@@ -2198,15 +2199,48 @@ def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_co
         }
     ]
 
-    batch = collate.nemotron_omni_collate_fn(examples, proc)
+    collate_fn = getattr(collate, collate_fn_name)
+    if collate_fn_name == "nemotron_omni_llava_collate_fn":
+        with pytest.warns(FutureWarning, match="deprecated"):
+            batch = collate_fn(examples, proc)
+    else:
+        batch = collate_fn(examples, proc)
 
     assert "<so_embedding>" in proc.tokenizer.tokenized_texts[0]
-    assert batch["input_ids"].tolist() == [
-        [5, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 6, 7]
-    ]
+    assert batch["input_ids"].tolist() == [[5, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 6, 7]]
     assert batch["sound_clips"].shape == (1, 9, 128)
-    assert batch["sound_length"].tolist() == [9]
+    assert batch["sound_length"].tolist() == [8]
     assert batch["visual_inputs"] is None
+
+
+def test_nemotron_omni_collate_pads_physical_audio_independently_from_valid_lengths(monkeypatch):
+    import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
+
+    def _features(waveform, sampling_rate=16000, num_mel_bins=4):
+        del sampling_rate
+        physical_length, valid_length = (9, 8) if len(waveform) == 3 else (17, 16)
+        return torch.ones(physical_length, num_mel_bins), valid_length
+
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+    monkeypatch.setattr(omni_utils, "compute_mel_features_with_length", _features)
+    proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6], [7, NEMO_SO_TOKEN_ID, 8]])
+    examples = [
+        {"conversation": [{"role": "user", "content": "short"}], "audio": ([0.0, 0.1, -0.1], 16000)},
+        {
+            "conversation": [{"role": "user", "content": "long"}],
+            "audio": ([0.0, 0.1, -0.1, 0.2], 16000),
+        },
+    ]
+
+    batch = collate.nemotron_omni_expanded_collate_fn(examples, proc, num_mel_bins=4)
+
+    assert batch["input_ids"].tolist() == [
+        [5, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 6, 0],
+        [7, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 8],
+    ]
+    assert batch["sound_clips"].shape == (2, 17, 4)
+    assert torch.all(batch["sound_clips"][0, 9:] == 0)
+    assert batch["sound_length"].tolist() == [8, 16]
 
 
 def test_nemotron_omni_collate_does_not_duplicate_existing_audio_framing(monkeypatch):
@@ -2215,8 +2249,8 @@ def test_nemotron_omni_collate_does_not_duplicate_existing_audio_framing(monkeyp
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(
         omni_utils,
-        "compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(9, num_mel_bins),
+        "compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: (torch.ones(9, num_mel_bins), 8),
     )
     proc = _NemotronOmniProcessor(
         tokenized_rows=[[5, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 6, 7]]
@@ -2230,9 +2264,7 @@ def test_nemotron_omni_collate_does_not_duplicate_existing_audio_framing(monkeyp
 
     batch = collate.nemotron_omni_collate_fn(examples, proc)
 
-    assert batch["input_ids"].tolist() == [
-        [5, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 6, 7]
-    ]
+    assert batch["input_ids"].tolist() == [[5, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 6, 7]]
 
 
 @pytest.mark.parametrize(
@@ -2248,8 +2280,8 @@ def test_nemotron_omni_collate_rejects_partially_framed_audio_placeholder(monkey
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(
         omni_utils,
-        "compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(9, num_mel_bins),
+        "compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: (torch.ones(9, num_mel_bins), 8),
     )
     proc = _NemotronOmniProcessor(tokenized_rows=[tokenized_row])
     examples = [
@@ -2269,8 +2301,8 @@ def test_nemotron_omni_collate_rejects_disjoint_audio_placeholder_runs(monkeypat
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(
         omni_utils,
-        "compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(9, num_mel_bins),
+        "compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: (torch.ones(9, num_mel_bins), 8),
     )
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, NEMO_SO_TOKEN_ID, 7]])
     examples = [
@@ -2310,8 +2342,8 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
     )
     monkeypatch.setattr(
         omni_utils,
-        "compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(1, num_mel_bins),
+        "compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: (torch.ones(1, num_mel_bins), 1),
     )
 
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6, 7]])

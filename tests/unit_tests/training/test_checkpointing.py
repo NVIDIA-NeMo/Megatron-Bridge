@@ -2439,6 +2439,38 @@ class TestLoadBaseCheckpoint:
 
         assert ctx["dataloader_state_dir"] == os.path.join("/ckpt", DATALOADER_STATE_SUBDIR)
 
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_msc_dataloader_state_dir_one_level_up_for_direct_iteration(
+        self,
+        mock_resolve,
+        mock_get_format,
+        mock_load_global,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A direct MSC iter_N path preserves its URI when recording the Energon sibling."""
+        MultiStorageClientFeature.enable()
+        mock_resolve.return_value = (_DIRECT_ITERATION_DIR_SENTINEL, False)
+        mock_get_format.return_value = "torch_dist"
+        mock_load_global.return_value = (
+            {"model": "x"},
+            "msc://default/ckpt/iter_0001000",
+            False,
+            CheckpointType.GLOBAL,
+        )
+
+        ctx = {}
+        _load_base_checkpoint(
+            "msc://default/ckpt/iter_0001000",
+            base_config,
+            checkpointing_context=ctx,
+            pg_collection=mock_pg_collection,
+        )
+
+        assert ctx["dataloader_state_dir"] == "msc://default/ckpt/energon"
+
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
     @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
@@ -5040,6 +5072,21 @@ class TestMaybeLoadDataloaderState:
 
         train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
 
+    def test_restores_from_msc_file(self, tmp_path):
+        """An Energon state colocated with an MSC checkpoint restores through the remote adapter."""
+        MultiStorageClientFeature.enable()
+        msc = MultiStorageClientFeature.import_package()
+        state_root = f"msc://default{tmp_path}/energon"
+        iter_dir = get_checkpoint_name(state_root, 10)
+        msc.os.makedirs(iter_dir, exist_ok=True)
+        state_path = os.path.join(iter_dir, "train_dataloader_dprank000.pt")
+        msc.torch.save({"dataloader_state_dict": {"dummy_energon_state": "xyz"}}, state_path)
+        train_iterator = Mock()
+
+        maybe_load_dataloader_state(train_iterator, 10, state_root, pg_collection=self._pg())
+
+        train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
+
     def test_restores_energon_state_via_restricted_unpickler(self, tmp_path):
         """Energon dataclass and NumPy state round-trips correctly through the restricted zip loader."""
         from megatron.energon.flavors.webdataset.sample_loader import SliceState
@@ -5274,3 +5321,22 @@ class TestMaybeSaveDataloaderState:
         train_iterator.iterable.save_state.assert_called_once_with()
         _, saved_path = mock_save.call_args[0]
         assert saved_path.endswith("train_dataloader_dprank002.pt")
+
+    def test_writes_to_msc_path(self, tmp_path):
+        """An Energon state colocated with an MSC checkpoint is written through the remote adapter."""
+        MultiStorageClientFeature.enable()
+        msc = MultiStorageClientFeature.import_package()
+        state_root = f"msc://default{tmp_path}/energon"
+        train_iterator = self._iterator()
+
+        with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
+            maybe_save_dataloader_state(Mock(), train_iterator, 10, state_root, pg_collection=self._pg())
+
+        state_path = os.path.join(
+            get_checkpoint_name(state_root, 10),
+            "train_dataloader_dprank000.pt",
+        )
+        assert msc.os.path.isfile(state_path)
+        assert msc.torch.load(state_path, weights_only=True) == {
+            "dataloader_state_dict": {"dummy_energon_state": "xyz"}
+        }

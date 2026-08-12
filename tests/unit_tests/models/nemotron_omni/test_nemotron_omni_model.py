@@ -373,6 +373,112 @@ def test_sound_encoder_drops_padded_rows_and_preserves_sample_order():
     )
 
 
+def test_bridge_sound_encoder_reconstructs_parakeet_feature_mask_from_valid_length():
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
+
+    class _RecordingEncoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.attention_mask = None
+
+        def forward(self, *, input_features, attention_mask):
+            self.attention_mask = attention_mask
+            return SimpleNamespace(last_hidden_state=input_features)
+
+        def _get_subsampling_output_length(self, lengths):
+            for _ in range(3):
+                lengths = (lengths + 1) // 2
+            return lengths
+
+    config = SimpleNamespace(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        intermediate_size=64,
+        num_mel_bins=8,
+        subsampling_factor=8,
+        conv_kernel_size=9,
+        use_bias=False,
+    )
+    model = BridgeSoundEncoder(config)
+    recording_encoder = _RecordingEncoder()
+    model.encoder = recording_encoder
+
+    _, embedding_lengths = model(torch.ones(1, 9, config.num_mel_bins), torch.tensor([8]))
+
+    assert recording_encoder.attention_mask.tolist() == [[True] * 8 + [False]]
+    assert embedding_lengths.tolist() == [1]
+
+
+@pytest.mark.parametrize(
+    ("sound_length", "match"),
+    [
+        (torch.tensor([0]), "0 < length"),
+        (torch.tensor([10]), "physical sound_clips width"),
+        (torch.tensor([8.0]), "integral dtype"),
+    ],
+)
+def test_bridge_sound_encoder_rejects_invalid_valid_lengths(sound_length, match):
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
+
+    config = SimpleNamespace(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        intermediate_size=64,
+        num_mel_bins=8,
+        subsampling_factor=8,
+        conv_kernel_size=9,
+        use_bias=False,
+    )
+    model = BridgeSoundEncoder(config)
+
+    with pytest.raises(ValueError, match=match):
+        model(torch.ones(1, 9, config.num_mel_bins), sound_length)
+
+
+@pytest.mark.run_only_on("GPU")
+def test_bridge_sound_encoder_validates_cuda_lengths_asynchronously(monkeypatch):
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
+
+    class _RecordingEncoder(nn.Module):
+        def forward(self, *, input_features, attention_mask):
+            del attention_mask
+            return SimpleNamespace(last_hidden_state=input_features)
+
+        def _get_subsampling_output_length(self, lengths):
+            return lengths
+
+    config = SimpleNamespace(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        intermediate_size=64,
+        num_mel_bins=8,
+        subsampling_factor=8,
+        conv_kernel_size=9,
+        use_bias=False,
+    )
+    model = BridgeSoundEncoder(config)
+    model.encoder = _RecordingEncoder()
+    assertions = []
+    original_assert_async = torch._assert_async
+
+    def _record_assertion(condition, message):
+        assertions.append(condition)
+        original_assert_async(condition, message)
+
+    monkeypatch.setattr(torch, "_assert_async", _record_assertion)
+
+    model(
+        torch.ones(1, 9, config.num_mel_bins, device="cuda"),
+        torch.tensor([8], device="cuda"),
+    )
+
+    assert len(assertions) == 1
+    assert assertions[0].is_cuda
+
+
 def test_real_parakeet_sound_encoder_matches_subsampled_placeholder_count():
     from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
 

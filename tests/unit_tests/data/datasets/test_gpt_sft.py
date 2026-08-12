@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+import torch
 
 from megatron.bridge.data.datasets import gpt_sft as gpt_sft_module
 from megatron.bridge.data.datasets.gpt_sft import (
@@ -381,6 +382,81 @@ class TestDataGPTSFTPackedDataset:
         assert processed["cu_seqlens_kv"].tolist() == processed["cu_seqlens_q"].tolist()
         assert processed["max_seqlen_q"].tolist() == [[3], [7]]
         assert processed["max_seqlen_kv"].tolist() == [[3], [7]]
+        assert processed["padding_mask"].dtype == torch.bool
+        assert processed["padding_mask"].tolist() == [
+            [False, False, False, False, False, False, True],
+            [False, False, False, False, False, False, False],
+        ]
+
+    def test_collate_fn_marks_offline_alignment_padding(self, tmp_path):
+        """Offline-packed rows expose physical alignment gaps to the MoE router."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset._pad_seq_to_mult = 4
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2, 2, 20, 21, 2, 2, 2]),
+                "seq_boundaries": [0, 5, 10],
+                "loss_mask": np.ones(10, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["tokens"].tolist() == [[10, 11, 12, 2, 20, 21, 2, 2]]
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 5]]
+        assert processed["cu_seqlens_q_padded"].tolist() == [[0, 4, 8]]
+        assert processed["padding_mask"].dtype == torch.bool
+        assert processed["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
+
+    def test_collate_fn_marks_offline_trailing_padding_without_alignment(self, tmp_path):
+        """Default offline packing masks padding added to reach the batch width."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_to_max_length = True
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2]),
+                "seq_boundaries": [0, 4],
+                "loss_mask": np.ones(4, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["tokens"].tolist() == [[10, 11, 12, 2, 2, 2, 2, 2]]
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 8]]
+        assert "cu_seqlens_q_padded" not in processed
+        assert processed["padding_mask"].tolist() == [[False, False, False, True, True, True, True, True]]
+
+    def test_collate_fn_keeps_padding_mask_key_stable_across_batches(self, tmp_path):
+        """Full-iteration graphs require an invariant input dictionary and tensor shape."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_to_max_length = True
+
+        padded = dataset.collate_fn(
+            [
+                {
+                    "input_ids": np.array([10, 11, 12, 2]),
+                    "seq_boundaries": [0, 4],
+                    "loss_mask": np.ones(4, dtype=np.int64),
+                }
+            ]
+        )
+        full = dataset.collate_fn(
+            [
+                {
+                    "input_ids": np.array([20, 21, 22, 23, 24, 25, 26, 27, 2]),
+                    "seq_boundaries": [0, 9],
+                    "loss_mask": np.ones(9, dtype=np.int64),
+                }
+            ]
+        )
+
+        assert padded["padding_mask"].shape == full["padding_mask"].shape == (1, 8)
+        assert padded["padding_mask"].any()
+        assert not full["padding_mask"].any()
 
     def test_utils_func_packed(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
