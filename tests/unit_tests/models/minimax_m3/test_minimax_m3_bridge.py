@@ -230,6 +230,10 @@ class TestMiniMaxM3Bridge:
         assert text_provider.hidden_size == vlm_provider.hidden_size
         assert text_provider.num_layers == vlm_provider.num_layers
         assert text_provider.transformer_layer_spec == vlm_provider.transformer_layer_spec
+        assert text_provider.moe_token_dispatcher_type == "flex"
+        assert text_provider.moe_flex_dispatcher_backend == "hybridep"
+        assert text_provider.moe_flex_dispatcher_num_sms == 16
+        assert text_provider.moe_permute_fusion_into_hybridep is False
         assert not hasattr(text_provider, "vision_config")
 
     def test_provider_bridge_uses_top_level_embedding_tie_contract(self):
@@ -257,7 +261,10 @@ class TestMiniMaxM3Bridge:
         assert provider.moe_router_pre_softmax is False
         assert provider.moe_router_score_function == "sigmoid"
         assert provider.moe_router_enable_expert_bias is True
-        assert provider.moe_token_dispatcher_type == "alltoall"
+        assert provider.moe_token_dispatcher_type == "flex"
+        assert provider.moe_flex_dispatcher_backend == "hybridep"
+        assert provider.moe_flex_dispatcher_num_sms == 16
+        assert provider.moe_permute_fusion_into_hybridep is False
         assert provider.moe_router_load_balancing_type == "aux_loss"
         assert provider.moe_router_topk_scaling_factor == 2.0
         assert provider.moe_shared_expert_intermediate_size == 32

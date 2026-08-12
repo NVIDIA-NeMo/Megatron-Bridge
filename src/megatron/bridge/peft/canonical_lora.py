@@ -319,15 +319,16 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         """
 
         # Skip already transformed modules
-        if isinstance(m, (LinearAdapter, LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
+        if isinstance(m, (LoRALinear, LoRALinearSplitQKV, LoRALinearSplitFC1UpGate, LoRATopKRouter)):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
             (match, full_name) = ans
             if isinstance(m, nn.Linear) and not is_modelopt_linear(m):
-                return LinearAdapter(
+                adapter = LinearAdapter(
                     m, dim=self.dim, alpha=self.alpha, dropout=self.dropout, lora_A_init_method=self.lora_A_init_method
                 )
+                return LoRALinear(m, adapter)
 
             is_expert = is_expert_linear(full_name)
             attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)

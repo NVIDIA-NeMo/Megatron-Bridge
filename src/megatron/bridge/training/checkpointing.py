@@ -118,6 +118,19 @@ try:
 except ImportError:
     handle_gdn_in_state_dict = None
 
+# Available from megatron-core with fused-MLA / MTP fsdp_dtensor support; None on older cores,
+# where the corresponding preprocessing and validation steps are skipped.
+try:
+    from megatron.core.transformer.fsdp_dtensor_checkpoint import (
+        handle_mla_down_proj_in_state_dict,
+        handle_mtp_in_state_dict,
+        validate_fsdp_dtensor_model_load,
+    )
+except ImportError:
+    handle_mla_down_proj_in_state_dict = None
+    handle_mtp_in_state_dict = None
+    validate_fsdp_dtensor_model_load = None
+
 try:
     from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
     from nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async import FileSystemWriterAsync
@@ -2070,6 +2083,8 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     - FP8 extra state
     - SWiGLU weight splitting
     - GDN (Gated DeltaNet) fused projection splitting (in_proj / conv1d)
+    - Fused MLA q/kv down-projection splitting (mla_down_proj_fusion)
+    - MTP inner-layer renaming (mtp_model_layer -> transformer_layer)
     - Expert parameter reindexing for Expert Parallel
     - Uneven DTensor preprocessing
 
@@ -2092,36 +2107,38 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
         getattr(model_config, "gated_linear_unit", False) and getattr(model_config, "activation_func", None) is F.silu
     )
 
-    if is_swiglu:
+    def apply(handler):
+        """Run a state dict handler over the model and, when present, the optimizer state."""
+        model_state_dict, optimizer_state_dict = handler(model, state_dict["model"], state_dict.get("optimizer"))
+        state_dict["model"] = model_state_dict
         if "optimizer" in state_dict:
-            model_state_dict, optimizer_state_dict = handle_swiglu_in_state_dict(
-                model, state_dict["model"], state_dict["optimizer"]
-            )
-            state_dict["model"] = model_state_dict
             state_dict["optimizer"] = optimizer_state_dict
-        else:
-            model_state_dict, _ = handle_swiglu_in_state_dict(model, state_dict["model"], None)
-            state_dict["model"] = model_state_dict
+
+    if is_swiglu:
+        apply(handle_swiglu_in_state_dict)
 
     # Handle GDN (Gated DeltaNet) fused projections — split in_proj / conv1d
     # into per-component sub-tensors for TP-correct checkpoint resharding.
     # No-op when handle_gdn_in_state_dict is unavailable (older megatron-core)
     # or when the model contains no GDN layers.
     if handle_gdn_in_state_dict is not None:
-        if "optimizer" in state_dict:
-            model_state_dict, optimizer_state_dict = handle_gdn_in_state_dict(
-                model, state_dict["model"], state_dict["optimizer"]
-            )
-            state_dict["model"] = model_state_dict
-            state_dict["optimizer"] = optimizer_state_dict
-        else:
-            model_state_dict, _ = handle_gdn_in_state_dict(model, state_dict["model"], None)
-            state_dict["model"] = model_state_dict
+        apply(handle_gdn_in_state_dict)
+
+    # Split a fused MLA q/kv down-projection (mla_down_proj_fusion) back into the unfused
+    # layout used on disk, and un-fold the layernorm it absorbed, so fused and unfused
+    # models share one on-disk format. No-op for unfused models.
+    if handle_mla_down_proj_in_state_dict is not None:
+        apply(handle_mla_down_proj_in_state_dict)
 
     # Handle expert parameters for Expert Parallel (DeepSeek-v3 style MoE)
     num_experts = getattr(model_config, "num_moe_experts", None)
     if num_experts:
         state_dict["model"] = handle_experts_in_state_dict(state_dict["model"], num_experts)
+
+    # Rename the MTP inner layer to the name used on disk. Runs after the handlers above
+    # because they resolve keys against live module paths, which still use the new name.
+    if handle_mtp_in_state_dict is not None:
+        apply(handle_mtp_in_state_dict)
 
     preprocess_state_dict_for_uneven_dtensor(state_dict)
 
@@ -3759,6 +3776,16 @@ def load_fsdp_dtensor_checkpoint(
 
         _time.sleep(rank * 0.001)  # Prevent log overlap across ranks
         print_diff_in_state_dicts(state_dict_metadata, state_dict)
+        # A partial load silently skips model weights the checkpoint does not have, leaving
+        # them at their initialized values. Report that, unless this is a finetune where
+        # loading only part of the model is the intent.
+        if validate_fsdp_dtensor_model_load is not None and not getattr(ckpt_cfg, "finetune", False):
+            validate_fsdp_dtensor_model_load(
+                state_dict_metadata,
+                state_dict,
+                checkpoint_name,
+                strict=ckpt_cfg.dist_ckpt_strictness,
+            )
 
     planner = torch.distributed.checkpoint.default_planner.DefaultLoadPlanner(allow_partial_load=allow_partial_load)
     torch.distributed.checkpoint.load_state_dict(

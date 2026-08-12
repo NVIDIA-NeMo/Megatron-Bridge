@@ -37,7 +37,6 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi.kimi_k3_provider import KimiK3ModelProvider
-from megatron.bridge.models.kimi.kimi_k3_spec import build_kimi_k3_spec
 
 
 @MegatronModelBridge.register_bridge(
@@ -71,6 +70,8 @@ class KimiK3Bridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK3ModelProvider:
         """Translate the nested Kimi K3 text configuration."""
+        from megatron.bridge.models.kimi.kimi_k3_spec import build_kimi_k3_spec
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         provider = super().provider_bridge(hf_pretrained)
