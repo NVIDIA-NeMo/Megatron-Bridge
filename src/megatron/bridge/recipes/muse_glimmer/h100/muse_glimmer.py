@@ -55,7 +55,7 @@ def _apply_model_and_data(
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
-    cfg.model.recompute_vision_layers = False
+    cfg.model.recompute_vision_layers = True
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = "auto"
     cfg.model.cross_entropy_loss_fusion = True
