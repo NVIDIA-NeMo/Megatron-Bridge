@@ -10,9 +10,10 @@ summary: >
   model-builder, and model bridge path. The modeled architecture includes the
   vision tower, adapter, projection, and a native Megatron-Core HybridModel text
   decoder; it does not use a legacy model provider or GPTModel wrapper.
-  CPU and TP8 GPU conversion, exact round-trip tensor equality, numerical
-  forward parity, and deterministic image-conditioned inference are verified.
-  TP8 LoRA PEFT is also verified; the remaining training modes are unverified.
+  All six modeling gates are verified: CPU and TP8 GPU conversion, exact
+  round-trip tensor equality, numerical forward parity, and deterministic
+  image-conditioned inference. TP8 LoRA PEFT is also verified; the remaining
+  training modes are unverified.
 verification_index:
   model_level:
     verified:
@@ -35,7 +36,7 @@ model:
   min_transformers_version: "5.15.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: a1122c6091f267618e92a636b4e440d3baf2ba1a  # pragma: allowlist secret
+  bridge_commit: c7026ab2cbaac76408c23c87d9ab9a27123603d6  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -131,8 +132,8 @@ items:
       Both implementations consume 584 padded input positions and a
       2040-by-1176 processed pixel tensor. The Hugging Face and Megatron
       next-token predictions match at token 328 (' to').
-      Logit cosine similarity is 0.999852, above the 0.99 gate; maximum and
-      mean absolute logit differences are 0.953125 and 0.281018, respectively.
+      Logit cosine similarity is 0.999896, above the 0.99 gate; maximum and
+      mean absolute logit differences are 0.781250 and 0.139148, respectively.
 
   inference:
     status: verified
@@ -148,7 +149,8 @@ items:
       --max_new_tokens 64 --deterministic --tp 8 --pp 1 --ep 1 --etp 1
     last_verified: 2026-08-12
     expected_result: |-
-      Two independent greedy runs reload the complete TP8 HybridModel
+      At bridge commit c7026ab2cbaac76408c23c87d9ab9a27123603d6, two
+      independent greedy runs reload the complete TP8 HybridModel
       checkpoint and use the same repository image (SHA-256
       a7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2).
       Both produce finite logits and the same exact 64-token completion without
