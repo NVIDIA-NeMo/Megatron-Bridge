@@ -60,8 +60,32 @@ class BridgeSoundEncoder(MegatronModule):
         """Dummy for pipeline parallel set_input_tensor hook."""
         self.input_tensor = input_tensor
 
-    def forward(self, sound_clips, sound_length):
+    def forward(self, sound_clips: torch.Tensor, sound_length: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Encode padded mel features using one valid prefix length per sample."""
+        if sound_clips.ndim != 3:
+            raise ValueError(f"sound_clips must have shape [batch, frames, mel_bins], got {tuple(sound_clips.shape)}.")
+        if sound_length.ndim != 1 or sound_length.numel() != sound_clips.shape[0]:
+            raise ValueError(
+                "sound_length must contain one value per sound_clips batch item; "
+                f"got shape {tuple(sound_length.shape)} for batch size {sound_clips.shape[0]}."
+            )
+        integral_dtypes = (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64)
+        if sound_length.dtype not in integral_dtypes:
+            raise ValueError(f"sound_length must use an integral dtype, got {sound_length.dtype}.")
+        if sound_length.device != sound_clips.device:
+            raise ValueError(
+                "sound_length and sound_clips must be on the same device; "
+                f"got {sound_length.device} and {sound_clips.device}."
+            )
         max_frames = sound_clips.size(1)
+        lengths_in_bounds = torch.all((sound_length > 0) & (sound_length <= max_frames))
+        bounds_message = (
+            f"sound_length values must satisfy 0 < length <= the physical sound_clips width ({max_frames})"
+        )
+        if sound_length.is_cuda:
+            torch._assert_async(lengths_in_bounds, f"{bounds_message}.")
+        elif not bool(lengths_in_bounds):
+            raise ValueError(f"{bounds_message}, got {sound_length.tolist()}.")
         attention_mask = torch.arange(max_frames, device=sound_clips.device)[None, :] < sound_length[:, None]
         output = self.encoder(
             input_features=sound_clips,
