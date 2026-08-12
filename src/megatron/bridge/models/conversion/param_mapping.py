@@ -2098,12 +2098,12 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Broadcast config to all PP ranks for collective communication
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             # create shallow copy and remove non-picklable objects with max depth=3
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
         d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
         d_tot_ssm_local = (config.mamba_state_dim * config.mamba_num_groups) // self.tp_size
@@ -2201,12 +2201,12 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Broadcast config to all PP ranks for collective communication
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             # create shallow copy and remove non-picklable objects with max depth=3
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
         shard_idx = self.get_shard_idx(config, local_tp=True)
 
@@ -2320,12 +2320,12 @@ class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # collective communication.
         # ------------------------------------------------------------------
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             # create shallow copy and remove non-picklable objects with max depth=3
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
         # Delegate TP/PP gathering.
         packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
@@ -2420,11 +2420,11 @@ class GDNLinearMappingSeparate(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Broadcast config across PP ranks (mirrors GDNLinearMapping).
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, cache_key="config")
         else:
             config = self._get_config(megatron_module)
             config = remove_non_pickleables(config, max_depth=3)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
         packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
         if not packed_dict:
