@@ -18,10 +18,14 @@ Run `./scripts/conversion/convert.sh import --help`,
 Training with Megatron-LM and later relying on Megatron Bridge for Hugging Face
 export is **not recommended**. Megatron-LM checkpoints normally store their
 arguments in `common.pt` instead of the `run_config.yaml` used by the supported
-Bridge export launcher. For an existing trusted checkpoint, follow the
-[best-effort compatibility guidance](../../docs/megatron-lm-to-megatron-bridge.md#export-megatron-lm-checkpoints-without-a-bridge-run-config).
+Bridge export launcher, so the launcher cannot consume them directly. For an
+existing trusted checkpoint, the
+[best-effort compatibility guidance](../../docs/megatron-lm-to-megatron-bridge.md#best-effort-export-of-an-existing-megatron-lm-checkpoint)
+describes how to generate and validate the required provider configuration. It
+does not guarantee compatibility, and any unclassified metadata mismatch must
+stop the export.
 
-Output from `scripts/translate_mlm_to_bridge.py` is reviewed configuration
+Output from `scripts/translate_mlm_to_bridge.py` is best-effort configuration
 guidance for a new Bridge run. It is not checkpoint metadata and must not be
 renamed or inserted as `run_config.yaml`.
 

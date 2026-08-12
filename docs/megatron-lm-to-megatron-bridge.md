@@ -6,7 +6,7 @@ Megatron Bridge is Python-first: configure models, data, and training via typed 
 
 `scripts/translate_mlm_to_bridge.py` translates bidirectionally between Megatron-LM `pretrain_gpt.py` CLI arguments and Megatron Bridge `run_recipe.py` Hydra overrides. It is useful for running loss-correlation experiments between the two frameworks and for migrating existing MLM configs.
 
-This script translates configuration only. It does not convert checkpoint weights and does not emit the serialized `run_config.yaml` stored in a Bridge-native checkpoint. Do not rename its output to `run_config.yaml` or place it in an MLM checkpoint: the generated overrides or Python recipe are inputs for a new Bridge run, not checkpoint metadata.
+This script provides best-effort configuration translation only. It does not establish semantic equivalence, convert checkpoint weights, or emit the serialized `run_config.yaml` stored in a Bridge-native checkpoint. Do not rename its output to `run_config.yaml` or place it in an MLM checkpoint: the generated overrides or Python recipe are starting points for a new Bridge run, not checkpoint metadata. Review every skipped and unknown argument before using the output.
 
 ### MLM → Bridge (default direction)
 
@@ -100,57 +100,11 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
 | `--sft-tokenizer-prompt-format P` | `tokenizer.tokenizer_prompt_format=P` | Bridge exposes the MCore SFT compatibility alias at load time |
 | `--mock-data` | `dataset.mock=true` | Use synthetic data (no files needed) |
 
-Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are silently skipped with a comment. `--mock-data` translates to `dataset.mock=true`. Unknown flags are listed in a separate section so you can handle them manually.
+Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are omitted and listed in a comment. `--mock-data` translates to `dataset.mock=true`. Unknown flags are listed separately so you can handle them manually.
 
-Megatron-LM `--spec` values are intentionally not copied into generated configuration as arbitrary import targets. A recognized Mamba or Hybrid spec helps the translator select `HybridModelProvider`, but review and select the Bridge stack specification in trusted Python code.
+Megatron-LM `--spec` values are intentionally not copied into generated configuration as arbitrary import targets. A recognized Mamba or Hybrid spec helps the translator identify the provider family, but a standalone Hybrid recipe still requires an explicit layer pattern. Review and select any Bridge stack specification in trusted Python code.
 
 > **Activation function CLI overrides**: `model.activation_func` can now be set via Hydra CLI string override (e.g. `model.activation_func=silu`, `model.activation_func=gelu`). The string is resolved to the callable in `TransformerConfig.finalize()`. This makes `--swiglu` → `model.gated_linear_unit=true model.activation_func=silu` round-trippable from the CLI.
-
-## Converting an existing Megatron-LM checkpoint to Hugging Face
-
-The conversion launcher supports export from Bridge-native checkpoints that contain a serialized `run_config.yaml`. A flat Megatron-LM distributed checkpoint instead stores an `argparse.Namespace` in common checkpoint state. Adding translator output to that directory does not turn it into a Bridge-native checkpoint.
-
-Training with Megatron-LM and then exporting with Megatron Bridge is not recommended; however, if you already have a Megatron-LM checkpoint, here is how you can convert it to Hugging Face format. For a supported model family:
-
-1. Pin compatible Megatron Bridge and Megatron-Core revisions, then inspect the saved MLM arguments with `load_model_config()`.
-2. Identify whether the checkpoint uses the `gpt` or `hybrid` MLM model path. Use the saved layer pattern and `args.spec`; do not infer the model type from the directory name.
-3. Resolve an exact Hugging Face revision for the same architecture to an immutable local snapshot containing its config, tokenizer, and required custom-code artifacts. Create `AutoBridge` from that local config. This supplies the registered config and parameter mappings; it does not load reference weights. Set `trust_remote_code=True` only after auditing code in the snapshot.
-4. Compare every weight-bearing field in the HF-derived provider with the saved MLM metadata. Architecture, vocabulary, expert, attention, Mamba, and physical/repeated-MTP layout must agree. Parallel degrees may be overridden for resharding when the target topology is valid.
-5. In an initialized distributed job, call `build_and_load_model()` with the configuration and MLM arguments returned by `load_model_config()`, plus `model_type="gpt"` or `model_type="hybrid"`.
-6. Call `AutoBridge.save_hf_pretrained()` collectively on all ranks, reusing that same immutable local snapshot as the source for tokenizer and custom-code artifacts. Do not switch back to a mutable Hub branch or tag during export.
-7. Verify the emitted HF config, shard index and shard headers, expected tensor keys, strict `from_pretrained()` loading, and at least one forward pass. Run numerical parity when a source-model baseline is available.
-
-The essential API flow is:
-
-```python
-from transformers import AutoConfig
-
-from megatron.bridge import AutoBridge
-from megatron.bridge.training.model_load_save import build_and_load_model, load_model_config
-
-model_config, mlm_args = load_model_config(mlm_checkpoint)
-# Resolve hf_reference@hf_revision to this read-only local snapshot first.
-trust_remote_code = False
-hf_config = AutoConfig.from_pretrained(
-    hf_reference_snapshot,
-    trust_remote_code=trust_remote_code,
-)
-bridge = AutoBridge.from_hf_config(hf_config)
-bridge.trust_remote_code = trust_remote_code
-
-# Validate model_config and mlm_args against bridge.to_megatron_provider()
-# before constructing or loading the model.
-model = build_and_load_model(
-    mlm_checkpoint,
-    model_config,
-    model_type="hybrid",  # or "gpt"
-    megatron_args=mlm_args,
-    skip_temp_dist_context=True,
-)
-bridge.save_hf_pretrained(model, hf_output, source_path=hf_reference_snapshot)
-```
-
-This is an advanced compatibility path rather than a promise that every MLM layout is convertible. Conversion still requires a registered Bridge for the HF architecture and compatible checkpoint keys. If configuration validation or strict weight mapping fails, stop and classify the mismatch instead of patching model or generation code to force the export.
 
 ## Quick start
 
@@ -174,27 +128,37 @@ Notes:
 - Config groups are nested: `rng`, `train`, `model`, `optimizer`, `ddp`, `scheduler`, `dataset`, `logger`, `tokenizer`, `checkpoint`, `dist`, `profiling`, `peft`, `comm_overlap`, `mixed_precision`, `inprocess_restart`.
 - After overrides are applied, runtime validation computes any dependent fields (e.g., data-parallel size, scheduler steps) and checks consistency.
 
-## Export Megatron-LM checkpoints without a Bridge run config
+## Best-effort export of an existing Megatron-LM checkpoint
 
 Megatron-LM checkpoints save their training arguments in `common.pt`; they do
 not normally contain the `run_config.yaml` written by Megatron Bridge. The
 Bridge checkpoint export launcher currently needs that file to reconstruct a
 model provider before loading the distributed weights.
 
+Training with Megatron-LM and later relying on Megatron Bridge for Hugging Face
+export is **not recommended**. This procedure is a best-effort recovery path for
+an existing checkpoint, not a supported general MLM-to-Hugging-Face conversion
+workflow. Use it only with a checkpoint and immutable local Hugging Face
+snapshot that you trust. Loading MLM common checkpoint state may deserialize
+Python objects; an allowlisted package prefix or audited Hugging Face code does
+not make an untrusted checkpoint safe.
+
 Use this procedure only when all of the following are true:
 
 - the iteration directory contains `common.pt` and the distributed checkpoint
   metadata and shards;
 - the checkpoint architecture has an existing Megatron Bridge implementation;
-- `--hf-model` identifies the exact Hugging Face architecture used to create
-  the checkpoint; fine-tuned weights may differ, but model dimensions, layer
-  patterns, vocabulary configuration, and MTP structure must match; and
+- `--hf-model` identifies an immutable local snapshot of the exact Hugging Face
+  architecture used to create the checkpoint; fine-tuned weights may differ,
+  but all architecture- and behavior-bearing configuration must match; and
 - Megatron Bridge, Megatron Core, and Transformer Engine are compatible with
   the versions that wrote the checkpoint.
 
-This procedure generates only `run_config.yaml`. It does not migrate legacy
-checkpoint keys or metadata, and it does not translate a custom Megatron-LM
-model spec into a Bridge provider.
+This procedure generates only `run_config.yaml` in the checkpoint directory.
+It does not migrate legacy checkpoint keys or metadata, translate a custom
+Megatron-LM model spec into a Bridge provider, or prove that the checkpoint and
+reference are semantically equivalent. Work on a copy if the checkpoint
+directory must remain pristine.
 
 ### Generate `run_config.yaml`
 
@@ -204,7 +168,7 @@ this generation step does not download its weights.
 
 ```bash
 MB_CKPT=/workspace/checkpoints/model/iter_0001000
-MB_HF_REF=organization/model-reference
+MB_HF_REF=/workspace/hf-snapshots/model-at-immutable-revision
 
 uv run python - "$MB_CKPT" "$MB_HF_REF" --trust-remote-code <<'PY'
 from dataclasses import fields
@@ -328,8 +292,12 @@ for name in (
 PY
 ```
 
-Compare the reported architecture, hybrid/MTP layout, and precision fields
-with the original training configuration. Do not continue if they differ.
+The printed fields are only a starting diagnostic. Compare every architecture-
+and behavior-bearing field with the original training configuration, including
+position and RoPE behavior, vocabulary and tokenizer IDs, tied weights, expert
+and router behavior, attention, Mamba, and physical/repeated-MTP layout.
+Parallel degrees may differ only for a valid resharding topology. Treat any
+unclassified difference as an incompatibility and do not continue.
 
 Run the normal export after validation. Adapt the parallel topology to the
 checkpoint and available GPUs:
@@ -349,6 +317,10 @@ checkpoint and available GPUs:
 
 Keep strict conversion enabled for the first export. Do not use
 `--not-strict` to bypass missing MTP, expert, or quantized parameters.
+Verify the emitted HF config, shard index, expected tensor keys, strict
+`from_pretrained()` loading, and at least one forward pass. These are structural
+and runtime checks, not numerical-parity evidence. Compare source and exported
+logits when a source-model baseline is available.
 
 For MXFP8 parameter checkpoints, use hardware supported by the saved recipe
 (normally Blackwell). The default BF16 export dequantizes Transformer Engine
@@ -358,7 +330,6 @@ native FP8 Hugging Face export currently supports blockwise FP8 parameters.
 ## Mapping Megatron-LM arguments to Megatron Bridge config
 
 Below is a concise mapping from common `megatron-lm/megatron/training/arguments.py` flags to the new dataclass fields. If a field is not listed here (e.g., highly model-specific knobs), it typically lives under `model.*`, `optimizer.*`, `dataset.*`, or `tokenizer.*` with similar names.
-
 
 ### Model topology and parallelisms
 

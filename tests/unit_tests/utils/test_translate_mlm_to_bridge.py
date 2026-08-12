@@ -632,6 +632,48 @@ class TestTranslateHybrid:
         assert "tokenizer.tokenizer_prompt_format" not in result.overrides
         assert ("sft-tokenizer-prompt-format", "nemotron-h-aligned") in result.skipped
 
+    def test_rejects_ambiguous_hybrid_recipe_inputs(self):
+        """Hybrid recipes fail when their architecture cannot be reconstructed safely."""
+        with pytest.raises(ValueError, match="cannot both be specified"):
+            translate(
+                {
+                    "hybrid-layer-pattern": "M*M*/EE",
+                    "hybrid-override-pattern": "MMMM",
+                }
+            )
+
+        result = translate(
+            {
+                "num-layers": 4,
+                "spec": ["megatron.core.models.mamba.mamba_layer_specs", "mamba_stack_spec"],
+            }
+        )
+
+        with pytest.raises(ValueError, match="Cannot emit a standalone Hybrid recipe"):
+            emit_recipe(result, recipe_name="hybrid_model")
+
+    def test_recipe_preserves_expert_tensor_parallelism_and_seed(self):
+        """Standalone recipes retain translated ETP and RNG settings."""
+        result = translate(
+            {
+                "num-experts": 8,
+                "expert-model-parallel-size": 2,
+                "expert-tensor-parallel-size": 4,
+                "seed": 5678,
+            }
+        )
+
+        output = emit_recipe(result, recipe_name="moe_model")
+
+        compile(output, "<generated-moe-recipe>", "exec")
+        assert "expert_tensor_parallelism: int = 4" in output
+        assert "expert_tensor_parallel_size=expert_tensor_parallelism" in output
+        assert "rng=RNGConfig(seed=5678)" in output
+        spec = ["megatron.core.models.mamba.mamba_layer_specs", "mamba_stack_spec"]
+        overrides = emit_overrides(translate({"spec": spec}))
+
+        assert f"#   --spec {spec}" in overrides
+
 
 # ===========================================================================
 #  Group 5 — _format_value_for_override

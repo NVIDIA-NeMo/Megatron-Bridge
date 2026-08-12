@@ -475,6 +475,9 @@ class TranslationResult:
 
 def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool] | None = None) -> TranslationResult:
     """Translate parsed MLM args into Bridge overrides."""
+    if args.get("hybrid-layer-pattern") is not None and args.get("hybrid-override-pattern") is not None:
+        raise ValueError("--hybrid-layer-pattern and deprecated --hybrid-override-pattern cannot both be specified")
+
     result = TranslationResult()
     result.raw_args = args
     result.env_vars = env_vars or {}
@@ -675,9 +678,9 @@ def emit_overrides(result: TranslationResult) -> str:
             lines.append(f"#   --{arg_name} {arg_val}")
 
     if result.skipped:
-        lines.append("\n# ── Skipped args (not needed in Bridge) ───────────────")
+        lines.append("\n# ── Skipped args (review manually) ───────────────────")
         for arg_name, arg_val in result.skipped:
-            lines.append(f"#   --{arg_name}")
+            lines.append(f"#   --{arg_name} {arg_val}")
 
     return "\n".join(lines)
 
@@ -686,6 +689,12 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     """Generate a standalone Bridge recipe Python file."""
     uses_mla = result.uses_mla
     uses_hybrid = result.uses_hybrid
+    if uses_hybrid and "model.hybrid_layer_pattern" not in result.overrides:
+        raise ValueError(
+            "Cannot emit a standalone Hybrid recipe without --hybrid-layer-pattern or "
+            "--hybrid-override-pattern; saved --spec values are intentionally not imported"
+        )
+
     if uses_hybrid:
         provider_cls = "HybridModelProvider"
         provider_import_path = "megatron.bridge.models.hybrid"
@@ -801,6 +810,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     # Tokenizer
     tok_type = tokenizer_fields.get("tokenizer_type", "HuggingFaceTokenizer")
     tok_model = tokenizer_fields.get("tokenizer_model", None)
+    rng_seed = misc_overrides.get("rng.seed", 1234)
 
     # Build recipe file content
     lines = []
@@ -846,6 +856,8 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     lines.append(f"    context_parallelism: int = {model_fields.get('context_parallel_size', 1)},")
     if result.uses_moe:
         lines.append(f"    expert_parallelism: int = {model_fields.get('expert_model_parallel_size', 1)},")
+    if "expert_tensor_parallel_size" in model_fields:
+        lines.append(f"    expert_tensor_parallelism: int = {model_fields.get('expert_tensor_parallel_size', 1)},")
     lines.append(f"    sequence_parallelism: bool = {model_fields.get('sequence_parallel', False)},")
     lines.append(f") -> {provider_cls}:")
     lines.append(f'    """Configure the {recipe_name} model."""')
@@ -875,6 +887,8 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     lines.append("        context_parallel_size=context_parallelism,")
     if result.uses_moe:
         lines.append("        expert_model_parallel_size=expert_parallelism,")
+    if "expert_tensor_parallel_size" in model_fields:
+        lines.append("        expert_tensor_parallel_size=expert_tensor_parallelism,")
     lines.append("        sequence_parallel=sequence_parallelism,")
     vpp = model_fields.get("virtual_pipeline_model_parallel_size")
     if vpp:
@@ -1047,7 +1061,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
         lines.append(f"            {k}={_fmt_val(v)},")
     lines.append("        ),")
 
-    lines.append("        rng=RNGConfig(seed=1234),")
+    lines.append(f"        rng=RNGConfig(seed={_fmt_val(rng_seed)}),")
 
     # Mixed precision
     mp = mixed_precision_str or "bf16_mixed"
