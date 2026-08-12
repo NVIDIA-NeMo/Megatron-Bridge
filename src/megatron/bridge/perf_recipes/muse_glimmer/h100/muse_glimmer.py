@@ -14,7 +14,7 @@
 
 """H100 performance recipes for Muse Glimmer."""
 
-from megatron.bridge.perf_recipes._common import _benchmark_common
+from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.muse_glimmer.h100 import (
     muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config,
@@ -23,8 +23,8 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer, MockGPTDatasetConfig
 
 
-def muse_glimmer_30b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
-    """Muse Glimmer dense decoder pretrain: 32× H100, BF16, TP=4 PP=4 CP=2."""
+def _muse_glimmer_30b_pretrain_32gpu_h100_config() -> ConfigContainer:
+    """Build the common Muse Glimmer dense-decoder H100 benchmark."""
     cfg = muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config()
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
@@ -67,4 +67,21 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-__all__ = ["muse_glimmer_30b_pretrain_32gpu_h100_bf16_config"]
+def muse_glimmer_30b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
+    """Muse Glimmer dense decoder pretrain: 32× H100, BF16, TP=4 PP=4 CP=2."""
+    cfg = _muse_glimmer_30b_pretrain_32gpu_h100_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    return cfg
+
+
+def muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Muse Glimmer dense decoder pretrain: 32× H100, FP8 current scaling."""
+    cfg = _muse_glimmer_30b_pretrain_32gpu_h100_config()
+    cfg.mixed_precision = _perf_precision("fp8_cs")
+    return cfg
+
+
+__all__ = [
+    "muse_glimmer_30b_pretrain_32gpu_h100_bf16_config",
+    "muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config",
+]

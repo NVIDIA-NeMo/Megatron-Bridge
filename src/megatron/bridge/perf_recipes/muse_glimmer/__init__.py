@@ -16,7 +16,11 @@
 
 from megatron.bridge.perf_recipes.muse_glimmer.h100 import (
     muse_glimmer_30b_pretrain_32gpu_h100_bf16_config,
+    muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config,
 )
 
 
-__all__ = ["muse_glimmer_30b_pretrain_32gpu_h100_bf16_config"]
+__all__ = [
+    "muse_glimmer_30b_pretrain_32gpu_h100_bf16_config",
+    "muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config",
+]

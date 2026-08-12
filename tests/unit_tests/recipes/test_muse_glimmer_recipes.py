@@ -12,6 +12,7 @@ import torch
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.perf_recipes.muse_glimmer.h100 import (
     muse_glimmer_30b_pretrain_32gpu_h100_bf16_config,
+    muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config,
 )
 from megatron.bridge.recipes.muse_glimmer.h100 import muse_glimmer as muse_glimmer_recipes
 from megatron.bridge.recipes.muse_glimmer.h100 import (
@@ -135,6 +136,18 @@ def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "TORCH_NCCL_HIGH_PRIORITY": 1,
     }
+
+
+def test_muse_glimmer_fp8_performance_recipe_uses_current_scaling() -> None:
+    cfg = muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config()
+
+    assert cfg.mixed_precision.fp8 == "hybrid"
+    assert cfg.mixed_precision.fp8_recipe == "tensorwise"
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.train.global_batch_size == 96
+    assert cfg.train.micro_batch_size == 3
 
 
 def test_muse_glimmer_lora_targets_native_attention_projections() -> None:
