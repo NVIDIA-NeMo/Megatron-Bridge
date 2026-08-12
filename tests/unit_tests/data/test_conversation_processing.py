@@ -28,6 +28,7 @@ from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
+    chat_template_kwargs_from_example,
     gather_assistant_text_segments,
     get_processor_tokenizer,
     infer_assistant_mask_boundary_config,
@@ -570,13 +571,14 @@ def test_build_assistant_loss_mask_aligns_hf_generation_mask_to_batch_padding(in
     assert mask.tolist() == expected_mask
 
 
-def test_build_assistant_loss_mask_forwards_tools_to_hf_generation_mask():
+def test_build_assistant_loss_mask_forwards_template_kwargs_to_hf_generation_mask():
     tools = [{"type": "function", "function": {"name": "lookup"}}]
     example = {
         "conversation": [
             {"role": "user", "content": "question"},
             {"role": "assistant", "content": "answer"},
         ],
+        "chat_template_kwargs": {"enable_thinking": True, "preserve_thinking": True},
         "tools": tools,
     }
 
@@ -585,15 +587,35 @@ def test_build_assistant_loss_mask_forwards_tools_to_hf_generation_mask():
     mask = build_assistant_loss_mask(example, torch.tensor([1, 2, 3, 4]), processor)
 
     assert mask.tolist() == [0.0, 0.0, 1.0, 0.0]
-    assert processor.tokenizer.template_kwargs == [{"tools": tools}]
+    assert processor.tokenizer.template_kwargs == [
+        {"enable_thinking": True, "preserve_thinking": True, "tools": tools}
+    ]
 
 
-def test_shared_chat_template_kwargs_from_examples_requires_shared_tools():
+def test_chat_template_kwargs_from_example_rejects_invalid_or_pipeline_controlled_values():
+    with pytest.raises(ValueError, match="string-keyed mapping"):
+        chat_template_kwargs_from_example({"chat_template_kwargs": ["preserve_thinking"]})
+    with pytest.raises(ValueError, match="pipeline-controlled arguments: tokenize, tools"):
+        chat_template_kwargs_from_example({"chat_template_kwargs": {"tokenize": False, "tools": []}})
+
+
+def test_shared_chat_template_kwargs_from_examples_requires_shared_values():
     tools = [{"type": "function", "function": {"name": "lookup"}}]
+    kwargs = {"preserve_thinking": True}
 
-    assert shared_chat_template_kwargs_from_examples([{"tools": tools}, {"tools": tools}]) == {"tools": tools}
-    with pytest.raises(ValueError, match="same chat-template tools"):
-        shared_chat_template_kwargs_from_examples([{"tools": tools}, {"tools": []}])
+    assert shared_chat_template_kwargs_from_examples(
+        [
+            {"chat_template_kwargs": kwargs, "tools": tools},
+            {"chat_template_kwargs": kwargs, "tools": tools},
+        ]
+    ) == {"preserve_thinking": True, "tools": tools}
+    with pytest.raises(ValueError, match="same chat-template kwargs and tools"):
+        shared_chat_template_kwargs_from_examples(
+            [
+                {"chat_template_kwargs": {"preserve_thinking": True}, "tools": tools},
+                {"chat_template_kwargs": {"preserve_thinking": False}, "tools": tools},
+            ]
+        )
 
 
 def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():

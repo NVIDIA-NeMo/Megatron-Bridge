@@ -37,6 +37,21 @@ _LEGACY_CHAT_ROLE_ALIASES = {"human": "user", "gpt": CHATML_ASSISTANT_ROLE}
 # will tokenize. Sized to admit payloads that print themselves in full — a few hundred frame
 # reprs, or a float array below numpy's summarization threshold — and reject the rest.
 _MAX_SCANNED_REPR_CHARS = 65536
+_PIPELINE_CONTROLLED_CHAT_TEMPLATE_KWARGS = frozenset(
+    {
+        "add_generation_prompt",
+        "chat_template",
+        "continue_final_message",
+        "max_length",
+        "padding",
+        "return_assistant_tokens_mask",
+        "return_dict",
+        "return_tensors",
+        "tokenize",
+        "tools",
+        "truncation",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -436,11 +451,32 @@ def _conversation_from_example(
 def chat_template_kwargs_from_example(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Return optional HF chat-template kwargs stored alongside a conversation."""
+    """Return optional HF chat-template kwargs stored alongside a conversation.
+
+    Rows may provide model-template controls such as ``enable_thinking`` or
+    ``preserve_thinking`` under ``chat_template_kwargs``. Rendering and
+    tokenization controls remain owned by the data pipeline, while tool schemas
+    use the established top-level ``tools`` field.
+
+    Raises:
+        ValueError: If ``chat_template_kwargs`` is not a string-keyed mapping or
+            attempts to override a pipeline-controlled argument.
+    """
     if not isinstance(example_or_conversation, Mapping):
         return {}
 
-    kwargs: dict[str, Any] = {}
+    raw_kwargs = example_or_conversation.get("chat_template_kwargs")
+    if raw_kwargs is None:
+        kwargs: dict[str, Any] = {}
+    elif not isinstance(raw_kwargs, Mapping) or not all(isinstance(key, str) for key in raw_kwargs):
+        raise ValueError("chat_template_kwargs must be a string-keyed mapping.")
+    else:
+        controlled_keys = sorted(_PIPELINE_CONTROLLED_CHAT_TEMPLATE_KWARGS.intersection(raw_kwargs))
+        if controlled_keys:
+            joined_keys = ", ".join(controlled_keys)
+            raise ValueError(f"chat_template_kwargs cannot override pipeline-controlled arguments: {joined_keys}.")
+        kwargs = dict(raw_kwargs)
+
     tools = example_or_conversation.get("tools")
     if tools is not None:
         kwargs["tools"] = tools
@@ -450,9 +486,9 @@ def chat_template_kwargs_from_example(
 def shared_chat_template_kwargs_from_examples(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Return dataset-wide chat-template kwargs shared by a processor batch.
 
-    Processor-batched VLM collators accept one tool schema for the whole
-    microbatch. Datasets using these collators must therefore use a shared tool
-    registry instead of varying tool definitions per row.
+    Processor-batched VLM collators accept one set of template kwargs for the
+    whole microbatch. Datasets using these collators must therefore keep those
+    controls and any tool registry identical across rows.
 
     Raises:
         ValueError: If rows in one processor batch use different template kwargs.
@@ -461,7 +497,7 @@ def shared_chat_template_kwargs_from_examples(examples: Sequence[Mapping[str, An
         return {}
     kwargs = chat_template_kwargs_from_example(examples[0])
     if any(chat_template_kwargs_from_example(example) != kwargs for example in examples[1:]):
-        raise ValueError("All examples in one processor batch must use the same chat-template tools.")
+        raise ValueError("All examples in one processor batch must use the same chat-template kwargs and tools.")
     return kwargs
 
 
