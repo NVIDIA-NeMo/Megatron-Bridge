@@ -613,14 +613,15 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     peft.set_params_to_save(transformed_model)
 
     # Log PEFT statistics
-    model_to_analyze = transformed_model[0] if isinstance(transformed_model, list) else transformed_model
+    model_chunks = transformed_model if isinstance(transformed_model, list) else [transformed_model]
     total_params = 0
     trainable_params = 0
-    for param in model_to_analyze.parameters():
-        param_count = param.numel()
-        total_params += param_count
-        if param.requires_grad:
-            trainable_params += param_count
+    for model_chunk in model_chunks:
+        for param in model_chunk.parameters():
+            param_count = param.numel()
+            total_params += param_count
+            if param.requires_grad:
+                trainable_params += param_count
 
     print_rank_0("PEFT Statistics:")
     print_rank_0(f"  Total parameters: {total_params:,}")
