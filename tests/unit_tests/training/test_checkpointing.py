@@ -41,6 +41,7 @@ from megatron.bridge.training.checkpointing import (
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
+    _get_run_config_tp_pp,
     _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
@@ -97,6 +98,17 @@ class _MaliciousDataloaderState:
 
 class TestCheckpointUtilities:
     """Test utility functions for checkpoint management."""
+
+    @pytest.mark.parametrize(
+        "model_config",
+        [
+            {"tensor_model_parallel_size": 4, "pipeline_model_parallel_size": 2},
+            {"transformer": {"tensor_model_parallel_size": 4, "pipeline_model_parallel_size": 2}},
+        ],
+    )
+    def test_get_run_config_tp_pp_supports_flat_and_hybrid_configs(self, model_config):
+        """Checkpoint parallelism checks support provider and HybridModel layouts."""
+        assert _get_run_config_tp_pp(model_config) == (4, 2)
 
     @pytest.mark.parametrize(
         "checkpoints_path,iteration,release,expected",

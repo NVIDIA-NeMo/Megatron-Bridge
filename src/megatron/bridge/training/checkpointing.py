@@ -23,6 +23,7 @@ import shutil
 import sys
 import threading
 from abc import ABC
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from functools import partial
@@ -159,6 +160,16 @@ HF_WEIGHTS_SUBDIR = "hf"
 # default (currently only Megatron Energon). Used to derive dataloader_save / dataloader_load when
 # those config fields are left unset.
 DATALOADER_STATE_SUBDIR = "energon"
+
+
+def _get_run_config_tp_pp(model_config: Mapping[str, Any]) -> tuple[int, int]:
+    """Read TP/PP sizes from a flat provider or nested HybridModel config."""
+    transformer_config = model_config.get("transformer")
+    parallel_config = transformer_config if isinstance(transformer_config, Mapping) else model_config
+    return (
+        parallel_config["tensor_model_parallel_size"],
+        parallel_config["pipeline_model_parallel_size"],
+    )
 
 
 class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
@@ -2816,10 +2827,7 @@ def _load_checkpoint_from_path(
             tp_pp_match = True
             mismatch_msg = ""
         else:
-            ckpt_tp_pp = (
-                run_config["model"]["tensor_model_parallel_size"],
-                run_config["model"]["pipeline_model_parallel_size"],
-            )
+            ckpt_tp_pp = _get_run_config_tp_pp(run_config["model"])
             run_tp_pp = (
                 cfg.model.tensor_model_parallel_size,
                 cfg.model.pipeline_model_parallel_size,
@@ -2936,10 +2944,7 @@ def _load_checkpoint_from_path(
             run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
             if file_exists(run_config_filename):
                 run_config = read_run_config(run_config_filename)
-                ckpt_tp_pp = (
-                    run_config["model"]["tensor_model_parallel_size"],
-                    run_config["model"]["pipeline_model_parallel_size"],
-                )
+                ckpt_tp_pp = _get_run_config_tp_pp(run_config["model"])
                 run_tp_pp = (
                     cfg.model.tensor_model_parallel_size,
                     cfg.model.pipeline_model_parallel_size,
