@@ -12,7 +12,7 @@ summary: >
   use a legacy model provider or GPTModel wrapper.
   CPU and TP8 GPU conversion, exact round-trip tensor equality, numerical
   forward parity, and deterministic image-conditioned inference are verified.
-  Training remains unverified.
+  TP8 LoRA PEFT is also verified; the remaining training modes are unverified.
 verification_index:
   model_level:
     verified:
@@ -24,7 +24,8 @@ verification_index:
       - inference
   training:
     H100:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [peft]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
 model:
   hf_id: meta-models/Muse-Glimmer-30B
   hf_revision: f84ecc3a0ea984a4c04542a84269e3d065350a6e  # pragma: allowlist secret
@@ -224,20 +225,35 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
-      command: null
-      last_verified: null
+      bridge_commit: e773fd0bfa2ba8a5c295f11f50e7758fa09dab6c  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+        --recipe muse_glimmer_30b_peft_8gpu_h100_bf16_config --mode lora
+        --pretrained_checkpoint
+        work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000
+        --max_steps 100
+        --save_dir work/model-verification/muse-glimmer-30b/peft-checkpoints
+        --save_interval 100 checkpoint.load=null
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-08-12
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 0.7247973
+        final_loss: 0.04332113
+        last_10_steps_step_time_ms_avg: 5291.7
+        last_10_steps_model_tflops_per_gpu_avg: 258.34
       expected_result: >
-        Complete a pinned-data 100-step PEFT run with an audited adapter target
-        set, finite loss, no skipped or NaN iterations, all four metrics, and a
-        reloadable adapter checkpoint.
+        The command loads the complete imported native HybridModel checkpoint,
+        freezes the base model, and inserts LoRA dim 8 / alpha 16 adapters only
+        into the native linear_qkv and linear_proj attention projections. All
+        100 optimizer-step rows are present exactly once with finite loss, zero
+        skipped iterations, and zero NaN iterations. Loss decreases from
+        0.7247973 to 0.04332113, all four metrics are recorded, and the complete
+        eight-shard iter_0000100 adapter checkpoint is saved with its run config,
+        metadata, and train state.
 
   checkpoint_resume:
     H100:
