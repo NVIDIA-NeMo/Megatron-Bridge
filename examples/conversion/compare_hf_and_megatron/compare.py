@@ -696,14 +696,15 @@ def _load_megatron_model(args):
         )
         if getattr(bridge._model_bridge, "MODEL_CONFIG_CLASS", None) is not None:
             model_config = bridge.get_model_config()
-            model_config.tensor_model_parallel_size = tp
-            model_config.pipeline_model_parallel_size = pp
-            model_config.expert_model_parallel_size = ep
-            model_config.expert_tensor_parallel_size = etp
-            model_config.pipeline_dtype = torch.bfloat16
-            model_config.params_dtype = torch.bfloat16
+            transformer = model_config.transformer
+            transformer.tensor_model_parallel_size = tp
+            transformer.pipeline_model_parallel_size = pp
+            transformer.expert_model_parallel_size = ep
+            transformer.expert_tensor_parallel_size = etp
+            transformer.pipeline_dtype = torch.bfloat16
+            transformer.params_dtype = torch.bfloat16
             model_config.finalize()
-            bridge._get_or_initialize_pg_collection(model_config.transformer)
+            bridge._get_or_initialize_pg_collection(transformer)
         else:
             model_provider = bridge.to_megatron_provider(load_weights=False)
             model_provider.tensor_model_parallel_size = tp
@@ -735,12 +736,13 @@ def _load_megatron_model(args):
         )
         if getattr(bridge._model_bridge, "MODEL_CONFIG_CLASS", None) is not None:
             model_config = bridge.get_model_config()
-            model_config.tensor_model_parallel_size = tp
-            model_config.pipeline_model_parallel_size = pp
-            model_config.expert_model_parallel_size = ep
-            model_config.expert_tensor_parallel_size = etp
-            model_config.pipeline_dtype = torch.bfloat16
-            model_config.params_dtype = torch.bfloat16
+            transformer = model_config.transformer
+            transformer.tensor_model_parallel_size = tp
+            transformer.pipeline_model_parallel_size = pp
+            transformer.expert_model_parallel_size = ep
+            transformer.expert_tensor_parallel_size = etp
+            transformer.pipeline_dtype = torch.bfloat16
+            transformer.params_dtype = torch.bfloat16
             megatron_model = bridge.get_model(
                 model_config,
                 wrap_with_ddp=False,

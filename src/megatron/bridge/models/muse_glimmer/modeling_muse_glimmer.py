@@ -24,7 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
-from megatron.core.models.backends import LocalSpecProvider
+from megatron.core.models.backends import get_backend
 from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -169,8 +169,7 @@ class MuseGlimmerMLP(MLP):
 
 def get_muse_glimmer_hybrid_stack_spec(config: TransformerConfig) -> ModuleSpec:
     """Build the native Hybrid stack spec used by the Muse decoder."""
-    del config
-    backend = LocalSpecProvider()
+    backend = get_backend(config.transformer_impl)
     return ModuleSpec(
         module=HybridStack,
         submodules=HybridStackSubmodules(

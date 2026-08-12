@@ -11,8 +11,11 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from megatron.core.extensions.transformer_engine import TEColumnParallelLinear, TEDotProductAttention
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.training.models.hybrid import HybridModelConfig
 
 from megatron.bridge import AutoBridge
@@ -29,6 +32,7 @@ from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
     MuseGlimmerCenteredRMSNorm,
     MuseGlimmerRMSNorm,
     MuseGlimmerVisionModel,
+    get_muse_glimmer_hybrid_stack_spec,
 )
 from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import (
     MuseGlimmerBridge,
@@ -127,6 +131,28 @@ def test_vision_config_contributes_to_runtime_flops() -> None:
     vision_flops = vit_flops_from_grid_thw(cfg, torch.tensor([[1, 4, 4]], dtype=torch.int64))
 
     assert vision_flops > 0
+
+
+@pytest.mark.parametrize(
+    ("transformer_impl", "expected_qkv", "expected_attention"),
+    [
+        ("local", ColumnParallelLinear, DotProductAttention),
+        ("transformer_engine", TEColumnParallelLinear, TEDotProductAttention),
+    ],
+)
+def test_decoder_stack_honors_transformer_backend(
+    transformer_impl: str,
+    expected_qkv: type,
+    expected_attention: type,
+) -> None:
+    config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).transformer
+    config.transformer_impl = transformer_impl
+
+    stack_spec = get_muse_glimmer_hybrid_stack_spec(config)
+    attention = stack_spec.submodules.attention_layer.submodules.self_attention.submodules
+
+    assert attention.linear_qkv is expected_qkv
+    assert attention.core_attention is expected_attention
 
 
 def test_autobridge_selects_string_registration_and_serializes_config() -> None:

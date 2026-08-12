@@ -238,8 +238,13 @@ class TestCompareMaskHandling:
         ):
             compare._load_megatron_model(args)
 
-        assert model_config.tensor_model_parallel_size == 8
-        assert model_config.params_dtype is torch.bfloat16
+        assert transformer.tensor_model_parallel_size == 8
+        assert transformer.pipeline_model_parallel_size == 1
+        assert transformer.expert_model_parallel_size == 1
+        assert transformer.expert_tensor_parallel_size == 1
+        assert transformer.pipeline_dtype is torch.bfloat16
+        assert transformer.params_dtype is torch.bfloat16
+        assert not hasattr(model_config, "tensor_model_parallel_size")
         model_config.finalize.assert_called_once_with()
         bridge._get_or_initialize_pg_collection.assert_called_once_with(transformer)
         bridge.to_megatron_provider.assert_not_called()
@@ -252,6 +257,47 @@ class TestCompareMaskHandling:
                 "expert_tensor_parallel_size": 1,
             },
             wrap_with_ddp=False,
+        )
+
+    def test_hf_conversion_uses_nested_builder_transformer_config(self):
+        """Hybrid HF conversion passes nested parallel settings to the builder."""
+        transformer = SimpleNamespace()
+        model_config = SimpleNamespace(transformer=transformer)
+        model = MagicMock()
+        bridge = MagicMock()
+        bridge._model_bridge = SimpleNamespace(MODEL_CONFIG_CLASS=object)
+        bridge.get_model_config.return_value = model_config
+        bridge.get_model.return_value = [model]
+        args = SimpleNamespace(
+            hf_model_path="hf/model",
+            hf_revision="revision",
+            trust_remote_code=False,
+            megatron_model_path=None,
+            tp=8,
+            pp=2,
+            ep=1,
+            etp=1,
+            enable_debug_hooks=False,
+        )
+
+        with (
+            patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge),
+            patch.object(compare, "is_safe_repo", return_value=False),
+            patch.object(compare, "disable_mtp_for_inference"),
+        ):
+            compare._load_megatron_model(args)
+
+        assert transformer.tensor_model_parallel_size == 8
+        assert transformer.pipeline_model_parallel_size == 2
+        assert transformer.expert_model_parallel_size == 1
+        assert transformer.expert_tensor_parallel_size == 1
+        assert transformer.pipeline_dtype is torch.bfloat16
+        assert transformer.params_dtype is torch.bfloat16
+        bridge.to_megatron_provider.assert_not_called()
+        bridge.get_model.assert_called_once_with(
+            model_config,
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
         )
 
     def test_tp_logits_skip_gather_when_runtime_output_is_already_full(self):
