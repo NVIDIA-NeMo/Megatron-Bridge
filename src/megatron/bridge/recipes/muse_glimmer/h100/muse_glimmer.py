@@ -149,7 +149,7 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContainer:
-    """Return a 100-step 8K full SFT config with CP2 on 32 H100 GPUs."""
+    """Return a 100-step packed 8K full SFT config with CP2 on 32 H100 GPUs."""
     cfg = _sft_common_vlm()
     _apply_model_and_data(
         cfg,
@@ -158,11 +158,12 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContaine
         pipeline_parallel_size=2,
         context_parallel_size=2,
     )
-    cfg.dataset.pad_to_max_length = True
-    cfg.dataset.enable_in_batch_packing = False
+    cfg.dataset.pad_to_max_length = False
+    cfg.dataset.enable_in_batch_packing = True
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 8
+    cfg.train.micro_batch_size = 2
     _set_optimizer(cfg, max_lr=5e-6, warmup_iters=10)
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None

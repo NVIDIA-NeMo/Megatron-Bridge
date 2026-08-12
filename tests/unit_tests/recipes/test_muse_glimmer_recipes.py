@@ -81,11 +81,12 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.dataset.source.load_kwargs == {
         "revision": "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
     }
-    assert cfg.dataset.pad_to_max_length is True
-    assert cfg.dataset.enable_in_batch_packing is False
+    is_long_context = recipe is muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config
+    assert cfg.dataset.pad_to_max_length is not is_long_context
+    assert cfg.dataset.enable_in_batch_packing is is_long_context
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == global_batch_size
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == (2 if is_long_context else 1)
     assert cfg.validation.eval_iters == 0
     assert cfg.validation.eval_interval == 0
     assert cfg.logger.log_throughput is True
