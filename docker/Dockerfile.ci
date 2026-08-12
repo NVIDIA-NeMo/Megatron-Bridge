@@ -183,4 +183,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         bash scripts/install_diffusion_deps.sh; \
     fi
 
-COPY --chmod=644 . /opt/Megatron-Bridge
+COPY --chown=1000:1000 --chmod=644 . /opt/Megatron-Bridge
+
+# CI writes coverage beside the checked-out source, installs that source editable into the
+# prepared environment, and uses /nemo_run for runtime outputs. Keep those paths owned by the
+# existing unprivileged base-image user instead of relying on a root final user.
+RUN install -d -o 1000 -g 1000 -m 0755 /nemo_run /home/ubuntu/.cache && \
+    chown -R 1000:1000 /opt/venv
+
+ENV HOME=/home/ubuntu
+USER 1000:1000
