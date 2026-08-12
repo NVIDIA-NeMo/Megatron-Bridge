@@ -49,7 +49,7 @@ def _apply_model_and_data(
     cfg.model.pipeline_dtype = torch.bfloat16 if pipeline_parallel_size > 1 else None
     cfg.model.virtual_pipeline_model_parallel_size = None
     if pipeline_parallel_size == 2:
-        cfg.model.hybrid_layer_pattern = f"{'*' * 20}|{'*' * 32}"
+        cfg.model.hybrid_layer_pattern = f"{'*' * 19}|{'*' * 33}"
     cfg.model.context_parallel_size = context_parallel_size
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = False
