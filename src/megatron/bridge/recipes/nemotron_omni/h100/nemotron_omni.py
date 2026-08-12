@@ -74,8 +74,8 @@ def _apply_8gpu_h100_execution(cfg: ConfigContainer, *, use_hybridep: bool) -> N
     cfg.ddp.grad_reduce_in_fp32 = False
 
     # FP16 main parameters retain FP32-equivalent update resolution through
-    # stored remainders while BF16 gradients and moments avoid full FP32 Adam
-    # state for the H100-specific variants.
+    # stored int16 low-bit remainders while BF16 gradients and moments avoid
+    # full FP32 Adam state for the H100-specific variants.
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
     cfg.optimizer.main_params_dtype = torch.float16
@@ -163,7 +163,8 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     objective, batch sizes, optimizer hyperparameters, and BF16 model
     arithmetic. TP2 and EP8 fold over the same eight ranks so dense
     projections and experts are both sharded. Precision-aware Adam stores
-    BF16 gradients/moments and FP16 main parameters with FP32 remainders.
+    BF16 gradients/moments and FP16 main parameters with stored int16 low-bit
+    remainders.
     """
     cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
     cfg.model.tensor_model_parallel_size = 2
@@ -177,10 +178,11 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     In-batch packing requires a micro batch greater than one. The TP4/CP2
     topology needs at least eight GPUs and aligns every packed row to the
     combined CP/SP multiple. Precision-aware Adam uses FP16 main parameters
-    with stored FP32 remainders, BF16 gradients, and BF16 moments so first-step
-    optimizer-state initialization fits within 80 GB H100 memory. The standard
-    all-to-all dispatcher is used because HybridEP did not make forward progress
-    for the packed CP2 workload in the controlled backend screen.
+    with stored int16 low-bit remainders, BF16 gradients, and BF16 moments so
+    first-step optimizer-state initialization fits within 80 GB H100 memory.
+    The standard all-to-all dispatcher is used because HybridEP did not make
+    forward progress for the packed CP2 workload in the controlled backend
+    screen.
     """
     cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
     cfg.model.seq_length = 8192
@@ -259,7 +261,7 @@ def nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     The adapter set, freezing policy, real image-text samples, batch sizes,
     optimizer hyperparameters, and BF16 model arithmetic match the portable
     4-GPU recipe. Precision-aware Adam stores BF16 gradients/moments and FP16
-    main parameters with FP32 remainders.
+    main parameters with stored int16 low-bit remainders.
     """
     cfg = nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config()
     cfg.model.tensor_model_parallel_size = 2
