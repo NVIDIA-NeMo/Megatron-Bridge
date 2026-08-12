@@ -1905,8 +1905,10 @@ class MegatronModelBridge(
             raise ValueError(
                 "Hugging Face checkpoint is missing mapped parameter(s):\n"
                 f"  {missing_names}\n"
-                "If a mapping intentionally reads alternate or synthesized names, set its explicit "
-                "allow_hf_name_mismatch contract."
+                "If the HF config determines whether the weight exists, register the mapping "
+                "conditionally on that config instead. If it does not, and the name is synthesized "
+                "or the weight is absent on only some layers, set allow_hf_name_mismatch on the "
+                "mapping."
             )
 
         return mappings_by_global_name
