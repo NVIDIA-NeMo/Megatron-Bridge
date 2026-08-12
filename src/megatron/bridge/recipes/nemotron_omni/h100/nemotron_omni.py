@@ -102,10 +102,12 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the one-node H100 CORD v2 SFT config with natural-routing HybridEP.
 
     This variant preserves the 4-GPU recipe's real image-text samples,
-    objective, batch sizes, optimizer hyperparameters, and BF16 model
+    objective, global batch size, optimizer hyperparameters, and BF16 model
     arithmetic. TP2 and EP8 fold over the same eight ranks so dense
-    projections and experts are both sharded. Precision-aware Adam stores
-    BF16 gradients/moments and scaled FP16 main parameters.
+    projections and experts are both sharded. A larger microbatch, fused
+    kernels, and selective activation recompute reduce launch overhead while
+    preserving the training objective. Precision-aware Adam stores BF16
+    gradients/moments and scaled FP16 main parameters.
     """
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
@@ -127,6 +129,14 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_expert_rank_capacity_factor = None
     cfg.model.moe_pad_expert_input_to_capacity = False
     cfg.model.moe_paged_stash = False
+    cfg.model.attention_backend = "fused"
+    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.use_fused_weighted_squared_relu = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe", "layernorm"]
+
+    cfg.train.micro_batch_size = 4
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False

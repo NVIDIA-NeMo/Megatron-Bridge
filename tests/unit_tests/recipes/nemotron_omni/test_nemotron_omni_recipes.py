@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Callable
 
@@ -219,6 +220,22 @@ def test_cord_v2_8gpu_recipes_use_natural_routing_hybridep(
     assert cfg.env_vars["USE_MNNVL"] == 0
 
 
+def test_cord_v2_8gpu_sft_recipe_uses_validated_execution_tuning(fake_processor):
+    cfg = _build_config(
+        _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert cfg.train.global_batch_size == 64
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.model.attention_backend == "fused"
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.use_fused_weighted_squared_relu is True
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe", "layernorm"]
+
+
 @pytest.mark.parametrize(
     "recipe_func",
     [
@@ -268,7 +285,17 @@ def test_cord_v2_8gpu_recipes_preserve_training_semantics(portable_recipe, optim
     optimized_cfg = _build_config(optimized_recipe, fake_processor)
 
     assert optimized_cfg.dataset == portable_cfg.dataset
-    assert optimized_cfg.train == portable_cfg.train
+    if optimized_recipe is _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config:
+        assert optimized_cfg.train.micro_batch_size == 4
+        assert (
+            replace(
+                optimized_cfg.train,
+                micro_batch_size=portable_cfg.train.micro_batch_size,
+            )
+            == portable_cfg.train
+        )
+    else:
+        assert optimized_cfg.train == portable_cfg.train
     assert optimized_cfg.scheduler == portable_cfg.scheduler
     assert optimized_cfg.peft == portable_cfg.peft
     assert optimized_cfg.optimizer.lr == portable_cfg.optimizer.lr
