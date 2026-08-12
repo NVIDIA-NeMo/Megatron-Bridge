@@ -30,6 +30,7 @@ from typing import Callable, Optional
 import torch.distributed as dist
 
 from megatron.bridge.training.config import ConfigContainer, megatron_mimo_runtime_config_update
+from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.pretrain import _maybe_destroy_process_group
 from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
 from megatron.bridge.training.state import GlobalState
@@ -98,6 +99,30 @@ def pretrain_megatron_mimo(
         multimodule_pg_collection=setup_output.multimodule_pg_collection,
         module_to_grid_tuple=setup_output.module_to_grid_tuple,
     )
+
+    # Ensure the completed weights are validated when the final step was not
+    # already covered by interval evaluation.
+    eval_interval = cfg.validation.eval_interval
+    if eval_interval is None:
+        eval_interval = cfg.train.eval_interval
+    iteration = setup_output.global_state.train_state.step
+    if (
+        setup_output.valid_data_iterator is not None
+        and cfg.validation.eval_iters
+        and (not eval_interval or iteration % eval_interval != 0)
+    ):
+        evaluate_and_print_results(
+            state=setup_output.global_state,
+            prefix=f"iteration {iteration} on validation set",
+            forward_step_func=forward_step_func,
+            data_iterator=setup_output.valid_data_iterator,
+            model=[setup_output.model],
+            config=cfg,
+            verbose=True,
+            write_to_tensorboard=True,
+            p2p_communicator=setup_output.multimodule_communicator,
+            pg_collection=setup_output.multimodule_pg_collection,
+        )
 
     # Post-training cleanup: finalize async saves, shut down NVRx/FT, flush
     # loggers, destroy GlobalState (which calls destroy_model_parallel internally).

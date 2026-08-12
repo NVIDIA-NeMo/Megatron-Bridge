@@ -510,8 +510,8 @@ class TestMegatronMIMOTraining:
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_megatron_mimo_interval_validation(self):
-        """MegatronMIMO should run interval validation with its canonical provider config."""
+    def test_megatron_mimo_terminal_validation(self):
+        """MegatronMIMO should validate final weights after an off-interval step."""
         from megatron.bridge.training.state import GlobalState
 
         initialize_distributed()
@@ -542,7 +542,7 @@ class TestMegatronMIMOTraining:
         )
 
         cfg = _build_config(par_cfg, train_iters=1)
-        cfg.validation.eval_interval = 1
+        cfg.validation.eval_interval = 2
         cfg.validation.eval_iters = 1
         cfg.validation.eval_global_batch_size = 1
         cfg.validation.eval_micro_batch_size = 1

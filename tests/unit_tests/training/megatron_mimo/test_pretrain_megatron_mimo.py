@@ -258,6 +258,62 @@ def test_pretrain_megatron_mimo_calls_setup_and_train(
     mock_finish.assert_called_once()
 
 
+def test_pretrain_megatron_mimo_evaluates_terminal_weights_off_interval():
+    """MegatronMIMO should validate final weights when the last step is off interval."""
+    from megatron.bridge.training.pretrain_megatron_mimo import pretrain_megatron_mimo
+
+    cfg = _make_cfg()
+    cfg.validation.eval_interval = 2
+    cfg.validation.eval_iters = 1
+
+    setup_output = _make_setup_output(module_to_grid_map={"language": MagicMock()})
+    setup_output.valid_data_iterator = iter([object()])
+    forward_step_func = MagicMock()
+    events = []
+
+    def run_training(**_kwargs):
+        events.append("train")
+        setup_output.global_state.train_state.step = 1
+
+    with (
+        patch("megatron.bridge.training.pretrain_megatron_mimo.megatron_mimo_runtime_config_update"),
+        patch("megatron.bridge.training.pretrain_megatron_mimo.setup_megatron_mimo", return_value=setup_output),
+        patch("megatron.bridge.training.pretrain_megatron_mimo.train_megatron_mimo", side_effect=run_training),
+        patch(
+            "megatron.bridge.training.pretrain_megatron_mimo.evaluate_and_print_results", create=True
+        ) as mock_evaluate,
+        patch(
+            "megatron.bridge.training.pretrain_megatron_mimo._finish_train",
+            side_effect=lambda *_args: events.append("finish"),
+        ),
+        patch("megatron.bridge.training.pretrain_megatron_mimo.dist") as mock_dist,
+    ):
+        mock_dist.get_rank.return_value = 0
+        mock_dist.is_initialized.return_value = True
+        mock_evaluate.side_effect = lambda **_kwargs: events.append("evaluate")
+
+        pretrain_megatron_mimo(
+            cfg=cfg,
+            forward_step_func=forward_step_func,
+            build_data_iterators_fn=MagicMock(),
+            global_state=setup_output.global_state,
+        )
+
+    mock_evaluate.assert_called_once_with(
+        state=setup_output.global_state,
+        prefix="iteration 1 on validation set",
+        forward_step_func=forward_step_func,
+        data_iterator=setup_output.valid_data_iterator,
+        model=[setup_output.model],
+        config=cfg,
+        verbose=True,
+        write_to_tensorboard=True,
+        p2p_communicator=setup_output.multimodule_communicator,
+        pg_collection=setup_output.multimodule_pg_collection,
+    )
+    assert events == ["train", "evaluate", "finish"]
+
+
 def test_finish_train_calls_cleanup():
     """_finish_train should finalize async saves, shut down NVRx/FT, and flush loggers."""
     from megatron.bridge.training.train import _finish_train
