@@ -139,6 +139,7 @@ items:
   inference:
     status: verified
     precision: bf16
+    bridge_commit: c7026ab2cbaac76408c23c87d9ab9a27123603d6  # pragma: allowlist secret
     command: >
       ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
       --task vlm-generation --hf_model_path meta-models/Muse-Glimmer-30B
@@ -150,8 +151,7 @@ items:
       --max_new_tokens 64 --deterministic --tp 8 --pp 1 --ep 1 --etp 1
     last_verified: 2026-08-12
     expected_result: |-
-      At bridge commit c7026ab2cbaac76408c23c87d9ab9a27123603d6, two
-      independent greedy runs reload the complete TP8 HybridModel
+      Two independent greedy runs reload the complete TP8 HybridModel
       checkpoint and use the same repository image (SHA-256
       a7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2).
       Both produce finite logits and the same exact 64-token completion without
@@ -168,6 +168,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 8be93c49130954e3257158db774d59075d2beaa6  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
@@ -202,6 +203,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: c7026ab2cbaac76408c23c87d9ab9a27123603d6  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
@@ -237,6 +239,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: c7026ab2cbaac76408c23c87d9ab9a27123603d6  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -270,6 +273,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: c7026ab2cbaac76408c23c87d9ab9a27123603d6  # pragma: allowlist secret
       enabled_features:
         sequence_packing: in_batch
         context_parallel_size: 2
@@ -309,7 +313,7 @@ items:
       status: verified
       precision: bf16
       enabled_features: {}
-      bridge_commit: 13f8af365d264353213033b63544b7303b66ab96  # pragma: allowlist secret
+      bridge_commit: 8be93c49130954e3257158db774d59075d2beaa6  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe muse_glimmer_30b_peft_8gpu_h100_bf16_config --mode lora
@@ -322,17 +326,17 @@ items:
         logger.tensorboard_dir=null
       last_verified: 2026-08-12
       metrics:
-        initial_loss: 0.7233534
-        final_loss: 0.03220246
-        last_10_steps_step_time_ms_avg: 4709.57
-        last_10_steps_model_tflops_per_gpu_avg: 290.42
+        initial_loss: 0.7254401
+        final_loss: 0.03141141
+        last_10_steps_step_time_ms_avg: 4812.79
+        last_10_steps_model_tflops_per_gpu_avg: 283.95
       expected_result: >
         The command loads the complete imported native HybridModel checkpoint,
         freezes the base model, and inserts LoRA dim 8 / alpha 16 adapters only
         into the native linear_qkv and linear_proj attention projections. All
         100 optimizer-step rows are present exactly once with finite loss, zero
         skipped iterations, and zero NaN iterations. Loss decreases from
-        0.7233534 to 0.03220246, all four metrics are recorded, and the complete
+        0.7254401 to 0.03141141, all four metrics are recorded, and the complete
         eight-shard iter_0000100 adapter checkpoint is saved with its run config,
         metadata, and train state.
 
@@ -364,6 +368,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 1fbf9630639f83f0fbfbc840a2f77878bc9a6a97  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
         --recipe muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config
