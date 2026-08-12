@@ -117,6 +117,9 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigConta
     )
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.enable_in_batch_packing = False
+    # Worker-local RNG and prefetch queues are not part of the checkpoint.
+    # Main-process loading keeps the step-50 resume data stream reproducible.
+    cfg.dataset.num_workers = 0
     cfg.rng.seed = 1234
     cfg.train.train_iters = 100
     # TP8/PP2 leaves two data-parallel replicas on 32 GPUs. One sample per
