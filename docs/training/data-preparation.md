@@ -190,7 +190,7 @@ dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
 Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
 
 Model-specific Jinja controls can be supplied per row under `chat_template_kwargs`, for example
-`{"truncate_history_thinking": false}` to retain all historical reasoning. MBridge translates this canonical
+`{"truncate_history_thinking": false}` to retain all historical reasoning. Megatron Bridge translates this canonical
 control to model-template-specific parameter names where necessary. The data pipeline owns tokenization,
 truncation, padding, and template selection, so those controls cannot be overridden from a dataset row. Tool
 schemas remain in the top-level `tools` field. Processor-batched VLM rows must use identical template kwargs and

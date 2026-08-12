@@ -52,7 +52,6 @@ _PIPELINE_CONTROLLED_CHAT_TEMPLATE_KWARGS = frozenset(
         "truncation",
     }
 )
-_LEGACY_THINKING_HISTORY_KWARGS = frozenset({"drop_thinking", "preserve_thinking"})
 
 
 @dataclass(frozen=True)
@@ -476,12 +475,6 @@ def chat_template_kwargs_from_example(
         if controlled_keys:
             joined_keys = ", ".join(controlled_keys)
             raise ValueError(f"chat_template_kwargs cannot override pipeline-controlled arguments: {joined_keys}.")
-        legacy_history_keys = sorted(_LEGACY_THINKING_HISTORY_KWARGS.intersection(raw_kwargs))
-        if legacy_history_keys:
-            joined_keys = ", ".join(legacy_history_keys)
-            raise ValueError(
-                f"chat_template_kwargs uses truncate_history_thinking instead of legacy option(s): {joined_keys}."
-            )
         kwargs = dict(raw_kwargs)
         truncate_history = kwargs.get("truncate_history_thinking")
         if truncate_history is not None and not isinstance(truncate_history, bool):

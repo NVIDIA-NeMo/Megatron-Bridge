@@ -609,8 +609,6 @@ def test_chat_template_kwargs_from_example_rejects_invalid_or_pipeline_controlle
         chat_template_kwargs_from_example({"chat_template_kwargs": ["truncate_history_thinking"]})
     with pytest.raises(ValueError, match="pipeline-controlled arguments: tokenize, tools"):
         chat_template_kwargs_from_example({"chat_template_kwargs": {"tokenize": False, "tools": []}})
-    with pytest.raises(ValueError, match="uses truncate_history_thinking instead of legacy option"):
-        chat_template_kwargs_from_example({"chat_template_kwargs": {"preserve_thinking": True}})
     with pytest.raises(ValueError, match="truncate_history_thinking must be a boolean"):
         chat_template_kwargs_from_example({"chat_template_kwargs": {"truncate_history_thinking": "yes"}})
 
