@@ -89,7 +89,7 @@ def _apply_model_and_data(
     cfg.validation.eval_iters = 0
     cfg.logger.log_interval = 1
     cfg.logger.log_throughput = True
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 10
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
@@ -165,7 +165,7 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContaine
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 8
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     _set_optimizer(cfg, max_lr=5e-6, warmup_iters=10)
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
