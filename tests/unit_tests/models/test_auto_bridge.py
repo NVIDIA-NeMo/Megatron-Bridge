@@ -50,6 +50,7 @@ from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
+from megatron.bridge.models.hf_pretrained.sequence_classification import PreTrainedSequenceClassification
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 
@@ -524,6 +525,39 @@ class TestAutoBridge:
             mock_token_classification_from_pretrained.assert_called_once_with("Qwen/Qwen3.5-token-classification")
             mock_causal_lm_from_pretrained.assert_not_called()
 
+    def test_from_hf_pretrained_dispatches_sequence_classification_wrapper(self):
+        mock_model = Mock(spec=PreTrainedSequenceClassification)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["Qwen3_5ForSequenceClassification"]
+        mock_model.config = mock_config
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedSequenceClassification.from_pretrained"
+            ) as mock_sequence_classification_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedTokenClassification.from_pretrained"
+            ) as mock_token_classification_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+            ) as mock_causal_lm_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+            ) as mock_safe_load_config,
+            patch.object(AutoBridge, "_validate_config"),
+        ):
+            mock_sequence_classification_from_pretrained.return_value = mock_model
+            mock_safe_load_config.return_value = mock_config
+
+            result = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-sequence-classification")
+
+            assert result.hf_pretrained == mock_model
+            mock_sequence_classification_from_pretrained.assert_called_once_with(
+                "Qwen/Qwen3.5-sequence-classification"
+            )
+            mock_token_classification_from_pretrained.assert_not_called()
+            mock_causal_lm_from_pretrained.assert_not_called()
+
     def test_token_classification_config_only_provider_and_mappings(self):
         from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config
 
@@ -581,6 +615,10 @@ class TestAutoBridge:
 
     def test_resolve_pretrained_wrapper_cls(self):
         """_resolve_pretrained_wrapper_cls selects the task-specific HF wrapper."""
+        sequence_classification_config = SimpleNamespace(architectures=["Qwen3_5ForSequenceClassification"])
+        assert AutoBridge.supports(sequence_classification_config)
+        assert _resolve_pretrained_wrapper_cls(sequence_classification_config) is PreTrainedSequenceClassification
+
         token_classification_config = SimpleNamespace(architectures=["Qwen3_5ForTokenClassification"])
         assert _resolve_pretrained_wrapper_cls(token_classification_config) is PreTrainedTokenClassification
 
@@ -992,6 +1030,10 @@ class TestAutoBridge:
         bridge_masked_lm = AutoBridge(mock_masked_lm)
         assert bridge_masked_lm.hf_pretrained == mock_masked_lm
 
+        mock_sequence_classification = Mock(spec=PreTrainedSequenceClassification)
+        bridge_sequence_classification = AutoBridge(mock_sequence_classification)
+        assert bridge_sequence_classification.hf_pretrained == mock_sequence_classification
+
         mock_token_classification = Mock(spec=PreTrainedTokenClassification)
         bridge_token_classification = AutoBridge(mock_token_classification)
         assert bridge_token_classification.hf_pretrained == mock_token_classification
@@ -1001,7 +1043,8 @@ class TestAutoBridge:
             ValueError,
             match=(
                 "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, "
-                "PreTrainedTokenClassification, or PretrainedConfig instance"
+                "PreTrainedSequenceClassification, PreTrainedTokenClassification, "
+                "or PretrainedConfig instance"
             ),
         ):
             AutoBridge("invalid")
@@ -1013,6 +1056,10 @@ class TestAutoBridge:
 
     def test_pretrained_wrapper_cls_property(self):
         """Test _pretrained_wrapper_cls resolves the wrapper class for each hf_pretrained kind."""
+        mock_sequence_classification = Mock(spec=PreTrainedSequenceClassification)
+        bridge = AutoBridge(mock_sequence_classification)
+        assert bridge._pretrained_wrapper_cls is PreTrainedSequenceClassification
+
         mock_token_classification = Mock(spec=PreTrainedTokenClassification)
         bridge = AutoBridge(mock_token_classification)
         assert bridge._pretrained_wrapper_cls is PreTrainedTokenClassification

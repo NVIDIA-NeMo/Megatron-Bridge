@@ -52,6 +52,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
+from megatron.bridge.models.hf_pretrained.sequence_classification import PreTrainedSequenceClassification
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
@@ -76,6 +77,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronLabsDiffusionModel",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
+    "ForSequenceClassification",
     "ForTokenClassification",
 )
 
@@ -85,6 +87,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
 _PRETRAINED_WRAPPER_TYPES: tuple[type, ...] = (
     PreTrainedCausalLM,
     PreTrainedMaskedLM,
+    PreTrainedSequenceClassification,
     PreTrainedTokenClassification,
 )
 
@@ -253,11 +256,18 @@ SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_
 
 def _resolve_pretrained_wrapper_cls(
     config: Any,
-) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM] | Type[PreTrainedTokenClassification]:
+) -> (
+    Type[PreTrainedCausalLM]
+    | Type[PreTrainedMaskedLM]
+    | Type[PreTrainedSequenceClassification]
+    | Type[PreTrainedTokenClassification]
+):
     """Select the hf_pretrained wrapper class for a model's architecture.
 
-    Token classifiers (``*ForTokenClassification``) are loaded through
-    :class:`PreTrainedTokenClassification`, which uses
+    Sequence classifiers (``*ForSequenceClassification``) are loaded through
+    :class:`PreTrainedSequenceClassification`, which uses
+    ``AutoModelForSequenceClassification``. Token classifiers (``*ForTokenClassification``)
+    are loaded through :class:`PreTrainedTokenClassification`, which uses
     ``AutoModelForTokenClassification``. Masked/encoder-only LMs
     (``*ForMaskedLM``) are loaded through
     :class:`PreTrainedMaskedLM`, which uses ``AutoModelForMaskedLM``. This matters
@@ -267,6 +277,8 @@ def _resolve_pretrained_wrapper_cls(
     supported architectures use :class:`PreTrainedCausalLM`.
     """
     architectures = getattr(config, "architectures", None) or []
+    if any(arch.endswith("ForSequenceClassification") for arch in architectures):
+        return PreTrainedSequenceClassification
     if any(arch.endswith("ForTokenClassification") for arch in architectures):
         return PreTrainedTokenClassification
     if any(arch.endswith("ForMaskedLM") for arch in architectures):
@@ -296,7 +308,7 @@ class AutoBridge(Generic[MegatronModelT]):
     This unified bridge class combines automatic model detection with full bridge
     functionality for converting models between HuggingFace and Megatron formats.
     It handles supported causal and masked language models as well as task-specific
-    heads such as token classification. It manages weight mapping, tensor-parallel
+    heads such as token and sequence classification. It manages weight mapping, tensor-parallel
     distribution, and configuration translation.
 
     The bridge supports both directions of conversion:
@@ -304,9 +316,10 @@ class AutoBridge(Generic[MegatronModelT]):
     - Megatron → HuggingFace: For saving trained models in HF format
 
     Args:
-        hf_pretrained: A PreTrainedCausalLM, PreTrainedMaskedLM, or
-            PreTrainedTokenClassification instance with loaded model, or a
-            PretrainedConfig for configuration-only operations.
+        hf_pretrained: A PreTrainedCausalLM, PreTrainedMaskedLM,
+            PreTrainedSequenceClassification, or PreTrainedTokenClassification
+            instance with loaded model, or a PretrainedConfig for
+            configuration-only operations.
 
     Example:
         >>> # Load and convert a model to Megatron format
@@ -336,15 +349,26 @@ class AutoBridge(Generic[MegatronModelT]):
 
     def __init__(
         self,
-        hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig,
+        hf_pretrained: (
+            PreTrainedCausalLM
+            | PreTrainedMaskedLM
+            | PreTrainedSequenceClassification
+            | PreTrainedTokenClassification
+            | PretrainedConfig
+        ),
     ):
         if not isinstance(hf_pretrained, (*_PRETRAINED_WRAPPER_TYPES, PretrainedConfig)):
             raise ValueError(
                 "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, "
-                "PreTrainedTokenClassification, or PretrainedConfig instance"
+                "PreTrainedSequenceClassification, PreTrainedTokenClassification, "
+                "or PretrainedConfig instance"
             )
         self.hf_pretrained: (
-            PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig
+            PreTrainedCausalLM
+            | PreTrainedMaskedLM
+            | PreTrainedSequenceClassification
+            | PreTrainedTokenClassification
+            | PretrainedConfig
         ) = hf_pretrained
         if isinstance(hf_pretrained, PretrainedConfig):
             hf_config = hf_pretrained
@@ -687,7 +711,8 @@ class AutoBridge(Generic[MegatronModelT]):
             if not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
                 raise ValueError(
                     "hf_path is required when hf_pretrained is not a PreTrainedCausalLM, "
-                    "PreTrainedMaskedLM, or PreTrainedTokenClassification instance"
+                    "PreTrainedMaskedLM, PreTrainedSequenceClassification, or "
+                    "PreTrainedTokenClassification instance"
                 )
             pre_trained = self.hf_pretrained
         else:
@@ -2061,7 +2086,8 @@ class AutoBridge(Generic[MegatronModelT]):
             if not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
                 raise ValueError(
                     "hf_path is required when hf_pretrained is not a PreTrainedCausalLM, "
-                    "PreTrainedMaskedLM, or PreTrainedTokenClassification instance"
+                    "PreTrainedMaskedLM, PreTrainedSequenceClassification, or "
+                    "PreTrainedTokenClassification instance"
                 )
             pre_trained = self.hf_pretrained
         else:
@@ -2105,12 +2131,19 @@ class AutoBridge(Generic[MegatronModelT]):
     @property
     def _pretrained_wrapper_cls(
         self,
-    ) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM] | Type[PreTrainedTokenClassification]:
+    ) -> (
+        Type[PreTrainedCausalLM]
+        | Type[PreTrainedMaskedLM]
+        | Type[PreTrainedSequenceClassification]
+        | Type[PreTrainedTokenClassification]
+    ):
         """The hf_pretrained wrapper class matching this bridge's current instance.
 
         Falls back to resolving from the current config when ``hf_pretrained`` is a
         bare ``PretrainedConfig`` (i.e. the bridge was built with ``from_hf_config``).
         """
+        if isinstance(self.hf_pretrained, PreTrainedSequenceClassification):
+            return PreTrainedSequenceClassification
         if isinstance(self.hf_pretrained, PreTrainedTokenClassification):
             return PreTrainedTokenClassification
         if isinstance(self.hf_pretrained, PreTrainedMaskedLM):
@@ -2122,7 +2155,13 @@ class AutoBridge(Generic[MegatronModelT]):
     @property
     def _provider_bridge_input(
         self,
-    ) -> PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | _ConfigOnlyPretrainedShim:
+    ) -> (
+        PreTrainedCausalLM
+        | PreTrainedMaskedLM
+        | PreTrainedSequenceClassification
+        | PreTrainedTokenClassification
+        | _ConfigOnlyPretrainedShim
+    ):
         if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
             return self.hf_pretrained
         return self._config_only_pretrained
@@ -2170,7 +2209,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"Model architectures: {architectures}\n\n"
                 f"None of the architectures end with {SUPPORTED_HF_ARCHITECTURES_DISPLAY}.\n"
                 f"This bridge only supports the language-model and task-head architectures "
-                f"listed above (for example causal LMs, masked LMs, and token classifiers).\n"
+                f"listed above (for example causal LMs, masked LMs, token classifiers, "
+                f"and sequence classifiers).\n"
                 f"For other model types, use a different bridge class."
             )
 
