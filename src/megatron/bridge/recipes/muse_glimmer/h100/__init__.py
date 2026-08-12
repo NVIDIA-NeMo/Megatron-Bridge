@@ -17,6 +17,7 @@
 from megatron.bridge.recipes.muse_glimmer.h100.muse_glimmer import (
     muse_glimmer_30b_peft_8gpu_h100_bf16_config,
     muse_glimmer_30b_pretrain_128gpu_h100_bf16_config,
+    muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config,
     muse_glimmer_30b_sft_32gpu_h100_bf16_config,
     muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config,
 )
@@ -25,6 +26,7 @@ from megatron.bridge.recipes.muse_glimmer.h100.muse_glimmer import (
 __all__ = [
     "muse_glimmer_30b_peft_8gpu_h100_bf16_config",
     "muse_glimmer_30b_pretrain_128gpu_h100_bf16_config",
+    "muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config",
 ]

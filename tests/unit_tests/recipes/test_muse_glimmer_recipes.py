@@ -14,10 +14,11 @@ from megatron.bridge.recipes.muse_glimmer.h100 import muse_glimmer as muse_glimm
 from megatron.bridge.recipes.muse_glimmer.h100 import (
     muse_glimmer_30b_peft_8gpu_h100_bf16_config,
     muse_glimmer_30b_pretrain_128gpu_h100_bf16_config,
+    muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config,
     muse_glimmer_30b_sft_32gpu_h100_bf16_config,
     muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, MockGPTDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -77,12 +78,10 @@ def test_muse_glimmer_recipe_contracts(
         "revision": "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
     }
     assert cfg.dataset.pad_to_max_length is True
-    is_pretrain = recipe is muse_glimmer_30b_pretrain_128gpu_h100_bf16_config
-    assert cfg.dataset.enable_in_batch_packing is is_pretrain
-    assert cfg.dataset.in_batch_packing_pad_to_multiple_of == (8 if is_pretrain else 1)
+    assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == global_batch_size
-    assert cfg.train.micro_batch_size == (16 if is_pretrain else 1)
+    assert cfg.train.micro_batch_size == 1
     assert cfg.validation.eval_iters == 0
     assert cfg.validation.eval_interval == 0
     assert cfg.logger.log_throughput is True
@@ -98,6 +97,28 @@ def test_muse_glimmer_pretrain_owns_resume_checkpoint_contract() -> None:
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.checkpoint.save_interval == 50
     assert cfg.checkpoint.load is None
+
+
+def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
+    cfg = muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config()
+
+    assert isinstance(cfg.dataset, MockGPTDatasetConfig)
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.model.hybrid_layer_pattern == f"{'*' * 26}|{'*' * 26}"
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.recompute_vision_layers is False
+    assert cfg.model.tensor_model_parallel_size == 8
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.train.train_iters == 50
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.scheduler.lr_warmup_iters == 5
+    assert cfg.scheduler.lr_decay_iters == 50
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.checkpoint.save_interval == 0
 
 
 def test_muse_glimmer_lora_targets_native_attention_projections() -> None:

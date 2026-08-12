@@ -24,7 +24,7 @@ from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, MockGPTDatasetConfig
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
@@ -112,16 +112,43 @@ def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
         context_parallel_size=1,
     )
     cfg.dataset.pad_to_max_length = True
-    cfg.dataset.enable_in_batch_packing = True
-    cfg.dataset.in_batch_packing_pad_to_multiple_of = 8
+    cfg.dataset.enable_in_batch_packing = False
     cfg.rng.seed = 1234
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 16
     _set_optimizer(cfg, max_lr=3e-4, warmup_iters=40)
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
+    return cfg
+
+
+def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a 50-step mock-data benchmark for the dense decoder on 32 H100 GPUs."""
+    cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
+    cfg.model.hybrid_layer_pattern = f"{'*' * 26}|{'*' * 26}"
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = True
+    cfg.model.recompute_vision_layers = False
+    cfg.dataset = MockGPTDatasetConfig(
+        seq_length=4096,
+        random_seed=1234,
+        reset_attention_mask=False,
+        reset_position_ids=False,
+        eod_mask_loss=False,
+        num_dataset_builder_threads=1,
+        split="9999,8,2",
+        data_sharding=True,
+        dataloader_type="single",
+        skip_getting_attention_mask_from_dataset=True,
+    )
+    cfg.train.train_iters = 50
+    cfg.train.global_batch_size = 256
+    cfg.scheduler.lr_warmup_iters = 5
+    cfg.scheduler.lr_decay_iters = 50
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.checkpoint.save_interval = 0
     return cfg
 
 
@@ -204,6 +231,7 @@ def muse_glimmer_30b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
 __all__ = [
     "muse_glimmer_30b_peft_8gpu_h100_bf16_config",
     "muse_glimmer_30b_pretrain_128gpu_h100_bf16_config",
+    "muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config",
 ]

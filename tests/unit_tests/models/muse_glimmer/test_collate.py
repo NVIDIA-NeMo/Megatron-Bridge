@@ -1,5 +1,8 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
+from types import SimpleNamespace
+
+import pytest
 import torch
 
 from megatron.bridge.data.collators.registry import resolve_model_collate
@@ -28,8 +31,8 @@ class _MuseGlimmerProcessor:
         return {
             "input_ids": torch.tensor([[11, 12, 13, 14]] * batch_size),
             "attention_mask": torch.ones(batch_size, 4, dtype=torch.long),
-            "pixel_values": torch.arange(batch_size * 24, dtype=torch.float32).reshape(batch_size * 2, 12),
-            "image_grid_thw": torch.tensor([[1, 2, 4]] * batch_size),
+            "pixel_values": torch.arange(24, dtype=torch.float32).reshape(2, 12),
+            "image_grid_thw": torch.tensor([[1, 2, 4]]),
         }
 
 
@@ -57,29 +60,6 @@ def test_muse_glimmer_collator_builds_shifted_labels_and_visual_inputs(monkeypat
     assert "pixel_values" not in batch
 
 
-def test_muse_glimmer_collator_packs_text_and_preserves_visual_order(monkeypatch):
-    monkeypatch.setattr(
-        "megatron.bridge.models.muse_glimmer.data.collate_fn.build_assistant_loss_mask",
-        lambda *args, **kwargs: torch.tensor([0.0, 0.0, 1.0, 1.0]),
-    )
-    processor = _MuseGlimmerProcessor()
-    examples = [
-        {"conversation": [{"role": "user", "content": "image"}, {"role": "assistant", "content": "ok"}]},
-        {"conversation": [{"role": "user", "content": "image"}, {"role": "assistant", "content": "ok"}]},
-    ]
-
-    batch = muse_glimmer_collate_fn(
-        examples,
-        processor,
-        sequence_length=8,
-        enable_in_batch_packing=True,
-        in_batch_packing_pad_to_multiple_of=4,
-    )
-
-    assert batch["input_ids"].shape == (1, 8)
-    assert batch["cu_seqlens_q"].tolist() == [0, 4, 8]
-    assert batch["cu_seqlens_kv"].tolist() == [0, 4, 8]
-    assert batch["max_seqlen_q"].item() == 4
-    assert batch["total_tokens"] == 8
-    assert torch.equal(batch["visual_inputs"].pixel_values, torch.arange(48, dtype=torch.float32).reshape(4, 12))
-    assert torch.equal(batch["visual_inputs"].image_grid_thw, torch.tensor([[1, 2, 4], [1, 2, 4]]))
+def test_muse_glimmer_collator_rejects_in_batch_packing():
+    with pytest.raises(ValueError, match="does not support in-batch packing"):
+        muse_glimmer_collate_fn([], SimpleNamespace(), enable_in_batch_packing=True)

@@ -46,6 +46,10 @@ def muse_glimmer_collate_fn(
     in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, Any]:
     """Collate Muse Glimmer conversations and their THW-grid media tensors."""
+    if enable_in_batch_packing:
+        raise ValueError("Muse Glimmer direct-HF training does not support in-batch packing.")
+    del in_batch_packing_pad_to_multiple_of
+
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,
@@ -100,8 +104,8 @@ def muse_glimmer_collate_fn(
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
-        enable_in_batch_packing=enable_in_batch_packing,
-        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        enable_in_batch_packing=False,
+        in_batch_packing_pad_to_multiple_of=1,
         ignore_index=IGNORE_INDEX,
     )
     return batch
