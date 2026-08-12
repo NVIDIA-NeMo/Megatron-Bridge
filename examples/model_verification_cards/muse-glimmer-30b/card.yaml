@@ -35,7 +35,7 @@ model:
   min_transformers_version: "5.15.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: 1fbf9630639f83f0fbfbc840a2f77878bc9a6a97  # pragma: allowlist secret
+  bridge_commit: a1122c6091f267618e92a636b4e440d3baf2ba1a  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -47,7 +47,7 @@ items:
       --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
       --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron
       --torch-dtype bfloat16 --overwrite
-    last_verified: 2026-08-11
+    last_verified: 2026-08-12
     expected_result: >
       On a CPU-only node with no CUDA runtime, the command builds a native
       52-layer HybridModel, completes all 1,228 mappings for 29,776,626,688
@@ -59,14 +59,13 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
-    bridge_commit: 37df4b0bec9f5fff6240818baa55c5a7c0aab1e9  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B
       --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
       --megatron-path work/model-verification/muse-glimmer-30b/gpu-megatron
       --torch-dtype bfloat16 --tp 8 --overwrite
-    last_verified: 2026-08-11
+    last_verified: 2026-08-12
     expected_result: >
       The eight-GPU command builds the complete native HybridModel, completes
       all 1,228 mappings, validates the TP8 distributed state, and persists
@@ -84,7 +83,7 @@ items:
       --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron/iter_0000000
       --hf-path work/model-verification/muse-glimmer-30b/cpu-hf-export
       --torch-dtype bfloat16 --overwrite
-    last_verified: 2026-08-11
+    last_verified: 2026-08-12
     expected_result: >
       Strict export exits successfully. All 1,436 BF16 tensors and
       29,776,626,688 elements match the pinned source exactly in keys, shapes,
@@ -95,7 +94,6 @@ items:
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
-    bridge_commit: 0bbd420fada019562647a17fa420ec981c6f81e3  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B
@@ -104,7 +102,7 @@ items:
       --hf-path work/model-verification/muse-glimmer-30b/gpu-hf-export
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 8 --overwrite
-    last_verified: 2026-08-11
+    last_verified: 2026-08-12
     expected_result: >
       Strict distributed export exits successfully. Every language, vision,
       adapter, and projection tensor matches the pinned source bitwise: 1,436
@@ -116,8 +114,9 @@ items:
     status: verified
     precision: bf16
     command: >
-      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
-      --task model-comparison --hf_model_path meta-models/Muse-Glimmer-30B
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path meta-models/Muse-Glimmer-30B
       --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
       --model_class MuseGlimmerForConditionalGeneration
       --megatron_model_path
@@ -125,15 +124,15 @@ items:
       --image_path docs/images/tp1.png
       --prompt "What type of neural network block is shown in this image?"
       --tp 8 --pp 1 --ep 1 --etp 1
-    last_verified: 2026-08-11
+    last_verified: 2026-08-12
     expected_result: >
       The repository image is 850 by 477 pixels with SHA-256
       a7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2.
       Both implementations consume 584 padded input positions and a
       2040-by-1176 processed pixel tensor. The Hugging Face and Megatron
       next-token predictions match at token 328 (' to').
-      Logit cosine similarity is 0.999929, above the 0.99 gate; maximum and
-      mean absolute logit differences are 0.687500 and 0.080432, respectively.
+      Logit cosine similarity is 0.999852, above the 0.99 gate; maximum and
+      mean absolute logit differences are 0.953125 and 0.281018, respectively.
 
   inference:
     status: verified
@@ -146,8 +145,8 @@ items:
       work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000
       --image_path docs/images/tp1.png
       --prompt "What type of neural network block is shown in this image?"
-      --max_new_tokens 64 --tp 8 --pp 1 --ep 1 --etp 1
-    last_verified: 2026-08-11
+      --max_new_tokens 64 --deterministic --tp 8 --pp 1 --ep 1 --etp 1
+    last_verified: 2026-08-12
     expected_result: |-
       Two independent greedy runs reload the complete TP8 HybridModel
       checkpoint and use the same repository image (SHA-256
@@ -230,7 +229,7 @@ items:
       status: verified
       precision: bf16
       enabled_features: {}
-      bridge_commit: e773fd0bfa2ba8a5c295f11f50e7758fa09dab6c  # pragma: allowlist secret
+      bridge_commit: 13f8af365d264353213033b63544b7303b66ab96  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe muse_glimmer_30b_peft_8gpu_h100_bf16_config --mode lora
@@ -243,17 +242,17 @@ items:
         logger.tensorboard_dir=null
       last_verified: 2026-08-12
       metrics:
-        initial_loss: 0.7247973
-        final_loss: 0.04332113
-        last_10_steps_step_time_ms_avg: 5291.7
-        last_10_steps_model_tflops_per_gpu_avg: 258.34
+        initial_loss: 0.7233534
+        final_loss: 0.03220246
+        last_10_steps_step_time_ms_avg: 4709.57
+        last_10_steps_model_tflops_per_gpu_avg: 290.42
       expected_result: >
         The command loads the complete imported native HybridModel checkpoint,
         freezes the base model, and inserts LoRA dim 8 / alpha 16 adapters only
         into the native linear_qkv and linear_proj attention projections. All
         100 optimizer-step rows are present exactly once with finite loss, zero
         skipped iterations, and zero NaN iterations. Loss decreases from
-        0.7247973 to 0.04332113, all four metrics are recorded, and the complete
+        0.7233534 to 0.03220246, all four metrics are recorded, and the complete
         eight-shard iter_0000100 adapter checkpoint is saved with its run config,
         metadata, and train state.
 
