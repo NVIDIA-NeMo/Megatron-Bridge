@@ -55,6 +55,16 @@ class MuseGlimmerVisionModelConfig:
     rotary_base: float = 10_000.0
     layer_types: list[str] = field(default_factory=list)
 
+    @property
+    def depth(self) -> int:
+        """Expose the vision depth expected by Bridge's VLM FLOPs estimator."""
+        return self.num_hidden_layers
+
+    @property
+    def spatial_merge_size(self) -> int:
+        """Expose the spatial merge factor expected by VLM data utilities."""
+        return self.merge_size
+
 
 @dataclass(kw_only=True)
 class MuseGlimmerModelConfig(HybridModelConfig):
@@ -74,6 +84,11 @@ class MuseGlimmerModelConfig(HybridModelConfig):
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
+
+    @property
+    def vision_config(self) -> MuseGlimmerVisionModelConfig:
+        """Expose the vision config to shared VLM training utilities."""
+        return self.vision
 
     @property
     def special_token_ids(self) -> dict[str, int]:

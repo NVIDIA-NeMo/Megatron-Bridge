@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -33,6 +34,7 @@ from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import (
     MuseGlimmerBridge,
     MuseGlimmerQKVGMapping,
 )
+from megatron.bridge.training.utils.flop_utils import vit_flops_from_grid_thw
 
 
 pytestmark = pytest.mark.unit
@@ -113,6 +115,18 @@ def test_config_conversion_uses_model_config_path_only() -> None:
     assert model_config.qk_layernorm is True
     assert model_config.hybrid_layer_pattern == "****"
     assert model_config.special_token_ids == {"images": 120, "videos": 121}
+    assert model_config.vision_config is model_config.vision
+    assert model_config.vision_config.depth == 4
+    assert model_config.vision_config.spatial_merge_size == 2
+
+
+def test_vision_config_contributes_to_runtime_flops() -> None:
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
+    cfg = SimpleNamespace(model=model_config)
+
+    vision_flops = vit_flops_from_grid_thw(cfg, torch.tensor([[1, 4, 4]], dtype=torch.int64))
+
+    assert vision_flops > 0
 
 
 def test_autobridge_selects_string_registration_and_serializes_config() -> None:

@@ -94,6 +94,7 @@ RECIPE_FORWARD_STEP_PREFIXES = (
     ("glm_45v_", "vlm_step"),
     ("kimi_k25_vl_", "vlm_step"),
     ("ministral3_", "vlm_step"),
+    ("muse_glimmer_", "vlm_step"),
     ("qwen25_vl_", "vlm_step"),
     ("flux_", "flux_step"),
     ("wan_", "wan_step"),
