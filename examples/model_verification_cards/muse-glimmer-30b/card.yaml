@@ -12,8 +12,9 @@ summary: >
   decoder; it does not use a legacy model provider or GPTModel wrapper.
   All six modeling gates are verified: CPU and TP8 GPU conversion, exact
   round-trip tensor equality, numerical forward parity, and deterministic
-  image-conditioned inference. TP8 LoRA PEFT is also verified; the remaining
-  training modes are unverified.
+  image-conditioned inference. Bounded multimodal pretraining, full SFT,
+  post-SFT export and inference, packed 8K SFT with CP2, LoRA PEFT, and
+  canonical dense-decoder performance are also verified.
 verification_index:
   model_level:
     verified:
@@ -25,8 +26,8 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [peft]
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft]
+      unverified: [checkpoint_resume]
   performance:
     H100: verified
 model:
@@ -36,7 +37,7 @@ model:
   min_transformers_version: "5.15.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: c7026ab2cbaac76408c23c87d9ab9a27123603d6  # pragma: allowlist secret
+  bridge_commit: 2bf9bbb49444954f6ce4361d7435d12021c842c2  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -165,66 +166,143 @@ items:
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
+        --recipe muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config
+        --mode pretrain --max_steps 100
+        --save_dir work/model-verification/muse-glimmer-30b/pretrain-reference
+        --save_interval 50
+        checkpoint.load=null checkpoint.finetune=false
+        checkpoint.save_optim=true checkpoint.save_rng=true
+        checkpoint.async_save=false ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/muse-glimmer-30b/pretrain-reference-resolved.yaml
+      last_verified: 2026-08-12
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 12.23545
+        final_loss: 1.526005
+        last_10_steps_step_time_ms_avg: 1092.84
+        last_10_steps_model_tflops_per_gpu_avg: 40.59
       expected_result: >
-        Complete a bounded 100-step multimodal pretraining run with finite loss,
-        no skipped or NaN iterations, all four metrics, and a reloadable final
-        checkpoint.
+        On 32 H100 GPUs at TP8/PP2/DP2, the command trains the complete
+        randomly initialized HybridModel for exactly 100 optimizer steps on
+        the revision-pinned public CORD-v2 multimodal dataset. All losses and
+        gradient norms remain finite, with zero skipped and zero NaN
+        iterations. Loss decreases from 12.23545 to 1.526005; steps 91-100
+        average 1,092.84 ms and 40.59 model TFLOP/s/GPU. Complete step-50 and
+        step-100 model, optimizer, scheduler, RNG, metadata, train-state, and
+        resolved-config artifacts are saved and reloadable.
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
+        --recipe muse_glimmer_30b_sft_32gpu_h100_bf16_config --mode sft
+        --pretrained_checkpoint
+        work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000
+        --max_steps 100
+        --save_dir work/model-verification/muse-glimmer-30b/sft-checkpoints
+        --save_interval 100 checkpoint.load=null
+        checkpoint.save_optim=false checkpoint.save_rng=false
+        checkpoint.async_save=false ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/muse-glimmer-30b/sft-resolved.yaml
+      last_verified: 2026-08-12
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 0.9772241
+        final_loss: 0.02695329
+        last_10_steps_step_time_ms_avg: 1826.64
+        last_10_steps_model_tflops_per_gpu_avg: 94.03
       expected_result: >
-        Complete a pinned-data 100-step multimodal SFT run with finite loss, no
-        skipped or NaN iterations, all four metrics, and a reloadable final
-        checkpoint.
+        On 32 H100 GPUs at TP8/PP2/DP2, the command loads the complete imported
+        HybridModel and performs exactly 100 full-model image-conditioned SFT
+        optimizer steps on the revision-pinned public CORD-v2 dataset. All
+        losses and gradient norms remain finite, with zero skipped and zero NaN
+        iterations. Loss decreases from 0.9772241 to 0.02695329; steps 91-100
+        average 1,826.64 ms and 94.03 model TFLOP/s/GPU. The complete 32-shard
+        step-100 full-model checkpoint, metadata, train state, and resolved
+        config are saved and reloadable.
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
-      commands: null
-      last_verified: null
-      expected_result: >
-        Export the completed SFT checkpoint to a complete Hugging Face VLM,
-        strictly reload it, and complete deterministic image-conditioned
-        generation with the pinned prompt.
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 2 --gpus-per-node 8 --tp 8 --pp 2 --ep 1 --etp 1
+          --hf-model meta-models/Muse-Glimmer-30B
+          --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
+          --megatron-path
+          work/model-verification/muse-glimmer-30b/sft-checkpoints/iter_0000100
+          --hf-path work/model-verification/muse-glimmer-30b/sft-hf-export
+          --torch-dtype bfloat16 --export-weight-dtype bfloat16
+          --distributed-save --overwrite
+        - >
+          ./scripts/inference/infer.sh --task hf-inference
+          --nodes 1 --gpus-per-node 1
+          --hf-model work/model-verification/muse-glimmer-30b/sft-hf-export
+          --image docs/images/tp1.png
+          --prompt "What type of neural network block is shown in this image?"
+          --max-new-tokens 64 --chat-template
+      last_verified: 2026-08-12
+      expected_result: |-
+        The first command completes all 1,228 MuseGlimmerBridge mappings and
+        writes a complete two-shard BF16 Hugging Face VLM. Transformers 5.15.0
+        strictly reloads all 1,436 tensors with no missing, unexpected,
+        mismatched, or error keys. The second command performs one bounded
+        greedy image-conditioned generation and produces exactly 64 new tokens.
+        The literal completion, represented with JSON angle-bracket escapes,
+        is: " \u003ctransformer_block\u003e\u003ctransformer_block_price\u003e35\u003c/transformer_block_price\u003e\u003ctransformer_block_nm\u003ePre-Layernorm Transformer Block\u003c/transformer_block_nm\u003e\u003ctransformer_block_cnt\u003eNx\u003c/transformer_block_cnt\u003e\u003c/transformer_block\u003e\u003ctransformer_block\u003e\u003ctransformer_sub\u003e\u003ctransformer_nm\u003eLinear".
 
   sft_long_context:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      enabled_features:
+        sequence_packing: in_batch
+        context_parallel_size: 2
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
+        --recipe muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config
+        --mode sft --pretrained_checkpoint
+        work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000
+        --max_steps 100
+        --save_dir work/model-verification/muse-glimmer-30b/long-sft-checkpoints
+        --save_interval 100 checkpoint.load=null
+        checkpoint.save_optim=false checkpoint.save_rng=false
+        checkpoint.async_save=false ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/muse-glimmer-30b/long-sft-resolved.yaml
+      last_verified: 2026-08-12
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.034497
+        final_loss: 0.03382061
+        last_10_steps_step_time_ms_avg: 1419.91
+        last_10_steps_model_tflops_per_gpu_avg: 16.07
       expected_result: >
-        Complete a 100-step long-context multimodal SFT run with declared
-        packing and context-parallel settings, finite loss, no skipped or NaN
-        iterations, all four metrics, and a reloadable checkpoint.
+        On 32 H100 GPUs, the command loads the complete imported HybridModel
+        and completes exactly 100 full-model SFT optimizer steps at sequence
+        length 8192 with in-batch packing, TP1/PP4/CP2, sequence parallelism,
+        A2A context-parallel communication, and selective core-attention
+        recompute. Every loss and gradient norm is finite, with zero skipped
+        and zero NaN iterations. Loss decreases from 1.034497 to 0.03382061;
+        steps 91-100 average 1,419.91 ms and 16.07 model TFLOP/s/GPU. The
+        complete step-100 full-model checkpoint, metadata, train state, and
+        resolved config are saved and reloadable.
 
   peft:
     H100:
