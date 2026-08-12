@@ -29,6 +29,7 @@ BENCHMARK_RECIPE_FAMILY_PREFIXES = (
     ("qwen35_vl_", "qwen_vl"),
     ("deepseek_", "deepseek"),
     ("gpt_oss_", "gpt_oss"),
+    ("muse_glimmer_", "muse_glimmer"),
     ("nemotron", "nemotronh"),
     ("llama", "llama"),
     ("qwen", "qwen"),

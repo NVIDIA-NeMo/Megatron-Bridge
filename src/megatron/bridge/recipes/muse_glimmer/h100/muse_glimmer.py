@@ -24,8 +24,7 @@ from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import ConfigContainer, MockGPTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
@@ -126,41 +125,6 @@ def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a 50-step mock-data benchmark for the dense decoder on 32 H100 GPUs."""
-    cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.context_parallel_size = 2
-    cfg.model.cp_comm_type = "all_gather"
-    cfg.model.hybrid_layer_pattern = "|".join(["*" * 13] * 4)
-    cfg.model.freeze_vision_model = True
-    cfg.model.freeze_vision_projection = True
-    cfg.model.recompute_vision_layers = False
-    cfg.dataset = MockGPTDatasetConfig(
-        seq_length=4096,
-        random_seed=1234,
-        reset_attention_mask=False,
-        reset_position_ids=False,
-        eod_mask_loss=False,
-        num_dataset_builder_threads=1,
-        split="9999,8,2",
-        data_sharding=True,
-        dataloader_type="single",
-        skip_getting_attention_mask_from_dataset=True,
-    )
-    cfg.train.train_iters = 50
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 4
-    cfg.scheduler.lr_warmup_iters = 5
-    cfg.scheduler.lr_decay_iters = 50
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_bootstrap_backend="nccl", tp_comm_overlap=True)
-    cfg.checkpoint.save_interval = 0
-    return cfg
-
-
 def muse_glimmer_30b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a 100-step full multimodal SFT config on 32 H100 GPUs."""
     cfg = _sft_common_vlm()
@@ -240,7 +204,6 @@ def muse_glimmer_30b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
 __all__ = [
     "muse_glimmer_30b_peft_8gpu_h100_bf16_config",
     "muse_glimmer_30b_pretrain_128gpu_h100_bf16_config",
-    "muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_config",
     "muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config",
 ]
