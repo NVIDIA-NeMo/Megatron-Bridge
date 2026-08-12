@@ -37,6 +37,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
 from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.muse_glimmer.model_config import (
@@ -476,9 +477,10 @@ class MuseGlimmerVisionEncoderLayer(nn.Module):
 class MuseGlimmerVisionModel(nn.Module):
     """Muse vision tower with 3:1 window/full attention and 2x2 pixel shuffle."""
 
-    def __init__(self, config: MuseGlimmerVisionModelConfig) -> None:
+    def __init__(self, config: MuseGlimmerVisionModelConfig, *, recompute_layers: bool = False) -> None:
         super().__init__()
         self.config = config
+        self.recompute_layers = recompute_layers
         self.patch_embedder = MuseGlimmerVisionPatchEmbedder(config)
         self.rotary_emb = MuseGlimmerVisionRotaryEmbedding(config)
         self.ln_pre = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
@@ -524,7 +526,16 @@ class MuseGlimmerVisionModel(nn.Module):
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         for layer_type, layer in zip(self.config.layer_types, self.layers):
             cu_seqlens = full_cu_seqlens if layer_type == "full_attention" else window_cu_seqlens
-            hidden_states = layer(hidden_states, cu_seqlens, position_embeddings)
+            if self.recompute_layers and self.training:
+                hidden_states = torch_checkpoint(
+                    layer,
+                    hidden_states,
+                    cu_seqlens,
+                    position_embeddings,
+                    use_reentrant=False,
+                )
+            else:
+                hidden_states = layer(hidden_states, cu_seqlens, position_embeddings)
         hidden_states = hidden_states[torch.argsort(window_index)]
         return self._pixel_shuffle(self.ln_post(hidden_states), grid_thw)
 
@@ -577,7 +588,10 @@ class MuseGlimmerModel(HybridModel):
         self.model_config = config
         customize_muse_glimmer_language_model(self)
         if pre_process:
-            self.vision_tower = MuseGlimmerVisionModel(config.vision)
+            self.vision_tower = MuseGlimmerVisionModel(
+                config.vision,
+                recompute_layers=config.recompute_vision_layers,
+            )
             self.vision_adapter = MuseGlimmerVisionAdapter(config)
             self.vision_projection = nn.Linear(
                 config.projector_hidden_size,

@@ -59,8 +59,9 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
     assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
     assert cfg.model.pipeline_dtype is (torch.bfloat16 if pipeline_parallel_size > 1 else None)
-    expected_pattern = f"{'*' * 19}|{'*' * 33}" if pipeline_parallel_size == 2 else "*" * 52
+    expected_pattern = f"{'*' * 20}|{'*' * 32}" if pipeline_parallel_size == 2 else "*" * 52
     assert getattr(cfg.model, "hybrid_layer_pattern", "*" * 52) == expected_pattern
+    assert cfg.model.recompute_vision_layers is True
     assert getattr(cfg.model, "pipeline_model_parallel_layout", None) is None
     assert cfg.model.context_parallel_size == context_parallel_size
     assert cfg.model.sequence_parallel is True

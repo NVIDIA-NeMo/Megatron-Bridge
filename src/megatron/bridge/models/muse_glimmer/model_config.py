@@ -84,6 +84,7 @@ class MuseGlimmerModelConfig(HybridModelConfig):
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
+    recompute_vision_layers: bool = False
 
     @property
     def vision_config(self) -> MuseGlimmerVisionModelConfig:

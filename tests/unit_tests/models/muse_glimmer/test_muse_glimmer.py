@@ -294,6 +294,24 @@ def test_tiny_vision_model_preserves_expected_token_count() -> None:
     assert output.shape == (4, 64)
 
 
+def test_vision_layer_recomputation_is_training_only() -> None:
+    vision_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).vision
+    model = MuseGlimmerVisionModel(vision_config, recompute_layers=True)
+    pixel_values = torch.randn(16, 24)
+    grid_thw = torch.tensor([[1, 4, 4]])
+
+    with patch(
+        "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.torch_checkpoint",
+        side_effect=lambda function, *args, **kwargs: function(*args),
+    ) as checkpoint:
+        training_output = model(pixel_values, grid_thw)
+        model.eval()
+        inference_output = model(pixel_values, grid_thw)
+
+    assert checkpoint.call_count == vision_config.num_hidden_layers
+    torch.testing.assert_close(training_output, inference_output)
+
+
 @pytest.fixture(scope="module")
 def tiny_hybrid_model() -> Iterator[MuseGlimmerModel]:
     auto_bridge = AutoBridge.from_hf_config(_tiny_hf_config())
