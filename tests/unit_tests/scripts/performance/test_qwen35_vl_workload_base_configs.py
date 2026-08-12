@@ -146,33 +146,37 @@ def test_qwen35_vl_35b_h100_measured_performance_defaults(monkeypatch: pytest.Mo
 
 
 @pytest.mark.parametrize(
-    ("recipe_fn", "expected_graph_modules"),
+    ("recipe_fn", "expected_micro_batch_size", "expected_graph_modules"),
     [
         (
             qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config,
+            2,
             [],
         ),
         (
             qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config,
+            3,
             [],
         ),
         (
             qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+            3,
             ["moe_router", "moe_preprocess"],
         ),
     ],
 )
 def test_qwen35_vl_35b_gb200_measured_performance_defaults(
     recipe_fn: Callable,
+    expected_micro_batch_size: int,
     expected_graph_modules: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The real GB200 factories should retain their measured batch and graph defaults."""
+    """The real GB200 factories should retain their precision-specific defaults."""
     patch_recipe_construction_dependencies(monkeypatch)
 
     config = recipe_fn()
 
-    assert config.train.micro_batch_size == 3
+    assert config.train.micro_batch_size == expected_micro_batch_size
     assert config.train.global_batch_size == 480
     assert config.model.moe_router_force_load_balancing is True
     assert config.model.moe_flex_dispatcher_backend == "hybridep"

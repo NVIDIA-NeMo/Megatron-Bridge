@@ -174,9 +174,10 @@ def _mtp_source_key_prefixes(source: Any, *configs: Any) -> tuple[str, ...]:
     differently:
 
     * DeepSeek-style: a dedicated ``mtp.*`` prefix.
-    * GLM-4.x ``glm4_moe_lite``: the nextn layer is stored as a regular decoder
-      layer at index ``num_hidden_layers`` (i.e. one past the last real layer),
-      so its tensors live under ``model.layers.{num_hidden_layers}.*``.
+    * GLM-4.x ``glm4_moe_lite`` and Step3.7: nextn layers are stored as regular
+      decoder layers starting at index ``num_hidden_layers`` (i.e. one past the
+      last real layer), so their tensors live under consecutive
+      ``model.layers.{layer_index}.*`` prefixes.
 
     When the megatron model is built without an MTP head the generator never
     yields these tensors. If they remain in the source sharding map, the shards
@@ -212,9 +213,20 @@ def _mtp_source_key_prefixes(source: Any, *configs: Any) -> tuple[str, ...]:
             break
 
     if num_hidden_layers is not _MISSING:
-        nextn_prefix = f"model.layers.{num_hidden_layers}."
-        if source.has_glob(f"{nextn_prefix}*"):
-            prefixes.append(nextn_prefix)
+        num_nextn_layers = 1
+        for config in configs:
+            text_config = _get_config_field(config, "text_config")
+            config_candidates = (config,) if text_config is _MISSING else (config, text_config)
+            for config_candidate in config_candidates:
+                for field in MTP_CONFIG_FIELDS:
+                    value = _get_config_field(config_candidate, field)
+                    if value is not _MISSING and value is not None:
+                        num_nextn_layers = max(num_nextn_layers, int(value))
+
+        for layer_index in range(num_hidden_layers, num_hidden_layers + num_nextn_layers):
+            nextn_prefix = f"model.layers.{layer_index}."
+            if source.has_glob(f"{nextn_prefix}*"):
+                prefixes.append(nextn_prefix)
 
     return tuple(prefixes)
 
