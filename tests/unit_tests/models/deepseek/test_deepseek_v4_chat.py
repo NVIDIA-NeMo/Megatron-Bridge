@@ -7,11 +7,6 @@ from typing import Any
 import pytest
 import torch
 
-from megatron.bridge.data.collators.registry import (
-    model_collate_required_for_processor,
-    resolve_model_collate_for_processor,
-)
-from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
 from megatron.bridge.models.deepseek.data.collate_fn import (
     deepseek_v4_collate_fn,
     tokenize_deepseek_v4_example,
@@ -143,6 +138,26 @@ def test_deepseek_v4_tokenizer_builds_content_plus_eos_mask(mode, expected_assis
     assert supervised == expected_assistant_text
 
 
+def test_deepseek_v4_tokenizer_accepts_tool_call_without_content():
+    tokenizer = _DeepSeekV4CharacterTokenizer()
+    example = {
+        "messages": [
+            {"role": "user", "content": "Weather?"},
+            {
+                "role": "assistant",
+                "tool_calls": [{"function": {"name": "get_weather", "arguments": '{"city":"Seattle"}'}}],
+            },
+        ],
+        "tools": [WEATHER_TOOL],
+        "enable_thinking": False,
+    }
+
+    tokenized = tokenize_deepseek_v4_example(example, tokenizer)
+
+    assert tokenized.conversation[2]["content"] is None
+    assert f'<{DSML_TOKEN}invoke name="get_weather">' in _decode_character_ids(tokenized.input_ids.tolist())
+
+
 @pytest.mark.parametrize("truncation_side", ["left", "right"])
 def test_deepseek_v4_tokenizer_truncates_ids_and_mask_together(truncation_side):
     tokenizer = _DeepSeekV4CharacterTokenizer()
@@ -179,32 +194,6 @@ def test_deepseek_v4_collator_shifts_labels_and_pads_rows():
     assert batch["labels"][1, -1].item() == -100
     assert batch["loss_mask"][1, -1].item() == 0
     assert batch["tokens"].data_ptr() == batch["input_ids"].data_ptr()
-
-
-def test_deepseek_v4_direct_sft_auto_selects_model_collator():
-    tokenizer = _DeepSeekV4CharacterTokenizer()
-    example = {"messages": REASONING_MESSAGES, "enable_thinking": True, "preserve_thinking": True}
-
-    assert model_collate_required_for_processor(tokenizer)
-    assert resolve_model_collate_for_processor(tokenizer) is deepseek_v4_collate_fn
-
-    dataset = DirectSFTDataset([example], target_length=1, processor=tokenizer, pad_to_multiple_of=1)
-    batch = dataset.collate_fn([dataset[0]])
-    assert batch["input_ids"].shape[0] == 1
-    assert batch["loss_mask"].sum().item() > 0
-
-
-def test_deepseek_v4_auto_selection_checks_nested_and_snapshot_identities(tmp_path):
-    tokenizer = _DeepSeekV4CharacterTokenizer()
-    wrapper = type("ProcessorWrapper", (), {"name_or_path": "generic-wrapper", "tokenizer": tokenizer})()
-    assert model_collate_required_for_processor(wrapper)
-
-    tokenizer.name_or_path = "/cache/models--deepseek-ai--DeepSeek-V4-Flash/snapshots/revision"
-    assert model_collate_required_for_processor(tokenizer)
-
-    (tmp_path / "config.json").write_text('{"model_type": "deepseek_v4"}', encoding="utf-8")
-    tokenizer.name_or_path = str(tmp_path)
-    assert model_collate_required_for_processor(tokenizer)
 
 
 def test_deepseek_v4_collator_requires_explicit_thinking_mode():

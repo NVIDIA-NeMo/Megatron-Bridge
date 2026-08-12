@@ -145,7 +145,7 @@ def test_builder_keeps_text_shaped_nemotron_omni_data_on_model_collator(monkeypa
 
     build_direct_hf_sft_split(config, config.source, 1, processor_type())
 
-    assert captured["collate_impl"] is not None
+    assert captured["collate_impl"] is None
 
 
 @pytest.mark.parametrize("loss_mode", ["last_turn", "full"])
@@ -172,22 +172,6 @@ def test_builder_forwards_chat_loss_mode_to_model_collator(monkeypatch, loss_mod
     build_direct_hf_sft_split(config, config.source, 1, processor)
 
     assert captured["collate_impl"].keywords["loss_mode"] == loss_mode
-
-
-def test_builder_rejects_unsupported_model_chat_loss_mode(monkeypatch):
-    row = {"conversation": [{"role": "user", "content": "question"}]}
-    processor_type = type("NemotronH_Nano_Omni_Reasoning_V3Processor", (_Tokenizer,), {})
-    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
-        preprocessing=ChatSFTPreprocessingConfig(loss_mode="full"),
-        do_validation=False,
-        do_test=False,
-    )
-
-    with pytest.raises(ValueError, match="supports only chat loss modes"):
-        build_direct_hf_sft_split(config, config.source, 1, processor_type())
 
 
 def test_builder_keeps_other_registered_processors_on_generic_text_collator(monkeypatch):

@@ -222,9 +222,9 @@ def text_chat_collate_fn(
     tokenizer = get_processor_tokenizer(processor)
     boundary_config = infer_assistant_mask_boundary_config(processor)
     skipped_tokens = extract_skipped_token_ids(processor)
+    tokenize = tokenize_impl or tokenize_chat_example
     tokenized_rows = []
     for example in examples:
-        tokenize = tokenize_impl or tokenize_chat_example
         tokenized = tokenize(
             example,
             processor,

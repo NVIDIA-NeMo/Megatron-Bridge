@@ -197,6 +197,14 @@ def select_direct_hf_sft_collate(
     raise ValueError("Prompt-completion preprocessing supports text-only examples.")
 
 
+def _model_collate_key(processor: Any) -> str:
+    tokenizer = get_processor_tokenizer(processor)
+    name_or_path = getattr(tokenizer, "name_or_path", "")
+    if isinstance(name_or_path, str) and "deepseek-v4" in name_or_path.lower().replace("_", "-"):
+        return "deepseek-v4"
+    return type(processor).__name__
+
+
 def build_direct_hf_sft_split(
     config: DirectHFSFTDatasetConfig,
     source: HFDatasetSourceConfig,
@@ -208,22 +216,23 @@ def build_direct_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
-    from megatron.bridge.data.collators.registry import (
-        model_collate_required_for_processor,
-        resolve_model_collate_for_processor,
-    )
+    from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples, resolve_model_collate
 
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
-    if collate_impl is None and model_collate_required_for_processor(processor):
+    collate_key = _model_collate_key(processor)
+    if collate_impl is None and model_collate_required_for_all_examples(collate_key):
         if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
             raise ValueError(
                 f"Processor type '{type(processor).__name__}' requires chat preprocessing through its "
                 "model-owned collator."
             )
-        selected_collate = resolve_model_collate_for_processor(
-            processor,
-            loss_mode=config.preprocessing.loss_mode,
-        )
+        if collate_key == "deepseek-v4":
+            selected_collate = partial(
+                resolve_model_collate(collate_key),
+                loss_mode=config.preprocessing.loss_mode,
+            )
+        else:
+            selected_collate = None
     else:
         selected_collate = select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl)
     return DirectSFTDataset(
