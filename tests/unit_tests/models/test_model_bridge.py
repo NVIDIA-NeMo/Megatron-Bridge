@@ -543,91 +543,36 @@ def test_stream_weights_megatron_to_hf_does_not_invent_tied_output_alias(monkeyp
     assert [weight.param_name for weight in weights] == [embedding_name]
 
 
-def test_stream_weights_hf_to_megatron_skips_unmapped_task_slots():
-    """build_conversion_tasks leaves a None slot when the HF checkpoint lacks a mapped
-    weight, so consumers must skip them.
-
-    A parameter with no mapping at all is a different condition and raises; see
-    test_build_conversion_tasks_rejects_an_unmapped_parameter.
-    """
-    bridge = DummyBridge()
-
-    mapped_task = WeightConversionTask(
-        param_name="decoder.weight",
-        global_param_name="decoder.weight",
-        mapping=SimpleNamespace(
-            hf_param="hf.weight",
-            hf_to_megatron=lambda weights, module: weights,
-        ),
-        pp_rank=0,
-        vp_stage=0,
-        megatron_module=Mock(),
-        param_weight=torch.ones(2),
-    )
-    hf_pretrained = SimpleNamespace(state={"hf.weight": torch.ones(2)})
-
-    weights = list(
-        bridge.stream_weights_hf_to_megatron(
-            hf_pretrained,
-            [Mock()],
-            conversion_tasks=[None, mapped_task],
-        )
-    )
-
-    assert [weight.param_name for weight in weights] == ["decoder.weight"]
-
-
-def test_stream_weights_megatron_to_hf_skips_unmapped_task_slots(monkeypatch):
-    """The export loop shares the same task list, so it must skip None slots too."""
-    bridge = DummyBridge()
-
-    class TrackingTensor:
-        def detach(self):
-            return self
-
-    source = TrackingTensor()
-
-    class DummyMapping:
-        def megatron_to_hf(self, weight, module):
-            return {"hf.weight": weight}
-
-    mapped_task = WeightConversionTask(
-        param_name="decoder.weight",
-        global_param_name="decoder.weight",
-        mapping=DummyMapping(),
-        pp_rank=0,
-        vp_stage=0,
-        megatron_module=None,
-        param_weight=source,
-    )
-
-    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
-    monkeypatch.setattr(
-        DummyBridge,
-        "maybe_modify_converted_hf_weight",
-        lambda self, *_args, **_kwargs: _args[1],
-    )
-
-    weights = list(
-        bridge.stream_weights_megatron_to_hf(
-            [Mock()],
-            SimpleNamespace(),
-            cpu=False,
-            show_progress=False,
-            conversion_tasks=[None, mapped_task],
-            merge_adapter_weights=False,
-        )
-    )
-
-    assert weights == [("hf.weight", source)]
-
-
 def _patch(monkeypatch, name, value):
     """Replace a module-level name in the bridge module under test."""
     monkeypatch.setattr(f"megatron.bridge.models.conversion.model_bridge.{name}", value)
 
 
-def test_build_conversion_tasks_rejects_an_unmapped_parameter(monkeypatch):
+def _patch_conversion_task_context(monkeypatch, bridge, model, global_names):
+    """Patch distributed task discovery while retaining registry validation."""
+    _patch(monkeypatch, "_get_pg_collection_from_model", lambda *_a, **_kw: Mock())
+    _patch(monkeypatch, "_get_pp_rank", lambda *_a, **_kw: 0)
+    _patch(monkeypatch, "unwrap_model", lambda *_a, **_kw: [model])
+    _patch(monkeypatch, "persistent_buffers", lambda *_a, **_kw: [])
+    _patch(
+        monkeypatch,
+        "_megatron_local_name_to_global",
+        lambda _models, _config, local_name, _vp_stage: local_name,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_megatron_global_param_names_all_pp_ranks",
+        lambda *_a, **_kw: global_names,
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_share_embeddings_and_output_weights",
+        lambda *_a, **_kw: False,
+    )
+
+
+@pytest.mark.parametrize("owns_parameter", [True, False])
+def test_build_conversion_tasks_rejects_an_unmapped_parameter(monkeypatch, owns_parameter):
     """A Megatron parameter with no registry entry must stop the conversion by name.
 
     Skipping it would leave the parameter at its initial value on import and drop it on
@@ -642,33 +587,57 @@ def test_build_conversion_tasks_rejects_an_unmapped_parameter(monkeypatch):
     )
 
     model = Mock()
-    model.named_parameters = lambda: [("orphan.weight", torch.ones(2))]
+    model.named_parameters = lambda: [("orphan.weight", torch.ones(2))] if owns_parameter else []
     model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
 
-    # The builder collects process groups and gathers parameter names across pipeline
-    # ranks before it reaches the registry lookup. None of that is under test here, and
-    # on a single process it fails first, so stand in for it at single-rank values.
-    _patch(monkeypatch, "_get_pg_collection_from_model", lambda *_a, **_kw: Mock())
-    _patch(monkeypatch, "_get_pp_rank", lambda *_a, **_kw: 0)
-    _patch(monkeypatch, "unwrap_model", lambda *_a, **_kw: [model])
-    _patch(monkeypatch, "persistent_buffers", lambda *_a, **_kw: [])
-    _patch(
-        monkeypatch,
-        "_megatron_local_name_to_global",
-        lambda _models, _config, local_name, _vp_stage: local_name,
-    )
-    monkeypatch.setattr(
-        DummyBridge,
-        "_megatron_global_param_names_all_pp_ranks",
-        lambda self, *_a, **_kw: ["orphan.weight"],
-    )
-    monkeypatch.setattr(
-        DummyBridge,
-        "_share_embeddings_and_output_weights",
-        lambda self, *_a, **_kw: False,
-    )
+    _patch_conversion_task_context(monkeypatch, bridge, model, ["orphan.weight"])
 
     hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: ["hf.weight"])))
 
     with pytest.raises(ValueError, match="orphan.weight"):
         bridge.build_conversion_tasks(hf_pretrained, [model])
+
+
+def test_build_conversion_tasks_rejects_a_missing_hf_weight(monkeypatch):
+    """A mapped source key must not silently become a remote-PP task."""
+    bridge = DummyBridge()
+    monkeypatch.setattr(
+        bridge,
+        "mapping_registry",
+        lambda: MegatronMappingRegistry(AutoMapping("decoder.weight", "hf.weight")),
+    )
+    model = Mock()
+    model.named_parameters = lambda: []
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+    _patch_conversion_task_context(monkeypatch, bridge, model, ["decoder.weight"])
+    hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: [])))
+
+    with pytest.raises(ValueError, match=r"decoder\.weight -> hf\.weight"):
+        bridge.build_conversion_tasks(hf_pretrained, [model])
+
+
+def test_build_conversion_tasks_allows_explicit_hf_name_mismatch(monkeypatch):
+    """Alternate/synthesized HF names require the mapping's explicit opt-in."""
+
+    class AlternateNameMapping(AutoMapping):
+        def __init__(self, megatron_param, hf_param):
+            super().__init__(megatron_param, hf_param)
+            self.allow_hf_name_mismatch = True
+
+    bridge = DummyBridge()
+    monkeypatch.setattr(
+        bridge,
+        "mapping_registry",
+        lambda: MegatronMappingRegistry(AlternateNameMapping("decoder.weight", "synthesized.weight")),
+    )
+    model = Mock()
+    model.named_parameters = lambda: []
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+    _patch_conversion_task_context(monkeypatch, bridge, model, ["decoder.weight"])
+    hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: [])))
+
+    tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
+
+    assert len(tasks) == 1
+    assert tasks[0].global_param_name == "decoder.weight"
+    assert tasks[0].megatron_module is None
