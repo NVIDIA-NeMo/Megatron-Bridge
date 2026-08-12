@@ -251,6 +251,24 @@ def test_vision_projection_matches_hf_and_vllm_activation():
     assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
 
 
+def test_vision_backbone_fp8_policy_does_not_disable_language_or_projection_fp8():
+    provider = NemotronOmniModelProvider(
+        fp8="hybrid",
+        fp8_param=True,
+        use_vision_backbone_fp8_arch=False,
+    )
+
+    vision_config = provider._build_vision_config(provider)
+    vision_projection_config = provider._build_vision_projection_config(provider)
+
+    assert vision_config.fp8 is None
+    assert vision_config.fp8_param is False
+    assert provider.fp8 == "hybrid"
+    assert provider.fp8_param is True
+    assert vision_projection_config.fp8 == "hybrid"
+    assert vision_projection_config.fp8_param is True
+
+
 def test_radio_cpe_uses_square_interpolate_then_crop_by_default():
     provider = _TinyOmniProvider()
 
