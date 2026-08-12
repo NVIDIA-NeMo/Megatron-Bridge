@@ -85,6 +85,7 @@ def _tiny_hf_config() -> MuseGlimmerConfig:
         projector_hidden_size=32,
         projector_hidden_act="gelu",
         architectures=["MuseGlimmerForConditionalGeneration"],
+        tie_word_embeddings=False,
         torch_dtype=torch.bfloat16,
     )
 
@@ -122,6 +123,17 @@ def test_config_conversion_uses_model_config_path_only() -> None:
     assert model_config.vision_config is model_config.vision
     assert model_config.vision_config.depth == 4
     assert model_config.vision_config.spatial_merge_size == 2
+
+
+def test_config_conversion_uses_top_level_embedding_sharing_contract() -> None:
+    """The VLM config, not its nested text config, owns HF weight tying."""
+    hf_config = _tiny_hf_config()
+    hf_config.tie_word_embeddings = True
+    hf_config.text_config.tie_word_embeddings = False
+
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(hf_config)
+
+    assert model_config.share_embeddings_and_output_weights is True
 
 
 def test_vision_config_contributes_to_runtime_flops() -> None:
