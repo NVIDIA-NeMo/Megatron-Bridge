@@ -65,7 +65,10 @@ def _apply_model_and_data(
 
     cfg.dataset.seq_length = seq_length
     cfg.dataset.hf_processor_path = _MODEL_ID
-    cfg.dataset.hf_processor_kwargs = {"revision": _MODEL_REVISION}
+    cfg.dataset.hf_processor_kwargs = {
+        "revision": _MODEL_REVISION,
+        "max_image_tokens": 3_072,
+    }
     cfg.dataset.source.split = "train"
     cfg.dataset.source.load_kwargs = {"revision": _CORD_V2_REVISION}
     cfg.dataset.do_validation = False

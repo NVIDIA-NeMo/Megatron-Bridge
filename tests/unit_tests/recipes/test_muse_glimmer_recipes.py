@@ -62,6 +62,10 @@ def test_muse_glimmer_recipe_contracts(
     expected_pattern = f"{'*' * 20}|{'*' * 32}" if pipeline_parallel_size == 2 else "*" * 52
     assert getattr(cfg.model, "hybrid_layer_pattern", "*" * 52) == expected_pattern
     assert cfg.model.recompute_vision_layers is True
+    assert cfg.dataset.hf_processor_kwargs == {
+        "revision": muse_glimmer_recipes._MODEL_REVISION,
+        "max_image_tokens": 3_072,
+    }
     assert getattr(cfg.model, "pipeline_model_parallel_layout", None) is None
     assert cfg.model.context_parallel_size == context_parallel_size
     assert cfg.model.sequence_parallel is True
@@ -69,9 +73,6 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.model.recompute_modules == ["core_attn"]
     assert cfg.model.seq_length == seq_length
     assert cfg.dataset.seq_length == seq_length
-    assert cfg.dataset.hf_processor_kwargs == {
-        "revision": "f84ecc3a0ea984a4c04542a84269e3d065350a6e"  # pragma: allowlist secret
-    }
     assert cfg.dataset.source.load_kwargs == {
         "revision": "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
     }
