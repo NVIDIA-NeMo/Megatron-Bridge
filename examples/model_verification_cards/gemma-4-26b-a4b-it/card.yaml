@@ -11,11 +11,12 @@ summary: >
   forward comparison remains unverified because the recorded run compared a
   tensor-parallel padding position rather than the prompt's next token.
   Decoder-focused SFT is verified on one 8-GPU H100 node with TP4/PP1/EP8/ETP1,
-  a frozen vision encoder, and selective core-attention and MoE-activation
-  recompute. The real CORD-v2 run completed 10 optimizer steps with stable
-  memory and saved iter_0000010. LoRA PEFT is also verified on four H100 GPUs
-  with TP2/PP1/EP4/ETP1 and a complete adapter checkpoint. Long-context SFT is
-  pending. The published Bridge recipes do not currently provide VLM pretraining.
+  a frozen vision encoder, and full-layer uniform activation recompute with one
+  layer per recompute unit. The real CORD-v2 run completed 10 optimizer steps
+  with stable memory and saved iter_0000010. LoRA PEFT is also verified on four
+  H100 GPUs with TP2/PP1/EP4/ETP1 and a complete adapter checkpoint.
+  Long-context SFT is pending. The published Bridge recipes do not currently
+  provide VLM pretraining.
 verification_index:
   model_level:
     verified:
@@ -181,7 +182,7 @@ items:
       status: verified
       precision: bf16
       enabled_features: {}
-      bridge_commit: 81e559ca4d579cf2d9ed5b8f3f48bef82e06451f  # pragma: allowlist secret
+      bridge_commit: f3130a0e37c78945ecf98b301dfc90505c3c305f  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe gemma4_vl_26b_sft_config --mode sft --dataset cord-v2
@@ -192,28 +193,30 @@ items:
         --save_dir work/model-verification/gemma-4-26b-a4b-it/sft-checkpoints
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/sft-post-setup.yaml
-      last_verified: 2026-08-04
+      last_verified: 2026-08-11
       metrics:
-        initial_loss: 1.268018
-        final_loss: 0.06543536
-        last_10_steps_step_time_ms_avg: 18699.99
-        last_10_steps_model_tflops_per_gpu_avg: 26.47
-        peak_allocated_memory_gib: 70.624
-        peak_reserved_memory_gib: 71.021
+        initial_loss: 1.282612
+        final_loss: 0.09127883
+        last_10_steps_step_time_ms_avg: 15936.25
+        last_10_steps_model_tflops_per_gpu_avg: 32.20
+        peak_allocated_memory_gib: 65.223
+        peak_reserved_memory_gib: 72.356
       expected_result: >
-        On 2026-08-04 the single-node TP4/PP1/EP8/ETP1 run loaded the immutable
+        On 2026-08-11 the single-node TP4/PP1/EP8/ETP1 run loaded the immutable
         BF16 checkpoint and real CORD-v2 revision, then completed exactly 10
         optimizer steps at MBS1 and GBS32. The persisted post-setup config
         confirmed a frozen vision encoder, trainable projection and language
-        model, expandable CUDA allocator segments, and selective core_attn plus
-        moe_act recompute with CUDA graphs and CPU offload disabled. Loss moved
-        from 1.268018 to 0.06543536, final grad norm was 1.561, and every step
-        reported zero skipped and zero NaN iterations. Across all eight ranks,
-        allocated memory returned to 56.493 GiB after each step, while
-        cumulative peak allocated and reserved memory remained at or below
-        70.624 and 71.021 GiB. The run saved a complete iter_0000010 torch_dist
-        checkpoint with eight rank shards, finalized metadata, training state,
-        and a latest-checkpoint tracker containing iteration 10.
+        model, expandable CUDA allocator segments, and full-layer uniform
+        recompute with one layer per recompute unit directly from the recipe
+        defaults, while CUDA graphs and CPU offload remained disabled. Loss
+        moved from 1.282612 to 0.09127883, final grad norm was 3.090, and all 10
+        steps reported zero skipped and zero NaN iterations. After iteration 2,
+        logger-reported ranks returned to
+        62.134-62.145 GiB allocated, while cumulative peak allocated and
+        reserved memory remained at or below 65.223 and 72.356 GiB. The run
+        saved a complete iter_0000010 torch_dist checkpoint with eight rank
+        shards, finalized metadata, run config, training state, and a
+        latest-checkpoint tracker containing iteration 10.
 
   sft_export_inference:
     H100:

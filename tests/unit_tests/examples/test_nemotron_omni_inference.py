@@ -14,6 +14,7 @@
 
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -104,3 +105,62 @@ def test_generic_inference_processes_heterogeneous_source_images(monkeypatch):
     assert packed.shape == (1, 4, 3 * 16 * 16)
     assert torch.equal(num_patches, torch.tensor([1, 1]))
     assert torch.equal(imgs_sizes, torch.tensor([[32, 16], [16, 32]]))
+
+
+@pytest.mark.unit
+def test_generic_audio_inference_uses_parakeet_feature_mask_length(monkeypatch):
+    script_globals = runpy.run_path(_EXAMPLE_ROOT / "hf_to_megatron_generate_nemotron_omni.py")
+    process_inputs = script_globals["process_audio_inputs"]
+
+    class _Tokenizer:
+        audio_token = "<so_embedding>"
+
+        def apply_chat_template(self, messages, **kwargs):
+            del kwargs
+            assert messages[-1]["content"].startswith("<so_embedding>")
+            return "rendered prompt"
+
+        def convert_tokens_to_ids(self, token):
+            assert token == "<so_embedding>"
+            return 90
+
+    class _Inputs(dict):
+        @property
+        def input_ids(self):
+            return self["input_ids"]
+
+    class _Processor:
+        def __call__(self, *, text, audio, return_tensors):
+            assert text == ["rendered prompt"]
+            assert audio == ["clip.wav"]
+            assert return_tensors == "pt"
+            return _Inputs(
+                input_ids=torch.tensor([[5, 90, 90, 6]]),
+                sound_clips=torch.zeros(1, 1280),
+            )
+
+    class _FeatureExtractor:
+        def __init__(self, *, sampling_rate, feature_size):
+            assert sampling_rate == 16000
+            assert feature_size == 128
+
+        def __call__(self, raw_sound_clips, **kwargs):
+            assert raw_sound_clips.shape == (1, 1280)
+            assert kwargs["return_attention_mask"] is True
+            return SimpleNamespace(
+                input_features=torch.ones(1, 9, 128),
+                attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0]]),
+            )
+
+    monkeypatch.setattr("transformers.ParakeetFeatureExtractor", _FeatureExtractor)
+
+    input_ids, sound_clips, sound_length = process_inputs(
+        _Tokenizer(),
+        _Processor(),
+        "clip.wav",
+        "transcribe",
+    )
+
+    assert input_ids.tolist() == [[5, 90, 6]]
+    assert sound_clips.shape == (1, 9, 128)
+    assert sound_length.tolist() == [8]
