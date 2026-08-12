@@ -216,11 +216,11 @@ def build_direct_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
-    from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples, resolve_model_collate
+    from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
 
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
     collate_key = _model_collate_key(processor)
-    if collate_impl is None and model_collate_required_for_all_examples(collate_key):
+    if collate_impl is None and always_use_model_collate(collate_key):
         if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
             raise ValueError(
                 f"Processor type '{type(processor).__name__}' requires chat preprocessing through its "
