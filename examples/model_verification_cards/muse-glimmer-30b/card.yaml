@@ -3,13 +3,13 @@
 
 title: muse_glimmer_30b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. This card covers the complete Muse Glimmer 30B vision-language
-  checkpoint through the builder-backed model-config, model-builder, and model
-  bridge path. The modeled architecture includes the vision tower, adapter,
-  projection, and a native Megatron-Core HybridModel text decoder; it does not
-  use a legacy model provider or GPTModel wrapper.
+  Performance scope: pretrain_performance.H100 uses the tuned 32-H100
+  fixed-shape mock-token dense-decoder recipe; functional training timing and
+  throughput remain sanity checks. This card covers the complete Muse Glimmer
+  30B vision-language checkpoint through the builder-backed model-config,
+  model-builder, and model bridge path. The modeled architecture includes the
+  vision tower, adapter, projection, and a native Megatron-Core HybridModel text
+  decoder; it does not use a legacy model provider or GPTModel wrapper.
   CPU and TP8 GPU conversion, exact round-trip tensor equality, numerical
   forward parity, and deterministic image-conditioned inference are verified.
   TP8 LoRA PEFT is also verified; the remaining training modes are unverified.
@@ -26,6 +26,8 @@ verification_index:
     H100:
       verified: [peft]
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
+  performance:
+    H100: verified
 model:
   hf_id: meta-models/Muse-Glimmer-30B
   hf_revision: f84ecc3a0ea984a4c04542a84269e3d065350a6e  # pragma: allowlist secret
@@ -33,7 +35,7 @@ model:
   min_transformers_version: "5.15.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: e322510641fd910a48ef6f6dc143eac9573366e5  # pragma: allowlist secret
+  bridge_commit: 1fbf9630639f83f0fbfbc840a2f77878bc9a6a97  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -278,3 +280,28 @@ items:
         restore model, optimizer, scheduler, data-order, and RNG state, match
         declared sentinel losses within tolerance, and save a distinct
         reloadable final checkpoint.
+
+  pretrain_performance:
+    H100:
+      status: verified
+      precision: bf16
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
+        --recipe muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config
+        --mode pretrain --max_steps 50
+      last_verified: 2026-08-12
+      metrics:
+        initial_loss: 12.26874
+        final_loss: 0.5229914
+        last_10_steps_step_time_ms_avg: 9353.63
+        last_10_steps_model_tflops_per_gpu_avg: 429.18
+      expected_result: >
+        The exact 32-H100 command completes all 50 fixed-shape mock-token dense
+        decoder steps at TP4/PP4/CP2, a 9|15|15|13 split of all 52 language
+        layers, sequence length 4096, MBS6/GBS192, BF16 model and gradient state,
+        and FP8 current-scaling Transformer GEMMs. The vision and projection
+        towers are frozen and excluded from the fixed-shape decoder workload.
+        Loss remains finite from 12.26874 to 0.5229914 with zero skipped or NaN
+        iterations. Steps 41-50 average 9,353.63 ms and 429.18 model
+        TFLOP/s/GPU, and the process exits successfully without checkpoint
+        output.
