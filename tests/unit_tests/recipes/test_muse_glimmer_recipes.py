@@ -77,10 +77,12 @@ def test_muse_glimmer_recipe_contracts(
         "revision": "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
     }
     assert cfg.dataset.pad_to_max_length is True
-    assert cfg.dataset.enable_in_batch_packing is False
+    is_pretrain = recipe is muse_glimmer_30b_pretrain_128gpu_h100_bf16_config
+    assert cfg.dataset.enable_in_batch_packing is is_pretrain
+    assert cfg.dataset.in_batch_packing_pad_to_multiple_of == (8 if is_pretrain else 1)
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == global_batch_size
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == (16 if is_pretrain else 1)
     assert cfg.validation.eval_iters == 0
     assert cfg.validation.eval_interval == 0
     assert cfg.logger.log_throughput is True

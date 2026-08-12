@@ -112,10 +112,12 @@ def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
         context_parallel_size=1,
     )
     cfg.dataset.pad_to_max_length = True
-    cfg.dataset.enable_in_batch_packing = False
+    cfg.dataset.enable_in_batch_packing = True
+    cfg.dataset.in_batch_packing_pad_to_multiple_of = 8
     cfg.rng.seed = 1234
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 16
     _set_optimizer(cfg, max_lr=3e-4, warmup_iters=40)
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
