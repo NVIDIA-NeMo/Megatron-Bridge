@@ -36,6 +36,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
 from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
+from megatron.core.utils import get_pg_rank
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
@@ -563,6 +564,19 @@ class MuseGlimmerVisionAdapter(nn.Module):
 class MuseGlimmerModel(HybridModel):
     """Native MCore Hybrid model with the Muse vision modules attached."""
 
+    _CENTERED_NORM_EXTRA_STATE_SUFFIXES = (
+        "input_layernorm._extra_state",
+        "self_attention.post_layernorm._extra_state",
+        "pre_mlp_layernorm._extra_state",
+        "mlp.post_layernorm._extra_state",
+    )
+    _CENTERED_NORM_WEIGHT_SUFFIXES = (
+        "input_layernorm.weight",
+        "self_attention.post_layernorm.weight",
+        "pre_mlp_layernorm.weight",
+        "mlp.post_layernorm.weight",
+    )
+
     def __init__(
         self,
         config: MuseGlimmerModelConfig,
@@ -614,6 +628,39 @@ class MuseGlimmerModel(HybridModel):
             freeze_vision_model=config.freeze_vision_model,
             freeze_vision_projection=config.freeze_vision_projection,
         )
+
+    def sharded_state_dict(
+        self,
+        prefix: str = "",
+        sharded_offsets: tuple[tuple[int, int, int], ...] = (),
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return a backend-stable Muse checkpoint schema.
+
+        Transformer Engine RMSNorm adds an empty ``_extra_state`` object that
+        the local centered RMSNorm does not expose. Muse conversion uses the
+        local backend so it can run on CPU, while training may use Transformer
+        Engine. Omitting only these empty norm objects keeps those checkpoints
+        interchangeable without relaxing strict loading for parameters or
+        stateful Transformer Engine modules.
+        """
+        metadata = ensure_metadata_has_dp_cp_group(metadata)
+        sharded_state_dict = super().sharded_state_dict(prefix, sharded_offsets, metadata)
+        replica_id = (0, get_pg_rank(self.tp_group), get_pg_rank(metadata["dp_cp_group"]))
+        for key in list(sharded_state_dict):
+            if key.endswith(self._CENTERED_NORM_WEIGHT_SUFFIXES):
+                sharded_state_dict[key].replica_id = replica_id
+            elif key.endswith(self._CENTERED_NORM_EXTRA_STATE_SUFFIXES):
+                extra_state = sharded_state_dict.pop(key)
+                extra_state_data = getattr(extra_state, "data", None)
+                has_extra_state = (
+                    extra_state_data.numel() > 0
+                    if isinstance(extra_state_data, Tensor)
+                    else extra_state_data is not None and bool(extra_state_data)
+                )
+                if has_extra_state:
+                    raise ValueError(f"Muse centered RMSNorm extra state must be empty: {key}.")
+        return sharded_state_dict
 
     def freeze(
         self,

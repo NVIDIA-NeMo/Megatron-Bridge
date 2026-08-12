@@ -442,6 +442,51 @@ def test_builder_constructs_native_hybrid_model_on_cpu(tiny_hybrid_model: MuseGl
     torch.testing.assert_close(embedding_forward.call_args.kwargs["input_ids"], expected_embedding_ids)
 
 
+def test_checkpoint_schema_omits_only_empty_backend_norm_state(tiny_hybrid_model: MuseGlimmerModel) -> None:
+    norm_weight = SimpleNamespace(replica_id=(0, 0, 0))
+    state = {
+        "decoder.layers.0.input_layernorm._extra_state": SimpleNamespace(data=torch.empty(0)),
+        "decoder.layers.0.self_attention.post_layernorm._extra_state": SimpleNamespace(data=None),
+        "decoder.layers.0.pre_mlp_layernorm._extra_state": SimpleNamespace(data=None),
+        "decoder.layers.0.mlp.post_layernorm._extra_state": SimpleNamespace(data=None),
+        "decoder.layers.0.self_attention.linear_qkv._extra_state": SimpleNamespace(data={"scale": 1}),
+        "decoder.layers.0.input_layernorm.weight": norm_weight,
+    }
+
+    with (
+        patch.object(HybridModel, "sharded_state_dict", return_value=state),
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.get_pg_rank",
+            side_effect=[3, 4],
+        ),
+    ):
+        result = tiny_hybrid_model.sharded_state_dict()
+
+    assert "decoder.layers.0.input_layernorm._extra_state" not in result
+    assert "decoder.layers.0.self_attention.post_layernorm._extra_state" not in result
+    assert "decoder.layers.0.pre_mlp_layernorm._extra_state" not in result
+    assert "decoder.layers.0.mlp.post_layernorm._extra_state" not in result
+    assert "decoder.layers.0.self_attention.linear_qkv._extra_state" in result
+    assert "decoder.layers.0.input_layernorm.weight" in result
+    assert norm_weight.replica_id == (0, 3, 4)
+
+
+def test_checkpoint_schema_rejects_stateful_backend_norm_state(tiny_hybrid_model: MuseGlimmerModel) -> None:
+    state = {
+        "decoder.layers.0.input_layernorm._extra_state": SimpleNamespace(data=torch.ones(1)),
+    }
+
+    with (
+        patch.object(HybridModel, "sharded_state_dict", return_value=state),
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.get_pg_rank",
+            side_effect=[3, 4],
+        ),
+        pytest.raises(ValueError, match="centered RMSNorm extra state must be empty"),
+    ):
+        tiny_hybrid_model.sharded_state_dict()
+
+
 def test_qkvg_mapping_executes_against_hybrid_qkv_module(tiny_hybrid_model: MuseGlimmerModel) -> None:
     model = tiny_hybrid_model
     registry = MuseGlimmerBridge().mapping_registry()
