@@ -181,6 +181,33 @@ def test_nemotron_lightning_forwards_thinking_controls_and_masks_assistant_turns
     ]
 
 
+def test_nemotron_lightning_without_reasoning_supervises_empty_thinking_boundary() -> None:
+    tokenizer = _NemotronLightningTokenizer()
+    example = {
+        "messages": [
+            {"role": "user", "content": "question one"},
+            {"role": "assistant", "content": "answer one"},
+        ],
+        "chat_template_kwargs": {
+            "enable_thinking": False,
+            "truncate_history_thinking": True,
+        },
+    }
+
+    tokenized = tokenize_chat_example(example, tokenizer, warn_on_all_masked=False)
+
+    semantic_kwargs = [kwargs for kwargs in tokenizer.template_kwargs if "enable_thinking" in kwargs]
+    assert semantic_kwargs
+    assert all(kwargs["enable_thinking"] is False for kwargs in semantic_kwargs)
+    assert _supervised_ids(tokenized) == [
+        THINK_OPEN,
+        THINK_CLOSE,
+        TEXT_IDS["answer one"],
+        IM_END,
+        NEWLINE,
+    ]
+
+
 def test_nemotron_lightning_tool_reasoning_and_calls_are_supervised() -> None:
     tokenizer = _NemotronLightningTokenizer()
     example = {
