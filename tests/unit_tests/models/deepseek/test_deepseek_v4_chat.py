@@ -118,6 +118,34 @@ def test_deepseek_v4_encoder_preserves_reasoning_and_formats_tools():
     assert f'{USER_TOKEN}<tool_result>{{"temperature":12}}</tool_result>{ASSISTANT_TOKEN}' in rendered
 
 
+def test_deepseek_v4_encoder_formats_non_thinking_tool_followup():
+    messages = [
+        {"role": "system", "content": "Use tools.", "tools": [WEATHER_TOOL]},
+        {"role": "user", "content": "Weather?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city":"Seattle"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"temperature":12}'},
+        {"role": "assistant", "content": "12°C."},
+    ]
+
+    rendered = encode_deepseek_v4_messages(messages, thinking_mode="chat")
+
+    assert f"{ASSISTANT_TOKEN}{THINKING_END_TOKEN}\n\n<{DSML_TOKEN}tool_calls>" in rendered
+    assert (
+        f'{USER_TOKEN}<tool_result>{{"temperature":12}}</tool_result>'
+        f"{ASSISTANT_TOKEN}{THINKING_END_TOKEN}12°C.{EOS_TOKEN}"
+    ) in rendered
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_assistant_text"),
     [
@@ -197,5 +225,5 @@ def test_deepseek_v4_collator_shifts_labels_and_pads_rows():
 
 
 def test_deepseek_v4_collator_requires_explicit_thinking_mode():
-    with pytest.raises(ValueError, match="requires thinking_mode"):
+    with pytest.raises(ValueError, match="require thinking_mode"):
         deepseek_v4_collate_fn([{"messages": ORDINARY_MESSAGES}], _DeepSeekV4CharacterTokenizer())
