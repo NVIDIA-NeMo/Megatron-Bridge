@@ -146,8 +146,8 @@ def test_muse_glimmer_fp8_performance_recipe_uses_current_scaling() -> None:
     assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.context_parallel_size == 2
-    assert cfg.train.global_batch_size == 96
-    assert cfg.train.micro_batch_size == 3
+    assert cfg.train.global_batch_size == 128
+    assert cfg.train.micro_batch_size == 4
 
 
 def test_muse_glimmer_lora_targets_native_attention_projections() -> None:

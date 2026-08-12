@@ -78,6 +78,8 @@ def muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config() -> ConfigContainer:
     """Muse Glimmer dense decoder pretrain: 32× H100, FP8 current scaling."""
     cfg = _muse_glimmer_30b_pretrain_32gpu_h100_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
     return cfg
 
 
