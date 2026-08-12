@@ -41,6 +41,8 @@ def _row(tag, index):
 
 
 def _config(source, weights=None, **kwargs):
+    kwargs.setdefault("do_validation", False)
+    kwargs.setdefault("do_test", False)
     return DirectHFSFTDatasetConfig(
         seq_length=16,
         source=source,
@@ -49,8 +51,6 @@ def _config(source, weights=None, **kwargs):
             prompt_column="prompt",
             completion_column="completion",
         ),
-        do_validation=False,
-        do_test=False,
         pad_to_multiple_of=1,
         **kwargs,
     )
@@ -142,3 +142,37 @@ def test_blend_survives_an_unrelated_cli_override():
     assert config.seq_length == 32
     assert all(isinstance(entry, HFDatasetSourceConfig) for entry in config.source)
     assert [entry.dataset_name for entry in config.source] == ["squad", "gsm8k"]
+
+
+@pytest.mark.parametrize("seed", [None, 1.5, "1234", True])
+def test_config_rejects_a_non_integer_blend_seed(seed):
+    # random.Random(None) reseeds from entropy, so ranks would disagree on order.
+    with pytest.raises(ValueError, match="blend_seed must be an integer"):
+        _config(_blend(), [1.0, 2.0], blend_seed=seed).validate()
+
+
+def test_config_rejects_a_non_finite_blend_weight():
+    with pytest.raises(ValueError, match="positive finite"):
+        _config(_blend(), [1.0, float("nan")]).validate()
+
+
+def test_blend_introduced_by_override_keeps_split_sources_usable():
+    # A scalar-source config gains a blend through Hydra, and the split sources
+    # the blend now requires arrive in the same override as plain mappings.
+    config = _config(HFDatasetSourceConfig(dataset_name="squad"), do_validation=True, do_test=True)
+
+    process_config_with_overrides(
+        config,
+        cli_overrides=[
+            "~source",
+            "+source=[{dataset_name: squad}, {dataset_name: gsm8k}]",
+            "+validation_source={dataset_name: squad, split: validation}",
+            "+test_source={dataset_name: gsm8k, split: test}",
+        ],
+    )
+    config.validate()
+
+    assert [entry.dataset_name for entry in config.source] == ["squad", "gsm8k"]
+    assert isinstance(config.validation_source, HFDatasetSourceConfig)
+    assert isinstance(config.test_source, HFDatasetSourceConfig)
+    assert config.validation_source.split == "validation"

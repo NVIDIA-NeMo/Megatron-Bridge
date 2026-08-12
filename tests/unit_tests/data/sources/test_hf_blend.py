@@ -113,3 +113,38 @@ def test_blended_rows_are_not_copied():
     blended = blend_sft_rows([rows], [1.0], seed=1234)
 
     assert all(any(row is original for original in rows) for row in blended)
+
+
+@pytest.mark.parametrize("weight", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_weights_are_rejected(weight):
+    # NaN and infinity pass a plain `<= 0` check, so they need a kind check.
+    sources = [HFDatasetSourceConfig(dataset_name="squad")]
+
+    with pytest.raises(ValueError, match="positive finite"):
+        resolve_blend_weights(sources, [weight])
+
+
+def test_a_positive_weight_keeps_a_row_even_when_its_share_is_under_one():
+    # Half a row of a one-row source still has to keep that source present.
+    blended = blend_sft_rows([_rows("a", 1)], [0.5], seed=1234)
+
+    assert len(blended) == 1
+
+
+def test_a_small_share_of_a_large_source_keeps_one_row():
+    blended = blend_sft_rows([_rows("a", 100)], [0.004], seed=1234)
+
+    assert len(blended) == 1
+
+
+def test_a_source_with_a_sub_row_share_does_not_vanish_from_a_blend():
+    blended = blend_sft_rows([_rows("a", 40), _rows("b", 1)], [1.0, 0.5], seed=1234)
+
+    assert _tags(blended) == {"a": 40, "b": 1}
+
+
+def test_a_fractional_share_rounds_up_to_a_whole_row():
+    # 100 * 0.333 is 33.3, and a partial row cannot be drawn.
+    blended = blend_sft_rows([_rows("a", 100)], [0.333], seed=1234)
+
+    assert len(blended) == 34

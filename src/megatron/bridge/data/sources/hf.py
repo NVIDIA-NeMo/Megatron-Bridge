@@ -14,6 +14,7 @@
 
 """Declarative Hugging Face sources, named presets, and shared normalization."""
 
+import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -342,7 +343,7 @@ def resolve_blend_weights(
 
     Raises:
         ValueError: If no source is given, if the counts disagree, or if a weight
-            is not positive.
+            is not a positive finite number.
     """
     if not sources:
         raise ValueError("A blend must name at least one source.")
@@ -350,10 +351,16 @@ def resolve_blend_weights(
         return [1.0] * len(sources)
     if len(weights) != len(sources):
         raise ValueError(f"Blend sources and weights must be equal in number, got {len(sources)} and {len(weights)}.")
+
+    resolved = []
     for weight in weights:
-        if weight <= 0:
-            raise ValueError(f"Blend weights must be positive, got {weight}.")
-    return [float(weight) for weight in weights]
+        # NaN and infinity pass every comparison below, so they are rejected by
+        # kind rather than by range.
+        value = float(weight)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Blend weights must be positive finite numbers, got {weight}.")
+        resolved.append(value)
+    return resolved
 
 
 def blend_sft_rows(
@@ -366,7 +373,8 @@ def blend_sft_rows(
 
     A weight is how many passes the blend takes over a source: ``1.0`` keeps
     every row once, ``2.5`` keeps every row twice plus half of them again, and
-    ``0.5`` keeps half of them. Fractional passes draw without replacement.
+    ``0.5`` keeps half of them. Fractional passes draw without replacement and
+    round up to a whole row, so a positive weight always keeps at least one.
 
     Weights count rows, not tokens. SFT rows vary in length, so equal row counts
     do not make equal token counts.
@@ -390,7 +398,9 @@ def blend_sft_rows(
         full_passes = int(weight)
         for _ in range(full_passes):
             blended.extend(rows)
-        remainder = round(len(rows) * (weight - full_passes))
+        # Rounding up rather than to nearest, so a positive weight always draws
+        # something. A share below half a row would otherwise drop the source.
+        remainder = math.ceil(len(rows) * (weight - full_passes))
         if remainder:
             blended.extend(rng.sample(list(rows), remainder))
 

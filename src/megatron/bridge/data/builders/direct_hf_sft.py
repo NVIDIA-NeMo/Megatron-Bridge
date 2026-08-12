@@ -97,6 +97,10 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             raise ValueError("seq_length must be greater than 0.")
         validate_sft_preprocessing_config(self.preprocessing)
         self._validate_sources()
+        if self.validation_source is not None:
+            self.validation_source = _as_source(self.validation_source)
+        if self.test_source is not None:
+            self.test_source = _as_source(self.test_source)
         if self.do_validation and self.validation_source is not None:
             self._inherit_source_adapter_kwargs(self.validation_source)
             self.validation_source.validate()
@@ -138,6 +142,10 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         sources = self.training_sources
         if isinstance(self.source, list) or self.source_weights is not None:
             resolve_blend_weights(sources, self.source_weights)
+            # random.Random(None) reseeds from system entropy, so an unset seed
+            # would give every rank and every rebuild a different blend order.
+            if not isinstance(self.blend_seed, int) or isinstance(self.blend_seed, bool):
+                raise ValueError(f"blend_seed must be an integer, got {self.blend_seed!r}.")
         for entry in sources:
             entry.validate()
 

@@ -189,7 +189,7 @@ dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
 
 Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
 
-To train on several sources at once, pass a list to `source`. Each entry in `source_weights` is an epoch count for its source: `1.0` keeps every row once, `2.5` keeps every row twice plus half of them again, and `0.5` keeps half of them. Fractional passes draw without replacement. Omitting the weights gives every source one pass.
+To train on several sources at once, pass a list to `source`. Each entry in `source_weights` is an epoch count for its source: `1.0` keeps every row once, `2.5` keeps every row twice plus half of them again, and `0.5` keeps half of them. Fractional passes draw without replacement and round up to a whole row. Omitting the weights gives every source one pass.
 
 ```python
 from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
