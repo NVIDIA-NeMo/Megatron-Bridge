@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers configuring sequence packing and long-context training in Megatron-Bridge for LLM and VLM finetuning workloads. <br>
+Developers and engineers configuring and validating sequence packing strategies for LLM and VLM finetuning workloads in Megatron-Bridge. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -27,12 +27,13 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Packed Sequences Documentation](docs/training/packed-sequences.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Multi-Token Prediction](docs/training/multi-token-prediction.md) <br>
+- [Hierarchical Context Parallel](docs/training/hierarchical-context-parallel.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Code] <br>
-**Output Format:** [Markdown with inline Python code blocks] <br>
+**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -43,18 +44,18 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 task (1 positive) in isolated k8s-sandbox pods with dataset digest sha256:57d3c088. <br>
+1 evaluation task (1 positive) run in isolated sandbox pods against skill-evaluator-dataset-snapshot/1. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill is safe to use (no unsafe operations, secret leakage, or unauthorized access). <br>
-- Correctness: Whether the skill produces correct answers against reference ground truth. <br>
-- Discoverability: Whether the right skill is loaded and activated when needed. <br>
+- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Whether the skill produces a correct answer against the reference. <br>
+- Discoverability: Whether the right skill is loaded and executed when needed. <br>
 - Effectiveness: Whether the skill helps complete the user's goal and expected workflow. <br>
 - Efficiency: Whether the skill avoids wasted tool or skill usage. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - `skill_execution`: Whether the expected skill was found and executed. <br>
 - `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
@@ -66,12 +67,12 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 37% → 91% (+54 points) | 68% → 86% (+18 points) |
+| Overall | 36% → 94% (+58 points) | 64% → 81% (+17 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 0% → 100% (+100 points) | 100% → 100% (±0 points) |
+| Correctness | 0% → 100% (+100 points) | 100% → 80% (-20 points) |
 | Discoverability | 50% → 100% (+50 points) | 50% → 88% (+38 points) |
-| Effectiveness | 0% → 66% (+66 points) | 74% → 45% (-29 points) |
-| Efficiency | 35% → 90% (+55 points) | 17% → 100% (+83 points) |
+| Effectiveness | 0% → 79% (+79 points) | 66% → 70% (+4 points) |
+| Efficiency | 28% → 89% (+61 points) | 5% → 67% (+62 points) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>
