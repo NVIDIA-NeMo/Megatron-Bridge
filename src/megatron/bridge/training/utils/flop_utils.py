@@ -1572,6 +1572,14 @@ def num_floating_point_operations(
         patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
         return vit_flops(cfg, batch_size, patches_per_image)
 
+    # A Hybrid attention symbol normally describes only the attention work for
+    # FLOPs accounting. Some native HybridModel stacks, such as Muse Glimmer,
+    # use that symbol for a complete Transformer layer containing both attention
+    # and its MLP. The standard Transformer path already accounts for that full
+    # layer plus GQA, output gates, sliding attention, logits, and vision work.
+    if getattr(cfg.model, "hybrid_attention_layers_include_mlp", False):
+        return transformer_flops()
+
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
     # a physical hybrid pattern is sufficient to select hybrid accounting.
     if getattr(cfg.model, "is_hybrid_model", False) or getattr(cfg.model, "hybrid_layer_pattern", None):

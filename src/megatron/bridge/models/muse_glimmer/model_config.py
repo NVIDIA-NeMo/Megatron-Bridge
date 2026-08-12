@@ -71,6 +71,7 @@ class MuseGlimmerModelConfig(HybridModelConfig):
     """Complete builder configuration for Muse Glimmer."""
 
     builder: ClassVar[str] = "megatron.bridge.models.muse_glimmer.MuseGlimmerModelBuilder"
+    hybrid_attention_layers_include_mlp: ClassVar[bool] = True
 
     vision: MuseGlimmerVisionModelConfig = field(default_factory=MuseGlimmerVisionModelConfig)
     image_token_id: int = 200_092

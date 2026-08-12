@@ -38,7 +38,7 @@ from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import (
     MuseGlimmerBridge,
     MuseGlimmerQKVGMapping,
 )
-from megatron.bridge.training.utils.flop_utils import vit_flops_from_grid_thw
+from megatron.bridge.training.utils.flop_utils import num_floating_point_operations, vit_flops_from_grid_thw
 
 
 pytestmark = pytest.mark.unit
@@ -131,6 +131,31 @@ def test_vision_config_contributes_to_runtime_flops() -> None:
     vision_flops = vit_flops_from_grid_thw(cfg, torch.tensor([[1, 4, 4]], dtype=torch.int64))
 
     assert vision_flops > 0
+
+
+def test_hybrid_attention_layers_use_full_transformer_flops() -> None:
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
+    cfg = SimpleNamespace(model=model_config)
+    batch_size = 8
+    sequence_length = model_config.seq_length
+
+    muse_flops = num_floating_point_operations(
+        cfg,
+        batch_size=batch_size,
+        seqlen_sum=batch_size * sequence_length,
+        seqlen_squared_sum=batch_size * sequence_length**2,
+    )
+
+    model_config.hybrid_attention_layers_include_mlp = False
+    model_config.hybrid_layer_pattern = None
+    transformer_flops = num_floating_point_operations(
+        cfg,
+        batch_size=batch_size,
+        seqlen_sum=batch_size * sequence_length,
+        seqlen_squared_sum=batch_size * sequence_length**2,
+    )
+
+    assert muse_flops == transformer_flops
 
 
 @pytest.mark.parametrize(
