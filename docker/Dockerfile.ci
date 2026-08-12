@@ -186,7 +186,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi && \
     chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
-COPY --chown=1000:1000 --chmod=644 . /opt/Megatron-Bridge
+COPY --chown=1000:1000 . /opt/Megatron-Bridge
 
 # CI writes coverage beside the checked-out source, installs that source editable into the
 # prepared environment, and uses /nemo_run for runtime outputs. Keep those paths owned by the
