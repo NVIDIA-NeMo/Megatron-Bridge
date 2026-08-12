@@ -335,9 +335,7 @@ def setup(
     if hasattr(cfg.dataset, "token_dtype_code") and cfg.dataset.token_dtype_code is None:
         vocab_size = getattr(tokenizer, "vocab_size", None)
         if vocab_size is not None:
-            import numpy
-
-            cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
+            cfg.dataset.token_dtype_code = _get_token_dtype_code(vocab_size)
 
     if cfg.train.num_epochs is not None:
         if should_fire(callback_manager, "on_data_init_start"):
@@ -779,6 +777,17 @@ def _validate_and_set_vocab_size(
                 f" {model_vocab_size - tokenizer_vocab_size}."
             )
         return model_vocab_size, False
+
+
+def _get_token_dtype_code(vocab_size: int) -> int:
+    """Return the numpy dtype code for token IDs that can hold `vocab_size` tokens.
+
+    uint16 (code 4) is used when all token ids (0..vocab_size-1) fit in uint16,
+    otherwise uint64 (code 8) is used.
+    """
+    import numpy as np
+
+    return 4 if vocab_size <= np.iinfo(np.uint16).max + 1 else 8
 
 
 def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
