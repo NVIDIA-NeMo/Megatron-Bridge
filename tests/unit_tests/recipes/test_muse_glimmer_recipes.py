@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.recipes.muse_glimmer.h100 import muse_glimmer as muse_glimmer_recipes
 from megatron.bridge.recipes.muse_glimmer.h100 import (
     muse_glimmer_30b_peft_8gpu_h100_bf16_config,
     muse_glimmer_30b_pretrain_128gpu_h100_bf16_config,
@@ -84,3 +87,25 @@ def test_muse_glimmer_lora_targets_native_attention_projections() -> None:
     assert cfg.peft.dropout == 0.0
     assert cfg.rng.seed == 5678
     assert cfg.optimizer.lr == pytest.approx(1e-4)
+
+
+def test_muse_glimmer_recipes_use_builder_model_config_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Bridge:
+        def get_model_config(self):
+            return SimpleNamespace()
+
+        def to_megatron_provider(self, *args, **kwargs):
+            del args, kwargs
+            raise AssertionError("legacy GPT provider path used")
+
+    class _AutoBridge:
+        @staticmethod
+        def from_hf_pretrained(*args, **kwargs):
+            del args, kwargs
+            return _Bridge()
+
+    monkeypatch.setattr(muse_glimmer_recipes, "AutoBridge", _AutoBridge)
+
+    cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
+
+    assert cfg.model is not None

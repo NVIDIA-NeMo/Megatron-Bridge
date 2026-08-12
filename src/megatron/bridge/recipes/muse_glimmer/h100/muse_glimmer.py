@@ -33,9 +33,7 @@ _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowl
 
 def _apply_model_and_data(cfg: ConfigContainer, *, seq_length: int, context_parallel_size: int) -> None:
     """Apply the exact model, multimodal data, and common execution settings."""
-    cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID, revision=_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID, revision=_MODEL_REVISION).get_model_config()
     cfg.model.seq_length = seq_length
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
