@@ -39,65 +39,6 @@ _DEFAULT_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: all
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 
 
-def _apply_8gpu_h100_execution(cfg: ConfigContainer, *, use_hybridep: bool) -> None:
-    """Apply the validated execution layout for one H100 node."""
-    cfg.model.expert_model_parallel_size = 8
-    cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.moe_hybridep_num_sms = None
-    if use_hybridep:
-        cfg.model.moe_token_dispatcher_type = "flex"
-        cfg.model.moe_flex_dispatcher_backend = "hybridep"
-        cfg.model.moe_flex_dispatcher_num_sms = 16
-        # Eager Bridge HybridEP requires rank-aligned dispatch shapes. Padding
-        # uses zero routing weights and is removed after combine, so dynamic
-        # media-token counts remain safe without changing routed outputs.
-        cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
-    else:
-        cfg.model.moe_token_dispatcher_type = "alltoall"
-        cfg.model.moe_flex_dispatcher_backend = None
-        cfg.model.moe_flex_dispatcher_num_sms = None
-        cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.model.moe_router_force_load_balancing = False
-    cfg.model.moe_expert_capacity_factor = None
-    cfg.model.moe_expert_rank_capacity_factor = None
-    cfg.model.moe_pad_expert_input_to_capacity = False
-    cfg.model.moe_paged_stash = False
-
-    # PEFT exercises parameters shared by multiple media-expanded microbatches.
-    # Keep DDP overlap disabled: the matched runtime A/B hit a second in-flight
-    # gradient communication and aborted before step three.
-    cfg.ddp.overlap_grad_reduce = False
-    cfg.ddp.overlap_param_gather = False
-    cfg.optimizer.overlap_param_gather = False
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    # Scaled FP16 main parameters plus BF16 gradients and moments avoid full
-    # FP32 Adam state for the H100-specific variants. Transformer Engine only
-    # supports low-bit parameter remainders with FP32 main parameters, so keep
-    # them explicitly disabled for this validated FP16-main-parameter path.
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.float16
-    cfg.optimizer.store_param_remainders = False
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-    cfg.mixed_precision = bf16_mixed()
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, "CUDA_DEVICE_MAX_CONNECTIONS": 32}
-    if use_hybridep:
-        cfg.env_vars.update(
-            {
-                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-                "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-                "NVLINK_DOMAIN_SIZE": 8,
-                "USE_MNNVL": 0,
-            }
-        )
-
-
 def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDatasetConfig:
     """Create the declarative temporal-video Energon config used by Omni recipes."""
     return EnergonDatasetConfig(
@@ -166,9 +107,67 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     projections and experts are both sharded. Precision-aware Adam stores
     BF16 gradients/moments and scaled FP16 main parameters.
     """
-    cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
+    cfg = _nemotron_omni_base()
+    cfg.model.temporal_patch_dim = 1
+    cfg.model.has_sound = False
     cfg.model.tensor_model_parallel_size = 2
-    _apply_8gpu_h100_execution(cfg, use_hybridep=True)
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    # Eager Bridge HybridEP requires rank-aligned dispatch shapes. Padding
+    # uses zero routing weights and is removed after combine, so dynamic
+    # media-token counts remain safe without changing routed outputs.
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_expert_capacity_factor = None
+    cfg.model.moe_expert_rank_capacity_factor = None
+    cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.moe_paged_stash = False
+
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.store_param_remainders = False
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.dataset = DirectHFSFTDatasetConfig(
+        seq_length=4096,
+        preprocessing=ChatSFTPreprocessingConfig(),
+        hf_processor_path=_DEFAULT_HF_PATH,
+        hf_processor_kwargs={"revision": _DEFAULT_HF_REVISION},
+        trust_remote_code=True,
+        source=HFDatasetSourceConfig(
+            dataset_name="cord_v2",
+            load_kwargs={"revision": _CORD_V2_REVISION},
+        ),
+        num_workers=2,
+        dataloader_type="cyclic",
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+        enable_in_batch_packing=False,
+    )
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -184,15 +183,61 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     forward progress for the packed CP2 workload in the controlled backend
     screen.
     """
-    cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
+    cfg = _nemotron_omni_base()
+    cfg.model.temporal_patch_dim = 1
+    cfg.model.has_sound = False
     cfg.model.seq_length = 8192
     cfg.model.context_parallel_size = 2
     cfg.model.calculate_per_token_loss = True
     cfg.train.micro_batch_size = 2
-    cfg.dataset.seq_length = 8192
-    cfg.dataset.enable_in_batch_packing = True
-    cfg.dataset.in_batch_packing_pad_to_multiple_of = 8
-    _apply_8gpu_h100_execution(cfg, use_hybridep=False)
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_expert_capacity_factor = None
+    cfg.model.moe_expert_rank_capacity_factor = None
+    cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.moe_paged_stash = False
+
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.store_param_remainders = False
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.dataset = DirectHFSFTDatasetConfig(
+        seq_length=8192,
+        preprocessing=ChatSFTPreprocessingConfig(),
+        hf_processor_path=_DEFAULT_HF_PATH,
+        hf_processor_kwargs={"revision": _DEFAULT_HF_REVISION},
+        trust_remote_code=True,
+        source=HFDatasetSourceConfig(
+            dataset_name="cord_v2",
+            load_kwargs={"revision": _CORD_V2_REVISION},
+        ),
+        num_workers=2,
+        dataloader_type="cyclic",
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=8,
+    )
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS, "CUDA_DEVICE_MAX_CONNECTIONS": 32}
     return cfg
 
 
@@ -263,9 +308,90 @@ def nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     4-GPU recipe. Precision-aware Adam stores BF16 gradients/moments and scaled
     FP16 main parameters.
     """
-    cfg = nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config()
+    from megatron.bridge.peft.lora import LoRA
+
+    cfg = _nemotron_omni_base()
+    cfg.model.temporal_patch_dim = 1
+    cfg.model.has_sound = False
     cfg.model.tensor_model_parallel_size = 2
-    _apply_8gpu_h100_execution(cfg, use_hybridep=True)
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    # Eager Bridge HybridEP requires rank-aligned dispatch shapes. Padding
+    # uses zero routing weights and is removed after combine, so dynamic
+    # media-token counts remain safe without changing routed outputs.
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_expert_capacity_factor = None
+    cfg.model.moe_expert_rank_capacity_factor = None
+    cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.moe_paged_stash = False
+
+    cfg.peft = LoRA(
+        target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"],
+        dim=16,
+        alpha=32,
+    )
+    cfg.checkpoint.load = None
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = True
+    cfg.model.freeze_sound_encoder = True
+    cfg.model.freeze_sound_projection = True
+
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=50,
+        lr_decay_iters=None,
+        max_lr=1e-4,
+        min_lr=1e-5,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.store_param_remainders = False
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.dataset = DirectHFSFTDatasetConfig(
+        seq_length=4096,
+        preprocessing=ChatSFTPreprocessingConfig(),
+        hf_processor_path=_DEFAULT_HF_PATH,
+        hf_processor_kwargs={"revision": _DEFAULT_HF_REVISION},
+        trust_remote_code=True,
+        source=HFDatasetSourceConfig(
+            dataset_name="cord_v2",
+            load_kwargs={"revision": _CORD_V2_REVISION},
+        ),
+        num_workers=2,
+        dataloader_type="cyclic",
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+        enable_in_batch_packing=False,
+    )
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
