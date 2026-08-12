@@ -25,6 +25,7 @@ from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKe
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.optim import (
     memory_efficient_fp32_optimizer_state_loading,
+    memory_efficient_precision_aware_optimizer_state_checkpointing,
     sync_hybrid_device_optimizer_fp32_master_copies,
 )
 
@@ -175,10 +176,21 @@ class _FakeFusedAdam(torch.optim.Optimizer):
         self.store_param_remainders = False
         self.name_to_dtype_map = {"exp_avg": exp_avg_dtype, "exp_avg_sq": exp_avg_dtype}
         self.override_load_calls = 0
+        self.get_unscaled_state_calls = 0
 
     def load_state_dict(self, state_dict: dict[str, object]) -> None:
         self.override_load_calls += 1
         super().load_state_dict(state_dict)
+
+    def get_unscaled_state(
+        self,
+        param: torch.nn.Parameter,
+        state_name: str,
+        skip_unscale: bool = False,
+    ) -> torch.Tensor:
+        del skip_unscale
+        self.get_unscaled_state_calls += 1
+        return self.state[param][state_name].float()
 
 
 class _FakeParamRange:
@@ -222,6 +234,91 @@ class _FakeLayerWiseChildOpt:
 
     def __init__(self, inner: torch.optim.Optimizer) -> None:
         self.optimizer = inner
+
+
+class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
+    """Tests for CPU staging of portable precision-aware Adam checkpoint state."""
+
+    @staticmethod
+    def _distributed_optimizer(
+        *,
+        state_dtype: torch.dtype = torch.bfloat16,
+    ) -> tuple[_FakeDistribOpt, _FakeFusedAdam, torch.Tensor]:
+        param = torch.zeros(4, dtype=torch.bfloat16)
+        inner = _FakeFusedAdam(param, master_weights=True, exp_avg_dtype=state_dtype)
+        inner.state[param] = {
+            "exp_avg": torch.ones(4, dtype=state_dtype),
+            "exp_avg_sq": torch.full((4,), 2.0, dtype=state_dtype),
+        }
+        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
+        distributed.config.use_precision_aware_optimizer = True
+        return distributed, inner, param
+
+    def test_stages_unscaled_state_on_cpu_and_restores_method(self):
+        distributed, inner, param = self._distributed_optimizer()
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed) as patched:
+                state = inner.get_unscaled_state(param, "exp_avg")
+                assert patched == 1
+                assert state.device.type == "cpu"
+
+            assert "get_unscaled_state" not in inner.__dict__
+            inner.get_unscaled_state(param, "exp_avg_sq")
+
+        assert inner.get_unscaled_state_calls == 2
+
+    @pytest.mark.parametrize("incompatibility", ["fp32", "cpu_offload", "fsdp", "stub"])
+    def test_does_not_patch_incompatible_optimizer(self, incompatibility: str):
+        state_dtype = torch.float32 if incompatibility == "fp32" else torch.bfloat16
+        distributed, inner, _ = self._distributed_optimizer(state_dtype=state_dtype)
+        if incompatibility == "cpu_offload":
+            distributed.config.optimizer_cpu_offload = True
+        elif incompatibility == "fsdp":
+            distributed.ddp_config.use_megatron_fsdp = True
+        elif incompatibility == "stub":
+            distributed.is_stub_optimizer = True
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed) as patched:
+                assert patched == 0
+
+        assert "get_unscaled_state" not in inner.__dict__
+
+    def test_patches_all_eligible_chained_optimizers(self):
+        distributed_optimizers = [self._distributed_optimizer()[0] for _ in range(2)]
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(
+                _ChainedOpt(distributed_optimizers)
+            ) as patched:
+                assert patched == 2
+                assert all("get_unscaled_state" in opt.optimizer.__dict__ for opt in distributed_optimizers)
+
+        assert all("get_unscaled_state" not in opt.optimizer.__dict__ for opt in distributed_optimizers)
+
+    def test_te_unavailable_and_none_optimizer_are_noops(self):
+        distributed, inner, _ = self._distributed_optimizer()
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=None):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed) as patched:
+                assert patched == 0
+        with memory_efficient_precision_aware_optimizer_state_checkpointing(None) as patched:
+            assert patched == 0
+
+        assert "get_unscaled_state" not in inner.__dict__
+
+    def test_restores_method_when_checkpointing_raises(self):
+        distributed, inner, _ = self._distributed_optimizer()
+
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            pytest.raises(RuntimeError, match="save failed"),
+        ):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed):
+                raise RuntimeError("save failed")
+
+        assert "get_unscaled_state" not in inner.__dict__
 
 
 class TestMemoryEfficientFp32OptimizerStateLoading:

@@ -140,6 +140,92 @@ def _get_te_fused_adam_class() -> type[torch.optim.Optimizer] | None:
 
 
 @contextmanager
+def memory_efficient_precision_aware_optimizer_state_checkpointing(
+    optimizer: MegatronOptimizer | None,
+) -> Iterator[int]:
+    """Stage expanded precision-aware Adam checkpoint tensors on CPU.
+
+    Transformer Engine's precision-aware FusedAdam exposes portable checkpoint
+    state by expanding compressed moments to FP32. Its default ``state_dict``
+    path retains those expansions on GPU until the complete state dictionary is
+    built for saving or load scaffolding, which can exceed device memory even
+    when training fits. This context preserves the same unscaled checkpoint
+    values and dtypes, but moves each tensor to CPU immediately so only one
+    expansion is live on GPU at a time.
+
+    Args:
+        optimizer: Optimizer participating in checkpointing.
+
+    Yields:
+        Number of compatible FusedAdam instances using CPU staging.
+    """
+    if optimizer is None:
+        yield 0
+        return
+
+    fused_adam_class = _get_te_fused_adam_class()
+    if fused_adam_class is None:
+        yield 0
+        return
+
+    chained_optimizers = getattr(optimizer, "chained_optimizers", None)
+    sub_optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
+    missing_method = object()
+    patched: list[tuple[torch.optim.Optimizer, object]] = []
+
+    try:
+        for distributed_optimizer in sub_optimizers:
+            if getattr(distributed_optimizer, "is_stub_optimizer", False):
+                continue
+            if not getattr(getattr(distributed_optimizer, "config", None), "use_precision_aware_optimizer", False):
+                continue
+            if getattr(getattr(distributed_optimizer, "config", None), "optimizer_cpu_offload", False):
+                continue
+            if getattr(getattr(distributed_optimizer, "ddp_config", None), "use_megatron_fsdp", False):
+                continue
+
+            inner = getattr(distributed_optimizer, "optimizer", None)
+            if not isinstance(inner, fused_adam_class):
+                continue
+            state_dtype_map = getattr(inner, "name_to_dtype_map", None)
+            if not isinstance(state_dtype_map, Mapping) or all(
+                dtype == torch.float32 for dtype in state_dtype_map.values()
+            ):
+                continue
+
+            original_get_unscaled_state: Callable[..., torch.Tensor] = inner.get_unscaled_state
+
+            def _get_unscaled_state_on_cpu(
+                fused_adam: torch.optim.Optimizer,
+                param: torch.nn.Parameter,
+                state_name: str,
+                skip_unscale: bool = False,
+                *,
+                _fallback: Callable[..., torch.Tensor] = original_get_unscaled_state,
+            ) -> torch.Tensor:
+                del fused_adam
+                return _fallback(param, state_name, skip_unscale).cpu()
+
+            previous_instance_method = inner.__dict__.get("get_unscaled_state", missing_method)
+            setattr(inner, "get_unscaled_state", MethodType(_get_unscaled_state_on_cpu, inner))
+            patched.append((inner, previous_instance_method))
+
+        if patched:
+            G_LOGGER.info(
+                "Enabled CPU staging for %d precision-aware Transformer Engine FusedAdam checkpoint state(s).",
+                len(patched),
+            )
+
+        yield len(patched)
+    finally:
+        for inner, previous_instance_method in patched:
+            if previous_instance_method is missing_method:
+                delattr(inner, "get_unscaled_state")
+            else:
+                setattr(inner, "get_unscaled_state", previous_instance_method)
+
+
+@contextmanager
 def memory_efficient_fp32_optimizer_state_loading(
     optimizer: MegatronOptimizer | None,
 ) -> Iterator[int]:
