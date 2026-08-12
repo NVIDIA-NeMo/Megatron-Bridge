@@ -49,6 +49,9 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 logger = logging.getLogger(__name__)
 
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
+_DEEPSEEK_V4_TOKENIZER_SIZE = 129280
+_DEEPSEEK_V4_ASSISTANT_TOKEN = "<｜Assistant｜>"
+_DEEPSEEK_V4_ASSISTANT_TOKEN_ID = 128804
 
 
 @dataclass(kw_only=True)
@@ -200,7 +203,19 @@ def select_direct_hf_sft_collate(
 def _model_collate_key(processor: Any) -> str:
     tokenizer = get_processor_tokenizer(processor)
     name_or_path = getattr(tokenizer, "name_or_path", "")
-    if isinstance(name_or_path, str) and "deepseek-v4" in name_or_path.lower().replace("_", "-"):
+    convert_tokens_to_ids = getattr(tokenizer, "convert_tokens_to_ids", None)
+    try:
+        has_deepseek_v4_fingerprint = len(tokenizer) == _DEEPSEEK_V4_TOKENIZER_SIZE and (
+            callable(convert_tokens_to_ids)
+            and convert_tokens_to_ids(_DEEPSEEK_V4_ASSISTANT_TOKEN) == _DEEPSEEK_V4_ASSISTANT_TOKEN_ID
+        )
+    except TypeError:
+        has_deepseek_v4_fingerprint = False
+    if (
+        isinstance(name_or_path, str)
+        and "deepseek-v4" in name_or_path.lower().replace("_", "-")
+        and has_deepseek_v4_fingerprint
+    ):
         return "deepseek-v4"
     return type(processor).__name__
 
