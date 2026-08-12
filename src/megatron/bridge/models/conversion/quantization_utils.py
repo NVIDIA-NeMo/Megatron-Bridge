@@ -325,6 +325,19 @@ def dequantize_mxfp4_e2m1_packed(
     ``scale`` is expected to be one scale per row and per K tile. ``uint8``
     E8M0 tensors use exponent bias 127 and are decoded to powers of two.
     """
+    # HF state dicts loaded via AutoBridge.from_hf_pretrained are CPU-resident,
+    # so without this every op below (bit unpack, LUT gather, repeat_interleave,
+    # multiply) runs on CPU even under scripts/conversion's GPU backend, leaving
+    # GPUs idle while a single CPU process becomes the bottleneck for the whole
+    # distributed conversion (observed ~20-30x slower than expected on a
+    # multi-GPU MoE conversion). Guarded on is_initialized() so the
+    # single-process CPU backend, which never calls init_process_group, is
+    # unaffected.
+    if torch.cuda.is_available() and torch.distributed.is_initialized():
+        device = torch.device("cuda", torch.cuda.current_device())
+        weight_packed = weight_packed.to(device)
+        scale = scale.to(device)
+
     w_u8 = weight_packed.view(torch.uint8)
     lo = (w_u8 & 0xF).to(torch.int64)
     hi = (w_u8 >> 4).to(torch.int64)
