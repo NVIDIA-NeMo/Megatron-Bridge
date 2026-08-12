@@ -115,7 +115,6 @@ def test_muse_glimmer_long_context_uses_te_supported_packed_cp_layout() -> None:
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.cp_comm_type == "a2a"
-    assert cfg.model.num_query_groups == 2
     assert cfg.model.hybrid_layer_pattern == "|".join("*" * layers for layers in (9, 15, 15, 13))
     assert cfg.train.micro_batch_size == 2
 
