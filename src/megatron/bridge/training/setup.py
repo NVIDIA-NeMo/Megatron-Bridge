@@ -14,25 +14,33 @@
 
 import inspect
 import logging
+import random
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
 
+import numpy as np
 import torch
+from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.core.transformer.multi_token_prediction import get_mtp_ranks
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training import fault_tolerance
@@ -46,6 +54,7 @@ from megatron.bridge.training.checkpointing import (
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import (
     memory_efficient_fp32_optimizer_state_loading,
@@ -62,6 +71,43 @@ from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, i
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
+
+
+def _get_embedding_ranks(
+    pp_ranks: list[int],
+    pipeline_model_parallel_size: int | None = None,
+    *,
+    model_config: GPTModelConfig | GPTModelProvider | HybridModelConfig | HybridModelProvider,
+) -> list[int]:
+    """Get the embedding ranks for a Bridge language-model config."""
+    # HyperCommGrid passes PP size as a second argument; MCore's MPU path does not.
+    del pipeline_model_parallel_size
+
+    # Keep this rank construction aligned with pretrain_gpt.get_embedding_ranks in MCore.
+    embedding_ranks = [pp_ranks[0]]
+    if len(pp_ranks) > 1:
+        if model_config.share_embeddings_and_output_weights:
+            embedding_ranks.append(pp_ranks[-1])
+        transformer_config = model_config.transformer if hasattr(model_config, "transformer") else model_config
+        mtp_ranks = get_mtp_ranks(pp_ranks, transformer_config)
+        embedding_ranks.extend(mtp_ranks)
+    embedding_ranks = list(set(embedding_ranks))
+    embedding_ranks = sorted(embedding_ranks)
+    return embedding_ranks
+
+
+def _resolve_embedding_ranks_fn(
+    model_config: object,
+    get_embedding_ranks: Callable[[list[int], Optional[int]], list[int]] | None,
+) -> Callable[[list[int], Optional[int]], list[int]] | None:
+    """Use model-aware language-model embedding ranks unless the caller supplied an override."""
+    if get_embedding_ranks is not None:
+        return get_embedding_ranks
+
+    language_model_configs = (GPTModelConfig, GPTModelProvider, HybridModelConfig, HybridModelProvider)
+    if isinstance(model_config, language_model_configs):
+        return partial(_get_embedding_ranks, model_config=model_config)
+    return None
 
 
 class SetupOutput(NamedTuple):
@@ -145,6 +191,33 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
     return should_load_checkpoint
 
 
+@contextmanager
+def _preserve_rng_state() -> Iterator[None]:
+    """Restore every training RNG stream after a disposable warmup."""
+    python_rng_state = random.getstate()
+    numpy_rng_state = np.random.get_state()
+    cuda_rng_tracker = tensor_parallel.get_cuda_rng_tracker()
+    graph_safe_rng = tensor_parallel.is_graph_safe_cuda_rng_tracker(cuda_rng_tracker)
+    rng_tracker_states = {
+        name: tensor_parallel.convert_cuda_rng_state(state).clone()
+        for name, state in cuda_rng_tracker.get_states().items()
+    }
+    cuda_devices = [torch.cuda.current_device()] if torch.cuda.is_available() else []
+
+    with torch.random.fork_rng(devices=cuda_devices):
+        try:
+            yield
+        finally:
+            random.setstate(python_rng_state)
+            np.random.set_state(numpy_rng_state)
+            cuda_rng_tracker.set_states(
+                {
+                    name: tensor_parallel.convert_cuda_rng_state(state, to_graphable=graph_safe_rng)
+                    for name, state in rng_tracker_states.items()
+                }
+            )
+
+
 def setup(
     state: GlobalState,
     train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
@@ -199,6 +272,8 @@ def setup(
         modules_to_filter=cfg.logger.modules_to_filter,
         set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
+
+    get_embedding_ranks = _resolve_embedding_ranks_fn(cfg.model, get_embedding_ranks)
 
     # pg_collection is returned from initialize_megatron:
     # - When use_decentralized_pg=True: uses HyperCommGrid to create local process groups
@@ -292,7 +367,7 @@ def setup(
     # Register PEFT pre-wrap hook if PEFT is configured
     if cfg.peft is not None:
         peft_hook = _create_peft_pre_wrap_hook(cfg, state)
-        _register_pre_wrap_hook(cfg.model, peft_hook)
+        _register_setup_pre_wrap_hook(cfg.model, peft_hook, setup_hook_name="peft")
         print_rank_0("Registered PEFT pre-wrap hook")
 
     if getattr(cfg.model, "restore_modelopt_state", False):
@@ -323,7 +398,7 @@ def setup(
             load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
 
-        _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
+        _register_setup_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook, setup_hook_name="modelopt")
 
     # Enable CUDA allocator history tracing before any model tensors are allocated,
     # so snapshots dumped later in training contain a full timeline + stack context.
@@ -407,7 +482,11 @@ def setup(
             scheduler=scheduler,
             user_state=callback_manager.user_state,
         )
-        callback_manager.fire("on_data_init_start", context)
+        if should_load_checkpoint and cfg.checkpoint.load_rng and not cfg.checkpoint.finetune:
+            with _preserve_rng_state():
+                callback_manager.fire("on_data_init_start", context)
+        else:
+            callback_manager.fire("on_data_init_start", context)
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
@@ -467,12 +546,39 @@ def setup(
     )
 
 
-def _register_pre_wrap_hook(model_cfg: ModelConfig | ModelProviderMixin, hook):
+def _register_pre_wrap_hook(
+    model_cfg: ModelConfig | ModelProviderMixin,
+    hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+) -> None:
     """Register a pre-wrap hook on either ModelConfig or ModelProviderMixin."""
     if isinstance(model_cfg, ModelConfig):
         model_cfg.pre_wrap_hooks.append(hook)
     else:
         model_cfg.register_pre_wrap_hook(hook)
+
+
+def _register_setup_pre_wrap_hook(
+    model_cfg: ModelConfig | ModelProviderMixin,
+    hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+    *,
+    setup_hook_name: str,
+) -> None:
+    """Replace one setup-owned hook while preserving user registrations."""
+    setup_hooks = getattr(model_cfg, "_megatron_bridge_setup_pre_wrap_hooks", {})
+    previous_hook = setup_hooks.get(setup_hook_name)
+    if previous_hook is not None:
+        if isinstance(model_cfg, ModelConfig):
+            model_cfg.pre_wrap_hooks[:] = [
+                registered_hook for registered_hook in model_cfg.pre_wrap_hooks if registered_hook is not previous_hook
+            ]
+        else:
+            model_cfg._pre_wrap_hooks[:] = [
+                registered_hook for registered_hook in model_cfg._pre_wrap_hooks if registered_hook is not previous_hook
+            ]
+
+    setup_hooks[setup_hook_name] = hook
+    model_cfg._megatron_bridge_setup_pre_wrap_hooks = setup_hooks
+    _register_pre_wrap_hook(model_cfg, hook)
 
 
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
@@ -510,7 +616,7 @@ def _update_model_config_funcs(
     pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
-    if isinstance(model[0], (DistributedDataParallel, megatron_FSDP)) and ddp_config.overlap_grad_reduce:
+    if isinstance(model[0], (DistributedDataParallel, *MEGATRON_FSDP_TYPES)) and ddp_config.overlap_grad_reduce:
         assert model_config.no_sync_func is None, (
             "When overlap_grad_reduce is True, config.no_sync_func must be None; "
             "a custom no_sync_func is not supported when overlapping grad-reduce"
@@ -689,6 +795,7 @@ def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
 
     if cfg.logger.save_config_filepath is not None:
         try:
+            Path(cfg.logger.save_config_filepath).parent.mkdir(parents=True, exist_ok=True)
             cfg.to_yaml(cfg.logger.save_config_filepath)
         except Exception as e:
             print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")

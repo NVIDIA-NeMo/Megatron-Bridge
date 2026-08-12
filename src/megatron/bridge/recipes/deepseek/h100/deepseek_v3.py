@@ -47,6 +47,27 @@ def _build_standalone_mtp_layout(num_decoder_layers: int, total_stages: int, mtp
     return layout
 
 
+def _get_deepseek_v3_pipeline_layout(pp_size: int, vp_size: int | None, mtp_layers: int = 1) -> list[list[str]] | None:
+    """Get a DeepSeek-V3 pipeline layout for the requested topology."""
+    last_layer = ["mtp"] * mtp_layers + ["loss"]
+    layout_map = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+    }
+    effective_vp_size = 1 if vp_size is None else vp_size
+    if (pp_size, effective_vp_size) not in layout_map:
+        raise ValueError(
+            f"Invalid PP and VP size: {pp_size} and {effective_vp_size} to infer PP layout "
+            f"for DeepSeek-V3. Known PP and VP combinations: {layout_map.keys()}"
+        )
+    return layout_map[(pp_size, effective_vp_size)]
+
+
 def set_deepseek_v3_pipeline_model_parallel_layout(
     model_cfg: GPTModelProvider, layout: str | list[list[str]] | None = None, *, mtp_standalone: bool = False
 ) -> None:
@@ -63,18 +84,8 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
         return
 
     mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
-    last_layer = ["mtp"] * mtp_layers + ["loss"]
     pp_size = model_cfg.pipeline_model_parallel_size or 1
     vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
-    layout_map = {
-        (1, 1): None,
-        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
-        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-    }
     if mtp_standalone:
         num_decoder_layers = getattr(model_cfg, "num_layers", None)
         if not isinstance(num_decoder_layers, int) or isinstance(num_decoder_layers, bool) or num_decoder_layers <= 0:
@@ -84,8 +95,11 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
             total_stages=pp_size * vp_size,
             mtp_layers=mtp_layers,
         )
-    elif (pp_size, vp_size) in layout_map:
-        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
+    else:
+        try:
+            model_cfg.pipeline_model_parallel_layout = _get_deepseek_v3_pipeline_layout(pp_size, vp_size, mtp_layers)
+        except ValueError:
+            pass
 
 
 def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
@@ -137,6 +151,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.num_layers_in_last_pipeline_stage = None
 
     # Set pipeline layout
+    cfg.model._pipeline_model_parallel_layout_builder = _get_deepseek_v3_pipeline_layout
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     # MoE Token Dispatcher settings
@@ -304,6 +319,7 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     cfg.model.num_layers_in_last_pipeline_stage = None
 
     # Set pipeline layout
+    cfg.model._pipeline_model_parallel_layout_builder = _get_deepseek_v3_pipeline_layout
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     # MoE Token Dispatcher settings

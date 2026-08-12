@@ -13,26 +13,29 @@
 # limitations under the License.
 
 """
-Qwen3.5 VL Model Provider configurations for Megatron-Core.
+Qwen3.5 and Qwen3.6 VL model-provider configurations for Megatron-Core.
 
-Qwen3.5 is a family of vision-language models that combine:
+Qwen3.5 and Qwen3.6 share a vision-language architecture that combines:
 - A hybrid Gated DeltaNet (GDN) + Gated Attention language model (like Qwen3-Next)
 - A vision encoder (similar to Qwen3-VL)
 - Dense MLP or Mixture of Experts (MoE) with shared experts
 
-This module provides two model providers:
+This module provides three model providers:
 
 - ``Qwen35VLModelProvider``: Dense variant (e.g., Qwen3.5-27B)
   Reference: https://huggingface.co/Qwen/Qwen3.5-27B
 
-- ``Qwen35VLMoEModelProvider``: MoE variant (e.g., Qwen3.5-397B-A17B)
+- ``Qwen35TokenClassificationModelProvider``: Dense token-classification variant
+
+- ``Qwen35VLMoEModelProvider``: Qwen3.5/Qwen3.6 MoE variants
   Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
+  Reference: https://huggingface.co/Qwen/Qwen3.6-35B-A3B
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, List, Optional
+from typing import Any, Callable, ClassVar, List, Optional, cast
 
 import transformers
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -59,6 +62,13 @@ except ImportError:
     _TRANSFORMERS_HAS_QWEN3_5 = False
     Qwen3_5VisionConfig = None  # type: ignore[assignment,misc]
 
+try:
+    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForTokenClassification  # noqa: F401
+
+    _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION = True
+except ImportError:
+    _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION = False
+
 from megatron.core.extensions.transformer_engine import (
     TEColumnParallelLinear,
     TENorm,
@@ -66,10 +76,12 @@ from megatron.core.extensions.transformer_engine import (
 )
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 
+from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
@@ -93,7 +105,8 @@ def _check_qwen3_5_moe_available() -> None:
     """Raise a clear error if transformers doesn't have qwen3_5_moe support."""
     if not _TRANSFORMERS_HAS_QWEN3_5_MOE:
         raise ImportError(
-            f"Qwen3.5 VL (MoE) requires transformers >= 5.2.0, but found {transformers.__version__}. "
+            f"Qwen3.5/3.6 VL (MoE) requires transformers with qwen3_5_moe support, "
+            f"but found {transformers.__version__}. "
             "Please upgrade: pip install --upgrade transformers"
         )
 
@@ -118,6 +131,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
     """
 
     modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
+    MODEL_CLASS: ClassVar[type[Qwen3VLModel] | None] = None
 
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
@@ -235,7 +249,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
         block_spec = self.build_language_spec(vp_stage=vp_stage)
         mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
 
-        model = Qwen3VLModel(
+        model_class = self.MODEL_CLASS or Qwen3VLModel
+        model = model_class(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=block_spec,
             vision_transformer_config=hf_vision_config,
@@ -261,15 +276,73 @@ class Qwen35VLModelProvider(GPTModelProvider):
 
 
 @dataclass
+class Qwen35TokenClassificationModelProvider(Qwen35VLModelProvider):
+    """Serializable provider for Qwen3.5 VL token-classification models."""
+
+    MODEL_CLASS: ClassVar[type[Qwen3VLModel]] = Qwen3VLForTokenClassification
+
+    num_labels: int | None = None
+    classifier_dropout: float = 0.1
+    mtp_num_layers: int | None = 0
+    mtp_enabled: bool = False
+    share_embeddings_and_output_weights: bool = False
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+    def provide(
+        self,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> Qwen3VLForTokenClassification:
+        """Build a Qwen3.5 VL model with a persistent replicated classifier head.
+
+        Args:
+            pre_process: Whether this pipeline stage owns input preprocessing.
+            post_process: Whether this pipeline stage owns output postprocessing.
+            vp_stage: Virtual-pipeline stage index, when virtual pipelining is enabled.
+
+        Returns:
+            The Megatron Qwen3.5 VL token-classification model for this stage.
+
+        Raises:
+            ValueError: If ``num_labels`` is not a positive integer.
+        """
+        if self.num_labels is None or self.num_labels <= 0:
+            raise ValueError(f"num_labels must be a positive integer, got {self.num_labels!r}.")
+
+        model = cast(
+            Qwen3VLForTokenClassification,
+            super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage),
+        )
+        if model.language_model is not None and model.language_model.post_process:
+            model.language_model.output_layer = LinearForLastLayer(
+                input_size=self.hidden_size,
+                output_size=self.num_labels,
+                sequence_parallel=self.sequence_parallel,
+                bias=True,
+                dropout=self.classifier_dropout,
+                output_in_fp32=False,
+                tp_group=getattr(getattr(model, "pg_collection", None), "tp", None),
+                init_method=self.init_method,
+                perform_initialization=self.perform_initialization,
+            )
+        return model
+
+
+@dataclass
 class Qwen35VLMoEModelProvider(GPTModelProvider):
     """
-    Model provider for Qwen 3.5 VL (Vision-Language) Models.
+    Model provider for Qwen3.5 and Qwen3.6 VL MoE models.
 
-    Qwen 3.5 combines a hybrid GDN (Gated DeltaNet) + Gated Attention language model
-    architecture (like Qwen3-Next) with a vision encoder (similar to Qwen3-VL) and
-    Mixture of Experts (MoE) with shared experts.
+    Qwen3.5 and Qwen3.6 combine a hybrid GDN (Gated DeltaNet) + Gated
+    Attention language architecture (like Qwen3-Next) with a vision encoder
+    (similar to Qwen3-VL) and Mixture of Experts (MoE) with shared experts.
+    Model-specific dimensions and MoE geometry are populated from the
+    Hugging Face config.
 
-    Key Architecture Details (397B-A17B):
+    Default Architecture Details (Qwen3.5-397B-A17B):
     - 60 layers: 15 groups × (3 GDN-MoE + 1 Attention-MoE)
     - Hidden dim: 4096, Token Embedding: 248320
     - GDN: 16 QK heads, 64 V heads, head_dim=128
@@ -339,9 +412,9 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
     vision_config: Any = field(default=None)
 
-    # Position embedding: Qwen3.5 uses multimodal rope (mRoPE)
+    # Position embedding: Qwen3.5/3.6 use multimodal rope (mRoPE).
     position_embedding_type: str = "mrope"
-    # Qwen3.5 mRoPE section is [11, 11, 10] (different from Qwen3-VL's [24, 20, 20])
+    # Qwen3.5/3.6 mRoPE is [11, 11, 10] (Qwen3-VL uses [24, 20, 20]).
     # because partial_rotary_factor=0.25, so RoPE dim = 256*0.25 = 64, with sections [11,11,10]
     # for [temporal, height, width] summing to 32 (half of 64 rotary dim).
     mrope_section: List[int] = field(default_factory=lambda: [11, 11, 10])
@@ -376,6 +449,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+
+    # Vision encoder CUDA graph settings
+    vision_cuda_graph_impl: str = "none"
+    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    max_vision_cuda_graph_seq_length: Optional[int] = None
 
     # Heterogeneous dist checkpoint (needed for hybrid architecture)
     hetereogenous_dist_checkpoint: bool = True
@@ -417,7 +495,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
-        """Provide a Qwen3.5 VL model instance with vision and language components."""
+        """Provide a Qwen3.5 or Qwen3.6 VL model with vision and language components."""
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype

@@ -13,6 +13,14 @@ Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
 `./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
+Megatron-LM training checkpoints normally store their arguments in `common.pt`
+instead of the Megatron Bridge `run_config.yaml` required by the export path.
+Before exporting such a checkpoint, follow
+[Export Megatron-LM checkpoints without a Bridge run config](../../docs/megatron-lm-to-megatron-bridge.md#export-megatron-lm-checkpoints-without-a-bridge-run-config)
+to generate and validate the provider configuration. Do not create an empty or
+hand-written YAML file; missing hybrid, MTP, MoE, or FP8 fields can construct a
+different model while appearing to load successfully.
+
 ## Local CPU conversion
 
 Local execution uses the current Megatron Bridge environment and waits for the
@@ -42,9 +50,11 @@ The GPU backend uses NeMo Run's torchrun launcher for local execution and
 srun-native tasks for Slurm. Users should not wrap the command in `torchrun`,
 `srun`, or `sbatch`.
 
-The requested topology must satisfy
-`nodes * gpus-per-node == TP * PP * EP`; conversion does not create redundant
-data-parallel replicas. `ETP * EP * PP` must also divide the total GPU count.
+The requested topology must satisfy `nodes * gpus-per-node % (TP * PP) == 0` and
+`nodes * gpus-per-node % (ETP * EP * PP) == 0`. Expert parallelism is an
+alternative slicing of the same ranks rather than an extra multiplicand, so it
+is not part of the first product. Ranks left over after either split form
+data-parallel replicas.
 
 ```bash
 export HF_TOKEN="$(<${HOME}/HF_TOKEN)"

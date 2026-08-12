@@ -29,12 +29,14 @@ MIN_SUPPORTED_VERSION = mcore_version.min_supported_mcore_version()
 MAX_SUPPORTED_VERSION = mcore_version.max_supported_mcore_version_exclusive()
 
 
-def test_window_is_derived_from_the_pin():
+def test_window_keeps_public_floor_and_derives_upper_bound_from_pin():
     pin = Version(mcore_version.MCORE_PIN_VERSION)
 
-    assert mcore_version.min_supported_mcore_version() == Version(f"{pin.major}.{pin.minor - 1}.0")
+    assert mcore_version.min_supported_mcore_version() == Version(mcore_version.MIN_SUPPORTED_MCORE_VERSION)
     assert mcore_version.max_supported_mcore_version_exclusive() == Version(f"{pin.major}.{pin.minor + 1}.0")
-    assert mcore_version.supported_mcore_specifier() == f">={pin.major}.{pin.minor - 1}.0,<{pin.major}.{pin.minor + 1}"
+    assert mcore_version.supported_mcore_specifier() == (
+        f">={mcore_version.MIN_SUPPORTED_MCORE_VERSION},<{pin.major}.{pin.minor + 1}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -42,7 +44,8 @@ def test_window_is_derived_from_the_pin():
     [
         (Version(f"{MIN_SUPPORTED_VERSION}rc1"), False),
         (MIN_SUPPORTED_VERSION, True),
-        (Version(f"{PIN_VERSION}rc1"), True),
+        (Version("0.18.2"), True),
+        (Version("0.19.0"), True),
         (PIN_VERSION, True),
         (Version(f"{MAX_SUPPORTED_VERSION}rc1"), False),
         (MAX_SUPPORTED_VERSION, False),

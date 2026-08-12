@@ -523,6 +523,8 @@ def test_qwen3_vl_8b_peft_energon_dataset_params(monkeypatch: pytest.MonkeyPatch
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.micro_batch_size == cfg.train.micro_batch_size
+    assert cfg.dataset.enable_in_batch_packing is False
+    assert cfg.dataset.defer_in_batch_packing_to_step is False
 
 
 @pytest.mark.parametrize("peft_scheme", ["lora", "dora"])

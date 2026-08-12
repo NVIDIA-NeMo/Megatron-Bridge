@@ -19,6 +19,11 @@ from megatron.bridge.compat.mcore_version import check_mcore_version
 # Warn before dependency-sensitive Bridge registrations are imported.
 check_mcore_version()
 
+try:
+    import modelopt.torch  # noqa: F401
+except ImportError:
+    pass
+
 import megatron.bridge.diffusion.models  # noqa: F401 — registers diffusion bridges
 import megatron.bridge.models  # noqa: F401 — triggers all bridge and HF Auto class registrations
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge

@@ -22,6 +22,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
+    bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_mxfp8_mixed,
     bf16_with_nvfp4_mixed,
 )
@@ -50,6 +51,7 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cfg.tokenizer.use_tokenizer_vocab_size = False
 
     cfg.checkpoint.save = None
+    cfg.checkpoint.load = None
 
     cfg.logger.log_interval = 1
     cfg.logger.tensorboard_dir = None
@@ -107,6 +109,9 @@ def _perf_precision(compute_dtype: str):
         cfg = bf16_mixed()
     elif compute_dtype == "fp8_cs":
         cfg = bf16_with_fp8_current_scaling_mixed()
+        cfg.first_last_layers_bf16 = False
+    elif compute_dtype == "fp8_ds":
+        cfg = bf16_with_fp8_delayed_scaling_mixed()
         cfg.first_last_layers_bf16 = False
     elif compute_dtype == "fp8_mx":
         cfg = bf16_with_mxfp8_mixed()

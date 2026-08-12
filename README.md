@@ -11,6 +11,10 @@
 </div>
 
 ## 📣 News
+- [08/11/2026] **NVIDIA Nemotron 3.5 Lightning is released!** Read the technical blog [here](https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/). See the [Nemotron 3.5 Lightning README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3/lightning/README.md) for details.
+
+- [07/31/2026] **[K-EXAONE-2](https://huggingface.co/LGAI-EXAONE/K-EXAONE-2.0-750B-A37B) is now supported**! Day-0 support for LG AI Research's K-EXAONE-2 (750B-A37B MoE) is now available on the [k-exaone-2 branch](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/k-exaone-2). Users can convert checkpoints, run inference, fine-tune with SFT or PEFT (LoRA), and use the NVFP4 inference-optimized checkpoint released alongside the model. See the branch documentation for setup instructions and examples.
+
 - [07/17/2026] [**LongStraw (MinT-2M)**](https://github.com/MindLab-Research/longstraw) is a long-context RL research system from MindLab Research that uses Megatron Bridge's modeling and LoRA capabilities. LongStraw explores resident-prefix, response-only GRPO by capturing a shared prompt once and replaying only the trainable response branches, and reports a 2.1M-token GLM-5.2 execution path across 32 NVIDIA H20 GPUs. The broader MinT system behind this work was also used to post-train [**Macaron-V1-Preview**](https://macaron.im/mindlab/research/macaron-v1-preview), MindLab's 749B Mixture-of-LoRA agent model derived from GLM-5.1. Learn more in the [paper](https://arxiv.org/abs/2607.14952).
 
 - [06/22/2026] **Megatron Bridge 0.5.0 released!** Highlights include expanded LLM and multimodal support (Qwen3.5, DeepSeek V4, Ernie 4.5, GLM-5/4.7, StepFun Step-3.5/3.7, MiMo-V2, Gemma 4, Falcon H1, Ling MoE V2, Nemotron-3 Nano Omni, Qwen3-Omni, Qwen3-ASR, and Nemotron Diffusion), MegatronMIMO and Energon v7 training updates, evaluator backend integration, eval-time context parallelism, deterministic recipes, quantized FP8/MXFP4 export, CUDA graph/performance improvements, and Megatron Inference/tokenizer unification with Megatron-LM. Huge thanks to our community contributors: [@HowardZorn](https://github.com/HowardZorn), [@hy2826](https://github.com/hy2826), [@bo-ke](https://github.com/bo-ke), [@beccohov](https://github.com/beccohov), [@dhiaEddineRhaiem](https://github.com/dhiaEddineRhaiem), [@pavelgein](https://github.com/pavelgein), [@ccclyu](https://github.com/ccclyu), [@hbhflw2000](https://github.com/hbhflw2000), and [@HollowMan6](https://github.com/HollowMan6)! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.5.0).
@@ -107,16 +111,18 @@ The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://gi
 
 ### Supported Megatron-Core versions
 
-A pip-installed Megatron Bridge is not restricted to the exact submodule pin. The supported
-window is a rule relative to the pin rather than a fixed pair of versions:
+A pip-installed Megatron Bridge is not restricted to the exact submodule pin. Bridge keeps
+compatibility with the publicly installable Megatron-Core 0.18.x line while accepting releases
+through the current pin:
 
-> **previous minor release (N-1) of the pin** ≤ `megatron-core` < **next minor of the pin**
+> `megatron-core>=0.18.0` and below the next minor after the current pin
 
-With the pin at Megatron-Core `0.19.0`, that resolves to `megatron-core>=0.18.0,<0.20` — the
-released 0.18.x line and the whole 0.19.x minor line. Installing Megatron Bridge alongside a
+With the pin at Megatron-Core `0.20.0`, that resolves to `megatron-core>=0.18.0,<0.21`.
+Installing Megatron Bridge alongside a
 Megatron-Core already inside that window leaves it in place; anything outside it fails at
 install time, and `megatron.bridge.compat.mcore_version.check_mcore_version()` logs a warning at
-import time. When the submodule pin moves to a new minor release, the window moves with it.
+import time. When the submodule pin moves to a new minor release, both bounds and the compatibility
+layer are reviewed together.
 
 Where an API used by Bridge exists only in the pinned commit, Bridge ships a compatibility
 shim so the older release keeps working — for example `megatron.training.models.gpt`, which was
@@ -247,7 +253,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl) |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
 | [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2 (deprecated), Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
-| [**GLM**](docs/models/glm/index.md) | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 |
+| [**GLM**](docs/models/glm/index.md) | GLM-4.5 / GLM-4.7 / GLM-4.7-Flash, GLM-4.5V, GLM-5 / GLM-5.1 / GLM-5.2 |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL |

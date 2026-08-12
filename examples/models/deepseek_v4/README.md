@@ -8,12 +8,35 @@ The bridge supports four published variants out of the same code path. The on-di
 
 The pretraining recipes were tested with Megatron-LM `dev` commit `35f36c7c9dba` plus PR [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839) (`f04b762406f0` in the OCI test checkout). The Megatron-LM copy inside the current NeMo FW container is not expected to work for these recipes.
 
+The NeMo Framework container uses one shared `/opt/venv` for several source
+projects. A plain `uv sync` is exact by default and removes packages that are
+not in the Megatron Bridge dependency graph, including container-provided
+packages such as NeMo Run. When switching MCore in this container, preserve
+those packages and then restore the aggregate container pins:
+
 ```bash
 ./scripts/switch_mcore.sh dev
-uv sync
+uv sync --inexact
+(cd /opt/NeMo-FW && uv sync --locked --all-groups --inexact)
+export UV_NO_SYNC=1
 ```
 
-Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
+Keep `UV_NO_SYNC=1` set while running the examples. It makes `uv run` calls,
+including those inside the example wrapper scripts, skip the implicit exact
+sync. The unlocked dev sync updates `uv.lock`; do not commit that generated
+change. From a clean checkout, return to the pinned main-branch submodule with:
+
+```bash
+./scripts/switch_mcore.sh main
+git restore uv.lock
+uv sync --locked --inexact
+(cd /opt/NeMo-FW && uv sync --locked --all-groups --inexact)
+export UV_NO_SYNC=1
+```
+
+In a standalone Megatron Bridge environment with its own virtual environment,
+exact sync is appropriate: use `uv sync` after switching to dev and restore the
+tracked lock file followed by `uv sync --locked` when switching back to main.
 
 The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` performance
 recipe preserves the stack validated by Megatron Bridge PR
@@ -142,11 +165,6 @@ DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported
 
 - **Fused mHC: use the unfused path for SFT.** The fused cuTile mHC kernel needs sm_100 (not H100) and is on by default in the bridge config; it works for import/inference on Blackwell, but **NaNs in SFT training** (see SFT Blockers). The SFT recipes therefore force `use_fused_mhc=False` — the validated unfused/reference path, which also runs on Hopper.
 
-- **`fast_hadamard_transform` is required by the DSA attention variant.** `csa.py` and `dsa.py` import `hadamard_transform` from this package and hard-assert availability — there is no in-tree PyTorch fallback. Install from the Dao-AILab git repo (the PyPI source distribution is incomplete; see the sibling GLM-5 [README](../glm/glm5/README.md#pre-requisites) for the same dependency):
-
-  ```bash
-  pip install --no-build-isolation \
-      git+https://github.com/Dao-AILab/fast-hadamard-transform.git
-  ```
+- **`fast_hadamard_transform` is required by the DSA attention variant.** `csa.py` and `dsa.py` import `hadamard_transform` from this package and hard-assert availability — there is no in-tree PyTorch fallback. It is a required Megatron Bridge dependency, pinned to the complete Dao-AILab git source because the PyPI source distribution is incomplete, and is installed by the `uv sync` commands above.
 
 - **Logit parity is verified for Flash and Flash-Base** against the official inference stack at last-real-token logits. The remaining gap is structural, from different attention/HC kernel decompositions and accumulation precisions between MCore and official inference.

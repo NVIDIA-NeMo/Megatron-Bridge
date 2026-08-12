@@ -16,16 +16,17 @@
 
 ``megatron.training.models.gpt`` (``GPTModelConfig``, ``GPTModelBuilder`` and
 ``mtp_block_spec``) was added to Megatron-Core *after* the 0.18.x release line was cut.
-Megatron Bridge supports every Megatron-Core version from the previous minor release
-(N-1) up to the commit pinned in ``3rdparty/Megatron-LM``, so on 0.18.x this vendored
-copy is used instead. ``megatron.bridge.compat.mcore_gpt`` is the stable facade that
-prefers the upstream module and falls back to this implementation only when necessary.
+Megatron Bridge supports the publicly installable 0.18.x line through the current
+pin, so on 0.18.x this vendored copy is used instead. ``megatron.bridge.compat.mcore_gpt``
+is the stable facade that prefers the upstream module and falls back to this
+implementation only when necessary.
 
-Derived from NVIDIA/Megatron-LM commit ``cd4afffa6`` (``megatron-core`` 0.19.0),
-file ``megatron/training/models/gpt.py``. Import ordering, formatting, unused imports,
-and the builder target are normalized for Bridge. Every Megatron-Core symbol it imports
-is present in the released 0.18.0 wheel. ``tests/unit_tests/compat/test_mcore_gpt.py``
-fails if the upstream module drifts away from this fallback.
+Derived from NVIDIA/Megatron-LM commit ``24bad8e677`` (``megatron-core`` 0.20.0),
+file ``megatron/training/models/gpt.py``. The builder target and the call into
+``unimodal_build_distributed_models`` are normalized for cross-version use. Every
+Megatron-Core symbol it imports is present in the released 0.18.x wheels.
+``tests/unit_tests/compat/test_mcore_gpt.py`` fails if the upstream API drifts away
+from this fallback.
 """
 
 import inspect
@@ -76,7 +77,7 @@ def default_layer_spec(config: "GPTModelConfig", vp_stage: int) -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
     transformer_cfg = config.transformer
     use_te = transformer_cfg.transformer_impl == "transformer_engine"
-    if transformer_cfg.transformer_impl == "inference_optimized":
+    if transformer_cfg.transformer_impl == "inference_optimized" and transformer_cfg.num_moe_experts is None:
         return get_gpt_layer_with_inference_spec(
             transformer_cfg.qk_layernorm,
             transformer_cfg.multi_latent_attention,
@@ -366,6 +367,8 @@ class GPTModelBuilder(ModelBuilder[GPTModel, GPTModelConfig]):
         data_parallel_random_init: bool = True,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         model_type: ModelType = ModelType.encoder_or_decoder,
+        use_layer_wise_distributed_optimizer: bool = False,
+        use_layer_wise_param_layout: bool = True,
     ) -> list[GPTModel]:
         """Build model stages and wrap for distributed training.
 
@@ -380,12 +383,21 @@ class GPTModelBuilder(ModelBuilder[GPTModel, GPTModelConfig]):
             data_parallel_random_init: Whether to use data parallel random initialization
             mixed_precision_wrapper: Mixed precision wrapper, e.g. ``Float16Module``
             model_type: Deprecated flag, only used for backwards compatibility.
+            use_layer_wise_distributed_optimizer: Whether the layerwise wiring runs.
+            use_layer_wise_param_layout: When ``use_layer_wise_distributed_optimizer=True``,
+                controls whether to compute and supply a shard-aligned param layout to DDP.
 
         Returns:
             List of model stages.
         """
         transformer_config = self._model_config.transformer
         composed_pre_wrap_hook = compose_hooks(self._model_config.pre_wrap_hooks)
+        distributed_model_kwargs = {}
+        if "use_layer_wise_distributed_optimizer" in inspect.signature(unimodal_build_distributed_models).parameters:
+            distributed_model_kwargs = {
+                "use_layer_wise_distributed_optimizer": use_layer_wise_distributed_optimizer,
+                "use_layer_wise_param_layout": use_layer_wise_param_layout,
+            }
         model_list = unimodal_build_distributed_models(
             self.build_model,
             transformer_config,
@@ -399,6 +411,7 @@ class GPTModelBuilder(ModelBuilder[GPTModel, GPTModelConfig]):
             mixed_precision_wrapper,
             composed_pre_wrap_hook,
             model_type,
+            **distributed_model_kwargs,
         )
 
         composed_post_wrap_hook = compose_hooks(self._model_config.post_wrap_hooks)

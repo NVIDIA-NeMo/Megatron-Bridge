@@ -33,7 +33,7 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+from transformers import AutoConfig, AutoProcessor, AutoTokenizer, GenerationConfig
 from vlm_generate_utils import (
     pad_input_ids_to_tp_multiple,
     patch_kimi_vision_processor,
@@ -45,7 +45,12 @@ from vlm_generate_utils import (
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import (
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+    print_rank_last,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +147,22 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
+def _gather_last_token_logits(output: torch.Tensor, real_seq_len: int) -> torch.Tensor:
+    """Gather only the last real token's tensor-parallel vocabulary shards."""
+    local_logits = output[:, real_seq_len - 1]
+    world_size = parallel_state.get_tensor_model_parallel_world_size()
+    gathered_logits = [torch.zeros_like(local_logits) for _ in range(world_size)]
+    dist.all_gather(
+        gathered_logits,
+        local_logits,
+        group=parallel_state.get_tensor_model_parallel_group(),
+    )
+    return torch.cat(gathered_logits, dim=-1)
+
+
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
+    maybe_initialize_distributed()
     tp = args.tp
     pp = args.pp
     ep = args.ep
@@ -166,6 +185,7 @@ def main(args) -> None:
     if is_kimi and image_token_id is None:
         image_token_id = 163605
     is_gemma4 = "gemma4" in model_type
+    is_minimax = model_type == "minimax_m3_vl"
     is_mistral3 = model_type == "mistral3"
 
     # ------------------------------------------------------------------
@@ -198,6 +218,9 @@ def main(args) -> None:
             "expert_tensor_parallel_size": etp,
             "pipeline_dtype": torch.bfloat16,
         }
+        mp_overrides["params_dtype"] = mp_overrides["pipeline_dtype"]
+        mp_overrides["bf16"] = mp_overrides["pipeline_dtype"] == torch.bfloat16
+        mp_overrides["fp16"] = mp_overrides["pipeline_dtype"] == torch.float16
         if args.pp_layout:
             mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout
         model = bridge.load_megatron_model(
@@ -278,10 +301,12 @@ def main(args) -> None:
             args.prompt,
             is_gemma4=is_gemma4,
             is_kimi=is_kimi,
+            is_minimax=is_minimax,
             is_mistral3=is_mistral3,
             image_token_id=image_token_id,
         )
 
+    prompt_length = input_ids_raw.size(1)
     input_ids_raw = input_ids_raw.cuda()
     pixel_values = to_cuda(pixel_values)
     image_grid_thw = to_cuda(image_grid_thw)
@@ -295,7 +320,19 @@ def main(args) -> None:
     # Greedy generation loop
     # ------------------------------------------------------------------
     generated_ids = input_ids_raw.clone()
-    stop_tokens = [tokenizer.eos_token_id]
+    try:
+        generation_config = GenerationConfig.from_pretrained(
+            args.hf_model_path,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
+    except OSError:
+        generation_config = GenerationConfig.from_model_config(config)
+    stop_token_ids = generation_config.eos_token_id
+    if stop_token_ids is None:
+        stop_token_ids = [tokenizer.eos_token_id]
+    elif isinstance(stop_token_ids, int):
+        stop_token_ids = [stop_token_ids]
+    stop_tokens = set(stop_token_ids)
 
     for step in range(args.max_new_tokens):
         with torch.no_grad():
@@ -342,26 +379,22 @@ def main(args) -> None:
                 output = output[0]
 
             if parallel_state.is_pipeline_last_stage():
-                world_size = parallel_state.get_tensor_model_parallel_world_size()
-                gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
-                dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
-                output = torch.cat(gathered_tensors, dim=2)
-
-                last_pos = real_seq_len - 1
-                next_token_ids = torch.argmax(output[:, last_pos], dim=-1, keepdim=True)
+                last_token_logits = _gather_last_token_logits(output, real_seq_len)
+                del output
+                next_token_ids = torch.argmax(last_token_logits, dim=-1, keepdim=True)
 
                 if step < 5:
                     print_rank_last(
-                        f"Step {step}: output shape={output.shape}, "
-                        f"real_seq_len={real_seq_len}, var={output.var():.4f}"
+                        f"Step {step}: last-token logits shape={last_token_logits.shape}, "
+                        f"real_seq_len={real_seq_len}, last-token var={last_token_logits.var():.4f}"
                     )
-                    logits = output[0, last_pos, :]
-                    top5_vals, top5_ids = torch.topk(logits, 5)
+                    top5_vals, top5_ids = torch.topk(last_token_logits[0], 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_last(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
                     print_rank_last(
                         f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
                     )
+                del last_token_logits
             else:
                 next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
 
@@ -377,11 +410,13 @@ def main(args) -> None:
                 break
 
     generated_text = tokenizer.decode(list(generated_ids[0]))
+    completion = tokenizer.decode(generated_ids[0, prompt_length:].tolist(), skip_special_tokens=True)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
     print_rank_0(f"Prompt: {args.prompt}")
     print_rank_0(f"Generated: {generated_text}")
+    print_rank_0(f"Completion: {completion}")
     print_rank_0("=======================================")
 
 
@@ -418,7 +453,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--trust_remote_code", action="store_true", help="Trust remote code for HF model loading")
     args = parser.parse_args()
-
     main(args)
 
     if torch.distributed.is_initialized():

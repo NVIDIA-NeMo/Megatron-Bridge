@@ -16,16 +16,16 @@
 
 Bridge is developed against the Megatron-Core commit pinned in
 ``3rdparty/Megatron-LM``, but a pip-installed Bridge must also work with the
-Megatron-Core releases users already have. The supported window is a *rule*
-relative to the pin rather than a hardcoded pair of versions:
+publicly installable Megatron-Core 0.18.x line. The lower bound is therefore
+explicit, while the upper bound moves with the pin:
 
-    previous minor release (N-1) of the pin  <=  megatron-core  <  next minor of the pin
+    public compatibility floor  <=  megatron-core  <  next minor of the pin
 
-With the pin at 0.19.0 that resolves to ``>=0.18.0,<0.20`` — the released 0.18.x
-line and the whole 0.19.x minor line. When the pin moves to 0.20.x the window moves
-with it; :data:`MCORE_PIN_VERSION` and the bound in ``pyproject.toml`` must be
-updated together. ``tests/unit_tests/compat/test_mcore_version.py`` fails if
-they drift from the submodule or from each other.
+With the pin at 0.20.0 that resolves to ``>=0.18.0,<0.21``. When the pin moves,
+:data:`MCORE_PIN_VERSION`, the compatibility floor, and the bound in
+``pyproject.toml`` must be reviewed together. ``tests/unit_tests/compat/test_mcore_version.py``
+fails if the pin drifts from the submodule or the package bound drifts from the
+declared window.
 """
 
 import logging
@@ -38,9 +38,12 @@ from packaging.version import InvalidVersion, Version
 logger = logging.getLogger(__name__)
 
 
+#: Oldest publicly installable Megatron-Core release supported by Bridge.
+MIN_SUPPORTED_MCORE_VERSION: str = "0.18.0"
+
 #: Megatron-Core version of the commit pinned in ``3rdparty/Megatron-LM``.
 #: Update this together with the submodule pin (enforced by unit test).
-MCORE_PIN_VERSION: str = "0.19.0"
+MCORE_PIN_VERSION: str = "0.20.0"
 
 
 def _pin() -> Version:
@@ -48,11 +51,8 @@ def _pin() -> Version:
 
 
 def min_supported_mcore_version() -> Version:
-    """Return the oldest supported Megatron-Core version (N-1 minor of the pin)."""
-    pin = _pin()
-    if pin.minor == 0:
-        raise ValueError(f"Cannot derive an N-1 minor release from pin {pin}")
-    return Version(f"{pin.major}.{pin.minor - 1}.0")
+    """Return the oldest publicly installable Megatron-Core version supported by Bridge."""
+    return Version(MIN_SUPPORTED_MCORE_VERSION)
 
 
 def max_supported_mcore_version_exclusive() -> Version:
@@ -62,7 +62,7 @@ def max_supported_mcore_version_exclusive() -> Version:
 
 
 def supported_mcore_specifier() -> str:
-    """Return the support window as a PEP 440 specifier, e.g. ``>=0.18.0,<0.20``."""
+    """Return the support window as a PEP 440 specifier, e.g. ``>=0.18.0,<0.21``."""
     upper = max_supported_mcore_version_exclusive()
     return f">={min_supported_mcore_version()},<{upper.major}.{upper.minor}"
 

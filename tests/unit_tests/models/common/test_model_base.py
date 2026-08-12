@@ -56,6 +56,12 @@ class DummySubConfig:
     y: str = "sub"
 
 
+@dataclass
+class DummyDerivedSubConfig:
+    value: int = 1
+    derived: int = field(init=False, default=2)
+
+
 def _dummy_callable() -> None:
     """Placeholder callable used as a field default in DummyNestedModelConfig."""
 
@@ -69,6 +75,15 @@ class DummyNestedModelConfig(ModelConfig):
 
 
 DummyNestedModelConfig.builder = f"{DummyModelBuilder.__module__}.DummyModelBuilder"
+
+
+@dataclass
+class DummyDerivedModelConfig(ModelConfig):
+    builder: ClassVar[str] = ""
+    sub: DummyDerivedSubConfig = field(default_factory=DummyDerivedSubConfig)
+
+
+DummyDerivedModelConfig.builder = f"{DummyModelBuilder.__module__}.DummyModelBuilder"
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +130,16 @@ def test_model_config_from_dict_migrates_legacy_mcore_gpt_targets() -> None:
 
     assert type(restored) is GPTModelConfig
     assert restored.get_builder_cls() is GPTModelBuilder
+
+
+def test_model_config_from_dict_ignores_non_init_derived_fields() -> None:
+    original = DummyDerivedModelConfig(sub=DummyDerivedSubConfig(value=7))
+
+    cfg = ModelConfig.from_dict(original.as_dict())
+
+    assert isinstance(cfg, DummyDerivedModelConfig)
+    assert cfg.sub.value == 7
+    assert cfg.sub.derived == 2
 
 
 def test_model_config_from_dict_rejects_disallowed_target() -> None:

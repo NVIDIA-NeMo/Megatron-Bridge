@@ -112,6 +112,49 @@ def test_facade_reraises_transitive_module_not_found(monkeypatch):
             mcore_gpt._load_gpt_symbols()
 
 
+def test_fallback_builder_omits_layerwise_kwargs_for_mcore_018(monkeypatch):
+    calls = []
+
+    def old_unimodal_build_distributed_models(
+        model_provider_func,
+        transformer_config,
+        pg_collection,
+        ddp_config,
+        overlap_param_gather_with_optimizer_step,
+        use_megatron_fsdp,
+        use_torch_fsdp2,
+        wrap_with_ddp,
+        data_parallel_random_init,
+        mixed_precision_wrapper,
+        pre_wrap_hook,
+        model_type,
+    ):
+        calls.append((model_provider_func, transformer_config, pg_collection, model_type))
+        return []
+
+    monkeypatch.setattr(
+        mcore_gpt_fallback,
+        "unimodal_build_distributed_models",
+        old_unimodal_build_distributed_models,
+    )
+    monkeypatch.setattr(mcore_gpt_fallback, "compose_hooks", lambda hooks: lambda models: models)
+    transformer = TransformerConfig(num_layers=1, hidden_size=16, num_attention_heads=1)
+    builder = mcore_gpt_fallback.GPTModelBuilder(mcore_gpt_fallback.GPTModelConfig(transformer=transformer))
+    pg_collection = object()
+
+    models = builder.build_distributed_models(
+        pg_collection,
+        wrap_with_ddp=False,
+        use_layer_wise_distributed_optimizer=True,
+        use_layer_wise_param_layout=False,
+    )
+
+    assert models == []
+    assert calls == [
+        (builder.build_model, transformer, pg_collection, mcore_gpt_fallback.ModelType.encoder_or_decoder)
+    ]
+
+
 @pytest.mark.skipif(upstream is None, reason="Upstream GPT module is unavailable on Megatron-Core 0.18.x")
 def test_fallback_public_surface_matches_upstream():
     missing = _public_names(upstream) - _public_names(mcore_gpt_fallback)
