@@ -45,7 +45,7 @@ def _offline_recipe_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     [
         (muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config, 4096, 8, 2, 1, 256),
         (muse_glimmer_30b_sft_32gpu_h100_bf16_config, 4096, 8, 2, 1, 8),
-        (muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config, 8192, 8, 2, 2, 8),
+        (muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config, 8192, 1, 4, 2, 8),
         (muse_glimmer_30b_peft_8gpu_h100_bf16_config, 8192, 8, 1, 1, 8),
     ],
 )
@@ -63,7 +63,11 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
     assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
     assert cfg.model.pipeline_dtype is (torch.bfloat16 if pipeline_parallel_size > 1 else None)
-    expected_pattern = f"{'*' * 20}|{'*' * 32}" if pipeline_parallel_size == 2 else "*" * 52
+    expected_pattern = {
+        1: "*" * 52,
+        2: f"{'*' * 20}|{'*' * 32}",
+        4: "|".join("*" * layers for layers in (9, 15, 15, 13)),
+    }[pipeline_parallel_size]
     assert getattr(cfg.model, "hybrid_layer_pattern", "*" * 52) == expected_pattern
     assert cfg.model.recompute_vision_layers is True
     assert cfg.dataset.hf_processor_kwargs == {
@@ -72,7 +76,7 @@ def test_muse_glimmer_recipe_contracts(
     }
     assert getattr(cfg.model, "pipeline_model_parallel_layout", None) is None
     assert cfg.model.context_parallel_size == context_parallel_size
-    assert getattr(cfg.model, "cp_comm_type", "p2p") == ("all_gather" if context_parallel_size > 1 else "p2p")
+    assert getattr(cfg.model, "cp_comm_type", "p2p") == ("a2a" if context_parallel_size > 1 else "p2p")
     assert cfg.model.sequence_parallel is True
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["core_attn"]
@@ -86,7 +90,7 @@ def test_muse_glimmer_recipe_contracts(
     assert cfg.dataset.enable_in_batch_packing is is_long_context
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == global_batch_size
-    assert cfg.train.micro_batch_size == (2 if is_long_context else 1)
+    assert cfg.train.micro_batch_size == 1
     assert cfg.validation.eval_iters == 0
     assert cfg.validation.eval_interval == 0
     assert cfg.logger.log_throughput is True
@@ -102,6 +106,17 @@ def test_muse_glimmer_pretrain_owns_resume_checkpoint_contract() -> None:
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.checkpoint.save_interval == 50
     assert cfg.checkpoint.load is None
+
+
+def test_muse_glimmer_long_context_uses_te_supported_packed_cp_layout() -> None:
+    cfg = muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.cp_comm_type == "a2a"
+    assert cfg.model.num_query_groups == 2
+    assert cfg.model.hybrid_layer_pattern == "|".join("*" * layers for layers in (9, 15, 15, 13))
 
 
 def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:

@@ -50,9 +50,11 @@ def _apply_model_and_data(
     cfg.model.virtual_pipeline_model_parallel_size = None
     if pipeline_parallel_size == 2:
         cfg.model.hybrid_layer_pattern = f"{'*' * 20}|{'*' * 32}"
+    elif pipeline_parallel_size == 4:
+        cfg.model.hybrid_layer_pattern = "|".join("*" * layers for layers in (9, 15, 15, 13))
     cfg.model.context_parallel_size = context_parallel_size
     if context_parallel_size > 1:
-        cfg.model.cp_comm_type = "all_gather"
+        cfg.model.cp_comm_type = "a2a"
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
@@ -154,8 +156,8 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContaine
     _apply_model_and_data(
         cfg,
         seq_length=8192,
-        tensor_parallel_size=8,
-        pipeline_parallel_size=2,
+        tensor_parallel_size=1,
+        pipeline_parallel_size=4,
         context_parallel_size=2,
     )
     cfg.dataset.pad_to_max_length = False
@@ -163,7 +165,7 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContaine
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 8
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     _set_optimizer(cfg, max_lr=5e-6, warmup_iters=10)
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
