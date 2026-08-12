@@ -119,7 +119,10 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigConta
     cfg.dataset.enable_in_batch_packing = False
     cfg.rng.seed = 1234
     cfg.train.train_iters = 100
-    cfg.train.global_batch_size = 256
+    # TP8/PP2 leaves two data-parallel replicas on 32 GPUs. One sample per
+    # replica keeps this bounded verification recipe to one microbatch per
+    # optimizer step while exercising the complete multimodal model.
+    cfg.train.global_batch_size = 2
     _set_optimizer(cfg, max_lr=3e-4, warmup_iters=40)
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50

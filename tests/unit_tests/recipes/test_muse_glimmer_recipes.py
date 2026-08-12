@@ -43,7 +43,7 @@ def _offline_recipe_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         "global_batch_size",
     ),
     [
-        (muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config, 4096, 8, 2, 1, 256),
+        (muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config, 4096, 8, 2, 1, 2),
         (muse_glimmer_30b_sft_32gpu_h100_bf16_config, 4096, 8, 2, 1, 8),
         (muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config, 8192, 1, 4, 2, 8),
         (muse_glimmer_30b_peft_8gpu_h100_bf16_config, 8192, 8, 1, 1, 8),
