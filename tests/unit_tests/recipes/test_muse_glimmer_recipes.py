@@ -104,16 +104,16 @@ def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
 
     assert isinstance(cfg.dataset, MockGPTDatasetConfig)
     assert cfg.dataset.seq_length == 4096
-    assert cfg.model.hybrid_layer_pattern == f"{'*' * 26}|{'*' * 26}"
+    assert cfg.model.hybrid_layer_pattern == "|".join(["*" * 13] * 4)
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is True
     assert cfg.model.recompute_vision_layers is False
-    assert cfg.model.tensor_model_parallel_size == 8
-    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.train.train_iters == 50
     assert cfg.train.global_batch_size == 256
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == 4
     assert cfg.scheduler.lr_warmup_iters == 5
     assert cfg.scheduler.lr_decay_iters == 50
     assert cfg.ddp.overlap_grad_reduce is True

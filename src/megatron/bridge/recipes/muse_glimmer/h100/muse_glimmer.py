@@ -126,7 +126,9 @@ def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
 def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a 50-step mock-data benchmark for the dense decoder on 32 H100 GPUs."""
     cfg = muse_glimmer_30b_pretrain_128gpu_h100_bf16_config()
-    cfg.model.hybrid_layer_pattern = f"{'*' * 26}|{'*' * 26}"
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.hybrid_layer_pattern = "|".join(["*" * 13] * 4)
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_vision_projection = True
     cfg.model.recompute_vision_layers = False
@@ -144,6 +146,7 @@ def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigCont
     )
     cfg.train.train_iters = 50
     cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 4
     cfg.scheduler.lr_warmup_iters = 5
     cfg.scheduler.lr_decay_iters = 50
     cfg.ddp.overlap_grad_reduce = True
