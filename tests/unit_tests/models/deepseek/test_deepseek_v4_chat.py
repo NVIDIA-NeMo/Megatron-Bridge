@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pytest
@@ -42,6 +43,17 @@ class _DeepSeekV4CharacterTokenizer:
         return {"input_ids": self.encode(text, add_special_tokens=add_special_tokens)}
 
 
+class _DeepSeekV4ReferenceTokenizer(_DeepSeekV4CharacterTokenizer):
+    def __init__(self, expected_prompt_sha256: str, expected_input_ids: list[int]):
+        self.expected_prompt_sha256 = expected_prompt_sha256
+        self.expected_input_ids = expected_input_ids
+
+    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+        assert add_special_tokens is False
+        assert hashlib.sha256(text.encode()).hexdigest() == self.expected_prompt_sha256
+        return self.expected_input_ids
+
+
 ORDINARY_MESSAGES = [
     {"role": "system", "content": "You are concise."},
     {"role": "user", "content": "First?"},
@@ -68,6 +80,35 @@ WEATHER_TOOL = {
         },
     },
 }
+
+# Generated with the DeepSeek-V4-Flash tokenizer snapshot 60d8d70770c6776ff598c94bb586a859a38244f1.  # pragma: allowlist secret
+# The prompt also matches SGLang 2b4381956f2dfc302ddb4c48a9ab30be41958838 exactly.  # pragma: allowlist secret
+# It matches vLLM 7f7a32cfec0f1bc5b73c37200b86631523a1ea8f with low reasoning effort.  # pragma: allowlist secret
+DSV4_THINKING_TOOL_PROMPT_SHA256 = (
+    "56f4dfb17a268aa7477ec0b804db0cd0aae9f2961afa9b9e97124348055c0f5f"  # pragma: allowlist secret
+)
+DSV4_THINKING_TOOL_INPUT_IDS = [
+    int(token_id)
+    for token_id in (
+        "0 271 372 27193 271 3476 611 3278 304 260 1341 294 6704 304 1694 3287 270 3967 734 3417 16 2042 588 "
+        "34756 6704 513 4985 260 38322 128825 72461 4941 12548 48902 5603 1277 270 2502 979 30 128825 72461 4941 "
+        "12548 1018 30 128825 40148 5406 2329 84476 6792 5896 35044 3816 30 128825 41523 2329 84476 46630 4130 "
+        "61729 35044 4 3418 1281 11476 94 19836 3320 6 46630 4130 61729 56909 1718 128825 41523 1018 7835 1718 "
+        "128825 40148 5406 1018 30 128825 40148 5406 2329 84476 6792 5896 35044 20 3816 7835 1718 128825 40148 "
+        "5406 1018 1718 128825 72461 4941 12548 4697 3524 8252 1531 366 12038 412 344 305 1341 3608 4463 1281 "
+        "11476 4 37419 1884 710 915 4815 343 62896 14 2631 2065 634 14 31939 14 8435 754 2281 270 1990 295 26639 "
+        "8786 305 1341 3608 4463 1281 19836 4 108526 3575 6892 71144 344 22104 343 89944 284 513 223 128821 754 "
+        "440 74366 5238 782 5553 22805 6352 223 128821 1613 128822 119907 1117 4105 10699 469 4087 4256 339 13079 "
+        "6922 14 5238 6578 1561 223 128822 418 4105 10699 469 4087 4256 339 795 17829 28249 13178 8380 271 24313 "
+        "2852 3362 582 1133 65 50219 1760 582 20855 3362 582 6287 9670 66910 582 46172 3362 28612 4611 3362 582 "
+        "10325 1760 582 68838 3362 28612 37399 3362 28612 4611 3362 582 4463 4 55695 582 24486 3362 20584 37399 "
+        "13747 33236 3476 74366 29851 1605 270 3554 6428 4105 2329 305 10767 5815 8380 304 34756 4105 10699 603 "
+        "128803 58565 33 128804 128821 50249 1499 16 128822 271 30 128825 72461 4941 12548 1018 30 128825 40148 "
+        "5406 2329 1281 1133 65 50219 3816 30 128825 41523 2329 1281 37399 4 3418 1281 11476 3320 4374 6829 1718 "
+        "128825 41523 1018 1718 128825 40148 5406 1018 1718 128825 72461 4941 12548 32 1 128803 30 72461 46148 32 "
+        "24313 88634 3362 736 24568 72461 46148 32 128804 128821 2107 344 223 736 16 128822 736 2614 37 16 1"
+    ).split()
+]
 
 
 def _decode_character_ids(input_ids: list[int]) -> str:
@@ -146,6 +187,40 @@ def test_deepseek_v4_encoder_formats_non_thinking_tool_followup():
         f'{USER_TOKEN}<tool_result>{{"temperature":12}}</tool_result>'
         f"{ASSISTANT_TOKEN}{THINKING_END_TOKEN}12°C.{EOS_TOKEN}"
     ) in rendered
+
+
+def test_deepseek_v4_thinking_tool_prompt_and_ids_match_serving_references():
+    tokenizer = _DeepSeekV4ReferenceTokenizer(
+        DSV4_THINKING_TOOL_PROMPT_SHA256,
+        DSV4_THINKING_TOOL_INPUT_IDS,
+    )
+    example = {
+        "messages": [
+            {"role": "user", "content": "Weather?"},
+            {
+                "role": "assistant",
+                "reasoning_content": "Need data.",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"city":"Seattle"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": '{"temperature":12}'},
+            {"role": "assistant", "reasoning_content": "It is 12.", "content": "12°C."},
+        ],
+        "tools": [WEATHER_TOOL],
+        "thinking_mode": "thinking",
+        "truncate_history_thinking": False,
+    }
+
+    tokenized = tokenize_deepseek_v4_example(example, tokenizer, loss_mode="full")
+
+    assert tokenized.input_ids.tolist() == DSV4_THINKING_TOOL_INPUT_IDS
+    assert tokenized.assistant_mask.all()
 
 
 @pytest.mark.parametrize(
