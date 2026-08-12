@@ -31,6 +31,7 @@ from megatron.bridge.models.muse_glimmer import (
 from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
     MuseGlimmerCenteredRMSNorm,
     MuseGlimmerRMSNorm,
+    MuseGlimmerVisionAttention,
     MuseGlimmerVisionModel,
     get_muse_glimmer_hybrid_stack_spec,
 )
@@ -343,6 +344,50 @@ def test_tiny_vision_model_preserves_expected_token_count() -> None:
     output = model(pixel_values, grid_thw)
 
     assert output.shape == (4, 64)
+
+
+def test_vision_attention_matches_eager_reference_with_finite_backward() -> None:
+    vision_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).vision
+    attention = MuseGlimmerVisionAttention(vision_config)
+    hidden_states = torch.randn(5, vision_config.hidden_size, requires_grad=True)
+    cu_seqlens = torch.tensor([0, 3, 5], dtype=torch.int32)
+    cosine = torch.ones(5, attention.head_dim)
+    sine = torch.zeros_like(cosine)
+    real_softmax = torch.nn.functional.softmax
+
+    with (
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.F.softmax",
+            wraps=real_softmax,
+        ) as softmax,
+        patch(
+            "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.F.scaled_dot_product_attention",
+            side_effect=AssertionError("Muse vision attention must use the HF eager path"),
+        ),
+    ):
+        output = attention(hidden_states, cu_seqlens, (cosine, sine))
+
+    query = attention.q_proj(hidden_states).reshape(5, attention.num_heads, attention.head_dim)
+    key = attention.k_proj(hidden_states).reshape(5, attention.num_heads, attention.head_dim)
+    value = attention.v_proj(hidden_states).reshape(5, attention.num_heads, attention.head_dim)
+    expected_chunks = []
+    for start, end in zip(cu_seqlens[:-1].tolist(), cu_seqlens[1:].tolist()):
+        q = query[start:end].transpose(0, 1).unsqueeze(0)
+        k = key[start:end].transpose(0, 1).unsqueeze(0)
+        v = value[start:end].transpose(0, 1).unsqueeze(0)
+        weights = torch.matmul(q, k.transpose(-2, -1)) * attention.scaling
+        weights = real_softmax(weights, dim=-1, dtype=torch.float32).to(q.dtype)
+        expected_chunks.append(torch.matmul(weights, v).squeeze(0).transpose(0, 1))
+    expected = attention.proj(torch.cat(expected_chunks, dim=0).reshape(5, -1))
+
+    assert softmax.call_count == 2
+    assert all(call.kwargs["dtype"] is torch.float32 for call in softmax.call_args_list)
+    torch.testing.assert_close(output, expected)
+    output.square().mean().backward()
+    assert torch.isfinite(hidden_states.grad).all()
+    assert all(
+        parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in attention.parameters()
+    )
 
 
 def test_vision_layer_recomputation_is_training_only() -> None:

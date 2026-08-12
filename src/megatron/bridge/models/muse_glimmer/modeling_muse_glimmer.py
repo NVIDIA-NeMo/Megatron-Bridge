@@ -446,7 +446,9 @@ class MuseGlimmerVisionAttention(nn.Module):
             q = query[start:end].transpose(0, 1).unsqueeze(0)
             k = key[start:end].transpose(0, 1).unsqueeze(0)
             v = value[start:end].transpose(0, 1).unsqueeze(0)
-            output = F.scaled_dot_product_attention(q, k, v, scale=self.scaling)
+            attention_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
+            attention_weights = F.softmax(attention_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+            output = torch.matmul(attention_weights, v)
             outputs.append(output.squeeze(0).transpose(0, 1))
         return self.proj(torch.cat(outputs, dim=0).reshape(sequence_length, -1))
 
