@@ -269,6 +269,16 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
 
+    def test_hf_text_only_path_selects_composite_language_backbone(self):
+        """Text-only comparisons bypass a composite model's media-required forward."""
+        composite_model = MagicMock()
+        language_model = torch.nn.Linear(3, 3)
+        composite_model.language_model = language_model
+
+        with patch.object(compare, "print_rank_0"):
+            assert compare._get_hf_forward_model(composite_model, pixel_values=None) is language_model
+            assert compare._get_hf_forward_model(composite_model, pixel_values=torch.ones(1)) is composite_model
+
     def test_hf_path_receives_multimodal_token_type_ids(self):
         """Gemma 3 token types reach HF so its image attention mask matches Megatron."""
         mock_hf_model = MagicMock()
@@ -367,3 +377,36 @@ class TestCompareMaskHandling:
         assert args.hf_revision == revision
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
+
+    def test_hf_loader_uses_one_device_without_hf_tensor_parallelism(self):
+        """Load the HF reference on one device without a Transformers TP plan."""
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+            ]
+        )
+        loaded_model = MagicMock()
+        model_class = MagicMock()
+        model_class.__name__ = "MockModel"
+        model_class.from_pretrained.return_value = loaded_model
+        loaded_model.to.return_value = loaded_model
+        loaded_model.eval.return_value = loaded_model
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "get_model_class", return_value=model_class),
+            patch.object(compare, "is_safe_repo", return_value=True),
+            patch.object(compare, "print_rank_0"),
+        ):
+            result = compare._load_hf_model(args, is_vl_model=False)
+
+        assert result is loaded_model
+        model_class.from_pretrained.assert_called_once()
+        load_kwargs = model_class.from_pretrained.call_args.kwargs
+        assert "device_map" not in load_kwargs
+        assert "tp_plan" not in load_kwargs
+        assert "tp_size" not in load_kwargs
+        loaded_model.to.assert_called_once_with("cuda")

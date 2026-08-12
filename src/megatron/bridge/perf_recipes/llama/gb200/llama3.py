@@ -29,6 +29,7 @@ from megatron.bridge.perf_recipes.llama.common import (
     userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
     userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
 )
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
 
 
 def llama3_8b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
@@ -356,7 +357,8 @@ def llama3_70b_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["mlp", "attn"]
+    # An empty module list captures the whole Transformer layer instead of MLP and attention separately.
+    clear_cuda_graph_modules(cfg.model)
 
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
