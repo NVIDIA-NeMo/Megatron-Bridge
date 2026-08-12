@@ -17,7 +17,9 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.stepfun import step37_bridge as _step37_bridge_mod
+from megatron.bridge.models.stepfun.configuration_step37 import Step37Config
 from megatron.bridge.models.stepfun.modelling_step37 import transformer_block as _step37_block_mod
 from megatron.bridge.models.stepfun.modelling_step37.transformer_block import get_step37_text_layer_spec
 from megatron.bridge.models.stepfun.step35_bridge import build_step35_layer_spec
@@ -81,6 +83,18 @@ class TestStep37BridgeProviderBridge:
         spec = p.transformer_layer_spec
         target = f"{spec.__module__}.{spec.__qualname__}"
         _validate_target_prefix(target=target, full_key="transformer_layer_spec")
+
+
+class TestStep37BridgeReverseConfig:
+    def test_checkpoint_mtp_override_is_nested_in_exported_config(self):
+        reference_config = Step37Config(text_config={"num_nextn_predict_layers": 3})
+        provider = SimpleNamespace(mtp_num_layers=0)
+
+        checkpoint_config = Step37Bridge.megatron_to_hf_config(provider)
+        exported_config = conform_config_to_reference(checkpoint_config, reference_config.to_dict())
+        synthesized_config = Step37Config(**exported_config)
+
+        assert synthesized_config.text_config.num_nextn_predict_layers == 0
 
 
 class TestGetStep37TextLayerSpec:
