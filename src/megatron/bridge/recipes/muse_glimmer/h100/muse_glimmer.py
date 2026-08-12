@@ -24,6 +24,7 @@ from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer, MockGPTDatasetConfig
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
@@ -155,6 +156,7 @@ def muse_glimmer_30b_pretrain_performance_32gpu_h100_bf16_config() -> ConfigCont
     cfg.scheduler.lr_decay_iters = 50
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_bootstrap_backend="nccl", tp_comm_overlap=True)
     cfg.checkpoint.save_interval = 0
     return cfg
 

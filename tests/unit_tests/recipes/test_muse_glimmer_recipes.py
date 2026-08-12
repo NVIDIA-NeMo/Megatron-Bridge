@@ -121,6 +121,8 @@ def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
     assert cfg.scheduler.lr_decay_iters == 50
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.overlap_param_gather is True
+    assert cfg.comm_overlap.tp_comm_bootstrap_backend == "nccl"
+    assert cfg.comm_overlap.tp_comm_overlap is True
     assert cfg.checkpoint.save_interval == 0
 
 
