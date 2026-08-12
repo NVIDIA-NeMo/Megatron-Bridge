@@ -7,6 +7,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.muse_glimmer.h100 import muse_glimmer as muse_glimmer_recipes
@@ -29,20 +30,38 @@ def _offline_recipe_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("recipe", "seq_length", "context_parallel_size", "global_batch_size"),
+    (
+        "recipe",
+        "seq_length",
+        "tensor_parallel_size",
+        "pipeline_parallel_size",
+        "context_parallel_size",
+        "global_batch_size",
+    ),
     [
-        (muse_glimmer_30b_pretrain_128gpu_h100_bf16_config, 4096, 1, 1024),
-        (muse_glimmer_30b_sft_32gpu_h100_bf16_config, 4096, 1, 8),
-        (muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config, 8192, 4, 8),
-        (muse_glimmer_30b_peft_8gpu_h100_bf16_config, 8192, 1, 8),
+        (muse_glimmer_30b_pretrain_128gpu_h100_bf16_config, 4096, 8, 2, 1, 1024),
+        (muse_glimmer_30b_sft_32gpu_h100_bf16_config, 4096, 8, 2, 1, 8),
+        (muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config, 8192, 8, 2, 2, 8),
+        (muse_glimmer_30b_peft_8gpu_h100_bf16_config, 8192, 8, 1, 1, 8),
     ],
 )
-def test_muse_glimmer_recipe_contracts(recipe, seq_length, context_parallel_size, global_batch_size) -> None:
+def test_muse_glimmer_recipe_contracts(
+    recipe,
+    seq_length,
+    tensor_parallel_size,
+    pipeline_parallel_size,
+    context_parallel_size,
+    global_batch_size,
+) -> None:
     cfg = recipe()
 
     assert isinstance(cfg, ConfigContainer)
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
+    assert cfg.model.pipeline_model_parallel_size == pipeline_parallel_size
+    assert cfg.model.pipeline_dtype is (torch.bfloat16 if pipeline_parallel_size > 1 else None)
+    expected_pattern = f"{'*' * 23}|{'*' * 29}" if pipeline_parallel_size == 2 else "*" * 52
+    assert getattr(cfg.model, "hybrid_layer_pattern", "*" * 52) == expected_pattern
+    assert getattr(cfg.model, "pipeline_model_parallel_layout", None) is None
     assert cfg.model.context_parallel_size == context_parallel_size
     assert cfg.model.sequence_parallel is True
     assert cfg.model.recompute_granularity == "selective"

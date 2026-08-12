@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import torch
+
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
@@ -31,14 +33,23 @@ _MODEL_REVISION = "f84ecc3a0ea984a4c04542a84269e3d065350a6e"  # pragma: allowlis
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 
 
-def _apply_model_and_data(cfg: ConfigContainer, *, seq_length: int, context_parallel_size: int) -> None:
+def _apply_model_and_data(
+    cfg: ConfigContainer,
+    *,
+    seq_length: int,
+    tensor_parallel_size: int,
+    pipeline_parallel_size: int,
+    context_parallel_size: int,
+) -> None:
     """Apply the exact model, multimodal data, and common execution settings."""
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID, revision=_MODEL_REVISION).get_model_config()
     cfg.model.seq_length = seq_length
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = None
+    cfg.model.tensor_model_parallel_size = tensor_parallel_size
+    cfg.model.pipeline_model_parallel_size = pipeline_parallel_size
+    cfg.model.pipeline_dtype = torch.bfloat16 if pipeline_parallel_size > 1 else None
     cfg.model.virtual_pipeline_model_parallel_size = None
+    if pipeline_parallel_size == 2:
+        cfg.model.hybrid_layer_pattern = f"{'*' * 23}|{'*' * 29}"
     cfg.model.context_parallel_size = context_parallel_size
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = False
@@ -89,7 +100,13 @@ def _set_optimizer(cfg: ConfigContainer, *, max_lr: float, warmup_iters: int) ->
 def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     """Return a 100-step random-init multimodal pretraining config on 128 H100 GPUs."""
     cfg = _sft_common_vlm()
-    _apply_model_and_data(cfg, seq_length=4096, context_parallel_size=1)
+    _apply_model_and_data(
+        cfg,
+        seq_length=4096,
+        tensor_parallel_size=8,
+        pipeline_parallel_size=2,
+        context_parallel_size=1,
+    )
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.enable_in_batch_packing = False
     cfg.rng.seed = 1234
@@ -105,7 +122,13 @@ def muse_glimmer_30b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
 def muse_glimmer_30b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a 100-step full multimodal SFT config on 32 H100 GPUs."""
     cfg = _sft_common_vlm()
-    _apply_model_and_data(cfg, seq_length=4096, context_parallel_size=1)
+    _apply_model_and_data(
+        cfg,
+        seq_length=4096,
+        tensor_parallel_size=8,
+        pipeline_parallel_size=2,
+        context_parallel_size=1,
+    )
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.enable_in_batch_packing = False
     cfg.rng.seed = 5678
@@ -120,9 +143,15 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContainer:
-    """Return a 100-step 8K full SFT config with CP4 on 32 H100 GPUs."""
+    """Return a 100-step 8K full SFT config with CP2 on 32 H100 GPUs."""
     cfg = _sft_common_vlm()
-    _apply_model_and_data(cfg, seq_length=8192, context_parallel_size=4)
+    _apply_model_and_data(
+        cfg,
+        seq_length=8192,
+        tensor_parallel_size=8,
+        pipeline_parallel_size=2,
+        context_parallel_size=2,
+    )
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.enable_in_batch_packing = False
     cfg.rng.seed = 5678
@@ -139,7 +168,13 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContaine
 def muse_glimmer_30b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a 100-step attention-projection LoRA config on 8 H100 GPUs."""
     cfg = _peft_common_vlm()
-    _apply_model_and_data(cfg, seq_length=8192, context_parallel_size=1)
+    _apply_model_and_data(
+        cfg,
+        seq_length=8192,
+        tensor_parallel_size=8,
+        pipeline_parallel_size=1,
+        context_parallel_size=1,
+    )
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.enable_in_batch_packing = False
 
