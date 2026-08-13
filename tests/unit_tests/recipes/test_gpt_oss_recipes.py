@@ -28,6 +28,9 @@ import importlib
 from collections.abc import Callable
 
 import pytest
+from transformers import GptOssConfig
+
+from megatron.bridge import AutoBridge
 
 
 _gpt_oss_module = importlib.import_module("megatron.bridge.recipes.gpt_oss")
@@ -41,6 +44,25 @@ _MXFP8_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "mxfp8" in 
 _HOPPER_FP8_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "fp8_current_scaling" in name]
 _ALL_FP8_RECIPE_CASES = _MXFP8_RECIPE_CASES + _HOPPER_FP8_RECIPE_CASES
 _BASE_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "fp8" not in name]
+
+_GPT_OSS_CONFIGS = {
+    "openai/gpt-oss-20b": GptOssConfig(
+        architectures=["GptOssForCausalLM"], num_hidden_layers=24, num_local_experts=32
+    ),
+    "openai/gpt-oss-120b": GptOssConfig(
+        architectures=["GptOssForCausalLM"], num_hidden_layers=36, num_local_experts=128
+    ),
+}
+
+
+@pytest.fixture(autouse=True)
+def mock_gpt_oss_configs(monkeypatch: pytest.MonkeyPatch):
+    """Build GPT-OSS recipes without depending on Hugging Face Hub."""
+
+    def from_hf_pretrained(path: str):
+        return AutoBridge.from_hf_config(_GPT_OSS_CONFIGS[path])
+
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", from_hf_pretrained)
 
 
 def _recipe_ids(recipe_cases):
