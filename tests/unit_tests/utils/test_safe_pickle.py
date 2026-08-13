@@ -15,6 +15,7 @@
 
 """Tests for safe_pickle module."""
 
+import codecs
 import io
 import os
 import pickle
@@ -189,6 +190,15 @@ class TestSafePickleRoundTrip:
         data = pickle.dumps(obj)
         assert safe_pickle_loads(data) == obj
 
+    @pytest.mark.parametrize("protocol", [0, 1, 2])
+    def test_pickled_video_frames_from_legacy_protocols(self, protocol):
+        """Encoded video frames remain loadable when shards use older pickle protocols."""
+        frames = [[b"encoded JPEG frame"]]
+
+        result = safe_pickle_loads(pickle.dumps(frames, protocol=protocol))
+
+        assert result == frames
+
     def test_safe_pickle_load_from_file(self):
         obj = {"key": [1, 2, 3]}
         buf = io.BytesIO()
@@ -225,6 +235,34 @@ class TestSafePickleRejectsUnsafe:
         with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
             safe_pickle_loads(data)
 
+    def test_rejects_application_codec_for_legacy_bytes(self):
+        """Legacy bytes reconstruction cannot select an application codec hook."""
+        hook_called = False
+
+        def search(encoding):
+            nonlocal hook_called
+            if encoding == "applicationcodec":
+                hook_called = True
+                return codecs.CodecInfo(
+                    name=encoding,
+                    encode=lambda value, errors="strict": (b"encoded", len(value)),
+                    decode=None,
+                )
+            return None
+
+        class Payload:
+            def __reduce__(self):
+                return codecs.encode, ("attacker selected", "applicationcodec")
+
+        codecs.register(search)
+        try:
+            with pytest.raises(pickle.UnpicklingError, match="invalid legacy bytes payload"):
+                safe_pickle_loads(pickle.dumps(Payload()))
+        finally:
+            codecs.unregister(search)
+
+        assert not hook_called
+
 
 class TestAllowlistImmutability:
     """Verify the allowlist cannot be mutated at runtime."""
@@ -256,6 +294,23 @@ def test_energon_group_bucket_enum_key_round_trip(tmp_path):
 
     bucket_key = next(iter(restored.worker_states[0]["buckets"]))
     assert bucket_key is _BucketKey.IMAGE
+
+
+def test_energon_group_bucket_frozenset_key_round_trip(tmp_path):
+    """Energon can reuse a restored partial bucket keyed by any supported Hashable."""
+    bucket_key = frozenset({"image"})
+    state = SavableDataLoaderState(
+        worker_states=[FlexState(buckets={bucket_key: {"batch_size": 2}})],
+        next_worker_id=0,
+        micro_batch_size=2,
+    )
+    path = tmp_path / "dataloader-state.pt"
+    torch.save({"dataloader_state_dict": state}, path)
+
+    restored = energon_torch_load(str(path))["dataloader_state_dict"]
+
+    restored_buckets = restored.worker_states[0]["buckets"]
+    assert restored_buckets[bucket_key] == {"batch_size": 2}
 
 
 def test_energon_group_bucket_enum_does_not_use_application_value_map(tmp_path):

@@ -428,7 +428,7 @@ def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_valida
 
     from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
 
-    state = _make_global_state(train_iters=1)
+    state = _make_global_state(save_dir=None, train_iters=1)
     if use_canonical_validation_config:
         state.cfg.validation.eval_interval = 1
     else:
@@ -520,7 +520,7 @@ class TestTrainMegatronMIMOCheckpointIntegration:
 
         mock_build_pg.return_value = Mock(spec=[])  # not a list
 
-        state = _make_global_state(train_iters=1, step=0)
+        state = _make_global_state(save_dir=None, train_iters=1, step=0)
         ckpt_mgr = MagicMock()
         train_iter = Mock()
 
@@ -621,7 +621,7 @@ class TestTrainMegatronMIMOCheckpointIntegration:
         infra.topology = Mock()
         mock_build_pg.return_value = Mock(spec=[])
 
-        state = _make_global_state(train_iters=2, step=0)
+        state = _make_global_state(save_dir=None, train_iters=2, step=0)
         ckpt_mgr = MagicMock()
 
         train_megatron_mimo(
@@ -649,54 +649,61 @@ class TestTrainMegatronMIMOCheckpointIntegration:
         # The blocking shutdown call (blocking=True, terminate=True) is now in
         # _finish_train (pretrain_megatron_mimo.py), tested separately.
 
-    @patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False)
-    @patch("megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo")
-    @patch("megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule")
-    @patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple")
-    @patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func")
-    @patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1)
-    @patch("torch.distributed.get_rank", return_value=0)
-    @patch("torch.distributed.get_world_size", return_value=1)
-    def test_no_inline_save_checkpoint_call(
-        self,
-        mock_world_size,
-        mock_rank,
-        mock_num_mb,
-        mock_prep_fwd,
-        mock_get_grid,
-        mock_build_pg,
-        mock_train_step,
-        mock_ckpt_exit,
+    @pytest.mark.parametrize(
+        ("save_interval", "expected_saved_steps"),
+        [(2, [2, 3]), (3, [3])],
+        ids=["off_interval", "interval_aligned"],
+    )
+    def test_persists_terminal_checkpoint_without_duplicate_interval_save(
+        self, save_interval: int, expected_saved_steps: list[int]
     ):
-        """Verify there is no inline save_checkpoint call — all saves go through
-        checkpoint_and_decide_exit."""
+        """Normal completion should persist the terminal step exactly once."""
         from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
 
-        mock_train_step.return_value = ({}, 0, 0.0, 0)
-
+        pg = Mock()
         infra = Mock()
-        infra.pg_collections = {"language": Mock()}
+        infra.pg_collections = {"language": pg}
         infra.module_to_grid_map = {"language": Mock()}
         infra.topology = Mock()
-        mock_build_pg.return_value = Mock(spec=[])
-
-        state = _make_global_state(save_interval=1, train_iters=3, step=0)
-
-        train_megatron_mimo(
-            forward_step_func=Mock(),
-            model=Mock(),
-            optimizer=Mock(),
-            schedulers={"language": _make_scheduler_mock()},
-            train_data_iterator=Mock(),
-            valid_data_iterator=None,
-            global_state=state,
-            megatron_mimo_infra=infra,
-            multimodule_communicator=Mock(),
-            checkpoint_manager=MagicMock(),
+        state = _make_global_state(save_interval=save_interval, train_iters=3, step=0)
+        checkpoint_manager = MagicMock()
+        saved_steps = []
+        checkpoint_manager.save.side_effect = lambda context, _callback_manager: saved_steps.append(
+            context.state.train_state.step
         )
 
-        # checkpoint_and_decide_exit should have been called
-        assert mock_ckpt_exit.call_count == 3
+        with (
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.get_world_size", return_value=1),
+            patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+            patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+            patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple", return_value=[]),
+            patch(
+                "megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule",
+                return_value=Mock(spec=[]),
+            ),
+            patch(
+                "megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo",
+                return_value=({}, 0, 0.0, 0),
+            ),
+            patch("megatron.bridge.training.train.check_nvrx_straggler_detection", return_value=False),
+            patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=False),
+            patch("megatron.bridge.training.train.force_param_sync"),
+        ):
+            train_megatron_mimo(
+                forward_step_func=Mock(),
+                model=Mock(),
+                optimizer=Mock(),
+                schedulers={"language": _make_scheduler_mock()},
+                train_data_iterator=Mock(),
+                valid_data_iterator=None,
+                global_state=state,
+                megatron_mimo_infra=infra,
+                multimodule_communicator=Mock(),
+                checkpoint_manager=checkpoint_manager,
+            )
+
+        assert saved_steps == expected_saved_steps
 
 
 # ---------------------------------------------------------------------------

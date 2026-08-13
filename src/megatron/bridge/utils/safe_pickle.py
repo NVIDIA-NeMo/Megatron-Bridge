@@ -21,7 +21,7 @@ import zipfile
 from collections import OrderedDict
 from dataclasses import fields
 from types import MappingProxyType, ModuleType
-from typing import cast
+from typing import BinaryIO, cast
 
 
 _BUILTIN_SAFE_TYPES = frozenset(
@@ -60,6 +60,13 @@ _ENERGON_SAFE_STATE_GLOBALS = MappingProxyType(
     }
 )
 _TRAVERSAL_IN_PROGRESS = object()
+
+
+def _restore_legacy_bytes(value: object, encoding: object) -> bytes:
+    """Reconstruct bytes from the fixed representation emitted by pickle protocols 0-2."""
+    if type(value) is not str or encoding != "latin1":
+        raise pickle.UnpicklingError("Restricted unpickler refused an invalid legacy bytes payload.")
+    return str.encode(value, "latin1")
 
 
 class _SafeEnumToken:
@@ -223,6 +230,8 @@ class _RestrictedUnpickler(pickle.Unpickler):
     )
 
     def find_class(self, module: str, name: str) -> object:
+        if module == "_codecs" and name == "encode":
+            return _restore_legacy_bytes
         if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
             return super().find_class(module, name)
         raise pickle.UnpicklingError(
@@ -294,6 +303,8 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
     )
 
     def find_class(self, module: str, name: str) -> object:
+        if module == "__builtin__":
+            module = "builtins"
         if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
             return pickle.Unpickler.find_class(self, module, name)
         if enum_resolver := _find_safe_loaded_enum(module, name):
@@ -305,7 +316,7 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
         )
 
 
-def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
+def energon_torch_load(path: str | BinaryIO, *, map_location: str = "cpu") -> object:
     """Load an Energon dataloader state ``.pt`` file through a restricted unpickler.
 
     Parses the torch zip format directly without calling ``torch.load``.  Security is enforced
@@ -324,7 +335,7 @@ def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
     that tensors sharing a storage (views, slices) remain aliased after restore.
 
     Args:
-        path: Path to the ``.pt`` file written by
+        path: Path to or binary stream for the ``.pt`` file written by
             :func:`~megatron.bridge.training.checkpointing.maybe_save_dataloader_state`.
         map_location: Device to map tensor storages to; defaults to ``"cpu"`` to avoid GPU
             allocation during restore.

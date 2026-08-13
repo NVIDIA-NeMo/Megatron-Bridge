@@ -36,9 +36,9 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4OutputLayer,
     Gemma4RotaryEmbedding,
     _attach_ple_modules,
-    _gemma4_block_spec,
     _install_ple_forward,
     _install_tied_kv,
+    gemma4_block_spec,
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
@@ -320,7 +320,7 @@ class Gemma4ModelProvider(GPTModelProvider):
 
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
-        default_factory=lambda: partial(_gemma4_block_spec, use_transformer_engine=HAVE_TE)
+        default_factory=lambda: partial(gemma4_block_spec, use_transformer_engine=HAVE_TE)
     )
     scatter_embedding_sequence_parallel: bool = True
 

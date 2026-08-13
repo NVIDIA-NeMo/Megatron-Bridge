@@ -421,6 +421,23 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def gpt_oss_20b_sft_8gpu_h100_bf16_32k_config() -> ConfigContainer:
+    """Return the 32K-context full SFT config for GPT-OSS 20B."""
+    cfg = gpt_oss_20b_sft_8gpu_h100_bf16_config()
+
+    seq_length = 32768
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+    cfg.train.global_batch_size = 32
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
 def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for GPT-OSS 120B.
 
@@ -936,6 +953,7 @@ __all__ = [
     "gpt_oss_20b_pretrain_16gpu_h100_fp8cs_config",
     "gpt_oss_20b_pretrain_16gpu_h100_fp8mx_config",
     "gpt_oss_20b_sft_8gpu_h100_bf16_config",
+    "gpt_oss_20b_sft_8gpu_h100_bf16_32k_config",
     "gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config",
     "gpt_oss_20b_sft_8gpu_h100_fp8cs_config",
     "gpt_oss_20b_sft_8gpu_h100_fp8mx_config",

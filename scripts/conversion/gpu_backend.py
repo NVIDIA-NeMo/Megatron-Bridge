@@ -203,7 +203,14 @@ def _roundtrip_weights_match(name: str, exported: torch.Tensor, original: torch.
 
 
 def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.Module]) -> None:
-    """Verify exported Megatron weights against the original Hugging Face state."""
+    """Exhaustively verify exported Megatron weights against the original Hugging Face state.
+
+    Every rank participates in the collective Megatron-to-Hugging-Face export, but only rank 0 lazily reads each
+    original Hugging Face tensor and compares it serially. This does not materialize a complete Hugging Face model
+    on every rank. For very large checkpoints, the rank-0 work can create prolonged rank skew before the result
+    broadcast, exceed the process-group collective timeout, and incur substantial transient tensor memory and
+    storage I/O.
+    """
     is_rank_0 = torch.distributed.get_rank() == 0
     all_match = True
     verified_count = 0
@@ -423,6 +430,13 @@ def roundtrip_checkpoint(
     distributed_timeout_minutes: int | None,
 ) -> None:
     """Validate a Hugging Face to Megatron to Hugging Face round trip.
+
+    This workflow performs exhaustive equality validation and is not intended as the scalable conversion path for
+    very large checkpoints. When the goal is conversion rather than exhaustive validation, prefer separate
+    ``convert.sh import`` and ``convert.sh export --distributed-save`` workflows. If a full round trip is required,
+    provision sufficient time and memory and choose an appropriate ``--distributed-timeout-minutes`` value. A
+    longer timeout can accommodate expected rank skew, but does not reduce serial verification cost or memory and
+    I/O pressure.
 
     Args:
         hf_model: Hugging Face model ID or local path.

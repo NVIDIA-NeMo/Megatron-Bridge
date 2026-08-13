@@ -19,12 +19,17 @@ import modelopt.torch.distill as mtd
 import pytest
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _cu_seqlens_for_cp_partition,
     _forward_step_common,
     _partition_packed_batch_for_cp,
+    _patch_mcore_expert_bias_padding_mask,
+    _patch_mcore_schedule_plan_padding_mask,
+    _prepare_packed_padding_mask,
+    _validate_packed_moe_cuda_graph,
     get_batch,
     get_packed_seq_params,
 )
@@ -61,8 +66,9 @@ class _MockProcessGroup:
 
 
 class _MockPGCollection:
-    def __init__(self, cp_size=1, pp_rank=0, pp_size=1):
+    def __init__(self, cp_size=1, pp_rank=0, pp_size=1, tp_size=1):
         self.pp = _MockProcessGroup(rank=pp_rank, size=pp_size)
+        self.tp = _MockProcessGroup(size=tp_size)
         self._cp_size = cp_size
 
     @property
@@ -144,13 +150,23 @@ class _NoopTimer:
 
 
 class _RecordingModel:
-    def __init__(self, *, vp_stage=None, output=None):
+    def __init__(self, *, vp_stage=None, output=None, pre_process=True):
         self.vp_stage = vp_stage
         self.output = output if output is not None else torch.tensor(1.0)
         self.forward_kwargs = None
+        self.pre_process = pre_process
 
     def __call__(self, **kwargs):
         self.forward_kwargs = kwargs
+        return self.output
+
+    def build_schedule_plan(self, input_ids, position_ids, attention_mask, **kwargs):
+        self.forward_kwargs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            **kwargs,
+        }
         return self.output
 
 
@@ -200,6 +216,7 @@ class TestGetBatch:
             "labels": torch.arange(100, 108).unsqueeze(0),
             "loss_mask": torch.ones(1, 8),
             "position_ids": torch.arange(8).unsqueeze(0),
+            "padding_mask": torch.tensor([[False, False, False, True, False, False, False, False]]),
             "cu_seqlens_q": torch.tensor([0, 3, 8], dtype=torch.int32),
             "cu_seqlens_kv": torch.tensor([0, 3, 8], dtype=torch.int32),
             "cu_seqlens_q_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
@@ -216,6 +233,7 @@ class TestGetBatch:
         assert torch.equal(out["labels"], torch.tensor([[100, 101, 102, 103]]))
         assert torch.equal(out["position_ids"], torch.tensor([[0, 1, 2, 3]]))
         assert torch.equal(out["loss_mask"], torch.ones(1, 4))
+        assert torch.equal(out["padding_mask"], torch.tensor([[False, False, False, True]]))
 
     def test_partition_packed_batch_trims_negative_sentinel_fallback(self, monkeypatch):
         """Packed CP slicing can trim CPU cu_seqlens without a precomputed argmin."""
@@ -600,8 +618,8 @@ class TestGetBatch:
         assert model.forward_kwargs["position_ids"] is None
         assert model.forward_kwargs["labels"] is None
 
-    def test_forward_common_passes_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
-        """Forward path must pass packed metadata on middle PP stages."""
+    def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
+        """Packed batches without physical gaps do not need the router graph guard."""
         sentinel_packed_seq_params = object()
         tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
         labels = torch.tensor([[2, 3, 4, 5, 6, 7, 8, 9]])
@@ -625,6 +643,10 @@ class TestGetBatch:
                 "is_hybrid_model": False,
                 "mtp_num_layers": 0,
                 "overlap_moe_expert_parallel_comm": False,
+                "cuda_graph_impl": "transformer_engine",
+                "cuda_graph_modules": [],
+                "cuda_graph_scope": None,
+                "num_moe_experts": 8,
             },
         )()
 
@@ -658,6 +680,262 @@ class TestGetBatch:
         get_packed_seq_params_mock.assert_called_once_with(packed_seq_metadata)
         assert "cu_seqlens" not in get_packed_seq_params_mock.call_args.args[0]
         assert "cu_seqlens_argmin" not in get_packed_seq_params_mock.call_args.args[0]
+
+    @pytest.mark.parametrize(
+        ("return_schedule_plan", "expert_bias"),
+        [(False, False), (True, False), (False, True), (True, True)],
+    )
+    def test_forward_common_passes_packed_padding_mask_to_model(self, monkeypatch, return_schedule_plan, expert_bias):
+        """Packed alignment gaps must not contribute to MoE router statistics."""
+        tokens = _as_nocuda(torch.arange(8).unsqueeze(0))
+        labels = _as_nocuda(torch.arange(1, 9).unsqueeze(0))
+        loss_mask = _as_nocuda(torch.tensor([[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0]]))
+        position_ids = _as_nocuda(torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]]))
+        padding_mask = _as_nocuda(torch.tensor([[False, False, False, True, False, False, False, False]]))
+        batch = {
+            "tokens": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": None,
+            "position_ids": position_ids,
+            "padding_mask": padding_mask,
+            "cu_seqlens_q": _as_nocuda(torch.tensor([0, 3, 7], dtype=torch.int32)),
+            "cu_seqlens_kv": _as_nocuda(torch.tensor([0, 3, 7], dtype=torch.int32)),
+            "cu_seqlens_q_padded": _as_nocuda(torch.tensor([0, 4, 8], dtype=torch.int32)),
+            "cu_seqlens_kv_padded": _as_nocuda(torch.tensor([0, 4, 8], dtype=torch.int32)),
+            "max_seqlen_q": torch.tensor(4, dtype=torch.int32),
+            "max_seqlen_kv": torch.tensor(4, dtype=torch.int32),
+        }
+        model = _RecordingModel()
+        state = Mock()
+        state.cfg = _make_cfg(enable_offline_packing=True, offline_packing_specs=object())
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": False,
+                "mtp_num_layers": 0,
+                "moe_router_enable_expert_bias": expert_bias,
+                "overlap_moe_expert_parallel_comm": return_schedule_plan,
+                "sequence_parallel": False,
+            },
+        )()
+
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
+            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+        )
+
+        _forward_step_common(state, _Iterator(batch), model, return_schedule_plan=return_schedule_plan)
+
+        assert model.forward_kwargs is not None
+        assert torch.equal(model.forward_kwargs["padding_mask"], padding_mask)
+
+    def test_mcore_expert_bias_padding_mask_compat(self, monkeypatch):
+        """The pinned MCore expert-bias path must receive a broadcastable mask."""
+        observed = {}
+
+        def current_apply_expert_bias(_self, routing_map, padding_mask=None):
+            observed["routing_map"] = routing_map & (~padding_mask)
+
+        monkeypatch.setattr(TopKRouter, "_apply_expert_bias", current_apply_expert_bias)
+
+        _patch_mcore_expert_bias_padding_mask()
+        patched_apply_expert_bias = TopKRouter._apply_expert_bias
+        _patch_mcore_expert_bias_padding_mask()
+
+        routing_map = torch.tensor([[True, False], [False, True], [True, True]])
+        padding_mask = torch.tensor([False, True, False])
+        patched_apply_expert_bias(object(), routing_map, padding_mask=padding_mask)
+
+        assert TopKRouter._apply_expert_bias is patched_apply_expert_bias
+        assert observed["routing_map"].tolist() == [[True, False], [False, False], [True, True]]
+
+        with pytest.raises(AssertionError, match="padding_mask flat"):
+            patched_apply_expert_bias(object(), routing_map, padding_mask=torch.zeros(4, dtype=torch.bool))
+
+    def test_mcore_schedule_plan_routes_with_chunk_padding_mask(self, monkeypatch):
+        """The pinned MCore EP-overlap callable must pass its chunk-local router mask."""
+        from megatron.core.models.common import fine_grained_callables
+
+        observed = {}
+
+        class FakeMlp:
+            def route(self, hidden_states, padding_mask=None):
+                observed["hidden_states"] = hidden_states
+                observed["padding_mask"] = padding_mask
+                return hidden_states, None
+
+        layer = type("Layer", (), {"mlp": FakeMlp()})()
+
+        def current_builder(layer):
+            def pre_dispatch(node, hidden_states):
+                output = layer.mlp.route(hidden_states)
+                if getattr(node, "fail_after_route", False):
+                    raise RuntimeError("expected pre-dispatch failure")
+                return output
+
+            return [pre_dispatch, None, None, None, None], {}
+
+        monkeypatch.setattr(fine_grained_callables, "build_transformer_layer_callables", current_builder)
+
+        _patch_mcore_schedule_plan_padding_mask()
+        patched_builder = fine_grained_callables.build_transformer_layer_callables
+        _patch_mcore_schedule_plan_padding_mask()
+
+        forward_funcs, _ = patched_builder(layer)
+        hidden_states = torch.ones(4, 1, 2)
+        padding_mask = torch.tensor([[False, False, True, True]])
+        node = type("Node", (), {"chunk_state": type("State", (), {"padding_mask": padding_mask})()})()
+        forward_funcs[0](node, hidden_states)
+
+        assert fine_grained_callables.build_transformer_layer_callables is patched_builder
+        assert observed["hidden_states"] is hidden_states
+        assert observed["padding_mask"] is padding_mask
+        assert "route" not in layer.mlp.__dict__
+
+        node.fail_after_route = True
+        with pytest.raises(RuntimeError, match="expected pre-dispatch failure"):
+            forward_funcs[0](node, hidden_states)
+        assert "route" not in layer.mlp.__dict__
+
+    @pytest.mark.parametrize(
+        ("graph_modules", "raises"),
+        [
+            ([], True),
+            (["attn"], False),
+            (["moe_router"], True),
+            (["moe_preprocess"], True),
+            (["attn", "moe_router"], True),
+            (["moe"], True),
+        ],
+    )
+    def test_packed_padding_mask_rejects_router_scoped_te_cuda_graphs(self, graph_modules, raises):
+        """Router graph replay cannot consume a microbatch-specific padding mask."""
+        config = type(
+            "Config",
+            (),
+            {
+                "cuda_graph_impl": "transformer_engine",
+                "cuda_graph_modules": graph_modules,
+                "cuda_graph_scope": None,
+                "num_moe_experts": 8,
+            },
+        )()
+
+        if raises:
+            with pytest.raises(ValueError, match="do not support router-scoped Transformer Engine CUDA graphs"):
+                _validate_packed_moe_cuda_graph(config)
+        else:
+            _validate_packed_moe_cuda_graph(config)
+
+    def test_packed_padding_mask_allows_dense_router_scoped_te_cuda_graph(self):
+        """Dense models do not consume the router padding mask."""
+        config = type(
+            "Config",
+            (),
+            {
+                "cuda_graph_impl": "transformer_engine",
+                "cuda_graph_modules": [],
+                "cuda_graph_scope": None,
+                "num_moe_experts": None,
+            },
+        )()
+
+        _validate_packed_moe_cuda_graph(config)
+
+    def test_hybrid_preprocess_stage_scatters_packed_padding_mask_for_sp(self, monkeypatch):
+        """Hybrid embeddings scatter activations but need Bridge to scatter the router mask."""
+        model = _RecordingModel(pre_process=True)
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": True,
+                "moe_router_enable_expert_bias": False,
+                "sequence_parallel": True,
+            },
+        )()
+        pg_collection = _MockPGCollection(tp_size=2)
+        padding_mask = torch.tensor([[False, False, False, True, False, False, True, True]])
+
+        def scatter_to_sp(tensor, group):
+            assert group is pg_collection.tp
+            return tensor[:4]
+
+        monkeypatch.setattr(
+            "megatron.core.tensor_parallel.scatter_to_sequence_parallel_region",
+            scatter_to_sp,
+        )
+
+        local_mask = _prepare_packed_padding_mask(
+            padding_mask,
+            config=config,
+            model=model,
+            pg_collection=pg_collection,
+        )
+
+        assert local_mask.tolist() == [[False, False, False, True]]
+
+    def test_forward_common_scatters_packed_padding_mask_on_middle_pp_sp_stage(self, monkeypatch):
+        """Middle PP stages must receive an SP-local router padding mask."""
+        _set_middle_pp_stage(monkeypatch)
+        batch = {
+            "tokens": _as_nocuda(torch.arange(8).unsqueeze(0)),
+            "labels": _as_nocuda(torch.arange(1, 9).unsqueeze(0)),
+            "loss_mask": _as_nocuda(torch.ones(1, 8)),
+            "attention_mask": None,
+            "position_ids": _as_nocuda(torch.arange(8).unsqueeze(0)),
+            "padding_mask": _as_nocuda(torch.tensor([[False, False, False, True, False, False, False, False]])),
+            "cu_seqlens_q": _as_nocuda(torch.tensor([0, 3, 7], dtype=torch.int32)),
+            "cu_seqlens_kv": _as_nocuda(torch.tensor([0, 3, 7], dtype=torch.int32)),
+            "cu_seqlens_q_padded": _as_nocuda(torch.tensor([0, 4, 8], dtype=torch.int32)),
+            "cu_seqlens_kv_padded": _as_nocuda(torch.tensor([0, 4, 8], dtype=torch.int32)),
+            "max_seqlen_q": torch.tensor(4, dtype=torch.int32),
+            "max_seqlen_kv": torch.tensor(4, dtype=torch.int32),
+        }
+        model = _RecordingModel(pre_process=False)
+        state = Mock()
+        state.cfg = _make_cfg(enable_offline_packing=True, offline_packing_specs=object())
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": False,
+                "mtp_num_layers": 0,
+                "moe_router_enable_expert_bias": False,
+                "overlap_moe_expert_parallel_comm": False,
+                "sequence_parallel": True,
+            },
+        )()
+        pg_collection = _MockPGCollection(pp_rank=1, pp_size=2, tp_size=2)
+
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: pg_collection)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
+            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+        )
+
+        def scatter_to_sp(tensor, group):
+            assert group is pg_collection.tp
+            return tensor[:4]
+
+        monkeypatch.setattr(
+            "megatron.core.tensor_parallel.scatter_to_sequence_parallel_region",
+            scatter_to_sp,
+        )
+
+        _forward_step_common(state, _Iterator(batch), model)
+
+        assert model.forward_kwargs is not None
+        assert model.forward_kwargs["padding_mask"].tolist() == [[False, False, False, True]]
 
 
 class _FakePackedPartitioner:
