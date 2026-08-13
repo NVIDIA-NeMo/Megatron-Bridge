@@ -201,6 +201,7 @@ test = [
     "pytest-timeout>=2.4.0",
     "pytest-mock>=3.14.0",
     "pytest-runner>=6.0.1",
+    "pytest-shard>=0.1.2",
     "pygithub",
     "click",
 ]

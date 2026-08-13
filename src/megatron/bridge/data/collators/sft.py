@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import torch
 
 from megatron.bridge.data.conversation_processing import (
+    TokenizedConversation,
     build_shifted_labels_and_loss_mask,
     ensure_position_ids,
     get_processor_tokenizer,
@@ -180,6 +181,7 @@ def text_chat_collate_fn(
     ignore_index: int = IGNORE_INDEX,
     enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
+    tokenize_impl: Callable[..., TokenizedConversation] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Collate text-only HF chat examples using the shared assistant-mask path.
@@ -204,6 +206,9 @@ def text_chat_collate_fn(
             packed-sequence metadata for GPT-style training steps.
         in_batch_packing_pad_to_multiple_of: Optional per-sequence length multiple
             used when ``enable_in_batch_packing`` inserts padding for CP/SP constraints.
+        tokenize_impl: Optional model-owned chat tokenizer. Models without a
+            Jinja chat template may provide an equivalent renderer while reusing
+            the shared padding, shifting, and packing implementation.
         **kwargs: Additional common collate kwargs accepted for parity with
             VLM collate functions and ignored by the text-only path.
 
@@ -218,9 +223,10 @@ def text_chat_collate_fn(
     tokenizer = get_processor_tokenizer(processor)
     boundary_config = infer_assistant_mask_boundary_config(processor)
     skipped_tokens = extract_skipped_token_ids(processor)
+    tokenize = tokenize_impl or tokenize_chat_example
     tokenized_rows = []
     for example in examples:
-        tokenized = tokenize_chat_example(
+        tokenized = tokenize(
             example,
             processor,
             max_length=max_length,
