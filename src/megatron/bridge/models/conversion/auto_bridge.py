@@ -31,6 +31,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 if TYPE_CHECKING:
+    from megatron.bridge.models.conversion.modelopt_utils import ModelOptExportPlan
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -771,58 +772,64 @@ class AutoBridge(Generic[MegatronModelT]):
     def export_hf_weights_modelopt(
         self,
         model: MegatronModelT | list[MegatronModelT],
-        quant_mode: str = "nvfp4",
         cpu: bool = False,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
-        ignore_patterns: Optional[List[str]] = None,
         merge_adapter_weights: bool = True,
     ) -> Iterable["HFWeightTuple"]:
         """Export Megatron weights to HuggingFace ModelOpt deployment format.
 
+        This method prepares ModelOpt state eagerly before returning the lazy weight iterator. Because state
+        preparation uses model-parallel collectives, every rank must call this method in the same order and fully
+        consume the returned iterator before starting another distributed conversion operation.
+
         Args:
             model: Megatron model instance or list of instances.
-            quant_mode: ModelOpt quantization mode to export. Currently supports
-                ``"nvfp4"`` and ``"w4a16_nvfp4"``.
             cpu: Whether to move exported tensors to CPU before yielding.
             show_progress: Display progress bar during base Hugging Face weight export.
             conversion_tasks: Pre-built conversion tasks. If not provided, tasks will be built
                 automatically from the models.
-            ignore_patterns: Hugging Face parameter name patterns that should remain unquantized.
-                Scale tensor suffixes and the optional ``model.`` prefix are ignored when matching.
             merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
                 tensors during export.
 
-        Yields:
-            HFWeightTuple: Named tuples containing Hugging Face parameter names and tensors. Quantized
-            weights yield the packed weight under the original ``*.weight`` name followed by the
-            corresponding ``*.weight_scale`` and ``*.weight_scale_2`` tensors.
-
-        Raises:
-            RuntimeError: If a matched quantized Megatron parameter uses a qformat unsupported by
-                ``quant_mode``.
+        Returns:
+            A lazy iterator of named Hugging Face tensors. Quantized weights produce the packed weight and
+            scale tensors named by ModelOpt's deployment format.
         """
+        model, plan = self._build_modelopt_export_plan(model, conversion_tasks)
+        hf_weights = self.export_hf_weights(
+            model,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=plan.conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+        return hf_weights
+
+    def get_hf_modelopt_quantization_config(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+    ) -> dict[str, Any]:
+        """Return ModelOpt's deployment config for the initialized Megatron model.
+
+        This method uses model-parallel collectives and must be called by every rank in the same order.
+        """
+        _, plan = self._build_modelopt_export_plan(model, conversion_tasks)
+        return plan.quantization_config
+
+    def _build_modelopt_export_plan(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        conversion_tasks: Optional[List[WeightConversionTask]],
+    ) -> tuple[list[MegatronModelT], "ModelOptExportPlan"]:
         from megatron.bridge.models.conversion.modelopt_utils import build_modelopt_export_plan
 
         if not isinstance(model, list):
             model = [model]
         if conversion_tasks is None:
             conversion_tasks = self._model_bridge.build_conversion_tasks(self.hf_pretrained, model)
-        export_tasks = build_modelopt_export_plan(
-            conversion_tasks,
-            model=model,
-            bridge=self._model_bridge,
-            quant_mode=quant_mode,
-            ignore_patterns=ignore_patterns or [],
-        )
-        hf_weights = self.export_hf_weights(
-            model,
-            cpu=cpu,
-            show_progress=show_progress,
-            conversion_tasks=export_tasks,
-            merge_adapter_weights=merge_adapter_weights,
-        )
-        yield from hf_weights
+        return model, build_modelopt_export_plan(conversion_tasks, model=model)
 
     def export_hf_weights_quant(
         self,

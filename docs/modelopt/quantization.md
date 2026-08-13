@@ -140,22 +140,29 @@ Use `AutoBridge.export_hf_weights_modelopt()` when you need to stream ModelOpt d
 already-loaded Megatron model instead of writing a full checkpoint through the export script. This is useful for
 integrations that consume Hugging Face weight names directly, such as inference-engine refit paths.
 
-The API currently only supports `quant_mode="nvfp4"`. Quantized parameters are yielded as the original Hugging Face
-`*.weight` name plus the ModelOpt NVFP4 scale tensors:
+The initialized ModelOpt quantizer graph is the source of truth; there is no separate export-mode argument. The
+current non-mutating export API supports dynamic NVFP4 W4A4 and W4A16 weights. Quantized parameters are yielded under
+ModelOpt's canonical Hugging Face names, including the packed weight and its scale tensors:
 
 - `*.weight`
 - `*.weight_scale`
 - `*.weight_scale_2`
+- `*.input_scale` for W4A4
 
 Unquantized parameters are yielded under their regular Hugging Face names. Quantizer-internal tensors are skipped.
+The matching deployment config can be obtained before consuming the weight stream:
+
+ModelOpt state preparation uses model-parallel collectives. All ranks must call the config and export APIs in the
+same order, and all ranks must fully consume each returned weight iterator before starting another distributed
+conversion operation.
 
 ```python
 from safetensors.torch import save_file
 
+quantization_config = bridge.get_hf_modelopt_quantization_config(model)
 state_dict = {}
 for name, weight in bridge.export_hf_weights_modelopt(
     model,
-    quant_mode="nvfp4",
     cpu=True,
     show_progress=False,
 ):
@@ -170,16 +177,13 @@ full `state_dict`.
 ```python
 for name, weight in bridge.export_hf_weights_modelopt(
     model,
-    quant_mode="nvfp4",
-    ignore_patterns=["lm_head", "*self_attn.o_proj*"],
     show_progress=False,
 ):
     refit_engine.replace_weight(name, weight)
 ```
 
-`ignore_patterns` are matched against Hugging Face parameter names. The matcher handles the optional `model.` prefix
-and ModelOpt scale suffixes, so a pattern can target the logical parameter name without separately listing
-`*.weight_scale` and `*.weight_scale_2`.
+Mixed precision and excluded layers are derived from the policy's enabled quantizers and recorded in the returned
+ModelOpt deployment config. Export does not mutate model parameters or quantizer state.
 
 ### Supported Models For PTQ
 
