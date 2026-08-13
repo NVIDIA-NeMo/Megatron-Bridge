@@ -80,7 +80,11 @@ class Llama32TestModelProvider(GPTModelProvider):
 
 
 class GTPValidationCallback(Callback):
-    """Validate GTP groups, parameters, and per-step training results."""
+    """Validate GTP groups, parameters, and finite per-step training results.
+
+    This callback is a GTP runtime smoke test, not an MLM numerical-parity or
+    tensor-parity assertion.
+    """
 
     def __init__(self) -> None:
         self.num_steps = 0
@@ -88,11 +92,12 @@ class GTPValidationCallback(Callback):
     def on_train_start(self, context: CallbackContext) -> None:
         transformer_config = get_transformer_config(context.state.cfg.model)
         gtp_size = transformer_config.gtp_weight_remat_size
+        assert gtp_size == 2
         assert parallel_state.get_gtp_weight_remat_world_size() == gtp_size
         assert parallel_state.get_data_parallel_world_size(with_gtp_remat=False) == 2 // gtp_size
         assert parallel_state.get_data_parallel_world_size(with_gtp_remat=True) == 2
         gtp_params = [param for chunk in context.model for param in chunk.parameters() if gtp_api.is_gtp_param(param)]
-        assert bool(gtp_params) == (gtp_size > 1)
+        assert gtp_params
         assert all(param.chain_id is not None for param in gtp_params)
 
     def on_train_step_end(self, context: CallbackContext) -> None:
