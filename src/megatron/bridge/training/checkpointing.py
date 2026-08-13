@@ -1668,7 +1668,12 @@ def cleanup_old_non_persistent_checkpoint(
     """
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
         return
-    save_dir = Path(save_dir)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        save_dir = msc.Path(save_dir)
+    else:
+        msc = None
+        save_dir = Path(save_dir)
 
     iter_prefix = "iter_"
     iter_ckpts = save_dir.glob(f"{iter_prefix}*")
@@ -1694,7 +1699,10 @@ def cleanup_old_non_persistent_checkpoint(
         with _CHECKPOINT_CLEANUP_LOCK:
             for ckpt in _iter_ckpts:
                 if ckpt.exists():
-                    shutil.rmtree(ckpt)
+                    if msc is not None:
+                        msc.delete(str(ckpt), recursive=True)
+                    else:
+                        shutil.rmtree(ckpt)
 
     if do_async:
         threading.Thread(target=remove_iter_ckpts, args=(rm_iter_ckpts,)).start()

@@ -1901,6 +1901,20 @@ class TestCleanupNonPersistentCheckpoints:
             # Should remove the two older checkpoints
             assert mock_rmtree.call_count == 2
 
+    @patch("torch.distributed.is_initialized", return_value=False)
+    def test_cleanup_old_non_persistent_checkpoint_with_msc_url(self, mock_dist_init, tmp_path):
+        """Retention removes old checkpoints from an MSC-backed root."""
+        MultiStorageClientFeature.enable()
+        msc = MultiStorageClientFeature.import_package()
+        save_dir = f"msc://default{tmp_path}/checkpoints"
+        for name in ("iter_0001000", "iter_0002000", "iter_0003000"):
+            msc.os.makedirs(os.path.join(save_dir, name), exist_ok=True)
+
+        cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=1, do_async=False)
+
+        retained_checkpoints = sorted(checkpoint.name for checkpoint in msc.Path(save_dir).glob("iter_*"))
+        assert retained_checkpoints == ["iter_0003000"]
+
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
     def test_cleanup_old_non_persistent_checkpoint_non_rank0(self, mock_get_rank, mock_dist_init):
