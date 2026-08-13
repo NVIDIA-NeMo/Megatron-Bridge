@@ -243,6 +243,12 @@ if grep -qE 'mcore_(commit|ref)|MCORE_COMMIT|uv sync --all-extras --all-groups' 
   echo "Test template must use the already-validated MCore in the built image" >&2
   exit 1
 fi
+grep -Fq 'VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"' "$composite_action"
+grep -q 'MOUNT_FS: ${{ inputs.is_unit_test == '\''false'\'' }}' "$composite_action"
+grep -q 'HF_HOME=/home/TestData/HF_HOME' "$composite_action"
+grep -q 'NEMO_HOME=/home/TestData/nemo_home' "$composite_action"
+grep -q 'HF_HOME=/home/ubuntu/.cache/huggingface' "$composite_action"
+grep -q 'NEMO_HOME=/home/ubuntu/.cache/nemo' "$composite_action"
 
 # The baseline dependency layer must be structurally independent of the mutable
 # dispatched checkout. CI validates the ordering statically so this regression
