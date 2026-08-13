@@ -24,6 +24,7 @@ overrides = [
     { name = "tokenizers", specifier = ">=0.22.0,<0.23" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=4329ff84bfbdaa778a33cba02a15fb0807c64689" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -31,6 +32,12 @@ overrides = [
 [[manifest.dependency-metadata]]
 name = "flash-mla"
 version = "1.0.0+b7643bd"
+
+[[manifest.dependency-metadata]]
+name = "transformer-engine"
+version = "2.17.1+4329ff84"
+requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic", "torch>=2.1"]
+provides-extras = ["core-cu13", "pytorch"]
 
 [[package]]
 name = "absl-py"
@@ -2013,7 +2020,7 @@ ssm = [
     { name = "mamba-ssm" },
 ]
 te = [
-    { name = "transformer-engine", extra = ["core-cu13", "pytorch"] },
+    { name = "transformer-engine" },
 ]
 tensor-inspect = [
     { name = "nvdlfw-inspect" },
@@ -2024,7 +2031,6 @@ build = [
     { name = "cython" },
     { name = "ninja" },
     { name = "numpy" },
-    { name = "nvidia-cudnn-frontend" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
@@ -2111,7 +2117,6 @@ build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "ninja" },
     { name = "numpy" },
-    { name = "nvidia-cudnn-frontend", specifier = ">=1.25.0" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
@@ -4592,49 +4597,18 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.17.1"
-source = { registry = "https://pypi.nvidia.com/" }
-wheels = [
-    { url = "https://pypi.nvidia.com/transformer-engine/transformer_engine-2.17.1-py3-none-any.whl", hash = "sha256:8a4543c0b0ffe4c6117bfbe7a0b6bb9acba0d159782fa4922aaee202ba2cfdc9" },
-]
-
-[package.optional-dependencies]
-core-cu13 = [
-    { name = "transformer-engine-cu13" },
-]
-pytorch = [
-    { name = "transformer-engine-torch" },
-]
-
-[[package]]
-name = "transformer-engine-cu13"
-version = "2.17.1"
-source = { registry = "https://pypi.nvidia.com/" }
-dependencies = [
-    { name = "importlib-metadata" },
-    { name = "packaging" },
-    { name = "pydantic" },
-]
-wheels = [
-    { url = "https://pypi.nvidia.com/transformer-engine-cu13/transformer_engine_cu13-2.17.1-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:8f7131caa91f04bd2fe21b35d22d81564a7b43fc6ea33242288b0596abf094e1" },
-    { url = "https://pypi.nvidia.com/transformer-engine-cu13/transformer_engine_cu13-2.17.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:f24a3d84938da755127378e580c56d8918316e84d4ba65a74f50723a688fc29a" },
-]
-
-[[package]]
-name = "transformer-engine-torch"
-version = "2.17.1"
-source = { registry = "https://pypi.nvidia.com/" }
+version = "2.17.1+4329ff84"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=4329ff84bfbdaa778a33cba02a15fb0807c64689#4329ff84bfbdaa778a33cba02a15fb0807c64689" }
 dependencies = [
     { name = "einops" },
+    { name = "importlib-metadata" },
     { name = "nvdlfw-inspect" },
     { name = "onnx" },
     { name = "onnxscript" },
     { name = "packaging" },
     { name = "pydantic" },
     { name = "torch", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine-cu13" },
 ]
-sdist = { url = "https://pypi.nvidia.com/transformer-engine-torch/transformer_engine_torch-2.17.1.tar.gz", hash = "sha256:5891479407be643c2c6df3b68b25a6b9497a996efe577eb88899c27c04dad9e2" }
 
 [[package]]
 name = "transformers"

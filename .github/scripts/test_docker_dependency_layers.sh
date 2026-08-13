@@ -232,9 +232,26 @@ if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
   exit 1
 fi
 
-if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
-  grep -q '^name = "transformer-engine"$' pyproject.toml; then
-  echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
+te_override=$(grep -Eo \
+  'transformer-engine @ git\+https://github.com/NVIDIA/TransformerEngine\.git@[0-9a-f]{40}' \
+  pyproject.toml || true)
+te_revision=${te_override##*@}
+if [[ ! "$te_revision" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Bridge must pin TransformerEngine to a full source revision" >&2
+  exit 1
+fi
+if ! grep -q '^name = "transformer-engine"$' pyproject.toml; then
+  echo "Bridge must provide lock metadata for the pinned TransformerEngine source" >&2
+  exit 1
+fi
+if ! grep -Fq \
+  "source = { git = \"https://github.com/NVIDIA/TransformerEngine.git?rev=${te_revision}#${te_revision}\" }" \
+  uv.lock; then
+  echo "TransformerEngine must be locked to the validated source revision" >&2
+  exit 1
+fi
+if grep -qE '^name = "transformer-engine-(cu13|torch)"$' uv.lock; then
+  echo "TransformerEngine must be built from source instead of split binary packages" >&2
   exit 1
 fi
 

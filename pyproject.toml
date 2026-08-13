@@ -130,6 +130,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@4329ff84bfbdaa778a33cba02a15fb0807c64689",
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -156,6 +157,25 @@ url = "https://pypi.nvidia.com"
 name = "flash-mla"
 version = "1.0.0+b7643bd"
 requires-dist = []
+
+# transformer-engine is a git dependency marked no-build-isolation, so uv would build it
+# from source just to read its metadata while locking. Keep the metadata synchronized with
+# the pinned TE commit so lock generation stays fast while container installation still
+# compiles TE against the target CUDA and cuDNN runtime.
+[[tool.uv.dependency-metadata]]
+name = "transformer-engine"
+version = "2.17.1+4329ff84"
+requires-dist = [
+    "einops",
+    "importlib-metadata>=1.0",
+    "nvdlfw-inspect",
+    "onnx",
+    "onnxscript",
+    "packaging",
+    "pydantic",
+    "torch>=2.1",
+]
+provides-extras = ["core-cu13", "pytorch"]
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
@@ -217,7 +237,6 @@ build = [
     "numpy",
     "ninja",
     "nvidia-mathdx",
-    "nvidia-cudnn-frontend>=1.25.0",
 ]
 # CVE-carrying WAN diffusion codecs, needed only by WAN video caching
 # (src/megatron/bridge/diffusion/models/wan/inference/utils.py). All three are suppressed
