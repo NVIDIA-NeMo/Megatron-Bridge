@@ -114,9 +114,14 @@ runs:
         echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
           VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
+          HF_HOME=/home/TestData/HF_HOME
+          NEMO_HOME=/home/TestData/nemo_home
         else
           VOLUME_ARGS=""
+          HF_HOME=/home/ubuntu/.cache/huggingface
+          NEMO_HOME=/home/ubuntu/.cache/nemo
         fi
+        HF_MODULES_CACHE=/home/ubuntu/.cache/huggingface/modules
 
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
@@ -131,8 +136,9 @@ runs:
           --cpus=40 \
           --env GHA_RUNNER=${{ inputs.runner }} \
           --env HYDRA_FULL_ERROR=1 \
-          --env HF_HOME=/home/TestData/HF_HOME \
-          --env NEMO_HOME=/home/TestData/nemo_home \
+          --env HF_HOME=$HF_HOME \
+          --env HF_MODULES_CACHE=$HF_MODULES_CACHE \
+          --env NEMO_HOME=$NEMO_HOME \
           --env RUN_ID=${{ github.run_id }} \
           --env UV_NO_SYNC=1 \
           --workdir /opt/Megatron-Bridge \
