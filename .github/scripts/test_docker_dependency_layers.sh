@@ -31,7 +31,7 @@ if grep -q -- '--mount=type=secret,id=GH_TOKEN' "$dockerfile"; then
 fi
 mcore_reinstall_line=$(grep -n 'uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM' "$dockerfile" | cut -d: -f1)
 helper_assertion_line=$(grep -n "find 3rdparty/Megatron-LM/megatron/core/datasets -maxdepth 1 -name 'helpers_cpp\*\.so'" "$dockerfile" | cut -d: -f1)
-final_copy_line=$(grep -n '^COPY --chmod=644 \. /opt/Megatron-Bridge$' "$dockerfile" | cut -d: -f1)
+final_copy_line=$(grep -nE '^COPY (--chmod=644|--chown=1000:1000) \. /opt/Megatron-Bridge$' "$dockerfile" | cut -d: -f1)
 [[ -n "$mcore_reinstall_line" ]]
 [[ -n "$helper_assertion_line" ]]
 [[ -n "$final_copy_line" ]]
@@ -232,9 +232,38 @@ if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
   exit 1
 fi
 
+if ! grep -A1 '^te = \[$' pyproject.toml | grep -Fxq '    "megatron-core[te]",'; then
+  echo "Bridge's TE extra must enable the selected MCore ref's TE extra" >&2
+  exit 1
+fi
+grep -Fq '{ name = "megatron-core", extra = ["te"] }' uv.lock
 if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
   grep -q '^name = "transformer-engine"$' pyproject.toml; then
   echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
+  exit 1
+fi
+
+lock_package_field() {
+  local lock_file="$1"
+  local package="$2"
+  local field="$3"
+
+  awk -v package="$package" -v field="$field" '
+    $0 == "[[package]]" { in_package = 1; package_matches = 0; next }
+    in_package && $0 ~ /^\[\[/ { in_package = 0; package_matches = 0 }
+    in_package && $0 == "name = \"" package "\"" { package_matches = 1; next }
+    package_matches && index($0, field " = ") == 1 { print; exit }
+  ' "$lock_file"
+}
+
+mlm_te_source=$(lock_package_field 3rdparty/Megatron-LM/uv.lock transformer-engine source)
+bridge_te_source=$(lock_package_field uv.lock transformer-engine source)
+if [[ ! "$mlm_te_source" =~ ^source\ =\ \{\ git\ =\ \"https://github.com/NVIDIA/TransformerEngine\.git\?rev=[0-9a-f]{40}#[0-9a-f]{40}\"\ \}$ ]]; then
+  echo "Selected MCore lock must pin TransformerEngine to a full source revision" >&2
+  exit 1
+fi
+if [[ "$bridge_te_source" != "$mlm_te_source" ]]; then
+  echo "Bridge must lock the TransformerEngine source selected by MCore" >&2
   exit 1
 fi
 
@@ -243,6 +272,14 @@ if grep -qE 'mcore_(commit|ref)|MCORE_COMMIT|uv sync --all-extras --all-groups' 
   echo "Test template must use the already-validated MCore in the built image" >&2
   exit 1
 fi
+grep -Fq 'VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"' "$composite_action"
+grep -q 'MOUNT_FS: ${{ inputs.is_unit_test == '\''false'\'' }}' "$composite_action"
+grep -q 'HF_HOME=/home/TestData/HF_HOME' "$composite_action"
+grep -q 'NEMO_HOME=/home/TestData/nemo_home' "$composite_action"
+grep -q 'HF_HOME=/home/ubuntu/.cache/huggingface' "$composite_action"
+grep -q 'NEMO_HOME=/home/ubuntu/.cache/nemo' "$composite_action"
+grep -q 'HF_MODULES_CACHE=/home/ubuntu/.cache/huggingface/modules' "$composite_action"
+grep -q -- '--env HF_MODULES_CACHE=\$HF_MODULES_CACHE' "$composite_action"
 
 # The baseline dependency layer must be structurally independent of the mutable
 # dispatched checkout. CI validates the ordering statically so this regression
