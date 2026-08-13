@@ -501,9 +501,10 @@ def _load_hf_model(args, is_vl_model: bool):
 
     print_rank_0("Loading HuggingFace model...")
     model_class = get_model_class(args.model_class, is_vl_model)
+    hf_device_map = args.hf_device if args.hf_device_map == "cuda" else args.hf_device_map
     load_kwargs = {
         "torch_dtype": torch.bfloat16,
-        "device_map": args.hf_device_map,
+        "device_map": hf_device_map,
         "trust_remote_code": is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,

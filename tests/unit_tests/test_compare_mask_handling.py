@@ -513,14 +513,16 @@ class TestCompareMaskHandling:
                 ]
             )
 
-    def test_hf_loader_uses_single_device_map_without_hf_tensor_parallelism(self):
-        """Load the HF reference on one device without a Transformers TP plan."""
+    def test_hf_loader_respects_selected_device_without_hf_tensor_parallelism(self):
+        """Load the HF reference on the selected device without a Transformers TP plan."""
         args = compare.build_parser().parse_args(
             [
                 "--hf_model_path",
                 "org/model",
                 "--prompt",
                 "Hello",
+                "--hf-device",
+                "cuda:2",
             ]
         )
         loaded_model = MagicMock()
@@ -540,6 +542,6 @@ class TestCompareMaskHandling:
         assert result is loaded_model
         model_class.from_pretrained.assert_called_once()
         load_kwargs = model_class.from_pretrained.call_args.kwargs
-        assert load_kwargs["device_map"] == "cuda"
+        assert load_kwargs["device_map"] == "cuda:2"
         assert "tp_plan" not in load_kwargs
         assert "tp_size" not in load_kwargs
