@@ -5340,3 +5340,34 @@ class TestMaybeSaveDataloaderState:
         assert msc.torch.load(state_path, weights_only=True) == {
             "dataloader_state_dict": {"dummy_energon_state": "xyz"}
         }
+
+    @patch("megatron.bridge.training.checkpointing.torch.save")
+    @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
+    def test_writes_nondefault_msc_uri_through_remote_adapter(
+        self, mock_get_checkpoint_name, mock_ensure_directory, mock_torch_save
+    ):
+        """A named MSC profile must not be passed to PyTorch's local-path serializer."""
+        mock_get_checkpoint_name.return_value = "msc://named/checkpoints/energon/iter_0000010"
+        msc = Mock()
+        train_iterator = self._iterator()
+
+        with (
+            patch.object(MultiStorageClientFeature, "is_enabled", return_value=True),
+            patch.object(MultiStorageClientFeature, "import_package", return_value=msc),
+            patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"),
+        ):
+            maybe_save_dataloader_state(
+                Mock(),
+                train_iterator,
+                10,
+                "msc://named/checkpoints/energon",
+                pg_collection=self._pg(),
+            )
+
+        expected_path = "msc://named/checkpoints/energon/iter_0000010/train_dataloader_dprank000.pt"
+        mock_ensure_directory.assert_called_once_with(expected_path)
+        msc.torch.save.assert_called_once_with(
+            {"dataloader_state_dict": {"dummy_energon_state": "xyz"}}, expected_path
+        )
+        mock_torch_save.assert_not_called()
