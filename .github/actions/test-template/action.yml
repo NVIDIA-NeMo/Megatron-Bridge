@@ -121,6 +121,7 @@ runs:
           HF_HOME=/home/ubuntu/.cache/huggingface
           NEMO_HOME=/home/ubuntu/.cache/nemo
         fi
+        HF_MODULES_CACHE=/home/ubuntu/.cache/huggingface/modules
 
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
@@ -136,6 +137,7 @@ runs:
           --env GHA_RUNNER=${{ inputs.runner }} \
           --env HYDRA_FULL_ERROR=1 \
           --env HF_HOME=$HF_HOME \
+          --env HF_MODULES_CACHE=$HF_MODULES_CACHE \
           --env NEMO_HOME=$NEMO_HOME \
           --env RUN_ID=${{ github.run_id }} \
           --env UV_NO_SYNC=1 \

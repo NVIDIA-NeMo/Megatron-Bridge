@@ -249,6 +249,8 @@ grep -q 'HF_HOME=/home/TestData/HF_HOME' "$composite_action"
 grep -q 'NEMO_HOME=/home/TestData/nemo_home' "$composite_action"
 grep -q 'HF_HOME=/home/ubuntu/.cache/huggingface' "$composite_action"
 grep -q 'NEMO_HOME=/home/ubuntu/.cache/nemo' "$composite_action"
+grep -q 'HF_MODULES_CACHE=/home/ubuntu/.cache/huggingface/modules' "$composite_action"
+grep -q -- '--env HF_MODULES_CACHE=\$HF_MODULES_CACHE' "$composite_action"
 
 # The baseline dependency layer must be structurally independent of the mutable
 # dispatched checkout. CI validates the ordering statically so this regression
