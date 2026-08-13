@@ -19,8 +19,8 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.thinker_model import Qwen3ASRThinkerModel
-from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.thinker_model import Qwen25OmniThinkerModel
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import Qwen3OmniThinkerModel
+from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.thinker_model import Qwen25OmniThinkerModel
 from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
 
 

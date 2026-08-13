@@ -1280,3 +1280,30 @@ def test_create_ddp_config_builds_and_finalizes(monkeypatch) -> None:
 
 def test_create_ddp_config_returns_none_when_not_wrapping() -> None:
     assert create_ddp_config(wrap_with_ddp=False) is None
+
+
+def test_create_ddp_config_can_skip_finalization(monkeypatch) -> None:
+    class _FakeDDPConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.finalized = False
+
+        def finalize(self):
+            self.finalized = True
+
+    monkeypatch.setattr(
+        "megatron.bridge.training.config.DistributedDataParallelConfig",
+        _FakeDDPConfig,
+    )
+
+    ddp_config = create_ddp_config(
+        use_distributed_optimizer=False,
+        overrides={"check_for_nan_in_grad": True},
+        finalize=False,
+    )
+
+    assert ddp_config.kwargs == {
+        "use_distributed_optimizer": False,
+        "check_for_nan_in_grad": True,
+    }
+    assert ddp_config.finalized is False
