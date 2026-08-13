@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import json
 import logging
 import pickle
@@ -35,6 +34,8 @@ from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
+
+import webdataset as wds
 
 from megatron.bridge.data.energon import prepare_webdataset
 
@@ -197,52 +198,34 @@ class MediaResolver:
         )
 
 
-class SplitShardWriter:
-    """Write deterministic split-prefixed WebDataset tar shards."""
+def _make_shard_writer(output_dir: Path, split: str, max_samples_per_tar: int) -> wds.ShardWriter:
+    """Create the standard WebDataset writer with deterministic tar metadata."""
+    return wds.ShardWriter(
+        str(output_dir / f"{split}-shard-%06d.tar"),
+        maxcount=max_samples_per_tar,
+        maxsize=float("inf"),
+        verbose=0,
+        encoder=False,
+        mtime=0,
+        mode=0o644,
+        user="",
+        group="",
+    )
 
-    def __init__(self, output_dir: Path, split: str, max_samples_per_tar: int) -> None:
-        self.output_dir = output_dir
-        self.split = split
-        self.max_samples_per_tar = max_samples_per_tar
-        self._archive: tarfile.TarFile | None = None
-        self._shard_index = 0
-        self._samples_in_shard = 0
 
-    def close(self) -> None:
-        """Close the current shard, if one was opened."""
-        if self._archive is not None:
-            self._archive.close()
-            self._archive = None
-
-    def __enter__(self) -> SplitShardWriter:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
-
-    def _open_shard(self) -> None:
-        self.close()
-        shard_path = self.output_dir / f"{self.split}-shard-{self._shard_index:06d}.tar"
-        self._archive = tarfile.open(shard_path, "w")
-        self._shard_index += 1
-        self._samples_in_shard = 0
-
-    def _add_bytes(self, name: str, payload: bytes) -> None:
-        if self._archive is None:
-            raise RuntimeError("Shard writer has no open archive.")
-        info = tarfile.TarInfo(name=name)
-        info.size = len(payload)
-        info.mtime = 0
-        info.mode = 0o644
-        self._archive.addfile(info, io.BytesIO(payload))
-
-    def write(self, key: str, images: list[bytes], messages: list[dict[str, Any]]) -> None:
-        """Write one matching-key media list and conversation."""
-        if self._archive is None or self._samples_in_shard >= self.max_samples_per_tar:
-            self._open_shard()
-        self._add_bytes(f"{key}.jpgs", pickle.dumps(images, protocol=4))
-        self._add_bytes(f"{key}.json", json.dumps(messages, ensure_ascii=False).encode("utf-8"))
-        self._samples_in_shard += 1
+def _write_sample(
+    writer: wds.ShardWriter,
+    key: str,
+    images: list[bytes],
+    messages: list[dict[str, Any]],
+) -> None:
+    writer.write(
+        {
+            "__key__": key,
+            "jpgs": pickle.dumps(images, protocol=4),
+            "json": json.dumps(messages, ensure_ascii=False).encode("utf-8"),
+        }
+    )
 
 
 def _sample_split(key: str, validation_fraction: float) -> str:
@@ -357,46 +340,49 @@ def convert_subsets(
     seen_keys: set[str] = set()
     total = 0
 
-    with SplitShardWriter(output_dir, "train", max_samples_per_tar) as train_writer:
-        with SplitShardWriter(output_dir, "val", max_samples_per_tar) as val_writer:
-            writers = {"train": train_writer, "val": val_writer}
-            for subset in subsets:
-                subset_dir = (source_dir / subset).resolve()
-                if not subset_dir.is_relative_to(source_dir) or not subset_dir.is_dir():
-                    raise FileNotFoundError(f"Downloaded subset directory does not exist: {subset_dir}")
-                jsonl_path = _jsonl_path(subset_dir, subset)
-                with (
-                    MediaResolver(
-                        subset_dir,
-                        allow_loose_media=allow_loose_media,
-                        archive_paths=None if media_archives is None else media_archives.get(subset, ()),
-                    ) as resolver,
-                    jsonl_path.open(encoding="utf-8") as jsonl_file,
-                ):
-                    for line_number, line in enumerate(jsonl_file, start=1):
-                        if max_samples is not None and total >= max_samples:
-                            break
-                        if not line.strip():
-                            continue
-                        row = json.loads(line)
-                        sample_id = row.get("id")
-                        if not isinstance(sample_id, str) or not sample_id:
-                            raise ValueError(f"{jsonl_path}:{line_number}: row id must be a non-empty string.")
-                        key = _sample_key(subset, sample_id)
-                        if key in seen_keys:
-                            raise ValueError(f"{jsonl_path}:{line_number}: duplicate normalized sample key {key!r}.")
-                        seen_keys.add(key)
-                        messages, images = _normalize_messages(
-                            row.get("messages"),
-                            resolver=resolver,
-                            sample_name=f"{jsonl_path}:{line_number}",
+    writers: dict[str, wds.ShardWriter] = {}
+    with ExitStack() as writer_stack:
+        for subset in subsets:
+            subset_dir = (source_dir / subset).resolve()
+            if not subset_dir.is_relative_to(source_dir) or not subset_dir.is_dir():
+                raise FileNotFoundError(f"Downloaded subset directory does not exist: {subset_dir}")
+            jsonl_path = _jsonl_path(subset_dir, subset)
+            with (
+                MediaResolver(
+                    subset_dir,
+                    allow_loose_media=allow_loose_media,
+                    archive_paths=None if media_archives is None else media_archives.get(subset, ()),
+                ) as resolver,
+                jsonl_path.open(encoding="utf-8") as jsonl_file,
+            ):
+                for line_number, line in enumerate(jsonl_file, start=1):
+                    if max_samples is not None and total >= max_samples:
+                        break
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    sample_id = row.get("id")
+                    if not isinstance(sample_id, str) or not sample_id:
+                        raise ValueError(f"{jsonl_path}:{line_number}: row id must be a non-empty string.")
+                    key = _sample_key(subset, sample_id)
+                    if key in seen_keys:
+                        raise ValueError(f"{jsonl_path}:{line_number}: duplicate normalized sample key {key!r}.")
+                    seen_keys.add(key)
+                    messages, images = _normalize_messages(
+                        row.get("messages"),
+                        resolver=resolver,
+                        sample_name=f"{jsonl_path}:{line_number}",
+                    )
+                    split = _sample_split(key, validation_fraction)
+                    if split not in writers:
+                        writers[split] = writer_stack.enter_context(
+                            _make_shard_writer(output_dir, split, max_samples_per_tar)
                         )
-                        split = _sample_split(key, validation_fraction)
-                        writers[split].write(key, images, messages)
-                        counts[split] += 1
-                        total += 1
-                if max_samples is not None and total >= max_samples:
-                    break
+                    _write_sample(writers[split], key, images, messages)
+                    counts[split] += 1
+                    total += 1
+            if max_samples is not None and total >= max_samples:
+                break
 
     if counts["train"] == 0:
         raise RuntimeError("No training samples were written.")

@@ -101,41 +101,36 @@ export PRETRAINED_CHECKPOINT=/checkpoints/Qwen3-VL-8B-Instruct
 
 ## 4. Launch Qwen3-VL LoRA through `train.sh`
 
-The unified launcher selects the Qwen3-VL Energon task encoder with `--dataset energon`; the exact Energon recipe
-selects `vlm_step`. Mount the prepared dataset, checkpoint, and output paths into the training container:
+The exact recipe already selects LoRA, the Energon dataset config, and `vlm_step`; those launcher selectors do not need
+to be repeated. Mount the prepared dataset, checkpoint, and output paths into the training container:
 
 ```bash
 export OUTPUT_DIR=/results/qwen3-vl-nemotron-image-v3
 mkdir -p "$OUTPUT_DIR"
 
 ./scripts/training/train.sh \
-  --nodes 1 --gpus-per-node 1 \
+  --gpus-per-node 1 \
   --account ACCOUNT --partition PARTITION \
   --container-image /path/to/container.sqsh \
   --mount "$ENERGON_PATH" \
   --mount "$PRETRAINED_CHECKPOINT" \
   --mount "$OUTPUT_DIR" \
   --recipe qwen3_vl_8b_peft_energon_config \
-  --step-func vlm_step \
-  --mode lora --dataset energon \
   --seq_length 16384 \
-  checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
+  --pretrained_checkpoint "$PRETRAINED_CHECKPOINT" \
+  --save_dir "$OUTPUT_DIR/checkpoints" \
+  --save_interval 1 \
+  --max_steps 1 \
+  --global_batch_size 1 \
+  --micro_batch_size 1 \
   checkpoint.load=null \
-  checkpoint.save="$OUTPUT_DIR/checkpoints" \
-  checkpoint.save_interval=1 \
-  train.train_iters=1 \
-  train.global_batch_size=1 \
-  train.micro_batch_size=1 \
   validation.eval_interval=1 \
   validation.eval_iters=1 \
-  validation.eval_micro_batch_size=1 \
   dataset.path="$ENERGON_PATH" \
   dataset.micro_batch_size=1 \
   dataset.num_workers=0 \
-  dataset.num_val_workers=0 \
   dataset.packing_buffer_size=16 \
   dataset.task_encoder.hf_processor_revision="$MODEL_REVISION" \
-  +tokenizer.hf_tokenizer_kwargs.revision="$MODEL_REVISION" \
   model.recompute_granularity=full \
   model.recompute_method=uniform \
   model.recompute_num_layers=1 \
@@ -148,10 +143,16 @@ mkdir -p "$OUTPUT_DIR"
 The pinned `turing` subset contains long reasoning targets: with the pinned Qwen3-VL processor and default image
 pixel bounds, the longest observed row is 15,608 tokens. The explicit 16,384-token setting keeps every source row
 eligible; the recipe's 4,096-token default would skip overlength rows. Full activation recompute keeps the documented
-one-GPU LoRA smoke within an 80 GiB H100. This one-step baseline intentionally uses no worker subprocesses so its
-command matches the validated smoke exactly. After it passes, increase `train.train_iters`, global batch size, and
-`dataset.num_workers`/`dataset.num_val_workers` for the target run. Benchmark recompute against context parallelism on
-the target hardware instead of silently reducing the dataset.
+one-GPU LoRA smoke within an 80 GiB H100. Native packing requires physical micro-batch size 1 in both the training and
+Energon configs, per-token loss, and non-averaged DDP collectives; these settings are not optional for this packed run.
+The processor revision is also required to reproduce the measured sequence lengths and pins the processor's tokenizer
+artifacts to the same model revision.
+
+The one-step limit, global batch size 1, validation/checkpoint interval 1, worker count 0, and log interval 1 are
+smoke/debug settings rather than packing requirements. They preserve the validated baseline and make its loss and
+checkpoint evidence visible. After it passes, increase the step count, global batch size, and worker count for the
+target run. `num_val_workers` defaults to `num_workers`. Benchmark recompute against context parallelism on the target
+hardware instead of silently reducing the dataset.
 
 For a local interactive smoke, export the same `ENERGON_PATH` and `PRETRAINED_CHECKPOINT`, then run
 `bash examples/models/qwen/qwen3_vl/peft_energon.sh`.
