@@ -435,6 +435,36 @@ def test_build_modelopt_export_plan_packs_lazily_and_preserves_source(monkeypatc
     ]
 
 
+def test_build_modelopt_export_plan_omits_internal_quantizer_state(monkeypatch):
+    weight_task = _task(
+        "decoder.layers.0.mlp.linear_fc1.weight",
+        "model.layers.0.mlp.up_proj.weight",
+    )
+    quantizer_task = _task(
+        "decoder.layers.0.mlp.linear_fc1.weight_quantizer._amax",
+        "model.layers.0.mlp.up_proj.weight_quantizer._amax",
+    )
+    monkeypatch.setattr(
+        modelopt_utils,
+        "collect_modelopt_quant_states",
+        lambda tasks: {tasks[0].global_param_name: _state(QUANTIZATION_W4A16_NVFP4)},
+    )
+    monkeypatch.setattr(
+        modelopt_utils,
+        "collect_modelopt_config_weights",
+        lambda tasks: {tasks[0].global_param_name},
+    )
+
+    plan = build_modelopt_export_plan(
+        [weight_task, quantizer_task],
+        model=_model(),
+    )
+
+    assert [task.global_param_name for task in plan.conversion_tasks] == [
+        weight_task.global_param_name
+    ]
+
+
 def test_build_modelopt_export_plan_packs_grouped_experts_independently(monkeypatch):
     hf_name = "model.layers.0.mlp.experts.gate_up_proj.weight"
     tasks = [
