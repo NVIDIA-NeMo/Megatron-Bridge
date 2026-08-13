@@ -240,6 +240,24 @@ def test_staged_comparison_artifact_requires_explicit_containing_mount():
         module._validate_staged_comparison_mount(args, ["/host:/other"])
 
 
+def test_staged_comparison_resolves_repository_relative_artifact_path():
+    module = _load_setup_inference_module()
+    args, _ = module.parse_args(
+        _launcher_args(
+            "--task",
+            "model-comparison",
+            "--staged-model-comparison",
+            "--comparison-artifact-path",
+            "work/model-verification/hf.pt",
+        )
+    )
+
+    module._validate_args(args)
+
+    assert args.comparison_artifact_path == "/opt/Megatron-Bridge/work/model-verification/hf.pt"
+    module._validate_staged_comparison_mount(args, ["/host/repo:/opt/Megatron-Bridge"])
+
+
 @pytest.mark.parametrize(
     "option",
     ["--hf-output-path", "--hf-input-path", "--hf-device-map=auto", "--hf-max-gpu-memory=60GiB"],

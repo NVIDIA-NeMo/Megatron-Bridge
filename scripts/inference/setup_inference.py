@@ -211,8 +211,15 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--comparison-hf-max-gpu-memory requires --staged-model-comparison.")
     if args.comparison_hf_max_gpu_memory is not None and not args.comparison_hf_max_gpu_memory.strip():
         raise ValueError("--comparison-hf-max-gpu-memory must not be empty.")
-    if args.comparison_artifact_path and not PurePosixPath(args.comparison_artifact_path).is_absolute():
-        raise ValueError("--comparison-artifact-path must be an absolute container path.")
+    if args.comparison_artifact_path:
+        artifact_path = PurePosixPath(args.comparison_artifact_path)
+        if not artifact_path.is_absolute():
+            if not artifact_path.parts or artifact_path.parts[0] != "work" or ".." in artifact_path.parts:
+                raise ValueError(
+                    "--comparison-artifact-path must be an absolute container path or a repository-relative "
+                    "path under work/."
+                )
+            args.comparison_artifact_path = str(PurePosixPath(CONTAINER_REPO_ROOT) / artifact_path)
 
 
 def _validate_staged_comparison_mount(args: argparse.Namespace, mounts: list[str]) -> None:

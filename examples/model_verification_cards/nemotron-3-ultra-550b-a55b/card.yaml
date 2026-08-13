@@ -10,20 +10,21 @@ summary: >
   has public BF16 H100 pretraining, packed full-SFT, and packed PEFT recipes.
   Its pinned 24-GPU BF16
   Hugging Face-to-Megatron-to-Hugging Face round trip and deterministic
-  Megatron inference are verified. CPU conversion, manual forward parity,
-  functional training, checkpoint resume, and the GB200 and H100 FSDP
-  workloads still require completed verification runs before those support
-  claims are promoted.
+  Megatron inference are verified, and its staged Hugging Face/Megatron
+  manual forward comparison passes the required logit-correlation gate. CPU
+  conversion, functional training, checkpoint resume, and the GB200 and H100
+  FSDP workloads still require completed verification runs before those
+  support claims are promoted.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
+      - manual_forward_pass
       - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - manual_forward_pass
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
@@ -40,7 +41,7 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 64b8a3085012a431101b624cf307ed4d7ecdbbb5  # pragma: allowlist secret
+  bridge_commit: bb77c7e238e49e9958e0846023a8df8a16af65db  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -123,17 +124,25 @@ items:
       architecture NemotronHForCausalLM.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 64b8a3085012a431101b624cf307ed4d7ecdbbb5  # pragma: allowlist secret
+    command: >
+      ./scripts/inference/infer.sh --nodes 3 --gpus-per-node 8
+      --task model-comparison --staged-model-comparison
+      --comparison-artifact-path work/model-verification/nemotron-3-ultra-550b-a55b/manual-forward/hf-stage.pt
+      --comparison-hf-max-gpu-memory 60GiB
+      --hf_model_path nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+      --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
+      --megatron_model_path work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
+      --prompt "Explain why the sky appears blue in one sentence."
+      --tp 1 --pp 3 --ep 8 --etp 1
+    last_verified: 2026-08-12
     expected_result: >
-      Verification requires the pinned Hugging Face and imported Megatron
-      models to agree on the prompt's next token with cosine similarity of at
-      least 0.99; maximum and mean absolute logit differences must also be
-      reported. The staged comparison path must complete its single-node,
-      automatically partitioned Hugging Face stage and dependent distributed
-      Megatron stage without a load, conversion, or forward-pass failure.
+      The staged Hugging Face and dependent distributed Megatron jobs completed
+      successfully. The next token matched: both models selected ID 1256,
+      decoded as two spaces. Cosine similarity: 0.999861. Logits diff - max:
+      0.265625, mean: 0.062669.
 
   inference:
     status: verified

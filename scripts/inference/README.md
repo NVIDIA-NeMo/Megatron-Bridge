@@ -98,6 +98,11 @@ load-time conversion needs additional GPU workspace,
 device map and permits the remaining weights to spill into available host
 memory.
 
+For portable repository workflows, `--comparison-artifact-path` also accepts a
+relative path under `work/`. The launcher resolves it below
+`/opt/Megatron-Bridge`, and the repository mount must be shared by every
+requested node.
+
 ## Model and checkpoint inputs
 
 Use `--hf-model-path` for the Hugging Face model ID or local directory that
