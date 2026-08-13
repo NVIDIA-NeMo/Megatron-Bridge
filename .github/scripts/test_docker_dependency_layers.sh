@@ -232,9 +232,38 @@ if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
   exit 1
 fi
 
+if ! grep -A1 '^te = \[$' pyproject.toml | grep -Fxq '    "megatron-core[te]",'; then
+  echo "Bridge's TE extra must enable the selected MCore ref's TE extra" >&2
+  exit 1
+fi
+grep -Fq '{ name = "megatron-core", extra = ["te"] }' uv.lock
 if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
   grep -q '^name = "transformer-engine"$' pyproject.toml; then
   echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
+  exit 1
+fi
+
+lock_package_field() {
+  local lock_file="$1"
+  local package="$2"
+  local field="$3"
+
+  awk -v package="$package" -v field="$field" '
+    $0 == "[[package]]" { in_package = 1; package_matches = 0; next }
+    in_package && $0 ~ /^\[\[/ { in_package = 0; package_matches = 0 }
+    in_package && $0 == "name = \"" package "\"" { package_matches = 1; next }
+    package_matches && index($0, field " = ") == 1 { print; exit }
+  ' "$lock_file"
+}
+
+mlm_te_source=$(lock_package_field 3rdparty/Megatron-LM/uv.lock transformer-engine source)
+bridge_te_source=$(lock_package_field uv.lock transformer-engine source)
+if [[ ! "$mlm_te_source" =~ ^source\ =\ \{\ git\ =\ \"https://github.com/NVIDIA/TransformerEngine\.git\?rev=[0-9a-f]{40}#[0-9a-f]{40}\"\ \}$ ]]; then
+  echo "Selected MCore lock must pin TransformerEngine to a full source revision" >&2
+  exit 1
+fi
+if [[ "$bridge_te_source" != "$mlm_te_source" ]]; then
+  echo "Bridge must lock the TransformerEngine source selected by MCore" >&2
   exit 1
 fi
 
