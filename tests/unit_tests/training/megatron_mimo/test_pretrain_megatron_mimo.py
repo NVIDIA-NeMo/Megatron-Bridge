@@ -258,6 +258,45 @@ def test_pretrain_megatron_mimo_calls_setup_and_train(
     mock_finish.assert_called_once()
 
 
+def test_pretrain_megatron_mimo_aborts_async_state_after_training_failure():
+    """MegatronMIMO should abort initialized async state after training fails."""
+    from megatron.bridge.training.pretrain_megatron_mimo import pretrain_megatron_mimo
+
+    cfg = _make_cfg()
+    state = MagicMock()
+    async_calls_queue = MagicMock()
+    state._async_calls_queue = async_calls_queue
+    failure = RuntimeError("training failed")
+    setup_output = _make_setup_output(module_to_grid_map={"language": MagicMock()})
+    setup_output.global_state = state
+
+    with (
+        patch("megatron.bridge.training.pretrain_megatron_mimo.dist") as mock_dist,
+        patch("megatron.bridge.training.pretrain_megatron_mimo.megatron_mimo_runtime_config_update"),
+        patch(
+            "megatron.bridge.training.pretrain_megatron_mimo.setup_megatron_mimo",
+            return_value=setup_output,
+        ),
+        patch("megatron.bridge.training.pretrain_megatron_mimo.train_megatron_mimo", side_effect=failure),
+        patch("megatron.bridge.training.pretrain.destroy_global_state") as mock_destroy_global_state,
+        patch("megatron.core.dist_checkpointing.strategies.filesystem_async._results_queue", None),
+        pytest.raises(RuntimeError, match="training failed") as exc_info,
+    ):
+        mock_dist.is_initialized.return_value = True
+        pretrain_megatron_mimo(
+            cfg=cfg,
+            forward_step_func=MagicMock(),
+            build_data_iterators_fn=MagicMock(),
+            global_state=state,
+        )
+
+    assert exc_info.value is failure
+    async_calls_queue.close.assert_called_once_with(abort=True)
+    assert state._async_calls_queue is None
+    mock_destroy_global_state.assert_called_once()
+    mock_dist.destroy_process_group.assert_not_called()
+
+
 def test_finish_train_calls_cleanup():
     """_finish_train should finalize async saves, shut down NVRx/FT, and flush loggers."""
     from megatron.bridge.training.train import _finish_train

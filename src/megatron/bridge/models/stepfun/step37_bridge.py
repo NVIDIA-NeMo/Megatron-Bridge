@@ -112,6 +112,18 @@ class Step37Bridge(MegatronModelBridge):
     # uses the identical HF schema.
     CONFIG_MAPPING = Step35Bridge.CONFIG_MAPPING
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Step37ModelProvider) -> dict:
+        """Convert a Step3.7 provider into its nested Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        mtp_num_layers = hf_config.pop("num_nextn_predict_layers", None)
+        if mtp_num_layers is not None:
+            hf_config["text_config"] = {"num_nextn_predict_layers": mtp_num_layers}
+        projector_bias = getattr(provider, "projector_bias", None)
+        if projector_bias is not None:
+            hf_config["projector_bias"] = projector_bias
+        return hf_config
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Step37ModelProvider:
         """Convert a HuggingFace Step3.7 config into a :class:`Step37ModelProvider`.
 
@@ -488,6 +500,8 @@ class Step37Bridge(MegatronModelBridge):
         vision_norm_param_mappings = {
             "vision_model.ln_pre.weight": "vision_model.ln_pre.weight",
             "vision_model.ln_pre.bias": "vision_model.ln_pre.bias",
+            "vision_model.ln_post.weight": "vision_model.ln_post.weight",
+            "vision_model.ln_post.bias": "vision_model.ln_post.bias",
             "vision_model.transformer.resblocks.*.ln_1.weight": "vision_model.transformer.resblocks.*.ln_1.weight",
             "vision_model.transformer.resblocks.*.ln_1.bias": "vision_model.transformer.resblocks.*.ln_1.bias",
             "vision_model.transformer.resblocks.*.ln_2.weight": "vision_model.transformer.resblocks.*.ln_2.weight",
@@ -507,6 +521,7 @@ class Step37Bridge(MegatronModelBridge):
             "vision_model.vit_downsampler2.bias": "vision_model.vit_downsampler2.bias",
             # Top-level nn.Parameter on Step37VisionModel — AutoMapping
             # would see the top-level vision class as the owning module.
+            "vision_model.class_embedding": "vision_model.class_embedding",
             "vision_model.positional_embedding": "vision_model.positional_embedding",
             # Attention — in_proj_* are bare nn.Parameter on
             # EncoderVisionAttention; out_proj.* are plain nn.Linear.
@@ -526,6 +541,7 @@ class Step37Bridge(MegatronModelBridge):
             # inside ``image_insert_embedding.align_projector``; on the HF side
             # it is the top-level ``vit_large_projector`` linear.
             "image_insert_embedding.align_projector.weight": "vit_large_projector.weight",
+            "image_insert_embedding.align_projector.bias": "vit_large_projector.bias",
         }
         for megatron_param, hf_param in vision_replicated_param_mappings.items():
             mapping_list.append(ReplicatedMapping(megatron_param=megatron_param, hf_param=hf_param))

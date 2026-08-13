@@ -376,6 +376,7 @@ class TestFinalizeModelGradsMultimodule:
         s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
         mock_in_grid.return_value = True
         mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
+        s.encoder_module.config.calculate_per_token_loss = True
 
         num_tokens = torch.tensor(100)
 
@@ -405,6 +406,58 @@ class TestFinalizeModelGradsMultimodule:
         s.encoder_module.scale_gradients.assert_called_once_with(1.0 / 100)
         s.llm_module.scale_gradients.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("language_per_token", "encoder_per_token", "expected_gradient"),
+        [
+            (True, False, 4.0),
+            (False, True, 200.0),
+        ],
+    )
+    @patch(f"{MODULE}.dist")
+    @patch(f"{MODULE}.is_current_rank_in_grid")
+    @patch(f"{MODULE}._get_dp_size_from_grid")
+    @patch(f"{MODULE}._finalize_model_grads")
+    def test_mixed_per_token_configs_preserve_encoder_gradient_normalization(
+        self,
+        mock_finalize,
+        mock_dp,
+        mock_in_grid,
+        mock_dist,
+        language_per_token,
+        encoder_per_token,
+        expected_gradient,
+    ):
+        """Module-local DDP scaling must not change the global encoder gradient."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
+        mock_in_grid.return_value = True
+        mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
+        s.llm_module.config.calculate_per_token_loss = language_per_token
+        s.encoder_module.config.calculate_per_token_loss = encoder_per_token
+
+        # Simulate the value after MCore DDP reduction for a global encoder
+        # gradient sum of 400. Non-per-token DDP averages over encoder DP;
+        # per-token DDP leaves the global sum intact.
+        encoder_gradient = torch.tensor(400.0)
+
+        def finalize_with_module_local_ddp(model, **kwargs):
+            if model[0] is s.encoder_module and not encoder_per_token:
+                encoder_gradient.div_(s.dp_by_grid[id(s.encoder_grid)])
+
+        mock_finalize.side_effect = finalize_with_module_local_ddp
+        s.encoder_module.scale_gradients.side_effect = encoder_gradient.mul_
+
+        num_tokens = torch.tensor(100) if language_per_token else None
+        finalize_model_grads_multimodule(
+            [MagicMock()],
+            num_tokens,
+            infra=s.infra,
+            module_to_grid_tuple=s.module_to_grid_tuple,
+        )
+
+        assert encoder_gradient.item() == pytest.approx(expected_gradient)
+
     @patch(f"{MODULE}.dist")
     @patch(f"{MODULE}.is_current_rank_in_grid")
     @patch(f"{MODULE}._get_dp_size_from_grid")
@@ -420,6 +473,8 @@ class TestFinalizeModelGradsMultimodule:
         s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
         mock_in_grid.return_value = True
         mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
+        s.llm_module.config.calculate_per_token_loss = False
+        s.encoder_module.config.calculate_per_token_loss = False
 
         finalize_model_grads_multimodule(
             [MagicMock()],

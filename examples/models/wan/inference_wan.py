@@ -20,8 +20,6 @@ import sys
 import warnings
 from datetime import datetime
 
-from easydict import EasyDict
-
 
 warnings.filterwarnings("ignore")
 
@@ -185,8 +183,8 @@ def generate(args):  # noqa: D103
         torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl", init_method="env://", rank=rank, world_size=world_size)
 
-    inference_cfg = EasyDict(
-        {
+    inference_cfg = argparse.Namespace(
+        **{
             # t5
             "t5_dtype": torch.bfloat16,
             "text_len": 512,

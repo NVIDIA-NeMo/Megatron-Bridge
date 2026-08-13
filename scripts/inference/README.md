@@ -26,7 +26,10 @@ are forwarded unchanged to the selected inference entry point. Text generation
 uses `text_generation.py`; `--task vlm-generation` selects
 `vlm_generation.py` for multimodal generation, and `--task model-comparison`
 selects `examples/conversion/compare_hf_and_megatron/compare.py` for forward-logit
-parity.
+parity. `--task legacy-full-prefix-generation` selects a slow, non-optimized
+compatibility path and requires `--legacy-full-prefix`. It recomputes the
+accumulated prefix for every decoding step for models such as GLM-5 whose
+AbsorbedMLA attention does not yet support cached inference.
 
 ```bash
 ./scripts/inference/infer.sh \
@@ -131,6 +134,10 @@ for inline prompts, or pass a mounted line-oriented or JSONL file with
 
 Run the selected entry point with `--help` in a configured Megatron Bridge
 environment for its full CLI.
+
+Use `--task hf-inference` to reload an exported Hugging Face checkpoint and run
+one deterministic inference. Its forwarded model argument is `--hf-model`, and
+multimodal verification additionally uses `--image` and `--chat-template`.
 
 ## Environment and cluster options
 

@@ -8,7 +8,7 @@ Scripts for [EXAONE-4.5-33B](https://huggingface.co/LGAI-EXAONE/EXAONE-4.5-33B),
 | Architecture | Vision-language model (`Exaone4_5_ForConditionalGeneration`) |
 | Default dtype | BF16 |
 | Default inference parallelism | `TP=4, PP=1, EP=1` |
-| Sequence length in recipes | 8192 |
+| Sequence length in recipes | 4096 |
 
 **Requirements:** use `--trust_remote_code` when loading the Hugging Face checkpoint.
 
@@ -64,26 +64,28 @@ ${WORKSPACE}/models/EXAONE-4.5-33B
 Equivalent direct command:
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model LGAI-EXAONE/EXAONE-4.5-33B \
-  --megatron-path "${WORKSPACE}/models/EXAONE-4.5-33B"
+  --megatron-path "${WORKSPACE}/models/EXAONE-4.5-33B" \
+  --trust-remote-code
 ```
 
 ## Finetune Recipes
 
 Available recipes:
 
-- `exaone45_vl_sft_config`: Full supervised fine-tuning for EXAONE 4.5 VL.
-- `exaone45_vl_peft_config`: Parameter-efficient fine-tuning with LoRA or DoRA.
+- `exaone45_vl_33b_sft_16gpu_h100_bf16_config`: Full supervised fine-tuning for EXAONE 4.5 VL.
+- `exaone45_vl_33b_peft_4gpu_h100_bf16_config`: Parameter-efficient fine-tuning with LoRA or DoRA.
 
 Recipe defaults:
 
 | Recipe | TP | PP | Notes |
 |---|---:|---:|---|
-| `exaone45_vl_sft_config` | 4 | 1 | Full SFT, sequence parallel enabled |
-| `exaone45_vl_peft_config` | 1 | 1 | PEFT, sequence parallel disabled |
+| `exaone45_vl_33b_sft_16gpu_h100_bf16_config` | 4 | 4 | Full SFT, sequence parallel disabled |
+| `exaone45_vl_33b_peft_4gpu_h100_bf16_config` | 4 | 1 | PEFT, sequence parallel disabled |
 
-The recipes freeze the vision encoder by default (`freeze_vision_model=True`) and keep the language model and vision projection trainable.
+Both recipes train the vision encoder, language model, and vision projection. Their micro batch size is 1, so in-batch
+packing is disabled.
 
 Before training, set the usual runtime environment variables as needed:
 

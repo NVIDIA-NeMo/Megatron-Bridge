@@ -80,6 +80,11 @@ def _resolve_output_shard_path(output_path: Path, filename: str) -> Path:
     return output_file_path
 
 
+def _contiguous_safetensors(tensors: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Return tensors in the contiguous layout required by safetensors."""
+    return {name: tensor if tensor.is_contiguous() else tensor.contiguous() for name, tensor in tensors.items()}
+
+
 class StateDict(Mapping[str, torch.Tensor]):
     """
     A state dict accessor that provides a unified interface for querying model
@@ -752,7 +757,7 @@ class SafeTensorsStateSource(StateSource):
         if not key_to_filename_map:
             buffered_tensors = dict(generator)
             if buffered_tensors:
-                save_file(buffered_tensors, output_path / "model.safetensors")
+                save_file(_contiguous_safetensors(buffered_tensors), output_path / "model.safetensors")
             return
 
         filename_to_keys_map = defaultdict(set)
@@ -797,7 +802,7 @@ class SafeTensorsStateSource(StateSource):
 
                 output_file_path = _resolve_output_shard_path(output_path, filename)
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                save_file(tensors_to_save, output_file_path)
+                save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
                 total_saved_tensor_bytes += sum(
                     tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
                 )
@@ -833,7 +838,7 @@ class SafeTensorsStateSource(StateSource):
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
                     output_file_path = _resolve_output_shard_path(output_path, filename)
                     output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_file(tensors_to_save, output_file_path)
+                    save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
                     total_saved_tensor_bytes += sum(
                         tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
                     )
@@ -959,7 +964,7 @@ class SafeTensorsStateSource(StateSource):
             if is_saver_rank and saver_index == 0:
                 buffered_tensors = dict(generator)
                 if buffered_tensors:
-                    save_file(buffered_tensors, output_path / "model.safetensors")
+                    save_file(_contiguous_safetensors(buffered_tensors), output_path / "model.safetensors")
             else:
                 for _ in generator:
                     pass
@@ -1001,7 +1006,7 @@ class SafeTensorsStateSource(StateSource):
             try:
                 output_file_path = _resolve_output_shard_path(output_path, fname)
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                save_file(tensors_to_save, output_file_path)
+                save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
             except Exception as error:
                 local_export_error = f"Rank {rank} failed to write shard '{fname}': {type(error).__name__}: {error}"
                 if output_file_path is not None:

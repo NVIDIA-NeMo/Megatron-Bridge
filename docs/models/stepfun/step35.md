@@ -17,6 +17,7 @@
 ## Examples
 
 For conversion, inference, pretraining, Slurm launch scripts, and MCore branch notes, see the [Step-3.5-Flash examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/stepfun/step35/README.md).
+For Step 3.7 Flash conversion and training examples, see the [Step 3.7 Flash examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/stepfun/step37/README.md).
 
 ## Related Implementation
 

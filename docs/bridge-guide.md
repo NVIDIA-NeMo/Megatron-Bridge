@@ -290,6 +290,11 @@ Or with a helper script:
 ./scripts/conversion/convert.sh export --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b --hf-path ./hf_exports/llama32_1b
 ```
 
+Megatron-LM training checkpoints do not normally contain the Bridge
+`run_config.yaml` required by this export command. See
+[Export Megatron-LM checkpoints without a Bridge run config](megatron-lm-to-megatron-bridge.md#export-megatron-lm-checkpoints-without-a-bridge-run-config)
+for the configuration generation and validation workflow.
+
 ### Create Megatron models and run locally
 
 ```bash

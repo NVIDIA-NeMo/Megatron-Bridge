@@ -1153,6 +1153,127 @@ def test_infer_assistant_mask_boundary_config_from_llama_template():
     assert all(token_ids == [303] for token_ids in boundary_config.role_end_tokens.values())
 
 
+class _HarmonyBoundaryTokenizer(_Tokenizer):
+    """gpt-oss / OpenAI Harmony tokenizer double.
+
+    A single assistant turn renders as two channel segments (``analysis`` then
+    ``final``), each wrapped in its own ``<|start|>assistant<|channel|>...
+    <|message|>...`` header. ``<|start|>`` and the role are emitted separately,
+    so the literal string ``<|start|>assistant`` never appears in the template.
+    """
+
+    chat_template = (
+        "{% for message in messages %}"
+        "<|start|>{{ message.role }}<|channel|>{{ channel }}<|message|>{{ message.content }}<|end|>"
+        "{% endfor %}<|return|>"
+    )
+
+    _role_ids = {"assistant": 210, "user": 211, "system": 212, "developer": 213, "tool": 214}
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "<|start|>assistant": [200, 210],
+            "<|start|>user": [200, 211],
+            "<|start|>system": [200, 212],
+            "<|start|>developer": [200, 213],
+            "<|start|>tool": [200, 214],
+            "<|return|>": [204],
+            "<|end|>": [203],
+            "<|call|>": [205],
+            "question": [20],
+            "reasoning": [30, 31],
+            "answer": [40, 41],
+        }
+        return {"input_ids": mapping.get(text, [42])}
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        **kwargs,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = []
+        for turn in conversation:
+            role_id = self._role_ids[turn["role"]]
+            content_ids = self(turn["content"])["input_ids"]
+            if turn["role"] == "assistant":
+                # Chain-of-thought in the analysis channel, then the user-facing final channel.
+                input_ids.extend([200, role_id, 201, 220, 202] + self("reasoning")["input_ids"] + [203])
+                input_ids.extend([200, role_id, 201, 221, 202] + content_ids + [204])
+            else:
+                input_ids.extend([200, role_id, 202] + content_ids + [203])
+        return {"input_ids": input_ids}
+
+
+class _HarmonyBoundaryProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _HarmonyBoundaryTokenizer()
+
+
+def test_infer_assistant_mask_boundary_config_from_gpt_oss_harmony_template():
+    processor = _HarmonyBoundaryProcessor()
+    # The concatenated assistant header is not a literal substring of the template;
+    # detection must rely on the standalone structural specials.
+    assert "<|start|>assistant" not in processor.tokenizer.chat_template
+    boundary_config = infer_assistant_mask_boundary_config(processor)
+
+    assert boundary_config is not None
+    # Start markers stop at the role header so the loss span begins at <|channel|>,
+    # covering the analysis channel as well as the final channel.
+    assert boundary_config.role_start_tokens == {
+        "assistant": [200, 210],
+        "system": [200, 212],
+        "developer": [200, 213],
+        "user": [200, 211],
+        "tool": [200, 214],
+    }
+    assert all(token_ids == [204] for token_ids in boundary_config.role_end_tokens.values())
+    # <|end|> (message) and <|call|> (tool call) terminators back up the <|return|> primary.
+    assert all(variants == [[203], [205]] for variants in boundary_config.role_end_token_variants.values())
+
+
+def test_gpt_oss_harmony_assistant_mask_covers_analysis_and_final_channels():
+    processor = _HarmonyBoundaryProcessor()
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        processor,
+    )
+
+    user_block = [200, 211, 202, 20, 203]  # <|start|>user<|message|>question<|end|>
+    analysis_block = [200, 210, 201, 220, 202, 30, 31, 203]  # ...<|channel|>analysis<|message|>reasoning<|end|>
+    final_block = [200, 210, 201, 221, 202, 40, 41, 204]  # ...<|channel|>final<|message|>answer<|return|>
+    assert tokenized.input_ids.tolist() == user_block + analysis_block + final_block
+
+    mask = tokenized.assistant_mask.tolist()
+    assert len(mask) == len(user_block + analysis_block + final_block)
+
+    # The user turn and the assistant's priming role header (<|start|>assistant) carry no loss.
+    priming_header_len = 2
+    assert not any(mask[: len(user_block) + priming_header_len])
+    # Everything from the first <|channel|> through the final <|return|> is trained, so the
+    # analysis chain-of-thought and the final answer both contribute to the loss.
+    assert all(mask[len(user_block) + priming_header_len :])
+
+    # Pin the reasoning (analysis channel) and answer (final channel) token positions so a
+    # regression that drops the analysis channel from the loss fails loudly here.
+    reasoning_positions = [len(user_block) + 5, len(user_block) + 6]
+    answer_positions = [len(user_block) + len(analysis_block) + 5, len(user_block) + len(analysis_block) + 6]
+    assert tokenized.input_ids[reasoning_positions].tolist() == [30, 31]
+    assert tokenized.input_ids[answer_positions].tolist() == [40, 41]
+    assert all(mask[position] for position in reasoning_positions + answer_positions)
+
+
 @pytest.mark.parametrize("column", ["messages", "conversation", "conversations"])
 def test_shared_chat_preprocessing_supports_all_declared_conversation_columns(column):
     turns = [

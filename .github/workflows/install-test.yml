@@ -149,19 +149,29 @@ jobs:
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_commit != '' }}
+        env:
+          MCORE_BRANCH: ${{ github.event.inputs.mcore_branch || 'unknown' }}
+          MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}
+          MCORE_REPO: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}
+          TRIGGERED_BY: ${{ github.event.inputs.triggered_by }}
         run: |
-          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
-          echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
-          echo "📍 MCore repo: ${{ github.event.inputs.mcore_repo || 'https://github.com/NVIDIA/Megatron-LM.git' }}"
-          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+          echo "🔄 Updating MCore submodule to commit: $MCORE_COMMIT"
+          echo "📌 MCore branch: $MCORE_BRANCH"
+          echo "📍 MCore repo: $MCORE_REPO"
+          echo "🎯 Triggered by: $TRIGGERED_BY"
+
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_COMMIT"; then
+            echo "MCore revision is not an approved NVIDIA branch head: $MCORE_COMMIT" >&2
+            exit 1
+          fi
 
           cd 3rdparty/Megatron-LM
-          git fetch ${{ github.event.inputs.mcore_repo || 'origin' }} ${{ github.event.inputs.mcore_commit }}
-          git checkout ${{ github.event.inputs.mcore_commit }}
+          git fetch "$MCORE_REPO" "$MCORE_COMMIT"
+          git checkout "$MCORE_COMMIT"
 
           # Verify the checkout was successful
           ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+          EXPECTED_COMMIT="$MCORE_COMMIT"
 
           echo "✅ MCore submodule updated successfully"
           echo "Expected: ${EXPECTED_COMMIT}"
@@ -193,10 +203,12 @@ jobs:
 
       - name: Verify MCore version before install
         if: ${{ github.event.inputs.mcore_commit != '' }}
+        env:
+          MCORE_COMMIT: ${{ github.event.inputs.mcore_commit }}
         run: |
           cd 3rdparty/Megatron-LM
           ACTUAL_COMMIT=$(git rev-parse HEAD)
-          EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
+          EXPECTED_COMMIT="$MCORE_COMMIT"
 
           echo "🧪 INSTALL TEST - MCore verification:"
           echo "Expected: ${EXPECTED_COMMIT}"
