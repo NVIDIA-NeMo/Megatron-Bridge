@@ -26,7 +26,7 @@ from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_layers import LoRALinear
 from megatron.bridge.peft.utils import AdapterAttributes, GroupedExpertLinearAdapter
 
 
@@ -261,7 +261,7 @@ class TestCanonicalLoRA:
 
         # canonical_mapping was rebuilt at apply time from the new target_modules
         assert set(lora.canonical_mapping.keys()) == {"linear_proj"}
-        assert isinstance(transformed.linear_proj, LinearAdapter)
+        assert isinstance(transformed.linear_proj, LoRALinear)
 
     def test_canonical_lora_wildcard_mapping(self):
         """Test wildcard pattern mapping in canonical LoRA."""
@@ -284,8 +284,8 @@ class TestCanonicalLoRA:
         transformed_model = lora(model, training=True)
 
         # Check that target modules were transformed to LinearAdapter (simple nn.Linear case)
-        assert isinstance(transformed_model.linear_proj, LinearAdapter)
-        assert isinstance(transformed_model.linear_fc2, LinearAdapter)
+        assert isinstance(transformed_model.linear_proj, LoRALinear)
+        assert isinstance(transformed_model.linear_fc2, LoRALinear)
 
         # Check that non-target modules were not transformed
         assert isinstance(transformed_model.linear_q, nn.Linear)
@@ -540,8 +540,8 @@ class TestCanonicalLoRA:
 
         # Check that nested target modules were transformed
         for layer in transformed_model.layers:
-            assert isinstance(layer["attention"]["linear_proj"], LinearAdapter)
-            assert isinstance(layer["mlp"]["linear_fc2"], LinearAdapter)
+            assert isinstance(layer["attention"]["linear_proj"], LoRALinear)
+            assert isinstance(layer["mlp"]["linear_fc2"], LoRALinear)
 
             # Check non-target modules remain unchanged
             assert isinstance(layer["attention"]["linear_q"], nn.Linear)
@@ -587,10 +587,10 @@ class TestCanonicalLoRA:
         transformed_model = lora(model, training=True)
 
         # Check first layer attention modules are transformed
-        assert isinstance(transformed_model.layers[0]["attention"]["linear_q"], LinearAdapter)
-        assert isinstance(transformed_model.layers[0]["attention"]["linear_k"], LinearAdapter)
-        assert isinstance(transformed_model.layers[0]["attention"]["linear_v"], LinearAdapter)
-        assert isinstance(transformed_model.layers[0]["attention"]["linear_proj"], LinearAdapter)
+        assert isinstance(transformed_model.layers[0]["attention"]["linear_q"], LoRALinear)
+        assert isinstance(transformed_model.layers[0]["attention"]["linear_k"], LoRALinear)
+        assert isinstance(transformed_model.layers[0]["attention"]["linear_v"], LoRALinear)
+        assert isinstance(transformed_model.layers[0]["attention"]["linear_proj"], LoRALinear)
 
         # Check first layer MLP modules are NOT transformed
         assert isinstance(transformed_model.layers[0]["mlp"]["linear_fc1_up"], nn.Linear)
@@ -611,8 +611,8 @@ class TestCanonicalLoRA:
         # Apply CanonicalLoRA
         transformed_model = lora(model, training=True)
 
-        # Check adapter properties
-        adapter = transformed_model.linear_proj
+        # Check adapter properties (live on the delta-only LinearAdapter sub-module)
+        adapter = transformed_model.linear_proj.adapter
         assert hasattr(adapter, "dim")
         assert hasattr(adapter, "alpha")
         assert hasattr(adapter, "scale")
@@ -632,15 +632,15 @@ class TestCanonicalLoRA:
         # Apply CanonicalLoRA
         transformed_model = lora(model, training=True)
 
-        # Check that original weights are frozen
-        linear_adapter = transformed_model.linear_proj
-        assert not linear_adapter.weight.requires_grad
-        if linear_adapter.bias is not None:
-            assert not linear_adapter.bias.requires_grad
+        # Check that original weights are frozen (base weight on the wrapped module)
+        wrapped = transformed_model.linear_proj
+        assert not wrapped.to_wrap.weight.requires_grad
+        if wrapped.to_wrap.bias is not None:
+            assert not wrapped.to_wrap.bias.requires_grad
 
         # Check that LoRA parameters are trainable
-        assert linear_adapter.linear_in.weight.requires_grad
-        assert linear_adapter.linear_out.weight.requires_grad
+        assert wrapped.adapter.linear_in.weight.requires_grad
+        assert wrapped.adapter.linear_out.weight.requires_grad
 
     def test_canonical_lora_forward_pass(self):
         """Test that CanonicalLoRA adapted models can perform forward passes."""
@@ -701,8 +701,8 @@ class TestCanonicalLoRA:
 
         # Each chunk should have LoRA applied to target modules
         for chunk in transformed_chunks:
-            assert isinstance(chunk.linear_proj, LinearAdapter)
-            assert isinstance(chunk.linear_fc2, LinearAdapter)
+            assert isinstance(chunk.linear_proj, LoRALinear)
+            assert isinstance(chunk.linear_fc2, LoRALinear)
             # Non-target modules should remain unchanged
             assert isinstance(chunk.linear_q, nn.Linear)
             assert isinstance(chunk.linear_k, nn.Linear)
@@ -740,12 +740,12 @@ class TestCanonicalLoRA:
         adapted_model2 = lora2(model2, training=True)
 
         # LoRA weights should be identical with same seed
-        linear_in_1 = adapted_model1.linear_proj.linear_in.weight.data
-        linear_in_2 = adapted_model2.linear_proj.linear_in.weight.data
+        linear_in_1 = adapted_model1.linear_proj.adapter.linear_in.weight.data
+        linear_in_2 = adapted_model2.linear_proj.adapter.linear_in.weight.data
         assert torch.equal(linear_in_1, linear_in_2)
 
-        linear_out_1 = adapted_model1.linear_proj.linear_out.weight.data
-        linear_out_2 = adapted_model2.linear_proj.linear_out.weight.data
+        linear_out_1 = adapted_model1.linear_proj.adapter.linear_out.weight.data
+        linear_out_2 = adapted_model2.linear_proj.adapter.linear_out.weight.data
         assert torch.equal(linear_out_1, linear_out_2)
 
     def test_canonical_lora_transform_idempotent(self):
@@ -762,8 +762,8 @@ class TestCanonicalLoRA:
         first_linear_q = first_transform.linear_q  # Should remain unchanged
 
         # Verify first transformation worked
-        assert isinstance(first_linear_proj, LinearAdapter)
-        assert isinstance(first_linear_fc2, LinearAdapter)
+        assert isinstance(first_linear_proj, LoRALinear)
+        assert isinstance(first_linear_fc2, LoRALinear)
         assert isinstance(first_linear_q, nn.Linear)
 
         # Apply CanonicalLoRA second time to the already-transformed model
@@ -775,16 +775,18 @@ class TestCanonicalLoRA:
         assert second_transform.linear_q is first_linear_q
 
         # Verify the module types are still correct
-        assert isinstance(second_transform.linear_proj, LinearAdapter)
-        assert isinstance(second_transform.linear_fc2, LinearAdapter)
+        assert isinstance(second_transform.linear_proj, LoRALinear)
+        assert isinstance(second_transform.linear_fc2, LoRALinear)
         assert isinstance(second_transform.linear_q, nn.Linear)
 
         # Verify the LoRA parameters are identical
         assert torch.equal(
-            first_transform.linear_proj.linear_in.weight.data, second_transform.linear_proj.linear_in.weight.data
+            first_transform.linear_proj.adapter.linear_in.weight.data,
+            second_transform.linear_proj.adapter.linear_in.weight.data,
         )
         assert torch.equal(
-            first_transform.linear_proj.linear_out.weight.data, second_transform.linear_proj.linear_out.weight.data
+            first_transform.linear_proj.adapter.linear_out.weight.data,
+            second_transform.linear_proj.adapter.linear_out.weight.data,
         )
 
     def test_canonical_lora_transform_idempotent_fused_layers(self):
@@ -1273,8 +1275,8 @@ class TestCanonicalLoRAIntegration:
         adapted_model = lora(model, training=True)
 
         # Verify CanonicalLoRA was applied
-        assert isinstance(adapted_model.linear_proj, LinearAdapter)
-        assert isinstance(adapted_model.linear_fc2, LinearAdapter)
+        assert isinstance(adapted_model.linear_proj, LoRALinear)
+        assert isinstance(adapted_model.linear_fc2, LoRALinear)
         # Verify non-target modules were not adapted
         assert isinstance(adapted_model.linear_q, nn.Linear)
         assert isinstance(adapted_model.linear_k, nn.Linear)

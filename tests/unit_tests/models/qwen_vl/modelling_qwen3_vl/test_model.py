@@ -39,6 +39,7 @@ from transformers import Qwen3VLMoeConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
     Qwen3VLModel,
     _get_cp_local_vision_embed_indices,
+    _get_packed_seq_padding_mask,
     _is_packed_input_pre_sharded,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
@@ -57,6 +58,29 @@ def _make_packed_seq_params(cu_seqlens: list[int]) -> PackedSeqParams:
         max_seqlen_q=max_seqlen,
         max_seqlen_kv=max_seqlen,
     )
+
+
+def test_packed_seq_padding_mask_excludes_only_physical_gaps():
+    """Build MoE routing padding from THD boundaries, independent of the loss mask."""
+    logical = torch.tensor([0, 3, 5], dtype=torch.int32)
+    physical = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=logical,
+        cu_seqlens_kv=logical,
+        cu_seqlens_q_padded=physical,
+        cu_seqlens_kv_padded=physical,
+        total_tokens=8,
+    )
+
+    padding_mask = _get_packed_seq_padding_mask(
+        packed_seq_params,
+        total_tokens=8,
+        device=torch.device("cpu"),
+    )
+
+    assert padding_mask is not None
+    assert padding_mask.tolist() == [[False, False, False, True, False, False, True, True]]
 
 
 def test_is_packed_input_pre_sharded_uses_global_physical_length():
@@ -782,6 +806,7 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["labels"] is labels
         assert language_model.last_kwargs["loss_mask"] is loss_mask
         assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+        assert language_model.last_kwargs["padding_mask"] is None
 
     def test_forward_preserves_collate_packed_layout_for_sequence_parallel(self, monkeypatch):
         """Packed SP forwards the collator's THD tensors and metadata unchanged."""
@@ -849,6 +874,9 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["labels"] is labels
         assert language_model.last_kwargs["loss_mask"] is loss_mask
         assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+        assert language_model.last_kwargs["padding_mask"].tolist() == [
+            [False, False, False, True, False, False, False, True]
+        ]
 
     def test_forward_preserves_pre_sharded_packed_cp_layout_and_selects_vision_embeds(self, monkeypatch):
         """Pre-sharded CP inputs stay local and select matching vision and deepstack rows."""

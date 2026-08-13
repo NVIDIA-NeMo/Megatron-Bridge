@@ -450,6 +450,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
 
+    # Vision encoder CUDA graph settings
+    vision_cuda_graph_impl: str = "none"
+    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    max_vision_cuda_graph_seq_length: Optional[int] = None
+
     # Heterogeneous dist checkpoint (needed for hybrid architecture)
     hetereogenous_dist_checkpoint: bool = True
 

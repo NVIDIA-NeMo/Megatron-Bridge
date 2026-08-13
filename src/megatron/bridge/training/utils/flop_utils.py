@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -29,6 +30,36 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+
+
+@dataclass(frozen=True)
+class GlobalFlopsRuntimeStats:
+    """Data-parallel-global FLOPS statistics collected during one training step.
+
+    Attributes:
+        seqlen_sum: Total padded language tokens, or ``None`` when unavailable.
+        seqlen_squared_sum: Sum of squared language subsequence lengths.
+        num_vision_patches: Legacy aggregate vision-patch count.
+        vision_patch_sum: Exact sum of independent vision patch counts.
+        vision_patch_squared_sum: Exact sum of squared independent patch counts.
+        vision_merged_token_sum: Exact sum of post-merger vision tokens.
+        cross_seqlen_sum: Total cross-attention key/value length.
+        cross_seqlen_product_sum: Sum of query/key-value length products.
+    """
+
+    seqlen_sum: int | None
+    seqlen_squared_sum: int | None
+    num_vision_patches: int = 0
+    vision_patch_sum: int = 0
+    vision_patch_squared_sum: int = 0
+    vision_merged_token_sum: int = 0
+    cross_seqlen_sum: int | None = None
+    cross_seqlen_product_sum: int | None = None
+
+    @property
+    def has_exact_vision_stats(self) -> bool:
+        """Return whether exact additive vision-patch statistics were collected."""
+        return self.vision_patch_sum > 0
 
 
 def _packed_data_exists(path: str | None) -> bool:
@@ -85,19 +116,23 @@ def _accumulator_to_int(value) -> int:
     return 0
 
 
-def resolve_global_flops_seqlen_stats(
+def resolve_global_flops_runtime_stats(
     state,
     *,
     data_parallel_size: int,
     vp_size: int | None = None,
     dp_group=None,
-) -> tuple[int | None, int | None, int]:
-    """Resolve data-parallel-global FLOPS sequence stats from per-rank accumulators.
+    include_vision_patch_stats: bool = False,
+    include_cross_attention_stats: bool = False,
+) -> GlobalFlopsRuntimeStats:
+    """Resolve all data-parallel-global FLOPS statistics used by training.
 
-    Reads the three accumulators populated by the forward step
+    Reads the accumulators populated by the forward step
     (``_flops_seqlen_sum`` = Σ padded tokens, ``_flops_seqlen_sq_sum`` = Σᵢ sᵢ²
-    over real sub-sequences, ``_flops_vision_patches``) and reduces them to
-    global totals across the data-parallel group.
+    over real sub-sequences, ``_flops_vision_patches``, optional exact additive
+    ViT patch statistics, and optional cross-attention key/value and query-key
+    products) and reduces them to global totals across the
+    data-parallel group.
 
     Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
     differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
@@ -116,16 +151,27 @@ def resolve_global_flops_seqlen_stats(
         dp_group: Data-parallel process group to SUM-reduce over. Must be the
             pure DP group (excluding CP) matching ``data_parallel_size`` — CP
             ranks share the same ``cu_seqlens`` and would double-count.
+        include_vision_patch_stats: Whether the collective includes the three
+            exact additive ViT values. This must be uniform across every rank
+            in ``dp_group``.
+        include_cross_attention_stats: Whether the collective includes the two
+            optional cross-attention values. This must be uniform across every
+            rank in ``dp_group``; callers should derive it from model capability,
+            not local batch contents.
 
     Returns:
-        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches)``. The first two
-        are ``None`` when no accumulation happened, signalling the caller to fall
-        back to a fixed-length estimate. ``num_vision_patches`` is ``0`` when no
-        vision tokens were seen.
+        Global statistics with sequence values set to ``None`` when no
+        corresponding accumulation happened and vision values set to ``0``
+        when no matching metadata was accumulated.
     """
     local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
     local_seqlen_sq_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sq_sum", 0))
     local_vision_patches = _accumulator_to_int(getattr(state, "_flops_vision_patches", 0))
+    local_vision_patch_sum = _accumulator_to_int(getattr(state, "_flops_vision_patch_sum", 0))
+    local_vision_patch_sq_sum = _accumulator_to_int(getattr(state, "_flops_vision_patch_sq_sum", 0))
+    local_vision_merged_token_sum = _accumulator_to_int(getattr(state, "_flops_vision_merged_token_sum", 0))
+    local_cross_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_cross_seqlen_sum", 0))
+    local_cross_seqlen_product_sum = _accumulator_to_int(getattr(state, "_flops_cross_seqlen_product_sum", 0))
     _ = vp_size
 
     use_all_reduce = (
@@ -137,22 +183,83 @@ def resolve_global_flops_seqlen_stats(
     )
     if use_all_reduce:
         device = torch.cuda.current_device() if torch.cuda.is_available() else None
-        stats = torch.tensor(
-            [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches],
-            dtype=torch.long,
-            device=device,
-        )
+        stats_values = [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches]
+        if include_vision_patch_stats:
+            stats_values.extend(
+                [
+                    local_vision_patch_sum,
+                    local_vision_patch_sq_sum,
+                    local_vision_merged_token_sum,
+                ]
+            )
+        if include_cross_attention_stats:
+            stats_values.extend([local_cross_seqlen_sum, local_cross_seqlen_product_sum])
+        stats = torch.tensor(stats_values, dtype=torch.long, device=device)
         torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM, group=dp_group)
-        seqlen_sum, seqlen_squared_sum, num_vision_patches = (int(x) for x in stats.tolist())
+        reduced_stats = [int(x) for x in stats.tolist()]
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = reduced_stats[:3]
+        offset = 3
+        if include_vision_patch_stats:
+            vision_patch_sum, vision_patch_squared_sum, vision_merged_token_sum = reduced_stats[offset : offset + 3]
+            offset += 3
+        else:
+            vision_patch_sum = 0
+            vision_patch_squared_sum = 0
+            vision_merged_token_sum = 0
+        if include_cross_attention_stats:
+            cross_seqlen_sum, cross_seqlen_product_sum = reduced_stats[offset : offset + 2]
+        else:
+            cross_seqlen_sum = 0
+            cross_seqlen_product_sum = 0
     else:
         # No process group: extrapolate from the local rank (approximation).
         seqlen_sum = local_seqlen_sum * data_parallel_size
         seqlen_squared_sum = local_seqlen_sq_sum * data_parallel_size
         num_vision_patches = local_vision_patches * data_parallel_size
+        vision_patch_sum = local_vision_patch_sum * data_parallel_size
+        vision_patch_squared_sum = local_vision_patch_sq_sum * data_parallel_size
+        vision_merged_token_sum = local_vision_merged_token_sum * data_parallel_size
+        cross_seqlen_sum = local_cross_seqlen_sum * data_parallel_size
+        cross_seqlen_product_sum = local_cross_seqlen_product_sum * data_parallel_size
 
     if seqlen_sum <= 0:
-        return None, None, max(num_vision_patches, 0)
-    return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
+        seqlen_sum = None
+        seqlen_squared_sum = None
+    if cross_seqlen_sum <= 0:
+        cross_seqlen_sum = None
+        cross_seqlen_product_sum = None
+    return GlobalFlopsRuntimeStats(
+        seqlen_sum=seqlen_sum,
+        seqlen_squared_sum=seqlen_squared_sum,
+        num_vision_patches=max(num_vision_patches, 0),
+        vision_patch_sum=max(vision_patch_sum, 0),
+        vision_patch_squared_sum=max(vision_patch_squared_sum, 0),
+        vision_merged_token_sum=max(vision_merged_token_sum, 0),
+        cross_seqlen_sum=cross_seqlen_sum,
+        cross_seqlen_product_sum=cross_seqlen_product_sum,
+    )
+
+
+def resolve_global_flops_seqlen_stats(
+    state,
+    *,
+    data_parallel_size: int,
+    vp_size: int | None = None,
+    dp_group=None,
+) -> tuple[int | None, int | None, int]:
+    """Resolve sequence statistics and the legacy total vision-patch count.
+
+    This compatibility wrapper preserves the established three-value return
+    contract and its three-integer collective.
+    """
+    stats = resolve_global_flops_runtime_stats(
+        state,
+        data_parallel_size=data_parallel_size,
+        vp_size=vp_size,
+        dp_group=dp_group,
+        include_cross_attention_stats=False,
+    )
+    return stats.seqlen_sum, stats.seqlen_squared_sum, stats.num_vision_patches
 
 
 def _add_flops_accumulator(state, name: str, delta) -> None:
@@ -221,7 +328,10 @@ def accumulate_flops_metadata(
     cu_seqlens_argmin: torch.Tensor | None = None,
     cu_seqlens_unpadded: torch.Tensor | None = None,
     cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+    cross_cu_seqlens: torch.Tensor | None = None,
+    cross_cu_seqlens_unpadded: torch.Tensor | None = None,
     num_vision_patches: int | torch.Tensor | None = None,
+    vision_patch_stats: tuple[int | torch.Tensor, int | torch.Tensor, int | torch.Tensor] | None = None,
 ) -> None:
     """Accumulate per-microbatch FLOPS metadata onto ``state``.
 
@@ -230,7 +340,7 @@ def accumulate_flops_metadata(
     0 contributes metadata so model chunking does not multiply the full-model
     FLOPS estimate. ``None`` and ``0`` both represent the primary/only chunk.
 
-    Writes three accumulators consumed by ``train.py`` at end of step:
+    Writes accumulators consumed by ``train.py`` at end of step:
 
     - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
       this microbatch contributes), or ``mbs * config_seq_len`` for dense
@@ -246,13 +356,21 @@ def accumulate_flops_metadata(
       ``mbs * dense_seq_len²`` is accumulated instead (bit-exact with the
       pre-fix value). ``dense_seq_len`` is ``config_seq_len`` when provided,
       otherwise ``tokens.shape[1]``.
-    - ``_flops_vision_patches``: running total of ``num_vision_patches``.
+    - ``_flops_vision_patches``: legacy total patch-count approximation.
+    - ``_flops_vision_patch_sum``, ``_flops_vision_patch_sq_sum``, and
+      ``_flops_vision_merged_token_sum``: exact additive ViT statistics that
+      preserve independent media/frame attention boundaries.
+    - ``_flops_cross_seqlen_sum`` and ``_flops_cross_seqlen_product_sum``:
+      optional cross-attention Σᵢ kᵢ and Σᵢ qᵢkᵢ terms for model-specific
+      estimators such as WAN.
 
-    ``num_vision_patches`` is the precomputed number of vision patches in this
-    microbatch (drives the ViT term). It is kept model-agnostic on purpose: the
-    caller — which knows its own encoder's layout — computes the count and passes
-    a scalar (e.g. Qwen-VL sums ``grid_thw.prod(-1)`` over images and videos). May
-    be an ``int`` or a scalar ``Tensor`` (a device tensor avoids a host sync here).
+    ``num_vision_patches`` remains supported for model callers that only expose a
+    total patch count. ``vision_patch_stats`` is the exact ``(Σp, Σp²,
+    Σmerged_tokens)`` tuple computed by a caller that knows the encoder's
+    attention boundaries. Each element may be an ``int`` or scalar ``Tensor``;
+    device tensors avoid a host sync here. This argument also opts into a
+    conditional DP collective: if one rank supplies it, every rank in that pure
+    DP group must supply a tuple, using ``(0, 0, 0)`` on ranks with no media.
 
     For THD packed training (offline packed LLM SFT or VLM in-batch packing),
     treating the whole pack as one length-``seq_len`` sequence over-counts
@@ -283,8 +401,171 @@ def accumulate_flops_metadata(
         _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * dense_seq_len)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * dense_seq_len**2)
 
+    cross_sub_seq_lens = _real_subseq_lengths(
+        cross_cu_seqlens,
+        cu_seqlens_unpadded=cross_cu_seqlens_unpadded,
+    )
+    if cross_sub_seq_lens is not None and cross_sub_seq_lens.numel() > 0:
+        if sub_seq_lens is None or sub_seq_lens.numel() != cross_sub_seq_lens.numel():
+            raise ValueError("Cross-attention FLOP metadata requires matching query and key/value sequences")
+        setattr(state, "_flops_requires_global_reduce", True)
+        cross_padded_sub_seq_lens = _real_subseq_lengths(cross_cu_seqlens)
+        if cross_padded_sub_seq_lens is None or cross_padded_sub_seq_lens.numel() == 0:
+            cross_padded_sub_seq_lens = cross_sub_seq_lens
+        _add_flops_accumulator(
+            state,
+            "_flops_cross_seqlen_sum",
+            _scalar_sum_for_accumulator(cross_padded_sub_seq_lens),
+        )
+        _add_flops_accumulator(
+            state,
+            "_flops_cross_seqlen_product_sum",
+            _scalar_sum_for_accumulator(sub_seq_lens * cross_sub_seq_lens),
+        )
+
     if num_vision_patches is not None:
         _add_flops_accumulator(state, "_flops_vision_patches", num_vision_patches)
+
+    if vision_patch_stats is not None:
+        if len(vision_patch_stats) != 3:
+            raise ValueError("vision_patch_stats must contain (patch_sum, patch_squared_sum, merged_token_sum).")
+        for name, value in zip(
+            (
+                "_flops_vision_patch_sum",
+                "_flops_vision_patch_sq_sum",
+                "_flops_vision_merged_token_sum",
+            ),
+            vision_patch_stats,
+            strict=True,
+        ):
+            _add_flops_accumulator(state, name, value)
+        # Image/video grids and resolutions may differ across DP ranks even for
+        # dense text batches, so exact grid statistics require a global SUM.
+        setattr(state, "_flops_requires_global_reduce", True)
+
+
+def _get_vision_config(cfg: ConfigContainer):
+    """Return a direct or thinker-nested vision config when available."""
+    vision_config = getattr(cfg.model, "vision_config", None)
+    if vision_config is not None:
+        return vision_config
+    thinker_config = getattr(cfg.model, "thinker_config", None)
+    return getattr(thinker_config, "vision_config", None)
+
+
+def vit_flops_from_patch_stats(
+    cfg: ConfigContainer,
+    *,
+    patch_sum: int | torch.Tensor,
+    patch_squared_sum: int | torch.Tensor,
+    merged_token_sum: int | torch.Tensor,
+) -> int | torch.Tensor:
+    """Calculate ViT FLOPS from additive per-attention-sequence statistics."""
+    vision_config = _get_vision_config(cfg)
+    if vision_config is None:
+        return 0
+    depth = getattr(vision_config, "depth", 0)
+    hidden_size = getattr(vision_config, "hidden_size", 0)
+    intermediate_size = getattr(vision_config, "intermediate_size", 0)
+    spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
+    out_hidden_size = getattr(vision_config, "out_hidden_size", cfg.model.hidden_size)
+    deepstack_visual_indexes = getattr(vision_config, "deepstack_visual_indexes", None)
+    if deepstack_visual_indexes is None:
+        deepstack_visual_indexes = getattr(cfg.model, "deepstack_visual_indexes", None)
+    if deepstack_visual_indexes is None:
+        deepstack_visual_indexes = getattr(getattr(cfg.model, "thinker_config", None), "deepstack_visual_indexes", ())
+
+    # ViT transformer layers. Projection and MLP terms are linear in the total
+    # patch count, while the full-attention core is quadratic within each
+    # independent attention sequence.
+    transformer_flops_val = depth * (
+        (8 * hidden_size**2 + 4 * hidden_size * intermediate_size) * patch_sum + 4 * hidden_size * patch_squared_sum
+    )
+
+    # Patch merger: spatial merge followed by the two projection matmuls.
+    merge_unit = spatial_merge_size**2
+    merged_hidden = hidden_size * merge_unit
+    merger_count = 1 + len(deepstack_visual_indexes or ())
+    merger_flops_val = (
+        merger_count * merged_token_sum * (2 * merged_hidden * merged_hidden + 2 * merged_hidden * out_hidden_size)
+    )
+
+    return (transformer_flops_val + merger_flops_val) * 3  # 3x for training (fwd + bwd)
+
+
+def vision_patch_stats_from_grid_thw(
+    grid_thw: torch.Tensor,
+    *,
+    spatial_merge_size: int,
+) -> tuple[int | torch.Tensor, int | torch.Tensor, int | torch.Tensor]:
+    """Build additive Qwen ViT patch statistics without a device-to-host sync.
+
+    Args:
+        grid_thw: Integer tensor shaped ``[..., 3]`` with temporal, height,
+            and width patch-grid dimensions.
+        spatial_merge_size: Vision encoder's spatial merge size.
+
+    Returns:
+        ``(patch_sum, patch_squared_sum, merged_token_sum)``. CUDA inputs
+        produce scalar CUDA tensors; CPU inputs produce Python integers.
+
+    Raises:
+        ValueError: If the grid shape or spatial merge size is invalid.
+    """
+    if grid_thw.dim() < 1 or grid_thw.size(-1) != 3:
+        raise ValueError(f"grid_thw must have shape [..., 3], got {tuple(grid_thw.shape)}")
+    if spatial_merge_size < 1:
+        raise ValueError("spatial_merge_size must be >= 1.")
+    if grid_thw.numel() == 0:
+        return 0, 0, 0
+
+    grid = grid_thw.reshape(-1, 3).to(dtype=torch.int64)
+    temporal, height, width = grid.unbind(dim=-1)
+    spatial_patches = height * width
+    total_patches = temporal * spatial_patches
+    merge_unit = spatial_merge_size**2
+    return (
+        _scalar_sum_for_accumulator(total_patches),
+        _scalar_sum_for_accumulator(temporal * spatial_patches.square()),
+        _scalar_sum_for_accumulator(torch.div(total_patches, merge_unit, rounding_mode="floor")),
+    )
+
+
+def vit_flops_from_grid_thw(cfg: ConfigContainer, grid_thw: torch.Tensor) -> int | torch.Tensor:
+    """Calculate exact ViT FLOPS for Qwen-style temporal-height-width grids.
+
+    Qwen vision attention treats every temporal frame as an independent THD
+    sequence. For a grid row ``[t, h, w]``, linear ViT work therefore sees
+    ``t*h*w`` patches while full-attention work sees ``t*(h*w)^2`` rather than
+    ``(t*h*w)^2``. Computing the additive statistics directly avoids expanding
+    frame lengths with ``repeat_interleave`` and keeps the microbatch path free
+    of device-to-host synchronization.
+
+    Args:
+        cfg: Configuration container with a direct or thinker-nested vision config.
+        grid_thw: Integer tensor shaped ``[..., 3]``. Each row contains
+            temporal frames, patch-grid height, and patch-grid width.
+
+    Returns:
+        Scalar ViT training FLOPS on the same device as ``grid_thw``. Returns
+        ``0`` if no vision config or no media rows are present.
+
+    Raises:
+        ValueError: If ``grid_thw`` is not shaped ``[..., 3]``.
+    """
+    vision_config = _get_vision_config(cfg)
+    if vision_config is None:
+        return 0
+    patch_sum, patch_squared_sum, merged_token_sum = vision_patch_stats_from_grid_thw(
+        grid_thw,
+        spatial_merge_size=getattr(vision_config, "spatial_merge_size", 2),
+    )
+    return vit_flops_from_patch_stats(
+        cfg,
+        patch_sum=patch_sum,
+        patch_squared_sum=patch_squared_sum,
+        merged_token_sum=merged_token_sum,
+    )
 
 
 def vit_flops(
@@ -299,8 +580,8 @@ def vit_flops(
     - Patch merger (spatial merge + MLP projection to LLM hidden size)
 
     Args:
-        cfg: Configuration container. ViT hyper-parameters are read from
-            ``cfg.model.vision_config`` (``depth``, ``hidden_size``,
+        cfg: Configuration container. ViT hyper-parameters are read from the
+            direct or thinker-nested vision config (``depth``, ``hidden_size``,
             ``num_heads``, ``intermediate_size``, ``spatial_merge_size``,
             ``out_hidden_size``). Passing the whole config keeps the public
             signature stable as the list of required ViT attributes grows.
@@ -315,40 +596,19 @@ def vit_flops(
         Total training FLOPs (forward * 3 for fwd+bwd). Returns 0 when
         no ``vision_config`` is attached or ``num_patches`` is non-positive.
     """
-    vision_config = getattr(cfg.model, "vision_config", None)
+    vision_config = _get_vision_config(cfg)
     if vision_config is None or num_patches <= 0:
         return 0
 
-    depth = getattr(vision_config, "depth", 0)
-    hidden_size = getattr(vision_config, "hidden_size", 0)
-    intermediate_size = getattr(vision_config, "intermediate_size", 0)
     spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
-    out_hidden_size = getattr(vision_config, "out_hidden_size", cfg.model.hidden_size)
-
-    # ViT Transformer layers (bidirectional attention)
-    per_token_per_layer = (
-        # QKV + O projections: 4 matmuls of h x h => 4 * 2 * h^2 FMA = 8h^2
-        # but standard counting: Q,K,V each h->h (3 * 2h^2) + O h->h (2h^2) = 8h^2
-        8 * hidden_size**2
-        # Attention core (full bidirectional, not causal): QK^T + attn*V
-        # = 2 * 2 * h * num_patches = 4 * h * num_patches
-        + 4 * hidden_size * num_patches
-        # MLP (GELU, 2 matmuls): fc1 h->intermediate + fc2 intermediate->h
-        # = 2 * 2 * h * intermediate = 4 * h * intermediate
-        + 4 * hidden_size * intermediate_size
-    )
-    transformer_flops_val = per_token_per_layer * num_patches * depth
-
-    # Patch Merger: spatial merge (2x2) + MLP projection
     merge_unit = spatial_merge_size**2
-    merged_hidden = hidden_size * merge_unit  # concatenated hidden dim
-    num_merged_tokens = num_patches // merge_unit if merge_unit > 0 else num_patches
-    merger_flops_val = num_merged_tokens * (
-        2 * merged_hidden * merged_hidden  # fc1: merged_hidden -> merged_hidden
-        + 2 * merged_hidden * out_hidden_size  # fc2: merged_hidden -> out_hidden_size
+    merged_tokens_per_image = num_patches // merge_unit if merge_unit > 0 else num_patches
+    return vit_flops_from_patch_stats(
+        cfg,
+        patch_sum=batch_size * num_patches,
+        patch_squared_sum=batch_size * num_patches**2,
+        merged_token_sum=batch_size * merged_tokens_per_image,
     )
-
-    return (transformer_flops_val + merger_flops_val) * batch_size * 3  # 3x for training (fwd + bwd)
 
 
 def num_floating_point_operations(
@@ -357,6 +617,8 @@ def num_floating_point_operations(
     seqlen_sum: int | None = None,
     seqlen_squared_sum: int | None = None,
     num_vision_patches: int = 0,
+    cross_seqlen_sum: int | None = None,
+    cross_seqlen_product_sum: int | None = None,
 ):
     """Return the number of floating point operations.
 
@@ -374,7 +636,21 @@ def num_floating_point_operations(
             result matches the legacy constant-length estimate.
         num_vision_patches: Total number of vision patches in the batch
             (before spatial merge). Used to compute ViT encoder FLOPS.
+        cross_seqlen_sum: Sum of cross-attention key/value sequence lengths.
+        cross_seqlen_product_sum: Sum of per-sample query and key/value length products.
     """
+    peft = getattr(cfg, "peft", None)
+    is_lora = isinstance(peft, LoRA)
+    runtime_flops_estimator = getattr(cfg.model, "_get_num_floating_point_operations_with_runtime_stats", None)
+    if runtime_flops_estimator is not None and not is_lora:
+        return runtime_flops_estimator(
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+            cross_seqlen_sum=cross_seqlen_sum,
+            cross_seqlen_product_sum=cross_seqlen_product_sum,
+        )
+
     # Compute effective sequence length from actual values or fall back to config.
     if seqlen_sum is not None and batch_size > 0:
         effective_seq_length = seqlen_sum / batch_size
@@ -395,8 +671,6 @@ def num_floating_point_operations(
     else:
         core_attn_seq_factor = effective_seq_length
 
-    peft = getattr(cfg, "peft", None)
-    is_lora = isinstance(peft, LoRA)
     # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
     if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
         return cfg.model._get_num_floating_point_operations(batch_size)

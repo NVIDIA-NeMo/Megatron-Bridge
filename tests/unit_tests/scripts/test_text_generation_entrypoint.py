@@ -155,3 +155,27 @@ def test_dynamic_generation_accepts_stopping_controls(text_generation_entrypoint
             stop_words=["<END>"],
         )
     )
+
+
+@pytest.mark.unit
+def test_print_results_includes_returned_log_probabilities(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(text_generation_entrypoint, "print_rank_0", messages.append)
+    output = types.SimpleNamespace(
+        generated_text="generated",
+        prompt_log_probs=[-0.1, -0.2],
+        generated_log_probs=[-0.3],
+        prompt_top_n_logprobs=[{"prompt-token": -0.1}],
+        generated_top_n_logprobs=[{"generated-token": -0.3}],
+    )
+
+    text_generation_entrypoint._print_results(["prompt"], [output])
+
+    rendered = "\n".join(messages)
+    assert "Prompt log probs: [-0.1, -0.2]" in rendered
+    assert "Generated log probs: [-0.3]" in rendered
+    assert "Prompt top-n logprobs: [{'prompt-token': -0.1}]" in rendered
+    assert "Generated top-n logprobs: [{'generated-token': -0.3}]" in rendered
