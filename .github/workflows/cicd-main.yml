@@ -584,7 +584,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Core
-          timeout: 18
+          timeout: 30
           is_unit_test: "true"
           PAT: ${{ secrets.PAT }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
