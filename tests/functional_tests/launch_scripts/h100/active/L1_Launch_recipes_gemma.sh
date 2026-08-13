@@ -23,5 +23,11 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # This script tests recipe configurations with their default settings to ensure
 # they can run basic training without crashes
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/recipes/test_gemma3_recipes_pretrain.py
+
+# The recipe constructors use a repository-local default output directory before
+# the functional test redirects checkpoints and logs to tmp_path. Remove that
+# test-owned residue before starting a separate pytest invocation whose unit-test
+# fixture deliberately refuses to delete pre-existing experiment directories.
+rm -rf -- "${REPO_ROOT}/NeMo_experiments" "${REPO_ROOT}/nemo_experiments"
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/unit_tests/models/gemma/test_gemma4_ple_sequence_parallel_distributed.py
 coverage combine -q
