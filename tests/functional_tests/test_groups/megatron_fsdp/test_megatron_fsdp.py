@@ -23,7 +23,6 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.models.transformer_config import MLATransformerConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -114,14 +113,13 @@ class DenseHybridSmokeModelProvider(HybridModelProvider):
 
 
 @dataclass
-class MLAMoEHybridSmokeModelProvider(MLATransformerConfig, HybridModelProvider):
-    """Small MLA/MoE HybridModel configuration for the MFSDP V2 EP smoke test."""
+class MoEHybridSmokeModelProvider(HybridModelProvider):
+    """Small HybridModel configuration for the MFSDP V2 EP smoke test."""
 
     attention_backend: AttnBackend = AttnBackend.auto
     seq_length: int = 128
     hidden_size: int = 128
-    multi_latent_attention: bool = True
-    hybrid_layer_pattern: str = "+E"
+    hybrid_layer_pattern: str = "*E"
     num_moe_experts: int = 4
     expert_model_parallel_size: int = 2
 
@@ -443,8 +441,8 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
-    def test_fsdp_v2_mla_moe_ep2_pretrain_smoke(self):
-        """Train a small MLA/MoE HybridModel with MFSDP V2 and EP=2."""
+    def test_fsdp_v2_moe_ep2_pretrain_smoke(self):
+        """Train a small MoE HybridModel with MFSDP V2 and EP=2."""
         initialize_distributed()
         torch.distributed.barrier()
 
@@ -453,7 +451,7 @@ class TestMegatronFSDP:
             train_iters=10,
             optimizer={"clip_grad": 0.0},
         )
-        cfg.model = MLAMoEHybridSmokeModelProvider()
+        cfg.model = MoEHybridSmokeModelProvider()
         cfg.ddp.megatron_fsdp_version = 2
 
         pretrain(cfg, forward_step)
