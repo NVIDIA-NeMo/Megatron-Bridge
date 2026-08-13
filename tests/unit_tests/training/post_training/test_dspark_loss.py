@@ -242,6 +242,52 @@ def test_accept_rate_and_tau_exclude_dropped_blocks():
     assert _den(report, "dspark tau") == pytest.approx(B * (N - 1))
 
 
+def _masked_outputs(*, poison: bool):
+    out = _outputs(with_target=True, with_confidence=True)
+    out.eval_mask[:, :, -1] = False  # trailing position unsupervised
+    if poison:
+        with torch.no_grad():
+            out.draft_logits[:, :, -1] = float("-inf")
+        out.aligned_target_logits[:, :, -1] = float("nan")
+        out.target_ids[:, :, -1] = -1
+        out.confidence_pred[:, :, -1] = float("nan")
+    return out
+
+
+def test_masked_positions_tolerate_sentinel_ids_and_nonfinite_padding():
+    # Padded layouts fill unsupervised positions with sentinel ids (-1 / -100) and
+    # non-finite logits; they must neither crash nor leak NaN into loss or grads.
+    clean = _masked_outputs(poison=False)
+    ref_loss, _, ref_report = dspark_loss(clean, ce_alpha=0.1, l1_alpha=0.9, confidence_alpha=1.0)
+    poisoned = _masked_outputs(poison=True)
+    loss, _, report = dspark_loss(poisoned, ce_alpha=0.1, l1_alpha=0.9, confidence_alpha=1.0)
+    assert torch.isfinite(loss)
+    assert loss.item() == pytest.approx(ref_loss.item(), rel=1e-6)
+    for key in ref_report:
+        assert _num(report, key) == pytest.approx(_num(ref_report, key), rel=1e-6), key
+        assert _den(report, key) == pytest.approx(_den(ref_report, key), rel=1e-6), key
+    loss.backward()
+    assert torch.isfinite(poisoned.draft_logits.grad).all()
+    assert torch.all(poisoned.draft_logits.grad[:, :, -1] == 0)
+
+
+def test_dropped_anchors_also_tolerate_poisoned_padding():
+    # The sanitizer keys off the combined mask, so a poisoned position inside a
+    # dropped anchor is covered even when its eval_mask says supervised.
+    out = _outputs(with_target=True, with_confidence=True)
+    out.block_keep_mask[:, 0] = False
+    with torch.no_grad():
+        out.draft_logits[:, 0] = float("-inf")
+    out.aligned_target_logits[:, 0] = float("nan")
+    out.target_ids[:, 0] = -1
+    out.confidence_pred[:, 0] = float("nan")
+    loss, _, _ = dspark_loss(out, ce_alpha=0.1, l1_alpha=0.9, confidence_alpha=1.0)
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert torch.isfinite(out.draft_logits.grad).all()
+    assert torch.all(out.draft_logits.grad[:, 0] == 0)
+
+
 def test_eval_mask_zero_positions_do_not_contribute():
     out = _outputs(with_target=True, with_confidence=False)
     out.eval_mask = torch.zeros(B, N, L, dtype=torch.bool)

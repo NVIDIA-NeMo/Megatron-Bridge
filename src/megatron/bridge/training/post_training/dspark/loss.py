@@ -83,7 +83,9 @@ class DSparkForwardOutput:
         target_ids: Teacher-forced next token per position
             ``[batch, num_blocks, block_size]``.
         eval_mask: Bool/float supervision mask ``[batch, num_blocks, block_size]``
-            (a block is a contiguous, in-bounds, loss-enabled prefix).
+            (a block is a contiguous, in-bounds, loss-enabled prefix). Positions
+            outside the mask may carry sentinel ids or non-finite padded values;
+            :func:`dspark_loss` sanitizes them before computing any term.
         block_keep_mask: Kept-anchor mask ``[batch, num_blocks]``. Dropped anchors
             are excluded from every loss term, from ``num_tokens``, and from the
             acceptance metrics, independently of what ``eval_mask`` says.
@@ -272,9 +274,19 @@ def dspark_loss(
         raise ValueError("aligned_target_logits is required for the L1 loss or the confidence head.")
     needs_teacher = l1_alpha > 0 or has_confidence
 
+    # Unsupervised positions may carry sentinel target ids (-1 / -100) or
+    # non-finite padded logits. Zero-weighting them afterwards is not enough:
+    # 0 * NaN is NaN, and a non-finite forward row still produces NaN gradients.
+    # Replacing the inputs with torch.where is what makes this safe in both
+    # directions, because where's backward *selects* zeros into the masked slots
+    # rather than multiplying by zero, so no NaN reaches draft_logits.grad.
+    supervised_bool = supervised > 0
+    draft_logits = torch.where(supervised_bool.unsqueeze(-1), draft_logits, 0.0)
+    target_ids = outputs.target_ids.long().masked_fill(~supervised_bool, 0)
+
     # One FP32 normalization of the draft distribution serves both terms.
     ce_per_token, l1_dist = _ce_and_l1_per_token(
-        draft_logits, outputs.target_ids, target_logits if needs_teacher else None, chunk_tokens
+        draft_logits, target_ids, target_logits if needs_teacher else None, chunk_tokens
     )
     ce_num = (ce_per_token * weight).sum()
 
@@ -282,16 +294,18 @@ def dspark_loss(
     l1_num = conf_num = zero
     accept_rate = None
     if needs_teacher:
+        # A non-finite teacher row at an unsupervised position surfaces as NaN in
+        # the reduced distance; scrub it there rather than copying the full-vocab
+        # teacher tensor just to mask a few rows.
+        l1_dist = torch.where(supervised_bool, l1_dist, 0.0)
         accept_rate = (1.0 - 0.5 * l1_dist).clamp(0.0, 1.0)
         if l1_alpha > 0:
             # Raw weighted L1 (paper Eq. 10). The 1/2 lives in accept_rate above.
             l1_num = (l1_dist * weight).sum()
         if has_confidence:
+            confidence_pred = torch.where(supervised_bool, outputs.confidence_pred.float(), 0.0)
             conf_num = (
-                F.binary_cross_entropy_with_logits(
-                    outputs.confidence_pred.float(), accept_rate.detach(), reduction="none"
-                )
-                * weight
+                F.binary_cross_entropy_with_logits(confidence_pred, accept_rate.detach(), reduction="none") * weight
             ).sum()
 
     loss = ce_alpha * ce_num + l1_alpha * l1_num + confidence_alpha * conf_num
