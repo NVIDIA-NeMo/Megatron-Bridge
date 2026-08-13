@@ -17,10 +17,13 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from torch import nn
+
 from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.stepfun import step37_bridge as _step37_bridge_mod
 from megatron.bridge.models.stepfun.configuration_step37 import Step37Config
 from megatron.bridge.models.stepfun.modelling_step37 import transformer_block as _step37_block_mod
+from megatron.bridge.models.stepfun.modelling_step37.image_insert_embedding import ImageInsertEmbedding
 from megatron.bridge.models.stepfun.modelling_step37.transformer_block import get_step37_text_layer_spec
 from megatron.bridge.models.stepfun.step35_bridge import build_step35_layer_spec
 from megatron.bridge.models.stepfun.step37_bridge import Step37Bridge
@@ -95,6 +98,27 @@ class TestStep37BridgeReverseConfig:
         synthesized_config = Step37Config(**exported_config)
 
         assert synthesized_config.text_config.num_nextn_predict_layers == 0
+
+    def test_projector_bias_schema_roundtrips(self):
+        reference_config = Step37Config(projector_bias=False)
+        provider = SimpleNamespace(projector_bias=True)
+
+        biased_projector = ImageInsertEmbedding(nn.Identity(), 4, 2, projector_bias=provider.projector_bias)
+        unbiased_projector = ImageInsertEmbedding(nn.Identity(), 4, 2, projector_bias=False)
+        assert biased_projector.align_projector.bias is not None
+        assert unbiased_projector.align_projector.bias is None
+
+        mapping = (
+            Step37Bridge().mapping_registry().megatron_to_hf_lookup("image_insert_embedding.align_projector.bias")
+        )
+        checkpoint_config = Step37Bridge.megatron_to_hf_config(provider)
+        exported_config = conform_config_to_reference(checkpoint_config, reference_config.to_dict())
+        synthesized_config = Step37Config(**exported_config)
+
+        assert (
+            mapping.hf_param if mapping is not None else None,
+            synthesized_config.projector_bias,
+        ) == ("vit_large_projector.bias", True)
 
 
 class TestGetStep37TextLayerSpec:

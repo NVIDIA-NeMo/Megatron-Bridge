@@ -119,6 +119,9 @@ class Step37Bridge(MegatronModelBridge):
         mtp_num_layers = hf_config.pop("num_nextn_predict_layers", None)
         if mtp_num_layers is not None:
             hf_config["text_config"] = {"num_nextn_predict_layers": mtp_num_layers}
+        projector_bias = getattr(provider, "projector_bias", None)
+        if projector_bias is not None:
+            hf_config["projector_bias"] = projector_bias
         return hf_config
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Step37ModelProvider:
@@ -535,6 +538,7 @@ class Step37Bridge(MegatronModelBridge):
             # inside ``image_insert_embedding.align_projector``; on the HF side
             # it is the top-level ``vit_large_projector`` linear.
             "image_insert_embedding.align_projector.weight": "vit_large_projector.weight",
+            "image_insert_embedding.align_projector.bias": "vit_large_projector.bias",
         }
         for megatron_param, hf_param in vision_replicated_param_mappings.items():
             mapping_list.append(ReplicatedMapping(megatron_param=megatron_param, hf_param=hf_param))
