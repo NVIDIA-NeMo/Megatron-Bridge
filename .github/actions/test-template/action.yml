@@ -59,6 +59,14 @@ inputs:
   runner:
     description: "Runner to use for test"
     required: true
+  shard-id:
+    description: "Zero-based pytest shard index"
+    required: false
+    default: ""
+  num-shards:
+    description: "Total number of pytest shards"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -141,6 +149,8 @@ runs:
           --env NEMO_HOME=$NEMO_HOME \
           --env RUN_ID=${{ github.run_id }} \
           --env UV_NO_SYNC=1 \
+          --env SHARD_ID=${{ inputs.shard-id }} \
+          --env NUM_SHARDS=${{ inputs.num-shards }} \
           --workdir /opt/Megatron-Bridge \
           $VOLUME_ARGS \
           ${{ inputs.container-image }} \
