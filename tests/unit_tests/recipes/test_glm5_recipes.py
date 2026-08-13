@@ -85,7 +85,7 @@ class _FakeAutoBridge:
     @classmethod
     def from_hf_pretrained(cls, model_id: str, revision: str) -> "_FakeAutoBridge":
         assert model_id == "zai-org/GLM-5.2"
-        assert len(revision) == 40
+        assert revision == gb200_glm5._GLM52_MODEL_REVISION
         return cls()
 
     def to_megatron_provider(self, load_weights: bool = False) -> _FakeMegatronProvider:
@@ -166,6 +166,9 @@ def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:
 def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backend) -> None:
     cfg = recipe()
 
+    assert cfg.tokenizer.tokenizer_model == gb200_glm5._GLM52_MODEL_ID
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": gb200_glm5._GLM52_MODEL_REVISION}
+    assert cfg.tokenizer.chat_template is None
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 6
     assert cfg.model.context_parallel_size == cp
@@ -220,9 +223,11 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert cfg.dataset.max_train_samples == 1120
     assert isinstance(cfg.dataset.preprocessing, ChatSFTPreprocessingConfig)
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
+    assert cfg.dataset.offline_packing_specs.tokenizer_model_name is None
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is False
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
+    assert cfg.tokenizer.chat_template is None
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
     assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72

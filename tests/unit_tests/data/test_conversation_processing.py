@@ -246,6 +246,66 @@ class _ChatMLBoundaryProcessor(_Processor):
         self.tokenizer = _ChatMLBoundaryTokenizer()
 
 
+class _GlmBoundaryTokenizer(_Tokenizer):
+    truncation_side = "right"
+    chat_template = (
+        "[gMASK]<sop><|system|>Reasoning Effort: Max"
+        "{% for message in messages %}"
+        "<|user|>{{ message.content }}"
+        "<|assistant|><think></think>{{ message.content }}"
+        "<|observation|>{{ message.content }}"
+        "{% endfor %}"
+    )
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "<|assistant|>": [102],
+            "<|system|>": [105],
+            "<|user|>": [100],
+            "<|observation|>": [107],
+            "question": [20],
+            "answer": [3, 4],
+            "tool result": [30],
+            "final": [7],
+        }
+        return {"input_ids": mapping.get(text, [42])}
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        truncation=False,
+        max_length=None,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        role_markers = {"user": 100, "assistant": 102, "tool": 107, "system": 105}
+        input_ids = [105, 50]
+        for turn in conversation:
+            input_ids.append(role_markers[turn["role"]])
+            if turn["role"] == "assistant":
+                input_ids.extend([55, 56])
+            input_ids.extend(self(turn["content"])["input_ids"])
+        if truncation:
+            assert max_length is not None
+            input_ids = input_ids[:max_length] if self.truncation_side == "right" else input_ids[-max_length:]
+        return {"input_ids": input_ids}
+
+
+class _GlmBoundaryProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _GlmBoundaryTokenizer()
+
+
+class _IncompleteGlmBoundaryTokenizer(_GlmBoundaryTokenizer):
+    def apply_chat_template(self, conversation, **kwargs):
+        return {"input_ids": [105, 50, 100, 20]}
+
+
 class _LiteralChatMLBoundaryTokenizer(_ChatMLBoundaryTokenizer):
     truncation_side = "right"
     _role_markers = {
@@ -1139,6 +1199,217 @@ def test_infer_assistant_mask_boundary_config_handles_jinja_separated_chatml_new
     assert boundary_config.role_end_tokens["assistant"] == [103, 104]
 
 
+def test_infer_assistant_mask_boundary_config_from_glm_template():
+    processor = _GlmBoundaryProcessor()
+    boundary_config = infer_assistant_mask_boundary_config(processor)
+
+    assert boundary_config is not None
+    assert boundary_config.role_start_tokens == {
+        "assistant": [102],
+        "system": [105],
+        "user": [100],
+        "tool": [107],
+    }
+    assert boundary_config.role_end_tokens == {}
+    assert boundary_config.implicit_end_roles == ("assistant",)
+    assert boundary_config.include_end_tokens_for_roles == ()
+
+
+def test_infer_assistant_mask_boundary_config_rejects_non_glm_template_with_role_marker_literals():
+    processor = _GlmBoundaryProcessor()
+    processor.tokenizer.chat_template = (
+        "Template documentation: <|system|> <|user|> <|assistant|>. "
+        "{% for message in messages %}### {{ message.role }}: {{ message.content }}{% endfor %}"
+    )
+
+    assert infer_assistant_mask_boundary_config(processor) is None
+
+
+def test_build_assistant_loss_mask_uses_glm_role_boundaries_and_sequence_end():
+    processor = _GlmBoundaryProcessor()
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "tool", "content": "tool result"},
+            {"role": "assistant", "content": "final"},
+        ]
+    }
+    tokenized = tokenize_chat_example(example, processor)
+
+    assert tokenized.input_ids.tolist() == [105, 50, 100, 20, 102, 55, 56, 3, 4, 107, 30, 102, 55, 56, 7]
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+    ]
+
+
+def test_glm_chat_preprocess_appends_and_supervises_eos():
+    processor = _GlmBoundaryProcessor()
+    result = _chat_preprocess(
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        processor,
+        add_eos=True,
+    )
+
+    assert result["input_ids"].tolist() == [105, 50, 100, 20, 102, 55, 56, 3, 4, 99]
+    assert result["loss_mask"].tolist() == [False, False, False, False, False, True, True, True, True, True]
+    assert result["answer_ids"].tolist()[-1] == 99
+
+
+def test_glm_chat_preprocess_does_not_supervise_eos_when_assistant_is_removed_by_truncation():
+    processor = _GlmBoundaryProcessor()
+    result = _chat_preprocess(
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        processor,
+        add_eos=True,
+        max_length=4,
+    )
+
+    assert result["input_ids"].tolist() == [105, 50, 100, 20, 99]
+    assert result["loss_mask"].tolist() == [False, False, False, False, False]
+    assert result["context_ids"].tolist() == [105, 50, 100, 20, 99]
+    assert result["answer_ids"].tolist() == []
+
+
+def test_glm_chat_preprocess_does_not_supervise_eos_after_partial_assistant():
+    processor = _GlmBoundaryProcessor()
+    result = _chat_preprocess(
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        processor,
+        add_eos=True,
+        max_length=8,
+    )
+
+    assert result["input_ids"].tolist() == [105, 50, 100, 20, 102, 55, 56, 3, 99]
+    assert result["loss_mask"].tolist() == [False, False, False, False, False, True, True, True, False]
+    assert result["context_ids"].tolist() == result["input_ids"].tolist()
+    assert result["answer_ids"].tolist() == []
+
+
+def test_glm_chat_preprocess_supervises_eos_when_render_exactly_matches_max_length():
+    processor = _GlmBoundaryProcessor()
+    result = _chat_preprocess(
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        processor,
+        add_eos=True,
+        max_length=9,
+    )
+
+    assert result["input_ids"].tolist() == [105, 50, 100, 20, 102, 55, 56, 3, 4, 99]
+    assert result["loss_mask"].tolist()[-1] is True
+    assert result["answer_ids"].tolist()[-1] == 99
+
+
+def test_glm_boundary_mask_keeps_complete_assistant_before_right_truncation():
+    processor = _GlmBoundaryProcessor()
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "final"},
+        ]
+    }
+
+    tokenized = tokenize_chat_example(example, processor, max_length=11)
+
+    assert tokenized.input_ids.tolist() == [105, 50, 100, 20, 102, 55, 56, 3, 4, 100, 20]
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
+
+
+def test_glm_boundary_mask_returns_zero_when_right_truncation_removes_all_assistants():
+    processor = _GlmBoundaryProcessor()
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+
+    tokenized = tokenize_chat_example(example, processor, max_length=4, warn_on_all_masked=False)
+
+    assert tokenized.input_ids.tolist() == [105, 50, 100, 20]
+    assert tokenized.assistant_mask.tolist() == [False, False, False, False]
+
+
+def test_glm_boundary_mask_does_not_treat_exact_max_length_as_confirmed_truncation():
+    processor = _GlmBoundaryProcessor()
+    processor.tokenizer = _IncompleteGlmBoundaryTokenizer()
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        tokenize_chat_example(example, processor, max_length=4)
+
+
+def test_glm_boundary_mask_accepts_surviving_role_suffix_after_left_truncation():
+    processor = _GlmBoundaryProcessor()
+    processor.tokenizer.truncation_side = "left"
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "final"},
+        ]
+    }
+
+    tokenized = tokenize_chat_example(example, processor, max_length=4)
+
+    assert tokenized.input_ids.tolist() == [102, 55, 56, 7]
+    assert tokenized.assistant_mask.tolist() == [False, True, True, True]
+
+
 def test_infer_assistant_mask_boundary_config_from_llama_template():
     boundary_config = infer_assistant_mask_boundary_config(_LlamaBoundaryProcessor())
 
@@ -1323,6 +1594,7 @@ def test_ultrachat_style_row_has_matching_gpt_sft_and_direct_hf_collation():
     gpt_dataset.use_hf_tokenizer_chat_template = True
     gpt_dataset.loss_mode = "assistant"
     gpt_dataset.tool_schemas = None
+    gpt_dataset.add_eos = False
     gpt_dataset.tokenizer = megatron_tokenizer
     gpt_dataset.output_original_text = False
     gpt_dataset.max_seq_length = 16
@@ -1854,7 +2126,7 @@ def test_build_assistant_loss_mask_raises_for_incomplete_boundary_config():
         role_end_tokens={},
     )
 
-    with pytest.raises(ValueError, match="role_start_tokens, role_end_tokens"):
+    with pytest.raises(ValueError, match="requires role_end_tokens or implicit_end_roles"):
         build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
 
