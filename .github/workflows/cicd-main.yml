@@ -523,8 +523,6 @@ jobs:
           tags: |
             ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
             ${{ matrix.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
-          secrets: |
-            GH_TOKEN=${{ secrets.PAT }}
 
   cicd-import-check:
     if: |
@@ -580,13 +578,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Core
           timeout: 18
           is_unit_test: "true"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
@@ -614,13 +619,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Diffusion
           timeout: 18
           is_unit_test: "true"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
@@ -716,13 +728,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -757,13 +776,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -798,13 +824,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -829,6 +862,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -836,7 +876,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -935,6 +975,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -946,7 +993,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -984,6 +1031,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -995,7 +1049,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1033,6 +1087,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -1044,7 +1105,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1070,6 +1131,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -1081,7 +1149,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1176,10 +1244,17 @@ jobs:
         || needs.configure.outputs.perf_scripts_only == 'true'
       )
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: Generate fake coverage report
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
-          github-token: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,

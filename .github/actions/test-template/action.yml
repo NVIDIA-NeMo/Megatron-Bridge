@@ -43,8 +43,8 @@ inputs:
     description: "Has Azure credentials"
     required: false
     default: "false"
-  PAT:
-    description: "GitHub Personal Access Token"
+  github-token:
+    description: "GitHub token"
     required: true
   container-image:
     description: "Container image to use for test"
@@ -159,7 +159,7 @@ runs:
 
         docker exec -t nemo_container_${{ github.run_id }} bash -c '
           set -e
-          export GH_TOKEN=${{ inputs.PAT }}
+          export GH_TOKEN=${{ inputs.github-token }}
 
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 

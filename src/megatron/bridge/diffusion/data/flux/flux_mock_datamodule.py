@@ -15,6 +15,7 @@
 """Mock data module for FLUX model training."""
 
 from dataclasses import dataclass
+from itertools import chain, repeat
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -219,7 +220,7 @@ class FluxMockDataModuleConfig(DatasetProvider):
 
     def __post_init__(self):
         """Initialize the mock dataset and dataloader."""
-        mock_ds = _MockT2IDataset(
+        self._mock_ds = _MockT2IDataset(
             image_H=self.image_H,
             image_W=self.image_W,
             length=self.num_train_samples,
@@ -232,13 +233,19 @@ class FluxMockDataModuleConfig(DatasetProvider):
             vae_channels=self.vae_channels,
         )
 
+        self._train_dl = self._build_dataloader()
+        self._valid_dl = self._build_dataloader()
+        self._test_dl = self._build_dataloader()
+        self.sequence_length = self.seq_length
+
+    def _build_dataloader(self) -> DataLoader:
         kwargs = {}
         if self.num_workers > 0:
             kwargs["prefetch_factor"] = 8
             kwargs["persistent_workers"] = True
 
-        self._train_dl = DataLoader(
-            mock_ds,
+        return DataLoader(
+            self._mock_ds,
             batch_size=self.micro_batch_size,
             num_workers=self.num_workers,
             collate_fn=_collate_fn,
@@ -247,10 +254,10 @@ class FluxMockDataModuleConfig(DatasetProvider):
             pin_memory=True,
             **kwargs,
         )
-        self._train_dl_iter = iter(self._train_dl)
-        self.sequence_length = self.seq_length
 
     def build_datasets(self, _context: DatasetBuildContext):
         """Build and return train/val/test dataloaders."""
-        # Return iterator for external dataloader type
-        return self._train_dl_iter, self._train_dl_iter, self._train_dl_iter
+        # Reiterate each loader without caching generated batches in host memory.
+        return tuple(
+            chain.from_iterable(repeat(dataloader)) for dataloader in (self._train_dl, self._valid_dl, self._test_dl)
+        )
