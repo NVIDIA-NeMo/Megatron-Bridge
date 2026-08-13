@@ -88,6 +88,26 @@ class TestStep37BridgeProviderBridge:
         target = f"{spec.__module__}.{spec.__qualname__}"
         _validate_target_prefix(target=target, full_key="transformer_layer_spec")
 
+    def test_output_gate_fallback_when_mcore_lacks_native_support(self):
+        """Without native head-wise gates, the full-head output gate is selected."""
+        with patch.object(_step37_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False):
+            p = self._run(use_head_wise_attn_gate=True)
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is True
+
+    def test_no_output_gate_fallback_when_mcore_supports_it_natively(self):
+        """Native head-wise gates and the output gate are mutually exclusive."""
+        with patch.object(_step37_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: True):
+            p = self._run(use_head_wise_attn_gate=True)
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is False
+
+    def test_gate_disabled_leaves_output_gate_untouched(self):
+        """A config that opts out of the gate selects neither form."""
+        p = self._run(use_head_wise_attn_gate=False)
+        assert p.head_wise_attn_gate is False
+        assert getattr(p, "attention_output_gate", None) is None
+
 
 class TestStep37BridgeReverseConfig:
     def test_checkpoint_mtp_override_is_nested_in_exported_config(self):
