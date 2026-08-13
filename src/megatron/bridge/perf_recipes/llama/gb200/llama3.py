@@ -160,6 +160,8 @@ def llama3_8b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× GB200, NVFP4."""
     cfg = llama3_8b_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    # NVFP4BlockScaling takes fp8_dpa from this field, so DPA runs in FP8 under the FP4 recipe.
+    cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.tokenizer.vocab_size = 128256
     cfg.model.should_pad_vocab = True
 
@@ -193,6 +195,8 @@ def llama3_8b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+        # FP8 recipe TE uses for the DPA enabled above.
+        "NVTE_DPA_FP8_RECIPE": "Float8CurrentScaling",
     }
     return cfg
 

@@ -131,7 +131,10 @@ def _patch_mcore_schedule_plan_padding_mask() -> None:
     TODO: Remove this compatibility patch after MCore dev's schedule-plan
     padding-mask forwarding reaches the pinned main commit.
     """
-    from megatron.core.models.common import fine_grained_callables
+    try:
+        from megatron.core.models.common import fine_grained_callables
+    except ImportError:
+        from megatron.core.models.gpt import fine_grained_callables
 
     current_builder = fine_grained_callables.build_transformer_layer_callables
     if getattr(current_builder, _MCORE_SCHEDULE_PADDING_MASK_PATCHED, False):
