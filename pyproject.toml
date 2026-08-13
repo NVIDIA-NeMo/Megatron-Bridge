@@ -133,7 +133,7 @@ override-dependencies = [
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
-    "nvidia-modelopt==0.46.0rc1",
+    "nvidia-modelopt @ git+https://github.com/NVIDIA/Model-Optimizer.git@6e6b95aca41c01b5c3f22aafdf793ae4911add80",
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
@@ -159,7 +159,6 @@ requires-dist = []
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
-nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 
 [project.optional-dependencies]
