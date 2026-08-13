@@ -74,6 +74,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
+from megatron.bridge.training.gtp import get_data_distribution_group
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -336,7 +337,8 @@ def train(
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
-    dp_size = pg_collection.dp.size()
+    data_distribution_group = get_data_distribution_group(pg_collection, config.model)
+    dp_size = data_distribution_group.size()
     # Anchor for interval-average throughput logging: training_log reports the FLOPS
     # performed over each logging interval as the delta of
     # floating_point_operations_so_far. Seed it with the current cumulative (0 fresh,
@@ -588,7 +590,7 @@ def train(
             global_state,
             data_parallel_size=dp_size,
             vp_size=config.model.virtual_pipeline_model_parallel_size,
-            dp_group=pg_collection.dp,
+            dp_group=data_distribution_group,
             include_vision_patch_stats=True,
             include_cross_attention_stats=hasattr(
                 config.model, "_get_num_floating_point_operations_with_runtime_stats"
@@ -993,7 +995,7 @@ def train_step(
                 # there is one dict per microbatch. in new reporting, we average
                 # over the total number of tokens across the global batch.
                 val = torch.vstack(val).sum(dim=0)
-                dp_cp_group = pg_collection.dp_cp
+                dp_cp_group = get_data_distribution_group(pg_collection, cfg.model, with_context_parallel=True)
                 torch.distributed.all_reduce(val, group=dp_cp_group)
                 loss_reduced[key] = val[0] / val[1]
             elif val[0].numel() == 1:
@@ -1576,7 +1578,7 @@ def _should_skip_and_handle_iteration(
 
     # Update step and sample counters
     global_state.train_state.step += 1
-    dp_size = pg_collection.dp.size()
+    dp_size = get_data_distribution_group(pg_collection, cfg.model).size()
     batch_size = dp_size * cfg.train.micro_batch_size * get_num_microbatches()
     global_state.train_state.consumed_train_samples += batch_size
     global_state.train_state.skipped_train_samples += batch_size
