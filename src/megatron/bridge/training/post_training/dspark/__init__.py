@@ -16,7 +16,7 @@
 
 This package holds the pure-``torch`` pieces of DSpark draft training: the
 sequential (Markov / RNN) and confidence heads (:mod:`heads`) and the three-term
-CE / TV / confidence objective with its acceptance metrics (:mod:`loss`). The
+CE / L1 / confidence objective with its acceptance metrics (:mod:`loss`). The
 parallel-aware draft backbone and the Megatron-Core forward-step / provider wiring
 are separate, GPU-validated concerns. See ``docs/training/dspark-speculative-decoding.md``.
 """
@@ -28,7 +28,11 @@ from megatron.bridge.training.post_training.dspark.heads import (
     VanillaMarkov,
     build_markov_head,
 )
-from megatron.bridge.training.post_training.dspark.loss import DSparkForwardOutput, dspark_loss
+from megatron.bridge.training.post_training.dspark.loss import (
+    DSparkForwardOutput,
+    assert_per_token_loss_config,
+    dspark_loss,
+)
 
 
 __all__ = [
@@ -37,6 +41,7 @@ __all__ = [
     "GatedMarkovHead",
     "RNNHead",
     "VanillaMarkov",
+    "assert_per_token_loss_config",
     "build_markov_head",
     "dspark_loss",
 ]
