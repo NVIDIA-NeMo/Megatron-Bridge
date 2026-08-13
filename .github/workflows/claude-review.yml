@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@c1a0837f362a1a696e647238ab1cf916b2a7cf4a # v1.8.6
     with:
       default_runner_prefix: ubuntu-latest
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
@@ -24,13 +24,15 @@ jobs:
   auto-review:
     name: Claude Review (auto)
     needs: [pre-flight]
-    # Auto-review non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
+    # Auto-review same-repository, non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
+    # Fork pull_request workflows cannot access the secrets or OIDC token required by the review action.
     # Subsequent commits do not re-trigger; re-request a review by commenting
     # "/claude review" (handled by the manual-review job below).
     # Skip bot-generated PRs: dependency bumps (`bump-ci-container-*`) and
     # auto cherry-picks (`cherry-pick-*`).
     if: |
       github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       needs.pre-flight.outputs.is_member == 'true' &&
       github.event.pull_request.draft == false &&
       !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&
@@ -38,12 +40,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 1
 
       - name: Run Claude Code Review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.NVIDIA_INFERENCE_URL }}
           CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1"
@@ -117,7 +119,7 @@ jobs:
 
   manual-review:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@v1.7.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@1fc7b2f024bac423b1825a57182f3628c5fcb1f1 # v1.7.0
     with:
       model: ${{ vars.CLAUDE_MODEL }}
       prompt: |

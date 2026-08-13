@@ -20,8 +20,10 @@ import torch
 from megatron.core.quantization.utils import load_quantization_recipe
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
-from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
@@ -35,6 +37,24 @@ _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
 # NVLink domain (HSDP), matching ``--num-distributed-optimizer-instances $((nodes/16))``
 # in the reference Megatron-LM launch script.
 _GB300_NVLINK_DOMAIN_GPUS = 64
+
+
+def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
+    """Apply the canonical Nemotron 3 Nano performance workload defaults."""
+    cfg.model.seq_length = 8192
+    cfg.dataset.seq_length = 8192
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    # Preserve the optimizer-state precision used by the measured performance
+    # recipes even if the source library recipe later adopts different
+    # optimizer-state storage for a constrained hardware target.
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
 
 def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
@@ -54,6 +74,16 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     """Apply shared Nemotron 3 Super perf defaults after recipe-specific overrides."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    # The Nemotron 3 Super base recipe is memory-bounded for 16-GPU support
+    # runs. Benchmarks measure throughput on larger systems, so restore
+    # overlapped collectives and full-precision optimizer state.
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.model.moe_router_force_load_balancing = True
     cfg.checkpoint.async_save = False

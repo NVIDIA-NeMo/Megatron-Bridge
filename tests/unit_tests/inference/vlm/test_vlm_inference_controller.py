@@ -149,6 +149,12 @@ class TestQwenVLTextGenerationController:
             assert tokens == [1, 2, 3]
             assert image_dict is None
 
+    def test_tokenize_prompt_image_requires_processor(self, controller):
+        controller.processor = None
+
+        with pytest.raises(ValueError, match="processor is required"):
+            controller.tokenize_prompt("test", "image")
+
     def test_tokenizer_detokenize_with_special_token_151652(self, controller, mock_tokenizer):
         """Test that token 151652 is followed by 151655 during detokenization."""
         tokens = [151652, 1]
@@ -200,6 +206,10 @@ class TestQwenVLTextGenerationController:
         """
         mock_processor = MagicMock()
         mock_inference_model = MagicMock()
+        mock_tokenizer.convert_tokens_to_ids.side_effect = {
+            "<|vision_start|>": 151652,
+            "<|image_pad|>": 151655,
+        }.__getitem__
 
         # Patch the direct parent's __init__ to avoid complex initialization chain
         with patch.object(VLMTextGenerationController, "__init__", return_value=None):
@@ -231,3 +241,54 @@ class TestQwenVLTextGenerationController:
             controller.tokenizer.detokenize([1, 2, 3])
             call_args = mock_tokenizer.decode.call_args[0][0]
             assert call_args == [1, 2, 3], "Regular tokens should pass through"
+
+    @pytest.mark.parametrize(
+        ("vision_start_token_id", "image_token_id"),
+        [(151652, 151655), (200001, 200004)],
+        ids=["canonical", "configured"],
+    )
+    def test_detokenize_preserves_prompt_length_for_configured_visual_tokens(
+        self,
+        mock_tokenizer,
+        mock_image_processor,
+        vision_start_token_id,
+        image_token_id,
+    ):
+        """Keep MCore's generated-text character slice aligned with the original prompt."""
+        vision_end_token_id = image_token_id - 1
+        question_token_id = 7
+        answer_token_id = 8
+        token_text = {
+            vision_start_token_id: "<|vision_start|>",
+            vision_end_token_id: "<|vision_end|>",
+            image_token_id: "<|image_pad|>",
+            question_token_id: "Question",
+            answer_token_id: "Answer",
+        }
+        mock_tokenizer.convert_tokens_to_ids.side_effect = {
+            "<|vision_start|>": vision_start_token_id,
+            "<|image_pad|>": image_token_id,
+        }.__getitem__
+        mock_tokenizer.decode.side_effect = lambda tokens, **_: "".join(token_text[token] for token in tokens)
+
+        with patch.object(VLMTextGenerationController, "__init__", return_value=None):
+            controller = QwenVLTextGenerationController(
+                MagicMock(),
+                mock_tokenizer,
+                mock_image_processor,
+                MagicMock(),
+            )
+
+        prompt = "<|vision_start|><|image_pad|><|vision_end|>Question"
+        expanded_prompt_and_answer = [
+            vision_start_token_id,
+            image_token_id,
+            image_token_id,
+            image_token_id,
+            vision_end_token_id,
+            question_token_id,
+            answer_token_id,
+        ]
+        text = controller.tokenizer.detokenize(expanded_prompt_and_answer)
+
+        assert text[len(prompt) :] == "Answer"

@@ -39,6 +39,7 @@ skills/nemo-rl-e2e-testing/SKILL
 skills/nemo-mbridge-perf-cpu-offloading/SKILL
 skills/nemo-mbridge-perf-moe-long-context/SKILL
 skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL
+skills/nemo-mbridge-perf-nsys-analysis/SKILL
 skills/nemo-mbridge-perf-moe-vlm-training/SKILL
 skills/nemo-mbridge-perf-memory-tuning/SKILL
 skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL
@@ -55,11 +56,20 @@ skills/nemo-mbridge-perf-activation-recompute/SKILL
 ```
 
 ```{toctree}
+:hidden:
+
+skills/nemo-mbridge-recipe-recommender/references/recipe-index
+skills/nemo-mbridge-perf-nsys-analysis/references/pitfalls
+skills/nemo-mbridge-perf-nsys-analysis/references/sql-recipes
+```
+
+```{toctree}
 :caption: Cluster & Debugging
 :maxdepth: 1
 
 skills/nemo-mbridge-multi-node-slurm/SKILL
 skills/nemo-mbridge-multi-node-slurm/references/templates
+skills/nemo-mbridge-memory-snapshot-analysis/SKILL
 ```
 
 ```{toctree}

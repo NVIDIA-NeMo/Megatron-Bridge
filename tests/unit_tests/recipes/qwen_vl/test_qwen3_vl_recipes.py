@@ -523,6 +523,8 @@ def test_qwen3_vl_8b_peft_energon_dataset_params(monkeypatch: pytest.MonkeyPatch
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.micro_batch_size == cfg.train.micro_batch_size
+    assert cfg.dataset.enable_in_batch_packing is False
+    assert cfg.dataset.defer_in_batch_packing_to_step is False
 
 
 @pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
@@ -600,7 +602,9 @@ def test_each_qwen3_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable,
 
     _assert_basic_config(cfg)
 
-    assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model == cfg.dataset.hf_processor_path
+    assert cfg.tokenizer.use_tokenizer_vocab_size is True
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 

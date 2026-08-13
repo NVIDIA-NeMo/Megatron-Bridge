@@ -477,7 +477,7 @@ def _build_hf_modelopt_pre_ep_quant_metadata(
 
 
 def collect_modelopt_quant_metadata(
-    conversion_tasks: list[WeightConversionTask],
+    conversion_tasks: list[WeightConversionTask | None],
 ) -> dict[str, QuantMeta]:
     """Collect ModelOpt quantization metadata from conversion task modules."""
     from modelopt.torch.export import quant_utils
@@ -492,7 +492,7 @@ def collect_modelopt_quant_metadata(
     metadata: dict[str, QuantMeta] = {}
     quantizer_metadata: dict[tuple[int, int, str, int], QuantMeta | None] = {}
     for task in conversion_tasks:
-        if task.megatron_module is None or task.param_weight is None:
+        if task is None or task.megatron_module is None or task.param_weight is None:
             continue
 
         weight_quantizer, quant_module = find_modelopt_weight_quantizer_and_module(
@@ -1018,7 +1018,7 @@ def _compose_export_hooks(exporter: HFExportHook, finalizer: HFExportHook | None
 
 
 def build_modelopt_export_plan(
-    conversion_tasks: list[WeightConversionTask],
+    conversion_tasks: list[WeightConversionTask | None],
     *,
     model: list[torch.nn.Module],
     bridge: "MegatronModelBridge",
@@ -1029,6 +1029,9 @@ def build_modelopt_export_plan(
     expected_qformat, export_weight = get_modelopt_quant_exporter(quant_mode)
     pg_collection = model_bridge_utils._get_pg_collection_from_model(model)
     local_metadata = collect_modelopt_quant_metadata(conversion_tasks)
+    # ``None`` slots represent global names without conversion tasks. They are
+    # not termination sentinels, so retain every concrete task after a hole.
+    concrete_tasks: list[WeightConversionTask] = [task for task in conversion_tasks if task is not None]
     if torch.distributed.is_initialized():
         pp_group = model_bridge_utils._get_pp_group(model)
         ep_group = model_bridge_utils._get_ep_group(model)
@@ -1049,7 +1052,7 @@ def build_modelopt_export_plan(
     candidate_mappings: dict[int, Any] = {}
     candidate_groups: dict[str, list[int]] = {}
     eligible_groups: dict[str, bool] = {}
-    for task_idx, task in enumerate(conversion_tasks):
+    for task_idx, task in enumerate(concrete_tasks):
         candidate = _modelopt_pre_ep_mapping(task.mapping, pg_collection) if can_export_before_ep else None
         if candidate is None:
             continue
@@ -1078,7 +1081,7 @@ def build_modelopt_export_plan(
             if valid_expert_layout:
                 try:
                     for task_idx in task_indices:
-                        candidate_task = conversion_tasks[task_idx]
+                        candidate_task = concrete_tasks[task_idx]
                         local_ids.append(
                             extract_expert_number_from_param(candidate_task.param_name) % experts_per_rank
                         )
@@ -1097,19 +1100,19 @@ def build_modelopt_export_plan(
             for group_key in all_group_keys
         }
 
-    mapped_tasks = list(conversion_tasks)
+    mapped_tasks = list(concrete_tasks)
     for group_key, task_indices in candidate_groups.items():
         if not eligible_groups[group_key]:
             continue
         for task_idx in task_indices:
             mapped_tasks[task_idx] = replace(
-                conversion_tasks[task_idx],
+                concrete_tasks[task_idx],
                 mapping=candidate_mappings[task_idx],
             )
 
     regular_metadata_tasks: list[WeightConversionTask] = []
     pre_ep_tasks: list[WeightConversionTask] = []
-    for original_task, mapped_task in zip(conversion_tasks, mapped_tasks, strict=True):
+    for original_task, mapped_task in zip(concrete_tasks, mapped_tasks, strict=True):
         if getattr(mapped_task.mapping, "is_modelopt_pre_ep_export", False):
             pre_ep_tasks.append(mapped_task)
         else:

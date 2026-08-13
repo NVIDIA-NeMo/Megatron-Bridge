@@ -36,9 +36,9 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4OutputLayer,
     Gemma4RotaryEmbedding,
     _attach_ple_modules,
-    _gemma4_block_spec,
     _install_ple_forward,
     _install_tied_kv,
+    gemma4_block_spec,
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
@@ -285,7 +285,7 @@ class Gemma4ModelProvider(GPTModelProvider):
     kv_channels: int = 256
     num_query_groups: int = 8
     window_size: int = 1024
-    interleaved_attn_pattern: tuple = (5, 1)
+    interleaved_attn_pattern: tuple[int, int] | list[str] = (5, 1)
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
     attention_backend: AttnBackend = AttnBackend.auto
@@ -320,7 +320,7 @@ class Gemma4ModelProvider(GPTModelProvider):
 
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
-        default_factory=lambda: partial(_gemma4_block_spec, use_transformer_engine=HAVE_TE)
+        default_factory=lambda: partial(gemma4_block_spec, use_transformer_engine=HAVE_TE)
     )
     scatter_embedding_sequence_parallel: bool = True
 
@@ -345,7 +345,7 @@ class Gemma4ModelProvider(GPTModelProvider):
         if hasattr(model, "embedding"):
             model.embedding = Gemma3LanguageModelEmbedding(
                 config=self,
-                vocab_size=self.vocab_size,
+                vocab_size=model.vocab_size,
                 max_sequence_length=self.seq_length,
                 position_embedding_type=self.position_embedding_type,
                 scatter_to_sequence_parallel=self.scatter_embedding_sequence_parallel,

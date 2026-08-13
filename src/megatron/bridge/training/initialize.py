@@ -308,10 +308,7 @@ def set_jit_fusion_options(
         torch._C._jit_override_can_fuse_on_cpu(True)
         torch._C._jit_override_can_fuse_on_gpu(True)
 
-    _warmup_jit_function(
-        model_config.transformer if isinstance(model_config, (GPTModelConfig, HybridModelConfig)) else model_config,
-        micro_batch_size,
-    )
+    _warmup_jit_function(model_config, micro_batch_size)
 
 
 def destroy_global_state() -> None:
@@ -883,7 +880,10 @@ def _set_random_seed(
         )
 
 
-def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int) -> None:
+def _warmup_jit_function(
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig,
+    micro_batch_size: int,
+) -> None:
     """Compilie JIT functions before the main training steps"""
     if model_config.bf16:
         dtype = torch.bfloat16

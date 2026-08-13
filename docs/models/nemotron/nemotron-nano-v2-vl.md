@@ -1,5 +1,9 @@
 # Nemotron Nano V2 VL
 
+> **Deprecation notice:** Nemotron Nano v2 VL 12B support is no longer actively
+> maintained or tested against current upstream checkpoints and will be removed
+> in Megatron Bridge 0.7.0.
+
 NVIDIA Nemotron Nano v2 VL is an open 12B multimodal reasoning model for document intelligence and video understanding.
 It enables [AI assistants](https://www.nvidia.com/en-us/use-cases/ai-assistants) to extract, interpret, and act on
 information across text, images, tables, and videos. This makes the model valuable for agents focused on data analysis,

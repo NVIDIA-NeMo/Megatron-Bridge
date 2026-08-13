@@ -130,6 +130,10 @@ class _ChatMLBoundaryTokenizer:
             return {"input_ids": [102]}
         if text == "<|im_end|>\n":
             return {"input_ids": [102, 103]}
+        if text == "hi":
+            return {"input_ids": [10]}
+        if text == "answer":
+            return {"input_ids": [21, 22]}
 
         texts = text if isinstance(text, list) else [text]
         tokenized = [[100, 10, 102, 103, 101, 21, 22, 102, 103] for _ in texts]
@@ -344,6 +348,7 @@ def test_text_chat_collate_fn_pads_packed_sequences_to_multiple():
     assert batch["cu_seqlens_kv"].tolist() == [0, 3, 7]
     assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
     assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 8]
+    assert batch["padding_mask"].tolist() == [[False, False, False, True, False, False, False, False]]
     assert batch["max_seqlen_q"].item() == 4
     assert batch["max_seqlen_kv"].item() == 4
     assert "cu_seqlens" not in batch

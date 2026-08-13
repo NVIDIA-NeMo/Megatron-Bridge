@@ -17,6 +17,7 @@
 # Core model components
 # Bridges for HuggingFace to Megatron conversion
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel  # noqa: F401
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.qwen3_vl_bridge import Qwen3VLBridge, Qwen3VLMoEBridge
 
 # Dense and MoE model providers
@@ -28,6 +29,7 @@ from megatron.bridge.models.qwen_vl.qwen3_vl_provider import (
 
 __all__ = [
     "Qwen3VLModel",
+    "Qwen3VLForTokenClassification",
     "Qwen3VLModelProvider",
     "Qwen3VLMoEModelProvider",
     "Qwen3VLBridge",

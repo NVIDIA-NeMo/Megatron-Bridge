@@ -553,6 +553,40 @@ class TestAbortCheckpoint:
 class TestAdapterFunction:
     """Test cases for the _adapter function behavior."""
 
+    def test_nvrx_injects_call_wrapper_into_adapter(self):
+        """Test that NVRx can inject its active CallWrapper into the adapter."""
+        from nvidia_resiliency_ext.inprocess import CallWrapper
+        from nvidia_resiliency_ext.inprocess.param_utils import substitute_param_value
+
+        mock_train_fn = MagicMock()
+        config = InProcessRestartConfig(enabled=True, granularity="rank", empty_cuda_cache=False)
+        mock_global_state = MagicMock(spec=GlobalState)
+
+        with (
+            patch.dict(os.environ, {"MASTER_PORT": "29500"}),
+            patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+            patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+        ):
+            mock_wrapper.return_value.return_value = MagicMock()
+            inprocess_restart(mock_train_fn, config, mock_global_state)
+
+        adapter_fn = mock_wrapper.return_value.call_args.args[0]
+        mock_call_wrapper = MagicMock(spec=CallWrapper)
+        args, kwargs = substitute_param_value(
+            adapter_fn,
+            ("arg1",),
+            {"other_kwarg": "value"},
+            {CallWrapper: mock_call_wrapper},
+        )
+
+        adapter_fn(*args, **kwargs)
+
+        mock_train_fn.assert_called_once_with(
+            "arg1",
+            inprocess_call_wrapper=mock_call_wrapper,
+            other_kwarg="value",
+        )
+
     def test_adapter_function_behavior(self):
         """Test that the adapter function correctly handles CallWrapper extraction."""
         # We can't directly test the _adapter function since it's defined inside inprocess_restart,

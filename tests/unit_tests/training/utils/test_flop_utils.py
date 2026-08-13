@@ -23,12 +23,16 @@ import torch
 
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.utils.flop_utils import (
+    GlobalFlopsRuntimeStats,
     _lora_seq_stats_cache,
     _packed_data_exists,
     accumulate_flops_metadata,
     num_floating_point_operations,
+    resolve_global_flops_runtime_stats,
     resolve_global_flops_seqlen_stats,
+    vision_patch_stats_from_grid_thw,
     vit_flops,
+    vit_flops_from_grid_thw,
 )
 
 
@@ -42,6 +46,7 @@ class MockVisionConfig:
     intermediate_size: int = 4096
     spatial_merge_size: int = 2
     out_hidden_size: int = 4096
+    deepstack_visual_indexes: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -100,6 +105,10 @@ class MockModelConfig:
     dsa_indexer_n_heads: int | None = None
     dsa_indexer_head_dim: int | None = None
     dsa_indexer_topk: int | None = None
+    dsa_indexer_topk_freq: int = 1
+    dsa_indexer_skip_topk_offset: int = 0
+    dsa_indexer_loss_coeff: float = 0.0
+    dsa_indexer_use_sparse_loss: bool = False
     # GDN (Gated DeltaNet) settings
     experimental_attention_variant: str | None = None
     linear_attention_freq: int | list | None = None
@@ -108,6 +117,11 @@ class MockModelConfig:
     linear_value_head_dim: int = 128
     linear_num_key_heads: int = 16
     linear_num_value_heads: int = 48
+    # Kimi K3 KDA (Kimi Delta Attention) settings
+    kimi_kda_layers: tuple[int, ...] = ()
+    kimi_linear_num_heads: int = 96
+    kimi_linear_head_dim: int = 128
+    kimi_linear_conv_kernel_size: int = 4
     # Optional ViT vision config (for VLM FLOPS tests)
     vision_config: object | None = None
 
@@ -1749,6 +1763,59 @@ class TestVitFlops:
         f2 = vit_flops(cfg, batch_size=2, num_patches=64)
         assert f2 == 2 * f1
 
+    def test_grid_thw_preserves_equal_image_attention_boundaries(self):
+        """Two images in one physical pack must not become one quadratic ViT sequence."""
+        cfg = self._base_cfg()
+        grids = torch.tensor([[1, 10, 10], [1, 10, 10]], dtype=torch.int64)
+
+        exact = vit_flops_from_grid_thw(cfg, grids)
+        per_image = vit_flops(cfg, batch_size=2, num_patches=100)
+        collapsed_pack = vit_flops(cfg, batch_size=1, num_patches=200)
+
+        assert exact == per_image
+        assert exact < collapsed_pack
+
+    def test_grid_thw_treats_video_frames_as_independent_attention_sequences(self):
+        """Qwen vision THD attention creates one sequence per temporal frame."""
+        cfg = self._base_cfg()
+        video_grid = torch.tensor([[2, 10, 10]], dtype=torch.int64)
+
+        assert vision_patch_stats_from_grid_thw(video_grid, spatial_merge_size=2) == (200, 20_000, 50)
+        assert vit_flops_from_grid_thw(cfg, video_grid) == vit_flops(cfg, batch_size=2, num_patches=100)
+
+    def test_grid_thw_supports_thinker_nested_vision_config(self):
+        """Qwen-Omni stores its vision config below thinker_config."""
+        direct_cfg = self._base_cfg()
+        nested_cfg = SimpleNamespace(
+            model=SimpleNamespace(
+                hidden_size=direct_cfg.model.hidden_size,
+                thinker_config=SimpleNamespace(vision_config=direct_cfg.model.vision_config),
+            )
+        )
+        grid = torch.tensor([[1, 8, 8]], dtype=torch.int64)
+
+        assert vit_flops_from_grid_thw(nested_cfg, grid) == vit_flops_from_grid_thw(direct_cfg, grid)
+
+    def test_deepstack_visual_indexes_add_one_merger_each(self):
+        """Qwen3-VL runs a merger at every deepstack index plus the final merger."""
+        cfg = self._base_cfg(deepstack_visual_indexes=[8, 16, 24])
+        num_patches = 64
+        cfg_without_deepstack = self._base_cfg()
+        without_deepstack = vit_flops(cfg_without_deepstack, batch_size=1, num_patches=num_patches)
+
+        with_deepstack = vit_flops(cfg, batch_size=1, num_patches=num_patches)
+
+        vision = cfg.model.vision_config
+        merge_unit = vision.spatial_merge_size**2
+        merged_hidden = vision.hidden_size * merge_unit
+        one_merger = (
+            num_patches
+            // merge_unit
+            * (2 * merged_hidden * merged_hidden + 2 * merged_hidden * vision.out_hidden_size)
+            * 3
+        )
+        assert with_deepstack == without_deepstack + 3 * one_merger
+
     def test_vit_flops_quadratic_in_num_patches_attention_term(self):
         """Attention core term should grow faster than linear in per-image patch count.
 
@@ -2118,6 +2185,268 @@ class TestMLAFlops:
 
 
 @pytest.mark.unit
+class TestDynamicSparseAttentionFlops:
+    """Closed-form training FLOPs for absorbed MLA with Dynamic Sparse Attention."""
+
+    @staticmethod
+    def _dsa_config(**overrides) -> MockConfigContainer:
+        values = {
+            "num_layers": 1,
+            "hidden_size": 8,
+            "seq_length": 4,
+            "ffn_hidden_size": 0,
+            "num_attention_heads": 2,
+            "num_query_groups": 2,
+            "kv_channels": 4,
+            "vocab_size": 128,
+            "make_vocab_size_divisible_by": 1,
+            "gated_linear_unit": False,
+            "multi_latent_attention": True,
+            "experimental_attention_variant": "dsa",
+            "q_lora_rank": 4,
+            "kv_lora_rank": 3,
+            "qk_head_dim": 2,
+            "qk_pos_emb_head_dim": 1,
+            "v_head_dim": 2,
+            "dsa_indexer_n_heads": 2,
+            "dsa_indexer_head_dim": 2,
+            "dsa_indexer_topk": 2,
+            "dsa_indexer_topk_freq": 1,
+            "dsa_indexer_skip_topk_offset": 0,
+            "dsa_indexer_loss_coeff": 0.001,
+            "dsa_indexer_use_sparse_loss": True,
+        }
+        values.update(overrides)
+        return MockConfigContainer(model=MockModelConfig(**values))
+
+    def test_dsa_exact_toy_formula(self):
+        """A one-layer toy covers absorbed sparse MLA and every lightning-indexer matmul."""
+        # At S=4 and top-k=2, the causal selected counts are [1, 2, 2, 2],
+        # while the dense indexer sees [1, 2, 3, 4]. The independently reduced
+        # per-token terms are:
+        #   MLA projections: 906; sparse QK+AV: 147
+        #   indexer projections (forward+wgrad): 192
+        #   index scores (dense forward 30 + sparse-loss backward 42): 72
+        #   sparse detached teacher QK (forward only): 28
+        #   vocabulary projection: 6144
+        expected = 4 * (906 + 147 + 192 + 72 + 28 + 6144)
+
+        assert num_floating_point_operations(self._dsa_config(), batch_size=1) == expected
+
+    def test_dsa_sequence_length_and_topk_scaling(self):
+        """Sparse MLA saturates at top-k while the lightning indexer remains quadratic."""
+        short = num_floating_point_operations(self._dsa_config(), batch_size=1)
+        long = num_floating_point_operations(self._dsa_config(seq_length=8), batch_size=1)
+        wider_topk = num_floating_point_operations(self._dsa_config(dsa_indexer_topk=4), batch_size=1)
+
+        # S=8, k=2: average sparse context is 15/8 and dense causal context is 9/2.
+        assert long == 60_228
+        assert long > 2 * short
+        # S=4, k=4 raises average sparse context from 7/4 to 5/2. Sparse QK/AV,
+        # the sparse-loss score backward, and the sparse teacher target change;
+        # top-k comparisons are not FLOPs.
+        assert wider_topk - short == 372
+
+    def test_dsa_index_sharing_cadence_and_offset(self):
+        """Only full IndexShare layers pay indexer projection, score, and teacher work."""
+        no_sharing = num_floating_point_operations(
+            self._dsa_config(num_layers=6, dsa_indexer_topk_freq=1), batch_size=1
+        )
+        offset_three = num_floating_point_operations(
+            self._dsa_config(
+                num_layers=6,
+                dsa_indexer_topk_freq=4,
+                dsa_indexer_skip_topk_offset=3,
+            ),
+            batch_size=1,
+        )
+        offset_one = num_floating_point_operations(
+            self._dsa_config(
+                num_layers=6,
+                dsa_indexer_topk_freq=4,
+                dsa_indexer_skip_topk_offset=1,
+            ),
+            batch_size=1,
+        )
+
+        # Full layers are [1..6], [1,2,3], and [1,5], respectively. Each full
+        # layer contributes (192 + 72 + 28) FLOPs per token of indexer work.
+        assert no_sharing - offset_three == 3 * 4 * 292
+        assert offset_three - offset_one == 4 * 292
+
+    def test_dsa_detached_indexer_projection_backward_multiplier(self):
+        """Indexer loss adds wgrad, not dgrad, for projections fed by detached inputs."""
+        with_loss = num_floating_point_operations(self._dsa_config(), batch_size=1)
+        without_loss = num_floating_point_operations(self._dsa_config(dsa_indexer_loss_coeff=0.0), batch_size=1)
+
+        # Enabling sparse indexer loss adds one projection wgrad (96/token),
+        # score gradients over the selected top-k context only (42/token),
+        # and teacher QK (28/token).
+        assert with_loss - without_loss == 4 * (96 + 42 + 28)
+
+    def test_dsa_mtp_layer_has_independent_sparse_attention_and_indexer(self):
+        """MTP1 adds one full DSA layer because MCore restarts MTP layer numbering at one."""
+        decoder_only = num_floating_point_operations(self._dsa_config(), batch_size=1)
+        with_mtp = num_floating_point_operations(self._dsa_config(mtp_num_layers=1), batch_size=1)
+
+        # Added per-token work: DSA layer 1345 + MTP norms/eh-proj 912 + logits 6144.
+        assert with_mtp - decoder_only == 4 * (1345 + 912 + 6144)
+
+
+@pytest.mark.unit
+class TestKimiK3KdaFlops:
+    """Tests for Kimi K3's KDA (Kimi Delta Attention) hybrid attention schedule.
+
+    The K3 provider subclasses ``MLAModelProvider``, so the MLA branch costs every
+    layer as full multi-latent attention. Layers listed in ``kimi_kda_layers`` are
+    linear-attention blocks and must be re-costed with the KDA per-layer formula.
+    """
+
+    @staticmethod
+    def _kda_per_layer(
+        hidden: int,
+        num_kda_heads: int,
+        head_dim: int,
+        conv_kernel_dim: int,
+    ) -> float:
+        """Mirror the KDA per-layer formula in flop_utils.py — regression coverage."""
+        projection_size = num_kda_heads * head_dim
+        return (
+            3
+            * 2
+            * (
+                hidden * projection_size * 5
+                + hidden * num_kda_heads
+                + hidden * head_dim
+                + head_dim * projection_size
+                + conv_kernel_dim * 3 * projection_size
+                + num_kda_heads * (head_dim**2) * 4
+            )
+        )
+
+    def _base_kwargs(self, **overrides):
+        """Small K3-shaped MLA config (dense, no MoE/MTP) so the math stays checkable."""
+        defaults = dict(
+            num_layers=4,
+            hidden_size=256,
+            seq_length=128,
+            ffn_hidden_size=512,
+            num_attention_heads=8,
+            num_query_groups=8,
+            kv_channels=32,
+            vocab_size=32000,  # already divisible by 128 → padded == vocab
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=False,  # ffn_expansion_factor = 2, simpler MLP math
+            multi_latent_attention=True,
+            q_lora_rank=64,
+            kv_lora_rank=32,
+            qk_head_dim=32,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=32,
+            kimi_linear_num_heads=8,
+            kimi_linear_head_dim=32,
+            kimi_linear_conv_kernel_size=4,
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_kda_layers_change_flops(self):
+        """Marking layers as KDA must not leave the pure-MLA total unchanged."""
+        mla_only = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs())), batch_size=1
+        )
+        hybrid = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(kimi_kda_layers=(1, 2, 3)))),
+            batch_size=1,
+        )
+        assert hybrid != mla_only
+        assert hybrid > 0
+
+    def test_kda_exact_self_attn_term(self):
+        """Hybrid MLA/KDA self_attn_term is the exact per-layer weighted sum."""
+        batch_size = 1
+        kw = self._base_kwargs(kimi_kda_layers=(1, 3))
+        cfg = MockConfigContainer(model=MockModelConfig(**kw))
+        actual = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        mla_per_layer = (
+            3
+            * 2
+            * TestMLAFlops._mla_inner(
+                hidden=kw["hidden_size"],
+                n_heads=kw["num_attention_heads"],
+                seq_length=kw["seq_length"],
+                q_lora_rank=kw["q_lora_rank"],
+                kv_lora_rank=kw["kv_lora_rank"],
+                qk_head_dim=kw["qk_head_dim"],
+                qk_pos_emb_head_dim=kw["qk_pos_emb_head_dim"],
+                v_head_dim=kw["v_head_dim"],
+            )
+        )
+        kda_per_layer = self._kda_per_layer(
+            hidden=kw["hidden_size"],
+            num_kda_heads=kw["kimi_linear_num_heads"],
+            head_dim=kw["kimi_linear_head_dim"],
+            conv_kernel_dim=kw["kimi_linear_conv_kernel_size"],
+        )
+        # 4 layers total, 2 of them KDA.
+        expected_self_attn = kda_per_layer * 2 + mla_per_layer * 2
+        expected_mlp = 3 * 2 * kw["hidden_size"] * (kw["ffn_hidden_size"] * 2) * kw["num_layers"]
+        expected_logit = 3 * 2 * kw["hidden_size"] * kw["vocab_size"] * 1
+        expected_total = batch_size * kw["seq_length"] * (expected_mlp + expected_self_attn + expected_logit)
+
+        assert actual == pytest.approx(expected_total, rel=1e-12)
+
+    def test_more_kda_layers_lowers_flops_at_long_context(self):
+        """KDA has no quadratic term, so it undercuts MLA once the sequence is long."""
+        # The crossover is sequence-dependent: KDA's projections are fixed cost while
+        # MLA's core-attention term grows with seq_length, so this only holds at long context.
+        few = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=8192, kimi_kda_layers=(1,)))),
+            batch_size=1,
+        )
+        many = num_floating_point_operations(
+            MockConfigContainer(
+                model=MockModelConfig(**self._base_kwargs(seq_length=8192, kimi_kda_layers=(1, 2, 3)))
+            ),
+            batch_size=1,
+        )
+        assert many < few
+
+    def test_kda_is_linear_in_sequence_length(self):
+        """An all-KDA schedule drops the quadratic core-attention term entirely."""
+        all_kda = dict(kimi_kda_layers=(1, 2, 3, 4))
+        short = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=128, **all_kda))), batch_size=1
+        )
+        long = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**self._base_kwargs(seq_length=256, **all_kda))), batch_size=1
+        )
+        assert long == pytest.approx(2 * short, rel=1e-12)
+
+    def test_mtp_layers_follow_final_decoder_layer_type(self):
+        """MTP reuses the last decoder layer spec, so its attention type must match."""
+        kw_kda_last = self._base_kwargs(kimi_kda_layers=(1, 4), mtp_num_layers=1)
+        kw_mla_last = self._base_kwargs(kimi_kda_layers=(1, 2), mtp_num_layers=1)
+        kda_last = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_kda_last)), batch_size=1
+        )
+        mla_last = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**kw_mla_last)), batch_size=1
+        )
+        # Same decoder KDA count (2), but the MTP layer inherits a different type.
+        assert kda_last != mla_last
+
+    @pytest.mark.parametrize("bad_layers", [(0, 1), (1, 5), (-1,)])
+    def test_out_of_range_kda_layers_raise(self, bad_layers):
+        """`kimi_kda_layers` holds 1-indexed layer numbers; out-of-range entries fail loudly."""
+        cfg = MockConfigContainer(model=MockModelConfig(**self._base_kwargs(kimi_kda_layers=bad_layers)))
+        with pytest.raises(ValueError, match="kimi_kda_layers contains layer numbers outside"):
+            num_floating_point_operations(cfg, batch_size=1)
+
+
+@pytest.mark.unit
 class TestMLAWithMoE:
     """Sanity tests for MLA combined with MoE (DeepSeek-V3 architecture shape)."""
 
@@ -2275,6 +2604,37 @@ class TestProviderOverride:
         # Override must have been invoked twice with the right batch_size args.
         assert captured == [1, 4], f"Override call log mismatch: {captured}"
 
+    def test_runtime_stats_override_short_circuits(self):
+        model = MockModelConfig()
+        sentinel = 7_654_321
+        captured = {}
+
+        def custom(**kwargs):
+            captured.update(kwargs)
+            return sentinel
+
+        model._get_num_floating_point_operations_with_runtime_stats = custom
+        cfg = MockConfigContainer(model=model)
+
+        assert (
+            num_floating_point_operations(
+                cfg,
+                batch_size=4,
+                seqlen_sum=100,
+                seqlen_squared_sum=2_500,
+                cross_seqlen_sum=20,
+                cross_seqlen_product_sum=500,
+            )
+            == sentinel
+        )
+        assert captured == {
+            "batch_size": 4,
+            "seqlen_sum": 100,
+            "seqlen_squared_sum": 2_500,
+            "cross_seqlen_sum": 20,
+            "cross_seqlen_product_sum": 500,
+        }
+
 
 class _State:
     """Minimal stand-in for GlobalState — just an attribute bag."""
@@ -2376,6 +2736,41 @@ class TestAccumulateFlopsMetadata:
         assert state._flops_seqlen_sum == 2 * 128
         assert state._flops_seqlen_sq_sum == (32**2 + 96**2) + (64**2 + 64**2)
 
+    def test_cross_attention_metadata_uses_matching_query_and_key_lengths(self):
+        state = _State()
+        tokens = torch.zeros(1, 12)
+        query_cu_seqlens = torch.tensor([0, 4, 12])
+        query_cu_seqlens_unpadded = torch.tensor([0, 3, 8])
+        key_value_cu_seqlens = torch.tensor([0, 4, 12])
+        key_value_cu_seqlens_unpadded = torch.tensor([0, 2, 9])
+
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            cu_seqlens=query_cu_seqlens,
+            cu_seqlens_unpadded=query_cu_seqlens_unpadded,
+            cross_cu_seqlens=key_value_cu_seqlens,
+            cross_cu_seqlens_unpadded=key_value_cu_seqlens_unpadded,
+        )
+
+        assert state._flops_seqlen_sum == 12
+        assert state._flops_seqlen_sq_sum == 3**2 + 5**2
+        assert state._flops_cross_seqlen_sum == 4 + 8
+        assert state._flops_cross_seqlen_product_sum == 3 * 2 + 5 * 7
+        assert state._flops_requires_global_reduce
+
+    def test_cross_attention_metadata_requires_matching_sequence_counts(self):
+        state = _State()
+        tokens = torch.zeros(1, 8)
+
+        with pytest.raises(ValueError, match="matching query and key/value sequences"):
+            accumulate_flops_metadata(
+                state,
+                tokens,
+                cu_seqlens=torch.tensor([0, 3, 8]),
+                cross_cu_seqlens=torch.tensor([0, 9]),
+            )
+
     @pytest.mark.parametrize("vp_size", [1, 2, 10])
     def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size):
         # MCore's interleaved schedule calls forward_step once for every
@@ -2434,6 +2829,41 @@ class TestAccumulateFlopsMetadata:
         tokens = torch.zeros(1, 64)
         accumulate_flops_metadata(state, tokens)
         assert not hasattr(state, "_flops_vision_patches")
+
+    def test_exact_vision_stats_accumulate_and_request_global_reduce(self):
+        state = _State()
+        tokens = torch.zeros(1, 64)
+
+        accumulate_flops_metadata(state, tokens, vision_patch_stats=(100, 10_000, 25))
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            vision_patch_stats=(torch.tensor(200), torch.tensor(20_000), torch.tensor(50)),
+        )
+
+        assert int(state._flops_vision_patch_sum) == 300
+        assert int(state._flops_vision_patch_sq_sum) == 30_000
+        assert int(state._flops_vision_merged_token_sum) == 75
+        assert state._flops_requires_global_reduce
+
+    def test_zero_vision_stats_still_request_matching_dp_collective(self):
+        state = _State()
+        tokens = torch.zeros(1, 64)
+
+        accumulate_flops_metadata(state, tokens, vision_patch_stats=(0, 0, 0))
+
+        assert state._flops_vision_patch_sum == 0
+        assert state._flops_requires_global_reduce
+
+    def test_legacy_vision_patch_count_remains_backward_compatible(self):
+        state = _State()
+        tokens = torch.zeros(1, 64)
+
+        accumulate_flops_metadata(state, tokens, num_vision_patches=40)
+        resolved = resolve_global_flops_seqlen_stats(state, data_parallel_size=2, dp_group=None)
+
+        assert resolved == (128, 2 * 64**2, 80)
+        assert not hasattr(state, "_flops_vision_patch_sum")
 
     def test_empty_cu_seqlens_falls_back_to_bshd(self):
         # Degenerate cu_seqlens (only one element after argmin truncation)
@@ -2499,12 +2929,16 @@ class TestResolveGlobalFlopsSeqlenStats:
         state._flops_seqlen_sum = 1000
         state._flops_seqlen_sq_sum = 250_000
         state._flops_vision_patches = 64
-        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
-            state, data_parallel_size=4, dp_group=None
+        state._flops_cross_seqlen_sum = 32
+        state._flops_cross_seqlen_product_sum = 8_000
+        stats = resolve_global_flops_runtime_stats(state, data_parallel_size=4, dp_group=None)
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=1000 * 4,
+            seqlen_squared_sum=250_000 * 4,
+            num_vision_patches=64 * 4,
+            cross_seqlen_sum=32 * 4,
+            cross_seqlen_product_sum=8_000 * 4,
         )
-        assert seqlen_sum == 1000 * 4
-        assert seqlen_sq_sum == 250_000 * 4
-        assert vision == 64 * 4
 
     def test_dp_size_one_returns_local(self):
         state = _State()
@@ -2603,7 +3037,114 @@ class TestResolveGlobalFlopsSeqlenStats:
         )
 
         all_reduce.assert_called_once()
+        assert all_reduce.call_args.args[0].numel() == 3
         assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)
+
+    def test_exact_vision_stats_share_integer_all_reduce_across_dp(self, monkeypatch):
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        state._flops_vision_patch_sum = 100
+        state._flops_vision_patch_sq_sum = 10_000
+        state._flops_vision_merged_token_sum = 25
+        state._flops_requires_global_reduce = True
+
+        def fake_all_reduce(stats, op=None, group=None):
+            assert stats.dtype == torch.int64
+            assert stats.numel() == 6
+            # Add a different DP rank instead of multiplying the local values.
+            stats.add_(torch.tensor([20, 400, 0, 200, 20_000, 50], dtype=torch.int64))
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=2,
+            dp_group=object(),
+            include_vision_patch_stats=True,
+        )
+
+        all_reduce.assert_called_once()
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=30,
+            seqlen_squared_sum=500,
+            vision_patch_sum=300,
+            vision_patch_squared_sum=30_000,
+            vision_merged_token_sum=75,
+        )
+
+    def test_cross_capability_extends_all_reduce_when_local_stats_are_zero(self, monkeypatch):
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        state._flops_cross_seqlen_sum = 0
+        state._flops_cross_seqlen_product_sum = 0
+        state._flops_requires_global_reduce = True
+
+        def fake_all_reduce(stats, op=None, group=None):
+            stats.mul_(4)
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=4,
+            dp_group=object(),
+            include_cross_attention_stats=True,
+        )
+
+        all_reduce.assert_called_once()
+        assert all_reduce.call_args.args[0].numel() == 5
+        assert stats == GlobalFlopsRuntimeStats(seqlen_sum=40, seqlen_squared_sum=400)
+
+    def test_vision_and_cross_stats_share_one_all_reduce(self, monkeypatch):
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        state._flops_vision_patch_sum = 20
+        state._flops_vision_patch_sq_sum = 400
+        state._flops_vision_merged_token_sum = 5
+        state._flops_cross_seqlen_sum = 30
+        state._flops_cross_seqlen_product_sum = 300
+        state._flops_requires_global_reduce = True
+
+        def fake_all_reduce(stats, op=None, group=None):
+            assert stats.dtype == torch.int64
+            assert stats.numel() == 8
+            stats.mul_(2)
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=2,
+            dp_group=object(),
+            include_vision_patch_stats=True,
+            include_cross_attention_stats=True,
+        )
+
+        all_reduce.assert_called_once()
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=20,
+            seqlen_squared_sum=200,
+            vision_patch_sum=40,
+            vision_patch_squared_sum=800,
+            vision_merged_token_sum=10,
+            cross_seqlen_sum=60,
+            cross_seqlen_product_sum=600,
+        )
 
 
 @pytest.mark.unit

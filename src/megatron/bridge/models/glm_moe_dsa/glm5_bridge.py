@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import GlmMoeDsaForCausalLM
@@ -53,6 +54,18 @@ class GLM5Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
+        """Return whether an HF config field should be mapped to the Megatron provider."""
+        # Transformers 5.11-5.12 has an upstream GLM config bug: ``GlmMoeDsaConfig`` declares an independent
+        # ``num_experts=256`` default alongside the model's authoritative ``n_routed_experts`` field. The generic
+        # config mapping is first-wins, so that injected default can shadow the checkpoint's routed-expert count.
+        # Transformers 5.13 removed the duplicate field and redirects legacy ``num_experts`` input to
+        # ``n_routed_experts``. Detect the affected config shape instead of version-gating so this compatibility
+        # workaround applies only while both fields exist and does not become the default GLM mapping behavior.
+        if hf_name == "num_experts" and hasattr(hf_config, "num_experts") and hasattr(hf_config, "n_routed_experts"):
+            return False
+        return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
@@ -80,7 +93,10 @@ class GLM5Bridge(MegatronModelBridge):
 
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
-        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_token_dispatcher_type = "flex"
+        provider.moe_flex_dispatcher_backend = "hybridep"
+        provider.moe_flex_dispatcher_num_sms = 16
+        provider.moe_permute_fusion_into_hybridep = False
         provider.moe_router_load_balancing_type = "seq_aux_loss"
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
@@ -98,6 +114,10 @@ class GLM5Bridge(MegatronModelBridge):
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
+        # GlmMoeDsaConfig may normalize qk_rope_head_dim to head_dim while
+        # loading GLM-5.2. Recover the RoPE width from the model's invariant:
+        # total QK width = non-RoPE width + RoPE width.
+        provider.qk_pos_emb_head_dim = hf_config.qk_head_dim - hf_config.qk_nope_head_dim
 
         # GLM5-specific: rotary_base is nested in rope_parameters
         provider.rotary_base = hf_config.rope_parameters["rope_theta"]
@@ -216,7 +236,7 @@ class GLM5Bridge(MegatronModelBridge):
         )
 
         hf_config = self.hf_config
-        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
+        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
         num_transformer_layers = hf_config.num_hidden_layers
         for mtp_layer in range(num_mtp_layers):
             # MTP specific mappings

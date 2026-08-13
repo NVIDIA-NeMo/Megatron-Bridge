@@ -22,6 +22,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
+    bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_mxfp8_mixed,
     bf16_with_nvfp4_mixed,
 )
@@ -33,8 +34,9 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     Intended for performance benchmark recipes only. Sets short training runs,
     disables checkpointing/eval, tunes scheduler, and enables perf-oriented kernels.
 
-    Must stay in sync with ``_set_common_perf_overrides`` in
-    ``scripts/performance/utils/overrides.py``.
+    This is the fixed-model-shape policy for flat performance recipes.
+    Canonical recipes launched with ``scripts/performance --use_recipes``
+    retain their own tokenizer vocabulary policy.
 
     Individual recipes may override any of these after calling this function
     (e.g. Kimi K2 sets ``grad_reduce_in_fp32 = True``).
@@ -44,7 +46,12 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
+    # Performance recipes benchmark a fixed model shape. Synthetic or runtime
+    # tokenizers must not resize the embedding and output layers during setup.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
     cfg.checkpoint.save = None
+    cfg.checkpoint.load = None
 
     cfg.logger.log_interval = 1
     cfg.logger.tensorboard_dir = None
@@ -102,6 +109,9 @@ def _perf_precision(compute_dtype: str):
         cfg = bf16_mixed()
     elif compute_dtype == "fp8_cs":
         cfg = bf16_with_fp8_current_scaling_mixed()
+        cfg.first_last_layers_bf16 = False
+    elif compute_dtype == "fp8_ds":
+        cfg = bf16_with_fp8_delayed_scaling_mixed()
         cfg.first_last_layers_bf16 = False
     elif compute_dtype == "fp8_mx":
         cfg = bf16_with_mxfp8_mixed()

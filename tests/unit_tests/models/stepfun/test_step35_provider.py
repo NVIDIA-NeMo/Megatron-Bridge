@@ -232,16 +232,14 @@ class TestStep35DecoderLayerIsSliding:
 
         return config, recorder
 
-    def test_full_attention_keeps_original_config(self):
+    def test_full_attention_uses_independent_config(self):
         original, captured = self._build(layer_number=1)  # layer_idx=0 -> full_attention
-        # No deep-copy happens; downstream sub-modules see the original instance.
-        assert captured is original
+        assert captured is not original
         assert captured.num_attention_heads == 64
         assert captured.num_query_groups == 8
 
     def test_sliding_attention_overrides_shape(self):
         original, captured = self._build(layer_number=2)  # layer_idx=1 -> sliding
-        # Must be a deep-copy so other layers' configs are not mutated.
         assert captured is not original
         assert captured.rotary_percent == 1.0
         assert captured.num_attention_heads == 96
@@ -260,7 +258,7 @@ class TestStep35DecoderLayerIsSliding:
             offset_return=100,  # would have triggered out-of-range sliding lookup
             pp_rank=2,
         )
-        assert captured is original  # full attention
+        assert captured is not original  # full attention
 
     def test_mtp_layer_forwards_name_to_transformer_layer(self):
         """MCore's MTP builder passes ``name`` into the nested transformer layer."""
@@ -271,7 +269,7 @@ class TestStep35DecoderLayerIsSliding:
             name=name,
         )
 
-        assert recorder.captured_config is original
+        assert recorder.captured_config is not original
         assert recorder.captured_kwargs["name"] == name
 
     def test_pp_offset_applied_for_main_decoder(self):
@@ -290,7 +288,7 @@ class TestStep35DecoderLayerIsSliding:
             layer_number=2,
             sliding_setting=None,
         )
-        assert captured is original
+        assert captured is not original
         assert captured.num_attention_heads == 64
 
     def test_layer_idx_outside_layer_types_falls_through(self):
@@ -298,7 +296,7 @@ class TestStep35DecoderLayerIsSliding:
             layer_number=10,  # idx=9, outside len(layer_types)=2
             layer_types=["full_attention", "sliding_attention"],
         )
-        assert captured is original
+        assert captured is not original
 
     def test_sliding_override_does_not_leak_via_alias(self):
         """Mutating the deep-copied config must not change the original's
@@ -306,6 +304,48 @@ class TestStep35DecoderLayerIsSliding:
         original, captured = self._build(layer_number=2)
         captured.sliding_attention_setting["num_attention_heads"] = 999
         assert original.sliding_attention_setting["num_attention_heads"] == 96
+
+    def test_full_attention_layers_retain_independent_per_layer_config(self):
+        config = _make_config(
+            ["full_attention", "full_attention"],
+            sliding_setting=None,
+        )
+        config.rotary_percents = [0.5, 1.0]
+        config.swiglu_limits = [0.0, 7.0]
+        config.swiglu_limits_shared = [0.0, 16.0]
+        config.activation_func_clamp_value = None
+        config.activation_func_clamp_value_shared_expert = None
+
+        def record_config(instance, config, **kwargs):
+            instance.config = config
+
+        with (
+            patch.object(TransformerLayer, "__init__", record_config),
+            patch("megatron.bridge.models.stepfun.step35_provider.get_pg_rank", return_value=0),
+            patch(
+                "megatron.bridge.models.stepfun.step35_provider.get_transformer_layer_offset",
+                return_value=0,
+            ),
+        ):
+            layer_0 = Step35DecoderLayer(
+                config=config,
+                submodules=None,
+                layer_number=1,
+                pg_collection=SimpleNamespace(pp="dummy"),
+            )
+            layer_1 = Step35DecoderLayer(
+                config=config,
+                submodules=None,
+                layer_number=2,
+                pg_collection=SimpleNamespace(pp="dummy"),
+            )
+
+        assert layer_0.config.rotary_percent == 0.5
+        assert layer_0.config.activation_func_clamp_value is None
+        assert layer_0.config.activation_func_clamp_value_shared_expert is None
+        assert layer_1.config.rotary_percent == 1.0
+        assert layer_1.config.activation_func_clamp_value == 7.0
+        assert layer_1.config.activation_func_clamp_value_shared_expert == 16.0
 
 
 # ---------------------------------------------------------------------------

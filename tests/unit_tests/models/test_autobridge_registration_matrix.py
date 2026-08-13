@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -31,13 +32,14 @@ REGISTRATION_CHECK_SCRIPT = Path(__file__).with_name("autobridge_registration_ch
 
 EXPECTED_REGISTRATIONS = {
     "BailingMoeV2ForCausalLM": "megatron.bridge.models.bailing.bailing_moe2_bridge.BailingMoeV2Bridge",
-    "DeciLMForCausalLM": "megatron.bridge.models.llama_nemotron.llama_nemotron_bridge.LlamaNemotronBridge",
-    "DeepseekV2ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v2_bridge.DeepSeekV2Bridge",
     "DeepseekV3ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v3_bridge.DeepSeekV3Bridge",
     "DeepseekV4ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v4_bridge.DeepSeekV4Bridge",
     "Ernie4_5_MoeForCausalLM": "megatron.bridge.models.ernie.ernie_45_bridge.Ernie45Bridge",
     "Ernie4_5_VLMoeForConditionalGeneration": ("megatron.bridge.models.ernie_vl.ernie45_vl_bridge.Ernie45VLBridge"),
-    "Exaone4ForCausalLM": "megatron.bridge.models.exaone.exaone4_bridge.Exaone4Bridge",
+    "Exaone4ForCausalLM": "megatron.bridge.models.exaone.exaone4.exaone4_bridge.Exaone4Bridge",
+    "Exaone4_5_ForConditionalGeneration": "megatron.bridge.models.exaone.exaone45.exaone45_bridge.Exaone45Bridge",
+    "ExaoneMoEForCausalLM": "megatron.bridge.models.exaone.exaone_moe.exaone_moe_bridge.ExaoneMoeBridge",
+    "ExaoneMoeForCausalLM": "megatron.bridge.models.exaone.exaone_moe.exaone_moe_bridge.ExaoneMoeBridge",
     "FalconH1ForCausalLM": "megatron.bridge.models.falcon_h1.falconh1_bridge.FalconH1Bridge",
     "Gemma3ForCausalLM": "megatron.bridge.models.gemma.gemma3_bridge.Gemma3ModelBridge",
     "Gemma3ForConditionalGeneration": "megatron.bridge.models.gemma_vl.gemma3_vl_bridge.Gemma3VLBridge",
@@ -61,7 +63,9 @@ EXPECTED_REGISTRATIONS = {
     "NemotronH_Nano_Omni_Reasoning_V3": (
         "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
     ),
-    "NemotronH_Nano_VL_V2": "megatron.bridge.models.nemotron_vl.nemotron_vl_bridge.NemotronVLBridge",
+    "NemotronH_Super_Omni_Reasoning_V3": (
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
+    ),
     "NemotronLabsDiffusionModel": (
         "megatron.bridge.diffusion.conversion.nemotron_labs_diffusion."
         "nemotron_labs_diffusion_bridge.NemotronLabsDiffusionBridge"
@@ -80,6 +84,9 @@ EXPECTED_REGISTRATIONS = {
     "Qwen3VLMoeForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.Qwen3VLMoEBridge",
     "Qwen3_5ForCausalLM": "megatron.bridge.models.qwen.qwen35_bridge.Qwen35Bridge",
     "Qwen3_5ForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35VLBridge",
+    "Qwen3_5ForTokenClassification": (
+        "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35TokenClassificationBridge"
+    ),
     "Qwen3_5MoeForCausalLM": "megatron.bridge.models.qwen.qwen35_bridge.Qwen35MoEBridge",
     "Qwen3_5MoeForConditionalGeneration": ("megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35VLMoEBridge"),
     "SarvamMLAForCausalLM": "megatron.bridge.models.sarvam.sarvam_mla_bridge.SarvamMLABridge",
@@ -90,13 +97,12 @@ EXPECTED_REGISTRATIONS = {
 
 STRING_REGISTRATIONS = {
     "BailingMoeV2ForCausalLM",
-    "DeciLMForCausalLM",
-    "DeepseekV2ForCausalLM",
     "DeepseekV3ForCausalLM",
     "DeepseekV4ForCausalLM",
     "Ernie4_5_MoeForCausalLM",
     "Ernie4_5_VLMoeForConditionalGeneration",
     "Exaone4ForCausalLM",
+    "ExaoneMoEForCausalLM",
     "FalconH1ForCausalLM",
     "Gemma4ForCausalLM",
     "Gemma4ForConditionalGeneration",
@@ -110,11 +116,12 @@ STRING_REGISTRATIONS = {
     "MiniMaxM3SparseForConditionalGeneration",
     "NemotronHForCausalLM",
     "NemotronH_Nano_Omni_Reasoning_V3",
-    "NemotronH_Nano_VL_V2",
+    "NemotronH_Super_Omni_Reasoning_V3",
     "NemotronLabsDiffusionModel",
     "Qwen3ASRForConditionalGeneration",
     "Qwen3_5ForCausalLM",
     "Qwen3_5ForConditionalGeneration",
+    "Qwen3_5ForTokenClassification",
     "Qwen3_5MoeForCausalLM",
     "Qwen3_5MoeForConditionalGeneration",
     "SarvamMLAForCausalLM",
@@ -124,9 +131,12 @@ STRING_REGISTRATIONS = {
 }
 
 DEPRECATED_REGISTRATIONS = {
+    "DeciLMForCausalLM",
+    "DeepseekV2ForCausalLM",
     "Gemma2ForCausalLM",
     "GemmaForCausalLM",
     "MistralForCausalLM",
+    "NemotronH_Nano_VL_V2",
     "NemotronForCausalLM",
 }
 
@@ -142,6 +152,57 @@ def test_public_autobridge_import_registers_every_supported_model() -> None:
             json.dumps(sorted(DEPRECATED_REGISTRATIONS)),
         ],
         capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_public_autobridge_import_does_not_require_flash_linear_attention(tmp_path: Path) -> None:
+    """Models unrelated to Kimi K3 remain available without its FLA runtime."""
+    blocker_dir = tmp_path / "without_fla"
+    blocker_dir.mkdir()
+    (blocker_dir / "sitecustomize.py").write_text(
+        """
+import builtins
+import importlib.util
+
+_original_find_spec = importlib.util.find_spec
+_original_import = builtins.__import__
+
+def _find_spec(fullname, package=None):
+    if fullname == "fla" or fullname.startswith("fla."):
+        return None
+    return _original_find_spec(fullname, package)
+
+def _import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "fla" or name.startswith("fla."):
+        raise ModuleNotFoundError("No module named 'fla'", name="fla")
+    return _original_import(name, globals, locals, fromlist, level)
+
+importlib.util.find_spec = _find_spec
+builtins.__import__ = _import
+"""
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(blocker_dir), environment.get("PYTHONPATH")) if value
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from megatron.bridge import AutoBridge; "
+                "supported = set(AutoBridge.list_supported_models()); "
+                "assert {'DeepseekV3ForCausalLM', 'KimiK3ForConditionalGeneration', "
+                "'Qwen3ForCausalLM'} <= supported"
+            ),
+        ],
+        capture_output=True,
+        env=environment,
         text=True,
         timeout=180,
         check=False,

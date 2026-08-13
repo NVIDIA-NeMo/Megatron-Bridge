@@ -17,6 +17,7 @@
 import os
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 from torch.distributed.run import main as torchrun_main
@@ -31,6 +32,7 @@ BASE_DIR = "/workspace/test_ckpts/qwen3_4b"
 MBRIDGE_CKPT = f"{BASE_DIR}/mbridge"
 MCORE_CKPT = f"{BASE_DIR}/mcore"
 TB_DIR = f"{BASE_DIR}/tb"
+QWEN3_4B_VOCAB_SIZE = 151936
 
 
 class TestQwen3Ckpt:
@@ -41,6 +43,11 @@ class TestQwen3Ckpt:
         """Functional test for Qwen MBridge checkpoint."""
 
         config = qwen3_4b_pretrain_config()
+
+        # Keep both checkpoint paths independent of the shared Hugging Face cache.
+        config.tokenizer.tokenizer_type = "NullTokenizer"
+        config.tokenizer.tokenizer_model = None
+        config.tokenizer.vocab_size = QWEN3_4B_VOCAB_SIZE
 
         config.checkpoint.save = MBRIDGE_CKPT
         config.checkpoint.load = MCORE_CKPT if os.path.exists(MCORE_CKPT) else None
@@ -76,7 +83,7 @@ class TestQwen3Ckpt:
             [
                 "torchrun",
                 "--nproc_per_node=2",
-                "/opt/Megatron-Bridge/3rdparty/Megatron-LM/pretrain_gpt.py",
+                str(Path(__file__).resolve().parents[5] / "3rdparty/Megatron-LM/pretrain_gpt.py"),
                 "--init-method-std",
                 "0.014",
                 "--disable-bias-linear",
@@ -127,7 +134,7 @@ class TestQwen3Ckpt:
                 "--tokenizer-type",
                 "NullTokenizer",
                 "--vocab-size",
-                "151936",
+                str(QWEN3_4B_VOCAB_SIZE),
                 "--train-iters",
                 f"{train_iters}",
                 "--save-interval",

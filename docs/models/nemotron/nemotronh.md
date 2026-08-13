@@ -1,9 +1,9 @@
 # Nemotron H and Nemotron Nano v2
 
-> **Deprecation notice:** Nemotron H v1 support (4B, 8B, 47B, and 56B) is no
-> longer actively maintained or tested against current upstream checkpoints and
-> will be removed in Megatron Bridge 0.7.0. Nemotron Nano v2 and Nemotron 3 are
-> not deprecated.
+> **Deprecation notice:** Nemotron H v1 support (4B, 8B, 47B, and 56B) and
+> Nemotron Nano v2 support (9B and 12B) are no longer actively maintained or
+> tested against current upstream checkpoints and will be removed in Megatron
+> Bridge 0.7.0. Nemotron 3 is not deprecated.
 
 [Nemotron H](https://huggingface.co/collections/nvidia/nemotron-h) and [Nemotron Nano v2](https://huggingface.co/collections/nvidia/nvidia-nemotron-v2) are families of **hybrid SSM-Attention models** from **NVIDIA** that combine Mamba (State Space Model) layers with traditional attention layers. These models achieve strong performance while maintaining computational efficiency through their hybrid architecture.
 

@@ -18,16 +18,20 @@ from __future__ import annotations
 
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     NEMOTRON_3_SUPER_HF_MODEL_ID,
+    _nemotron_3_super_pretrain_64gpu_h100_bf16_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_peft_1gpu_h100_bf16_config as nemotron_3_super_peft_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
-    nemotron_3_super_pretrain_8gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_config as nemotron_3_super_sft_config,
 )
-from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
-    nemotron_3_super_sft_8gpu_h100_bf16_config as nemotron_3_super_sft_config,
-)
+from megatron.bridge.training.config import ConfigContainer
+
+
+def nemotron_3_super_pretrain_config() -> ConfigContainer:
+    """Return the convergence-oriented 64-H100 Nemotron 3 Super pretraining config."""
+    return _nemotron_3_super_pretrain_64gpu_h100_bf16_config()
 
 
 __all__ = [

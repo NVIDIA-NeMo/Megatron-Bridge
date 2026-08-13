@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import tempfile
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -27,6 +28,7 @@ import torch
 from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
 from megatron.bridge.data.conversation_processing import (
+    AssistantMaskBoundaryConfig,
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
@@ -47,6 +49,35 @@ CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system",
 VISION_FRAME_SIZE = 512
 PIXEL_SHUFFLE_FACTOR = 2
 _NEMOTRON_OMNI_VISUAL_KEYS = ("pixel_values",)
+
+
+def _build_padded_assistant_loss_masks(
+    examples: Sequence[Mapping[str, Any]],
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    processor: Any,
+    skipped_tokens: torch.Tensor,
+    *,
+    boundary_config: AssistantMaskBoundaryConfig,
+) -> torch.Tensor:
+    """Build assistant loss masks without treating batch padding as message boundaries."""
+    if input_ids.dim() != 2 or attention_mask.shape != input_ids.shape:
+        raise ValueError("Nemotron Omni assistant masking expects matching 2D input_ids and attention_mask.")
+
+    loss_masks = []
+    for example, token_row, attention_row in zip(examples, input_ids, attention_mask, strict=True):
+        active_positions = attention_row.to(dtype=torch.bool)
+        active_mask = build_assistant_loss_mask(
+            example,
+            token_row[active_positions],
+            processor,
+            skipped_tokens,
+            boundary_config=boundary_config,
+        ).to(dtype=torch.int)
+        padded_mask = torch.zeros_like(token_row, dtype=torch.int)
+        padded_mask[active_positions] = active_mask
+        loss_masks.append(padded_mask)
+    return torch.stack(loss_masks)
 
 
 def _validate_nemotron_omni_visual_keys(visual_keys: object = None) -> None:
@@ -430,7 +461,7 @@ def _add_audio_inputs(
     num_mel_bins: int,
 ) -> None:
     """Extract audio features and align each row's sound placeholder count."""
-    from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import compute_mel_features
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import compute_mel_features_with_length
 
     waveforms = [_audio_waveform(example) for example in examples]
     if not any(waveform is not None for waveform in waveforms):
@@ -439,14 +470,20 @@ def _add_audio_inputs(
         raise ValueError("Nemotron Omni collation does not support mixing audio and no-audio samples.")
 
     mel_features: list[torch.Tensor] = []
+    valid_lengths: list[int] = []
     token_counts: list[int] = []
     for example, waveform in zip(examples, waveforms, strict=True):
         assert waveform is not None
         duration = float(example.get("max_audio_duration", max_audio_duration))
         waveform = waveform[: int(duration * 16000)]
-        mel = compute_mel_features(waveform, sampling_rate=16000, num_mel_bins=num_mel_bins)
+        mel, valid_length = compute_mel_features_with_length(
+            waveform,
+            sampling_rate=16000,
+            num_mel_bins=num_mel_bins,
+        )
         mel_features.append(mel)
-        token_length = int(mel.shape[0])
+        valid_lengths.append(valid_length)
+        token_length = valid_length
         for _ in range(3):
             token_length = (token_length + 1) // 2
         token_counts.append(max(1, token_length))
@@ -502,7 +539,7 @@ def _add_audio_inputs(
     for row_index, mel in enumerate(mel_features):
         sound_clips[row_index, : mel.shape[0]] = mel
     batch["sound_clips"] = sound_clips
-    batch["sound_length"] = torch.tensor([mel.shape[0] for mel in mel_features], dtype=torch.long)
+    batch["sound_length"] = torch.tensor(valid_lengths, dtype=torch.long)
 
 
 def _adjust_image_placeholders(
@@ -814,8 +851,23 @@ def nemotron_omni_collate_fn(
     video_nframes: int = 8,
     use_temporal_video_embedder: bool = False,
     patch_dim: int = 16,
+    collapse_image_tokens: bool = False,
 ) -> dict[str, Any]:
-    """Build one model-ready Omni batch from either HF or Energon examples."""
+    """Build one model-ready Omni batch from either HF or Energon examples.
+
+    The canonical :class:`NemotronOmniModel` consumes the processor-expanded
+    token sequence, with one image placeholder for every projected feature.
+    Use :func:`nemotron_omni_llava_collate_fn` for the legacy LLaVA
+    collapse/expand contract.
+    """
+    if collapse_image_tokens:
+        warnings.warn(
+            "The Nemotron Omni LLaVA collapse/expand data contract is deprecated; use "
+            "nemotron_omni_expanded_collate_fn (the default registry path) with the canonical "
+            "processor-expanded model.",
+            FutureWarning,
+            stacklevel=2,
+        )
     _validate_nemotron_omni_visual_keys(visual_keys)
     del start_of_response_token, min_pixels, max_pixels
     if not examples:
@@ -872,21 +924,33 @@ def nemotron_omni_collate_fn(
         assistant_end_fallbacks=("<|im_end|>",),
         role_start_markers=CHATML_OTHER_ROLE_STARTS,
     )
-    loss_mask = torch.stack(
-        [
-            build_assistant_loss_mask(
-                example,
-                input_ids,
-                processor,
-                skipped_tokens,
-                boundary_config=boundary_config,
-            ).to(dtype=torch.int)
-            for example, input_ids in zip(mask_examples, batch["input_ids"], strict=True)
-        ]
+    loss_mask = _build_padded_assistant_loss_masks(
+        mask_examples,
+        batch["input_ids"],
+        batch["attention_mask"],
+        processor,
+        skipped_tokens,
+        boundary_config=boundary_config,
     )
-    adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
-    batch["input_ids"] = adjusted["input_ids"]
-    batch["attention_mask"] = adjusted["attention_mask"]
+    if collapse_image_tokens:
+        adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
+        batch["input_ids"] = adjusted["input_ids"]
+        batch["attention_mask"] = adjusted["attention_mask"]
+    elif use_temporal_video_embedder and num_tiles is not None:
+        tokens_per_tubelet = _pixel_shuffled_token_count(
+            height=VISION_FRAME_SIZE,
+            width=VISION_FRAME_SIZE,
+            patch_dim=patch_dim,
+        )
+        replacement_counts = torch.full_like(num_tiles, tokens_per_tubelet)
+        adjusted, loss_mask = _adjust_image_placeholders(
+            batch,
+            loss_mask,
+            processor,
+            replacement_counts,
+        )
+        batch["input_ids"] = adjusted["input_ids"]
+        batch["attention_mask"] = adjusted["attention_mask"]
 
     if use_per_image_token_counts:
         _pack_dynamic_images(batch, patch_dim=patch_dim)
@@ -898,7 +962,7 @@ def nemotron_omni_collate_fn(
 
     has_modalities = batch.get("visual_inputs") is not None or batch.get("sound_clips") is not None
     post_merge_row_lengths = None
-    if has_modalities and (sequence_length is not None or enable_in_batch_packing):
+    if collapse_image_tokens and has_modalities and (sequence_length is not None or enable_in_batch_packing):
         post_merge_row_lengths = _model_merge_row_lengths(
             batch,
             processor,
@@ -921,16 +985,35 @@ def nemotron_omni_collate_fn(
     if pad_token_id is None:
         pad_token_id = processor.tokenizer.eos_token_id or 0
     if enable_in_batch_packing:
-        if post_merge_row_lengths is None:
-            post_merge_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
-        _pack_omni_rows_to_mcore_thd(
-            batch,
-            post_merge_row_lengths,
-            sequence_length=sequence_length,
-            pad_to_max_length=pad_to_max_length,
-            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-            pad_token_id=int(pad_token_id),
-        )
+        if collapse_image_tokens:
+            if post_merge_row_lengths is None:
+                post_merge_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
+            _pack_omni_rows_to_mcore_thd(
+                batch,
+                post_merge_row_lengths,
+                sequence_length=sequence_length,
+                pad_to_max_length=pad_to_max_length,
+                pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                pad_token_id=int(pad_token_id),
+            )
+        else:
+            # The canonical model receives one placeholder per projected media
+            # feature, so media insertion is length preserving. Build the final
+            # THD token stream here; the model only applies rank-local CP
+            # indices after replacing placeholders with media embeddings.
+            prepare_sequence_batch(
+                batch,
+                sequence_length=sequence_length,
+                enable_in_batch_packing=True,
+                in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                pad_token_id=int(pad_token_id),
+                ignore_index=IGNORE_INDEX,
+                emit_packed_padding_mask=True,
+            )
+            # Do not synthesize PackedSeqParams.tokens_per_sample: canonical
+            # packing is compact and rows may have different physical lengths.
+            # Exact per-row seq_aux_loss restoration requires the planned
+            # MCore boundary-aware unflattening support.
     else:
         compact_sequence_length = sequence_length
         compact_pad_to_max_length = pad_to_max_length
@@ -954,3 +1037,17 @@ def nemotron_omni_collate_fn(
             ignore_index=IGNORE_INDEX,
         )
     return batch
+
+
+def nemotron_omni_llava_collate_fn(*args, **kwargs) -> dict[str, torch.Tensor]:
+    """Collate inputs for the deprecated LLaVA collapse/expand path."""
+
+    kwargs["collapse_image_tokens"] = True
+    return nemotron_omni_collate_fn(*args, **kwargs)
+
+
+def nemotron_omni_expanded_collate_fn(*args, **kwargs) -> dict[str, Any]:
+    """Collate processor-expanded inputs for the canonical Nemotron Omni model."""
+
+    kwargs["collapse_image_tokens"] = False
+    return nemotron_omni_collate_fn(*args, **kwargs)

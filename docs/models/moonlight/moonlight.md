@@ -101,15 +101,13 @@ See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md
 ```python
 from megatron.bridge.recipes.moonlight import moonlight_16b_pretrain_config
 
-cfg = moonlight_16b_pretrain_config(
-    name="moonlight_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/moonlight_16b",
-    train_iters=500_000,
-    global_batch_size=2048,
-    seq_length=4096,
-    # Uses TP=1, PP=1, EP=8 (16 GPUs) automatically
-)
+cfg = moonlight_16b_pretrain_config()
+cfg.logger.tensorboard_dir = "/results/moonlight_16b/tb_logs"
+cfg.checkpoint.save = "/results/moonlight_16b/checkpoints"
+cfg.dataset.data_path = "/path/to/preprocessed_text_document"
+cfg.train.train_iters = 500_000
+cfg.train.global_batch_size = 2048
+# Uses TP=1, PP=1, EP=8 (16 GPUs) automatically
 ```
 
 ### Finetuning Examples
@@ -119,16 +117,14 @@ cfg = moonlight_16b_pretrain_config(
 ```python
 from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
-cfg = moonlight_16b_sft_config(
-    tokenizer_path="moonshotai/Moonlight-16B-A3B",
-    name="moonlight_full_sft",
-    pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
-    train_iters=1000,
-    global_batch_size=8,
-    seq_length=8192,
-    finetune_lr=5e-6,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
-)
+cfg = moonlight_16b_sft_config()
+cfg.logger.tensorboard_dir = "/results/moonlight_16b/sft/tb_logs"
+cfg.checkpoint.save = "/results/moonlight_16b/sft/checkpoints"
+cfg.checkpoint.pretrained_checkpoint = "/results/moonlight_16b/checkpoints/iter_0500000"
+cfg.train.train_iters = 1000
+cfg.train.global_batch_size = 8
+cfg.optimizer.lr = 5e-6
+# Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 ```
 
 #### LoRA Finetuning
@@ -136,16 +132,14 @@ cfg = moonlight_16b_sft_config(
 ```python
 from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
-cfg = moonlight_16b_peft_config(
-    tokenizer_path="moonshotai/Moonlight-16B-A3B",
-    name="moonlight_lora_finetune",
-    pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
-    peft_scheme="lora",  # or "dora" for DoRA
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=1e-4,
-    # Uses TP=1, PP=1, EP=4 (4 GPUs) automatically
-)
+cfg = moonlight_16b_peft_config(peft_scheme="lora")  # or "dora" for DoRA
+cfg.logger.tensorboard_dir = "/results/moonlight_16b/peft/tb_logs"
+cfg.checkpoint.save = "/results/moonlight_16b/peft/checkpoints"
+cfg.checkpoint.pretrained_checkpoint = "/results/moonlight_16b/checkpoints/iter_0500000"
+cfg.train.train_iters = 1000
+cfg.train.global_batch_size = 128
+cfg.optimizer.lr = 1e-4
+# Uses TP=1, PP=1, EP=4 (4 GPUs) automatically
 ```
 
 ## Hugging Face model cards
