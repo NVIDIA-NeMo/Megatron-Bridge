@@ -8,9 +8,10 @@ summary: >
   items remain sanity checks rather than optimized performance results.
   GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export,
   manual HF/Megatron forward-pass correlation, deterministic Megatron
-  inference, bounded H100 pretraining, H100 PEFT, and H100 checkpoint resume
-  are verified. CPU conversion, SFT, and performance verification remain
-  planned but not yet verified.
+  inference, bounded H100 pretraining, H100 SFT, H100 PEFT, and H100
+  checkpoint resume, and H100 SFT export/inference are verified. CPU
+  conversion, long-context SFT, and performance verification remain planned
+  but not yet verified.
 verification_index:
   model_level:
     verified:
@@ -23,8 +24,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      verified: [pretrain, peft, checkpoint_resume]
-      unverified: [sft, sft_export_inference, sft_long_context]
+      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [sft_long_context]
   performance:
     GB200: unverified
 model:
@@ -195,7 +196,7 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -214,28 +215,34 @@ items:
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
         +dataset.offline_packing_specs.pad_seq_to_mult=1
+        model.tensor_model_parallel_size=2 model.sequence_parallel=true
+        model.recompute_granularity=selective
+        'model.recompute_modules=[moe_act]'
         scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
         checkpoint.load=null
         --save_dir work/model-verification/gpt-oss-120b/sft-2k-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-08-12
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 6.751403
+        final_loss: 0.7468084
+        last_10_steps_step_time_ms_avg: 8063.150
+        last_10_steps_model_tflops_per_gpu_avg: 33.800
       expected_result: >
-        Future support verification must complete 100 full-SFT steps from the
-        imported checkpoint with immutable Tulu3 selection, assistant-token
-        masking, offline packing, finite losses, zero skipped or NaN iterations,
-        all required metrics, a persisted post-setup ConfigContainer, and a
-        complete reloadable final full-model checkpoint. The recipe-owned batch
-        contract is not a qwen3_30b_a3b_convergence_v2 claim.
+        Completed 100 full-SFT steps from the imported checkpoint on 32x H100
+        with immutable Tulu3 selection, assistant-token masking, offline
+        packing, TP2/SP, and selective MoE-activation recompute. All 100
+        optimizer-step rows are present with finite losses, zero skipped
+        iterations, and zero NaN iterations; loss decreases from 6.751403 to
+        0.7468084. All four metrics are recorded, the checkpoint-local
+        post-setup run_config.yaml persists, and the final full-model
+        checkpoint at iter_0000100 is complete with 32 DistCP shards, metadata,
+        train state, tokenizer artifacts, and latest-checkpoint marker 100.
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
       commands:
@@ -246,21 +253,26 @@ items:
           --megatron-path work/model-verification/gpt-oss-120b/sft-2k-checkpoints/iter_0000100
           --hf-path work/model-verification/gpt-oss-120b/sft-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
-          --distributed-save --tp 1 --pp 4 --ep 8 --etp 1
+          --distributed-save --tp 2 --pp 4 --ep 8 --etp 1
           --trust-remote-code
         - >
           ./scripts/inference/infer.sh --task hf-inference
           --nodes 1 --gpus-per-node 1
           --hf-model work/model-verification/gpt-oss-120b/sft-hf-export
           --prompt "Name the capital of France and explain its role in one sentence."
-          --max-new-tokens 45 --chat-template
-      last_verified: null
-      expected_result: >
-        After SFT is verified, future verification must export its final
-        checkpoint to a strict-reloadable BF16 Hugging Face checkpoint with
-        attention_bias=true, then run deterministic greedy HF inference and
-        record the actual generated-token count and literal completion within
-        the 45-token bound.
+          --max-new-tokens 45 --chat-template --trust-remote-code --device cpu
+      last_verified: 2026-08-13
+      expected_result: |
+        The verified step-100 SFT checkpoint exports to a strict-reloadable BF16
+        Hugging Face checkpoint with architecture GptOssForCausalLM and
+        attention_bias=true. The exported checkpoint has 73 safetensors shards,
+        615 tensors, model.safetensors.index.json total_size 233,658,313,344,
+        tokenizer artifacts, generation_config.json, and chat_template.jinja.
+        The deterministic HF verifier reloads the export on CPU through
+        Transformers with no missing, unexpected, mismatched, or error loading
+        keys and generates exactly 45 new tokens under the 45-token bound. The
+        literal completion is:
+        "finalThe capital of France is Paris, and it serves as the political, economic, and cultural center of the country, housing important institutions such as the French government, major corporations, and world-renowned museums and landmarks."
 
   sft_long_context:
     H100:
