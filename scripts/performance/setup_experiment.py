@@ -858,14 +858,16 @@ def main(
                 logger.info("dryrun requested: exiting")
                 return
 
-            job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
-
-            terminal_failure = job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]
-
             if detach:
+                # For detached runs (e.g. XCalibur), skip status polling — the
+                # caller (llmb-run) polls for completion via xcalctl.
                 is_finished_experiment = True
                 is_testing_passed = True
                 break
+
+            job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
+
+            terminal_failure = job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]
 
             log_file_paths = list(Path(f"{job_dir}").glob("log*.out"))
             ensure_logs_where_written(log_file_paths)
@@ -1062,7 +1064,8 @@ if __name__ == "__main__":
         gpu=args.gpu,
         hf_token=args.hf_token or os.environ.get('HF_TOKEN'),
         offline=args.offline,
-        detach=args.detach,
+        # Force detach for XCalibur — llmb-run polls for completion via xcalctl
+        detach=True if args.xcalibur_namespace else args.detach,
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
