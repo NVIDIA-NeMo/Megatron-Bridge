@@ -497,6 +497,8 @@ class Step37Bridge(MegatronModelBridge):
         vision_norm_param_mappings = {
             "vision_model.ln_pre.weight": "vision_model.ln_pre.weight",
             "vision_model.ln_pre.bias": "vision_model.ln_pre.bias",
+            "vision_model.ln_post.weight": "vision_model.ln_post.weight",
+            "vision_model.ln_post.bias": "vision_model.ln_post.bias",
             "vision_model.transformer.resblocks.*.ln_1.weight": "vision_model.transformer.resblocks.*.ln_1.weight",
             "vision_model.transformer.resblocks.*.ln_1.bias": "vision_model.transformer.resblocks.*.ln_1.bias",
             "vision_model.transformer.resblocks.*.ln_2.weight": "vision_model.transformer.resblocks.*.ln_2.weight",
@@ -516,6 +518,7 @@ class Step37Bridge(MegatronModelBridge):
             "vision_model.vit_downsampler2.bias": "vision_model.vit_downsampler2.bias",
             # Top-level nn.Parameter on Step37VisionModel — AutoMapping
             # would see the top-level vision class as the owning module.
+            "vision_model.class_embedding": "vision_model.class_embedding",
             "vision_model.positional_embedding": "vision_model.positional_embedding",
             # Attention — in_proj_* are bare nn.Parameter on
             # EncoderVisionAttention; out_proj.* are plain nn.Linear.
