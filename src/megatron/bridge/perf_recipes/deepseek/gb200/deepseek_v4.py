@@ -18,7 +18,7 @@ import torch
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
-    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
+    deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config as deepseek_v4_flash_128gpu_library_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
@@ -26,35 +26,20 @@ from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 
 def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB200, MXFP8, full-iteration CUDA graph."""
-    cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
+    cfg = deepseek_v4_flash_128gpu_library_config()
 
-    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
-    # The Sheet lists VPP=4, but the measured PP=1 W&B run resolves VPP to None.
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
-    cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = False
     cfg.model.pipeline_model_parallel_layout = None
     cfg.train.global_batch_size = 2048
-    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc_interval = 10
 
     cfg.model.attention_backend = "auto"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.model.moe_hybridep_num_sms = 32
-    cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_router_fusion = True
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.moe_router_load_balancing_type = "seq_aux_loss"
     cfg.model.moe_aux_loss_coeff = 1.0e-4
-
-    cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["mla_up_proj"]
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = []
     cfg.model.fine_grained_offloading_max_inflight_offloads = None
@@ -99,8 +84,6 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.ddp.average_in_collective = False
-    cfg.comm_overlap.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.comm_overlap.delay_wgrad_compute = False
 

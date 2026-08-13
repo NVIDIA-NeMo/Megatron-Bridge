@@ -17,10 +17,12 @@
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config,
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config,
 )
 
 
 __all__ = [
+    "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config",
     "deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config",
     "deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config",
 ]

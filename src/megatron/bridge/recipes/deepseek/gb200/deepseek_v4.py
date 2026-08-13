@@ -71,7 +71,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
 
     cfg.model.transformer_impl = "transformer_engine"
-    cfg.model.attention_backend = None
+    cfg.model.attention_backend = "auto"
     cfg.model.apply_dsa_kernel_fusion = True
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
@@ -83,17 +83,20 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_hybridep_num_sms = 16
     cfg.model.moe_grouped_gemm = True
     cfg.model.moe_permute_fusion = True
+    cfg.model.moe_router_fusion = True
     cfg.model.moe_aux_loss_coeff = 0.0
     cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 2
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
@@ -127,6 +130,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dist.enable_megatron_core_experimental = True
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.overlap_grad_reduce = True
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
@@ -134,6 +138,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.ddp.use_megatron_fsdp = False
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "NVTE_CPU_OFFLOAD_V1": 1,
     }
     return cfg
 
@@ -145,10 +150,9 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config()
 
-    cfg.model.apply_dsa_kernel_fusion = False
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=2000,
@@ -185,6 +189,57 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = True
     cfg.model.mtp_eval_in_bf16 = True
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
+    return cfg
+
+
+def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigContainer:
+    """Return the real-training DeepSeek V4 Flash config for 128 GB200 GPUs.
+
+    This variant uses one PP stage per 64-rank NVLink domain while preserving
+    the 64-GPU library recipe's optimizer, routing, loss, precision, validation,
+    and checkpoint contracts.
+    """
+    cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+    cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = 108
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.recompute_modules = ["mhc", "mla_up_proj"]
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = []
+    cfg.model.fine_grained_offloading_max_inflight_offloads = None
+    cfg.ddp.average_in_collective = False
+
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    cfg.env_vars.pop("NVTE_CPU_OFFLOAD_V1", None)
     return cfg
 
 

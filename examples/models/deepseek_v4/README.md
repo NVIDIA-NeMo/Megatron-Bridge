@@ -6,7 +6,13 @@ The bridge supports four published variants out of the same code path. The on-di
 
 ## MCore Checkout
 
-The pretraining recipes were tested with Megatron-LM `dev` commit `35f36c7c9dba` plus PR [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839) (`f04b762406f0` in the OCI test checkout). The Megatron-LM copy inside the current NeMo FW container is not expected to work for these recipes.
+DeepSeek V4 pretraining requires Megatron-LM `dev`; the Megatron-LM copy
+pinned by the current Megatron Bridge `main` branch is not supported. Stateless
+grouped-FP8 checkpoint saves additionally require Megatron-LM PR
+[#6509](https://github.com/NVIDIA/Megatron-LM/pull/6509) until that fix merges,
+including saves from the existing MXFP8 recipes. Earlier pretraining
+verification used Megatron-LM `dev` commit `35f36c7c9dba` plus PR
+[#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839).
 
 The NeMo Framework container uses one shared `/opt/venv` for several source
 projects. A plain `uv sync` is exact by default and removes packages that are
@@ -38,9 +44,11 @@ In a standalone Megatron Bridge environment with its own virtual environment,
 exact sync is appropriate: use `uv sync` after switching to dev and restore the
 tracked lock file followed by `uv sync --locked` when switching back to main.
 
-The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` performance
-recipe preserves the stack validated by Megatron Bridge PR
-[#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824):
+The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config`
+library recipe and its corresponding performance recipe require the stack
+validated by Megatron Bridge PR
+[#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824). The performance
+definition preserves its exact benchmark stack:
 `nvcr.io/nvidia/nemo:26.06.01` with Megatron-LM dev commit
 `9d46c924dce3818f2b5f894f7380712c780d1801` and the capability-check patch
 documented in that PR. The Megatron-LM commit pinned by the current
@@ -58,22 +66,44 @@ performance features, so it is not a supported runtime for that recipe.
 
 - `conversion.sh` imports HF weights into Megatron Bridge and exports Megatron checkpoints back to HF format.
 - `inference.sh` runs text generation against an HF or Megatron checkpoint.
-- `slurm_pretrain.sh` runs the DeepSeek-V4-Flash pretraining recipes.
+- `slurm_pretrain.sh` runs the legacy 32-GPU DeepSeek-V4-Flash pretraining recipes.
 - `slurm_sft.sh` runs DeepSeek-V4-Flash full SFT end to end (import, then fine-tune) on Hopper or Blackwell, with MTP on or off.
 
 Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected environment variables and `#SBATCH` directives to edit before submitting.
 
 ## Pretraining Recipes
 
-See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the Slurm launcher and [`deepseek_v4.py`](../../../src/megatron/bridge/recipes/deepseek/deepseek_v4.py) for recipe definitions.
+See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the legacy 32-GPU Slurm launcher. Hardware-specific recipe definitions live in the [`gb200`](../../../src/megatron/bridge/recipes/deepseek/gb200/deepseek_v4.py) and [`gb300`](../../../src/megatron/bridge/recipes/deepseek/gb300/deepseek_v4.py) modules.
 
 Available Blackwell pretraining recipes:
 
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
-- `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config`: 256-GPU GB300
-  performance configuration (requires the PR #4824 container and dev-MCore
-  stack described above)
+- `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config`: 128-GPU GB200
+  Adam MXFP8 with PP2/EP64/HybridEP
+- `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config`: 256-GPU GB300
+  Adam MXFP8 with PP4/VPP4/EP64/HybridEP (requires the PR #4824 container and
+  dev-MCore stack described above)
+
+The `_library_config` suffix keeps these real-training definitions distinct
+from the corresponding benchmark recipe families. They retain natural routing,
+convergence batch sizes, correctness checks, and checkpoint behavior.
+
+The hardware-count-specific recipes are intentionally not accepted by
+`slurm_pretrain.sh`: that legacy launcher overwrites the recipe's batch and
+TP/PP/EP/CP settings. Launch them through a site multi-node runner that invokes
+`scripts/training/run_recipe.py --recipe <recipe-name> --mode pretrain` with
+128 ranks for GB200 Flash or 256 ranks for GB300 Pro. Keep the topology and
+global batch size owned by the recipe; pass only dataset, run-length, logging,
+and checkpoint overrides.
+
+The GB200 Flash and GB300 Pro library bases enable their supported DSA and
+Transformer Engine fused grouped-MLP paths. The new hardware-count-specific
+variants additionally enable GLU interleaving; the existing recipe identities
+retain their checkpoint tensor layout. The library recipes retain unlimited
+natural-routing capacity. All variants retain their precision-specific
+training policies: full-iteration CUDA graphs, FP8 parameter gather/buffer
+reuse, and reduced-precision gradient reduction remain disabled.
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 

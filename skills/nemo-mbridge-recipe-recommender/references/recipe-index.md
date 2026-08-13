@@ -74,6 +74,8 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 | `deepseek_v2_pretrain_config` | Pretrain | 1 | 4 | 32 | 128 |
 | `deepseek_v3_pretrain_config` | Pretrain | 2 | 16 | 64 | 2048 |
 | `deepseek_v3_pretrain_config_32nodes` | Pretrain | 2 | 8 | 32 | 256 |
+| `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config` | Pretrain | 1 | 2 | 64 | 128 (GB200; unlimited capacity) |
+| `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config` | Pretrain | 1 | 4 | 64 | 256 (GB300; unlimited capacity) |
 
 ### GLM-4.5
 
