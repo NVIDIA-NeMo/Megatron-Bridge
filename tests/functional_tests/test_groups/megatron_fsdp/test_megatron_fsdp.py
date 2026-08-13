@@ -23,6 +23,7 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -113,7 +114,7 @@ class DenseHybridSmokeModelProvider(HybridModelProvider):
 
 
 @dataclass
-class MLAMoEHybridSmokeModelProvider(HybridModelProvider):
+class MLAMoEHybridSmokeModelProvider(MLATransformerConfig, HybridModelProvider):
     """Small MLA/MoE HybridModel configuration for the MFSDP V2 EP smoke test."""
 
     attention_backend: AttnBackend = AttnBackend.auto
