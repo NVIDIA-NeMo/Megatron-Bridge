@@ -287,6 +287,7 @@ jobs:
         run: |
           .github/scripts/test_cache_keys.sh
           .github/scripts/test_docker_dependency_layers.sh
+          .github/scripts/test_queue_bypass.sh
 
       - name: Check lint
         run: |
@@ -317,7 +318,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
-        || needs.configure.outputs.skip_queue == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -358,6 +359,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -537,6 +539,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -568,6 +571,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -609,6 +613,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -657,6 +662,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -719,6 +725,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -766,6 +773,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -814,6 +822,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -901,6 +910,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -963,6 +973,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -1018,6 +1029,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -1074,6 +1086,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
