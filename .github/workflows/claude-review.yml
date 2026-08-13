@@ -5,6 +5,9 @@ on:
     types: [opened, reopened, ready_for_review]
   issue_comment:
     types: [created]
+  push:
+    branches:
+      - "pull-request/[0-9]+"
 
 permissions:
   contents: read
@@ -24,25 +27,63 @@ jobs:
   auto-review:
     name: Claude Review (auto)
     needs: [pre-flight]
-    # Auto-review non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
-    # Subsequent commits do not re-trigger; re-request a review by commenting
-    # "/claude review" (handled by the manual-review job below).
+    # Review same-repository PRs when opened. For fork PRs, wait until
+    # copy-pr-bot creates a trusted pull-request/<number> branch in this repo.
     # Skip bot-generated PRs: dependency bumps (`bump-ci-container-*`) and
     # auto cherry-picks (`cherry-pick-*`).
     if: |
-      github.event_name == 'pull_request' &&
       needs.pre-flight.outputs.is_member == 'true' &&
-      github.event.pull_request.draft == false &&
-      !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&
-      !startsWith(github.event.pull_request.head.ref, 'cherry-pick-')
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.draft == false &&
+        !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&
+        !startsWith(github.event.pull_request.head.ref, 'cherry-pick-')) ||
+       (github.event_name == 'push' &&
+        startsWith(github.ref, 'refs/heads/pull-request/') &&
+        github.event.created == true))
     runs-on: ubuntu-latest
     steps:
+      - name: Get PR info
+        id: get-pr-info
+        if: github.event_name == 'push'
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
+
+      - name: Resolve PR
+        id: pr
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_INFO: ${{ steps.get-pr-info.outputs.pr-info }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            number=$(jq -r '.number // empty' <<< "$PR_INFO")
+            head_repo=$(jq -r '.head.repo.full_name // empty' <<< "$PR_INFO")
+            head_ref=$(jq -r '.head.ref // empty' <<< "$PR_INFO")
+            draft=$(jq -r '.draft // true' <<< "$PR_INFO")
+
+            eligible=true
+            if [[ -z "$number" || "$head_repo" == "$REPOSITORY" || "$draft" == "true" ]]; then
+              eligible=false
+            elif [[ "$head_ref" == bump-ci-container-* || "$head_ref" == cherry-pick-* ]]; then
+              eligible=false
+            fi
+          else
+            number=$EVENT_PR_NUMBER
+            eligible=true
+          fi
+
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
       - name: Checkout repository
+        if: steps.pr.outputs.eligible == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 1
 
       - name: Run Claude Code Review
+        if: steps.pr.outputs.eligible == 'true'
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.NVIDIA_INFERENCE_URL }}
@@ -55,7 +96,7 @@ jobs:
             --model "${{ vars.CLAUDE_MODEL }}"
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR NUMBER: ${{ steps.pr.outputs.number }}
 
             Mandatory workflow — never skip or reorder:
             1. Read the PR diff first (gh pr diff).
