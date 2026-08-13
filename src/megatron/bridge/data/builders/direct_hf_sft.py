@@ -15,7 +15,7 @@
 """Serializable config and runtime builder for direct Hugging Face SFT."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Literal
@@ -40,7 +40,9 @@ from megatron.bridge.data.sources.hf import (
     HFDatasetSourceConfig,
     hf_dataset_supports_split,
     load_and_adapt_hf_dataset,
+    load_and_blend_hf_datasets,
     prepare_hf_dataset_sources,
+    resolve_blend_weights,
 )
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -51,6 +53,13 @@ logger = logging.getLogger(__name__)
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
 
 
+def _as_source(entry: "HFDatasetSourceConfig | Mapping[str, Any]") -> HFDatasetSourceConfig:
+    """Rebuild a source that an override round trip flattened into a mapping."""
+    if isinstance(entry, HFDatasetSourceConfig):
+        return entry
+    return HFDatasetSourceConfig(**dict(entry))
+
+
 @dataclass(kw_only=True)
 class DirectHFSFTDatasetConfig(DataloaderConfig):
     """Serializable configuration for direct Hugging Face SFT datasets.
@@ -58,10 +67,15 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     Chat preprocessing is the compatibility default for multimodal and
     conversation sources. New text recipes should select chat or paired-text
     preprocessing explicitly.
+
+    ``source`` takes one source or a list of them. A list blends the training
+    rows across the sources, weighted by ``source_weights``.
     """
 
     seq_length: int
-    source: HFDatasetSourceConfig
+    source: HFDatasetSourceConfig | list[HFDatasetSourceConfig]
+    source_weights: list[float] | None = None
+    blend_seed: int = 1234
     validation_source: HFDatasetSourceConfig | None = None
     test_source: HFDatasetSourceConfig | None = None
     preprocessing: SFTPreprocessingConfig = field(default_factory=ChatSFTPreprocessingConfig)
@@ -82,7 +96,11 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         if self.seq_length <= 0:
             raise ValueError("seq_length must be greater than 0.")
         validate_sft_preprocessing_config(self.preprocessing)
-        self.source.validate()
+        self._validate_sources()
+        if self.validation_source is not None:
+            self.validation_source = _as_source(self.validation_source)
+        if self.test_source is not None:
+            self.test_source = _as_source(self.test_source)
         if self.do_validation and self.validation_source is not None:
             self._inherit_source_adapter_kwargs(self.validation_source)
             self.validation_source.validate()
@@ -101,12 +119,54 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
 
+    @property
+    def training_sources(self) -> list[HFDatasetSourceConfig]:
+        """The sources the training rows are drawn from, blended or not."""
+        return list(self.source) if isinstance(self.source, list) else [self.source]
+
+    @property
+    def split_source(self) -> HFDatasetSourceConfig | None:
+        """The source that derives validation and test splits, if one is unambiguous."""
+        sources = self.training_sources
+        return sources[0] if len(sources) == 1 else None
+
+    def _validate_sources(self) -> None:
+        """Validate the training sources and any blend weights."""
+        # Any override re-serializes this config through OmegaConf, which returns
+        # dataclasses as plain mappings even when the override targeted another field.
+        if isinstance(self.source, list):
+            self.source = [_as_source(entry) for entry in self.source]
+        else:
+            self.source = _as_source(self.source)
+
+        sources = self.training_sources
+        if isinstance(self.source, list) or self.source_weights is not None:
+            resolve_blend_weights(sources, self.source_weights)
+            # random.Random(None) reseeds from system entropy, so an unset seed
+            # would give every rank and every rebuild a different blend order.
+            if not isinstance(self.blend_seed, int) or isinstance(self.blend_seed, bool):
+                raise ValueError(f"blend_seed must be an integer, got {self.blend_seed!r}.")
+        for entry in sources:
+            entry.validate()
+
+        if len(sources) > 1:
+            for name, split_source in (
+                ("validation_source", self.validation_source),
+                ("test_source", self.test_source),
+            ):
+                enabled = self.do_validation if name == "validation_source" else self.do_test
+                if enabled and split_source is None:
+                    raise ValueError(
+                        f"A blended source has no single split to derive from; set {name} or disable that split."
+                    )
+
     def _inherit_source_adapter_kwargs(self, split_source: HFDatasetSourceConfig) -> None:
         """Fill unset adapter arguments on another split of the training source."""
-        if split_source.dataset_name != self.source.dataset_name or not self.source.adapter_kwargs:
+        source = self.split_source
+        if source is None or split_source.dataset_name != source.dataset_name or not source.adapter_kwargs:
             return
         split_adapter_kwargs = dict(split_source.adapter_kwargs or {})
-        for key, value in self.source.adapter_kwargs.items():
+        for key, value in source.adapter_kwargs.items():
             if split_adapter_kwargs.get(key) is None:
                 split_adapter_kwargs[key] = value
         split_source.adapter_kwargs = split_adapter_kwargs
@@ -197,6 +257,15 @@ def select_direct_hf_sft_collate(
     raise ValueError("Prompt-completion preprocessing supports text-only examples.")
 
 
+def load_direct_hf_sft_train_examples(config: DirectHFSFTDatasetConfig) -> list[dict[str, Any]]:
+    """Load the training rows, blending them when the config names several sources."""
+    sources = config.training_sources
+    if len(sources) == 1 and config.source_weights is None:
+        return load_direct_hf_sft_examples(sources[0], config.preprocessing)
+    rows = load_and_blend_hf_datasets(sources, config.source_weights, seed=config.blend_seed)
+    return normalize_sft_examples(rows, config.preprocessing)
+
+
 def build_direct_hf_sft_split(
     config: DirectHFSFTDatasetConfig,
     source: HFDatasetSourceConfig,
@@ -204,13 +273,15 @@ def build_direct_hf_sft_split(
     processor: Any,
     *,
     collate_impl: CollateFunction | None = None,
+    examples: list[dict[str, Any]] | None = None,
 ) -> DirectSFTDataset | None:
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
     from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
 
-    examples = load_direct_hf_sft_examples(source, config.preprocessing)
+    if examples is None:
+        examples = load_direct_hf_sft_examples(source, config.preprocessing)
     if collate_impl is None and model_collate_required_for_all_examples(type(processor).__name__):
         if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
             raise ValueError(
@@ -256,7 +327,7 @@ class DirectHFSFTDatasetBuilder:
             self.config.do_validation
             and context.valid_samples > 0
             and self.config.validation_source is None
-            and not hf_dataset_supports_split(self.config.source, "validation")
+            and not hf_dataset_supports_split(self.config.split_source, "validation")
         ):
             raise ValueError(
                 "The selected Hugging Face source has no validation split; disable validation or set one."
@@ -265,14 +336,19 @@ class DirectHFSFTDatasetBuilder:
             self.config.do_test
             and context.test_samples > 0
             and self.config.test_source is None
-            and not hf_dataset_supports_split(self.config.source, "test")
+            and not hf_dataset_supports_split(self.config.split_source, "test")
         ):
             raise ValueError("The selected Hugging Face source has no test split; disable test or set one.")
-        validation_source = self.config.validation_source or self.config.source.with_split("validation")
-        test_source = self.config.test_source or self.config.source.with_split("test")
+        split_source = self.config.split_source
+        validation_source = self.config.validation_source or (
+            split_source.with_split("validation") if split_source is not None else None
+        )
+        test_source = self.config.test_source or (
+            split_source.with_split("test") if split_source is not None else None
+        )
         requested_sources = []
         if context.train_samples > 0:
-            requested_sources.append(self.config.source)
+            requested_sources.extend(self.config.training_sources)
         if self.config.do_validation and context.valid_samples > 0:
             requested_sources.append(validation_source)
         if self.config.do_test and context.test_samples > 0:
@@ -287,12 +363,14 @@ class DirectHFSFTDatasetBuilder:
             and getattr(context.tokenizer, "library", None) in {"sentencepiece", "tiktoken"}
         ):
             processor = normalize_direct_hf_sft_processor(context.tokenizer)
+        train_examples = load_direct_hf_sft_train_examples(self.config) if context.train_samples > 0 else None
         train_dataset = build_direct_hf_sft_split(
             self.config,
-            self.config.source,
+            self.config.training_sources[0],
             context.train_samples,
             processor,
             collate_impl=self._collate_impl,
+            examples=train_examples,
         )
         valid_dataset = (
             build_direct_hf_sft_split(

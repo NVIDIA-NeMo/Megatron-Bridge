@@ -112,6 +112,15 @@ class Step37Bridge(MegatronModelBridge):
     # uses the identical HF schema.
     CONFIG_MAPPING = Step35Bridge.CONFIG_MAPPING
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Step37ModelProvider) -> dict:
+        """Convert a Step3.7 provider into its nested Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        mtp_num_layers = hf_config.pop("num_nextn_predict_layers", None)
+        if mtp_num_layers is not None:
+            hf_config["text_config"] = {"num_nextn_predict_layers": mtp_num_layers}
+        return hf_config
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Step37ModelProvider:
         """Convert a HuggingFace Step3.7 config into a :class:`Step37ModelProvider`.
 
