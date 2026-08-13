@@ -90,6 +90,7 @@ jobs:
       expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
       expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
       perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
+      skip_queue:        ${{ steps.configure.outputs.skip_queue }}
       merge_sha:         ${{ steps.merge-sha.outputs.merge_sha }}
     steps:
       - name: Get PR info
@@ -122,6 +123,7 @@ jobs:
           EVENT_NAME:    ${{ github.event_name }}
           REF:           ${{ github.ref }}
           TEST_SUITE:    ${{ github.event.inputs.test_suite }}
+          PR_HEAD_LABEL: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.label || '' }}
         run: |
           PR_NUMBER=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
 
@@ -130,6 +132,9 @@ jobs:
 
           NEEDS_MORE_TESTS=$(echo "$LABELS" | jq 'any(. == "needs-more-tests")')
           FULL_TEST_SUITE=$(echo "$LABELS"  | jq 'any(. == "full-test-suite")')
+
+          SKIP_QUEUE=false
+          [[ "$PR_HEAD_LABEL" == svcnemo-autobot:chore/bump-mcore-* ]] && SKIP_QUEUE=true
 
           # Detect if every changed file lives under scripts/performance/
           PERF_SCRIPTS_ONLY=false
@@ -173,6 +178,7 @@ jobs:
           echo "docs_only=$DOCS_ONLY"               | tee -a "$GITHUB_OUTPUT"
           echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
           echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
+          echo "skip_queue=$SKIP_QUEUE"               | tee -a "$GITHUB_OUTPUT"
           echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
           echo "expect_l1=$EXPECT_L1"                 | tee -a "$GITHUB_OUTPUT"
           echo "expect_l2=$EXPECT_L2"                 | tee -a "$GITHUB_OUTPUT"
@@ -296,7 +302,8 @@ jobs:
       !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
       || needs.configure.outputs.docs_only == 'true'
-      || needs.configure.outputs.perf_scripts_only == 'true')
+      || needs.configure.outputs.perf_scripts_only == 'true'
+      || needs.configure.outputs.skip_queue == 'true')
       && github.event_name != 'merge_group'
     steps:
       - name: Running CI tests
@@ -310,6 +317,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.configure.outputs.skip_queue == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -340,7 +348,7 @@ jobs:
           echo "matrix=$MATRIX" | tee -a "$GITHUB_OUTPUT"
 
   cicd-container-build:
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-compute-build-matrix]
+    needs: [pre-flight, configure, cicd-compute-build-matrix]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.cicd-compute-build-matrix.outputs.matrix) }}
@@ -534,7 +542,7 @@ jobs:
       )
       && !cancelled()
       && needs.configure.outputs.perf_scripts_only != 'true'
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Import_Check
     steps:
@@ -565,7 +573,7 @@ jobs:
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Core
     env:
@@ -606,7 +614,7 @@ jobs:
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Diffusion
     env:
