@@ -115,6 +115,187 @@ Notes:
 - Config groups are nested: `rng`, `train`, `model`, `optimizer`, `ddp`, `scheduler`, `dataset`, `logger`, `tokenizer`, `checkpoint`, `dist`, `profiling`, `peft`, `comm_overlap`, `mixed_precision`, `inprocess_restart`.
 - After overrides are applied, runtime validation computes any dependent fields (e.g., data-parallel size, scheduler steps) and checks consistency.
 
+## Export Megatron-LM checkpoints without a Bridge run config
+
+Megatron-LM checkpoints save their training arguments in `common.pt`; they do
+not normally contain the `run_config.yaml` written by Megatron Bridge. The
+Bridge checkpoint export launcher currently needs that file to reconstruct a
+model provider before loading the distributed weights.
+
+Use this procedure only when all of the following are true:
+
+- the iteration directory contains `common.pt` and the distributed checkpoint
+  metadata and shards;
+- the checkpoint architecture has an existing Megatron Bridge implementation;
+- `--hf-model` identifies the exact Hugging Face architecture used to create
+  the checkpoint; fine-tuned weights may differ, but model dimensions, layer
+  patterns, vocabulary configuration, and MTP structure must match; and
+- Megatron Bridge, Megatron Core, and Transformer Engine are compatible with
+  the versions that wrote the checkpoint.
+
+This procedure generates only `run_config.yaml`. It does not migrate legacy
+checkpoint keys or metadata, and it does not translate a custom Megatron-LM
+model spec into a Bridge provider.
+
+### Generate `run_config.yaml`
+
+Set `MB_CKPT` to the checkpoint iteration directory, not its parent. The
+Hugging Face reference is used only for configuration and provider selection;
+this generation step does not download its weights.
+
+```bash
+MB_CKPT=/workspace/checkpoints/model/iter_0001000
+MB_HF_REF=organization/model-reference
+
+uv run python - "$MB_CKPT" "$MB_HF_REF" --trust-remote-code <<'PY'
+from dataclasses import fields
+import logging
+from pathlib import Path
+import sys
+
+from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols
+
+from megatron.bridge import AutoBridge
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.model_load_save import load_model_config
+from megatron.bridge.utils.yaml_utils import dump_dataclass_to_yaml
+from transformers import AutoConfig
+
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
+
+checkpoint = Path(sys.argv[1])
+hf_reference = sys.argv[2]
+trust_remote_code = "--trust-remote-code" in sys.argv[3:]
+output = checkpoint / "run_config.yaml"
+
+if not (checkpoint / "common.pt").is_file():
+    raise FileNotFoundError(f"common.pt not found in {checkpoint}")
+if output.exists():
+    raise FileExistsError(f"Refusing to overwrite {output}")
+
+# Without run_config.yaml, this reads the Megatron-LM args from common.pt.
+checkpoint_config, megatron_args = load_model_config(str(checkpoint))
+if megatron_args is None:
+    raise RuntimeError("Expected a Megatron-LM checkpoint with args in common.pt")
+
+hf_config = AutoConfig.from_pretrained(
+    hf_reference,
+    trust_remote_code=trust_remote_code,
+)
+bridge = AutoBridge.from_hf_config(hf_config)
+provider = bridge.to_megatron_provider(load_weights=False)
+
+# Overlay the checkpoint's TransformerConfig, including FP8/MXFP8 fields, on
+# the architecture-specific provider derived from the HF reference.
+for field in fields(checkpoint_config):
+    if hasattr(provider, field.name):
+        setattr(provider, field.name, getattr(checkpoint_config, field.name))
+
+# Hybrid layer patterns are stored in the Megatron-LM Namespace rather than
+# its TransformerConfig. Preserve separate and already-unified MTP layouts.
+pattern = (
+    getattr(megatron_args, "hybrid_layer_pattern", None)
+    or getattr(megatron_args, "hybrid_override_pattern", None)
+)
+if pattern and hasattr(provider, "hybrid_layer_pattern"):
+    provider.hybrid_override_pattern = None
+    provider.hybrid_layer_pattern = pattern
+
+for name in (
+    "mtp_num_layers",
+    "mtp_hybrid_override_pattern",
+    "mtp_use_repeated_layer",
+    "keep_mtp_spec_in_bf16",
+    "seq_length",
+):
+    value = getattr(megatron_args, name, None)
+    if value is not None and hasattr(provider, name):
+        setattr(provider, name, value)
+
+if pattern and Symbols.MTP_SEPARATOR in pattern:
+    provider.mtp_hybrid_override_pattern = None
+
+if hasattr(provider, "hf_model_id"):
+    provider.hf_model_id = hf_reference
+provider.finalize()
+
+# Serializing the provider directly omits its dataclass fields. Convert it
+# through ConfigContainer so load_model_config() can instantiate it correctly.
+model_dict = ConfigContainer._convert_value_to_dict(provider)
+dump_dataclass_to_yaml({"model": model_dict}, str(output))
+logger.info("Wrote %s", output)
+PY
+```
+
+Omit `--trust-remote-code` unless the reference model requires custom code and
+you trust its repository.
+
+### Validate the generated provider
+
+Validate the YAML before allocating GPUs for conversion:
+
+```bash
+uv run python - "$MB_CKPT" <<'PY'
+import logging
+import sys
+
+from megatron.bridge.training.model_load_save import load_model_config
+
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
+
+config, megatron_args = load_model_config(sys.argv[1])
+if megatron_args is not None:
+    raise RuntimeError("run_config.yaml was not loaded")
+
+for name in (
+    "num_layers",
+    "hidden_size",
+    "ffn_hidden_size",
+    "num_moe_experts",
+    "hybrid_layer_pattern",
+    "mtp_num_layers",
+    "fp8",
+    "fp8_recipe",
+    "fp8_param",
+    "first_last_layers_bf16",
+    "num_layers_at_start_in_bf16",
+    "num_layers_at_end_in_bf16",
+):
+    logger.info("%s=%r", name, getattr(config, name, None))
+PY
+```
+
+Compare the reported architecture, hybrid/MTP layout, and precision fields
+with the original training configuration. Do not continue if they differ.
+
+Run the normal export after validation. Adapt the parallel topology to the
+checkpoint and available GPUs:
+
+```bash
+./scripts/conversion/convert.sh export \
+  --executor local \
+  --device gpu \
+  --gpus-per-node 8 \
+  --hf-model "$MB_HF_REF" \
+  --megatron-path "$MB_CKPT" \
+  --hf-path /workspace/exports/model-hf \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --torch-dtype bfloat16 \
+  --trust-remote-code
+```
+
+Keep strict conversion enabled for the first export. Do not use
+`--not-strict` to bypass missing MTP, expert, or quantized parameters.
+
+For MXFP8 parameter checkpoints, use hardware supported by the saved recipe
+(normally Blackwell). The default BF16 export dequantizes Transformer Engine
+quantized parameters. Do not request `--export-weight-dtype fp8` for MXFP8;
+native FP8 Hugging Face export currently supports blockwise FP8 parameters.
+
 ## Mapping Megatron-LM arguments to Megatron Bridge config
 
 Below is a concise mapping from common `megatron-lm/megatron/training/arguments.py` flags to the new dataclass fields. If a field is not listed here (e.g., highly model-specific knobs), it typically lives under `model.*`, `optimizer.*`, `dataset.*`, or `tokenizer.*` with similar names.

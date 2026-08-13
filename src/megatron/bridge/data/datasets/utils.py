@@ -978,8 +978,7 @@ def _chat_preprocess(
         context_end_idx = len(input_ids)
 
     terminal_assistant = bool(tokenized.conversation and tokenized.conversation[-1].get("role") == "assistant")
-    rendered_at_limit = max_length is not None and len(input_ids) >= max_length
-    terminal_assistant_survived = terminal_assistant and (context_end_idx < len(input_ids) or not rendered_at_limit)
+    terminal_assistant_complete = terminal_assistant and tokenized.truncation_side != "right"
     if add_eos:
         eos_id = getattr(tokenizer, "eos_id", None)
         if eos_id is None:
@@ -988,14 +987,14 @@ def _chat_preprocess(
         if eos_id is None:
             raise ValueError("Chat preprocessing with add_eos=True requires a tokenizer EOS token ID.")
         eos_id = int(eos_id)
-        eos_in_loss = loss_mode == "full" or terminal_assistant_survived
+        eos_in_loss = tokenized.truncation_side != "right" and (loss_mode == "full" or terminal_assistant)
         if not input_ids or input_ids[-1] != eos_id:
             input_ids.append(eos_id)
             mask.append(eos_in_loss)
         elif eos_in_loss:
             mask[-1] = True
 
-        if not terminal_assistant_survived:
+        if not terminal_assistant_complete:
             context_end_idx = len(input_ids)
 
     context_ids = input_ids[:context_end_idx]

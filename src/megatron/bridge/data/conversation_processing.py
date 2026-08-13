@@ -145,6 +145,7 @@ class TokenizedConversation:
     assistant_mask: torch.Tensor
     conversation: list[dict[str, Any]]
     final_assistant_start: int | None = None
+    truncation_side: Literal["left", "right"] | None = None
 
 
 def normalize_energon_vlm_sample(sample: Any) -> NormalizedVLMSample:
@@ -763,6 +764,14 @@ def tokenize_chat_example(
         raise ValueError("Chat preprocessing requires a processor or tokenizer with apply_chat_template.")
 
     input_ids = torch.tensor(_chat_template_input_ids(tokenized_chat), dtype=torch.long)
+    confirmed_truncation_side = None
+    if selected_template_owner is not None and selected_tokenize_kwargs is not None:
+        confirmed_truncation_side = _confirmed_truncation_side(
+            selected_template_owner,
+            conversation,
+            selected_tokenize_kwargs,
+            input_ids.tolist(),
+        )
     generation_assistant_start = None
     last_turn_start = None
     if return_final_assistant_start and selected_template_owner is not None and selected_tokenize_kwargs is not None:
@@ -794,23 +803,12 @@ def tokenize_chat_example(
             assistant_mask=full_mask,
             conversation=conversation,
             final_assistant_start=generation_assistant_start,
+            truncation_side=confirmed_truncation_side,
         )
 
     chat_example: dict[str, Any] = {"conversation": conversation}
     chat_example.update(template_kwargs)
     effective_boundary_config = boundary_config or infer_assistant_mask_boundary_config(processor)
-    boundary_truncation_side = None
-    if (
-        effective_boundary_config is not None
-        and selected_template_owner is not None
-        and selected_tokenize_kwargs is not None
-    ):
-        boundary_truncation_side = _confirmed_truncation_side(
-            selected_template_owner,
-            conversation,
-            selected_tokenize_kwargs,
-            input_ids.tolist(),
-        )
     if returned_mask is not None and effective_boundary_config is None:
         assistant_mask = returned_mask
     else:
@@ -821,7 +819,7 @@ def tokenize_chat_example(
                 processor,
                 None,
                 boundary_config=effective_boundary_config,
-                truncation_side=boundary_truncation_side,
+                truncation_side=confirmed_truncation_side,
                 warn_on_all_masked=False,
             ).to(dtype=torch.bool)
         except ValueError:
@@ -874,6 +872,7 @@ def tokenize_chat_example(
         assistant_mask=assistant_mask,
         conversation=conversation,
         final_assistant_start=generation_assistant_start,
+        truncation_side=confirmed_truncation_side,
     )
 
 
@@ -1027,6 +1026,22 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                 role: f"<|start_header_id|>{role}<|end_header_id|>\n\n"
                 for role in ("system", "developer", "user", "tool")
             },
+        ),
+        # OpenAI Harmony (gpt-oss). One assistant turn renders as one or more
+        # channel segments, e.g. ``<|start|>assistant<|channel|>analysis<|message|>...
+        # <|end|><|start|>assistant<|channel|>final<|message|>...<|return|>``. The
+        # start marker stops at ``<|start|>assistant`` so the loss span begins at
+        # ``<|channel|>`` and covers every channel of the turn, analysis included.
+        # The template emits ``<|start|>`` and the role separately, so the required
+        # markers use the standalone structural specials rather than a concatenated
+        # ``<|start|>assistant``. End variants cover message (``<|end|>``), final
+        # generation (``<|return|>``), and tool call (``<|call|>``) terminators.
+        (
+            ("<|start|>", "<|channel|>", "<|message|>"),
+            "<|start|>assistant",
+            "<|return|>",
+            ("<|end|>", "<|call|>"),
+            {role: f"<|start|>{role}" for role in ("system", "developer", "user", "tool")},
         ),
     )
     for required_markers, assistant_start, assistant_end, assistant_end_fallbacks, other_role_starts in candidates:

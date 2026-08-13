@@ -152,6 +152,22 @@ def test_fp8_sft_inherits_base_sft_config():
     assert base.model.moe_router_padding_for_fp8 is False
 
 
+def test_gpt_oss_20b_sft_32k_overrides_batch_and_sequence_length():
+    """gpt_oss_20b_sft_32k_config should inherit SFT defaults with a 32K context and GBS32."""
+    from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_sft_32k_config
+    from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import gpt_oss_20b_sft_8gpu_h100_bf16_32k_config
+
+    assert gpt_oss_20b_sft_32k_config is gpt_oss_20b_sft_8gpu_h100_bf16_32k_config
+
+    cfg = gpt_oss_20b_sft_32k_config()
+    _assert_basic_config(cfg)
+    assert cfg.model.seq_length == 32768
+    assert cfg.dataset.seq_length == 32768
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 32768
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+
+
 def test_fp8_peft_inherits_base_peft_config():
     """gpt_oss_20b_peft_fp8_current_scaling_config should inherit base PEFT settings."""
     from megatron.bridge.recipes.gpt_oss import (

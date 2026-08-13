@@ -1,6 +1,7 @@
 ---
 name: review-pr
 description: Structured single-agent code review workflow for PRs, commits, and local diffs. Use when asked to review code, understand a PR, rubber duck a change, prepare GitHub review comments, compare a change against Megatron Bridge conventions, or produce high-signal findings without subagents or tmux.
+when_to_use: Reviewing a GitHub PR, commit, local diff, or code change; preparing review comments; checking a change against Megatron Bridge conventions; assessing whether a PR is safe to merge; summarizing review findings and test gaps.
 ---
 
 # Review PR
@@ -100,6 +101,20 @@ For model or conversion changes, verify HF/MCore name mappings, tensor transform
 
 For changes that appear specific to one model or one training feature, check whether neighboring models or features share the same path and could regress. If common infrastructure is modified, examine it carefully and require the change to be necessary, generalizable, and covered by tests or clear reasoning.
 
+### Security And Deserialization
+
+- Treat every use of `torch.load(..., weights_only=False)` as a merge-blocking
+  security bug. Never approve it as a primary path or fallback, including for
+  checkpoints assumed to be trusted.
+- Inspect `torch.load` calls that omit `weights_only`; do not rely on a
+  version-dependent default. Require `weights_only=True` when the payload is
+  representable by tensors and plain containers.
+- When richer state requires custom deserialization, require an explicit,
+  fail-closed allowlist or a non-pickle format. The implementation must not
+  delegate to unrestricted `torch.load` after the restricted path fails.
+- Require both a representative legitimate-state round trip and a malicious
+  `__reduce__` regression proving that rejected input causes no side effect.
+
 ### Integration And Runtime Behavior
 
 Trace how the change is reached in real workflows. Follow call sites across recipes, providers, launch scripts, configs, and downstream adapters. For distributed or performance-sensitive code, check rank behavior, process-group assumptions, collective ordering, recompute/offload/overlap interactions, and GPU-count constraints.
@@ -115,19 +130,6 @@ without copying model-specific glue.
 
 Do not approve an abstraction solely because it reduces lines of code. It must
 also reduce user or developer complexity without obscuring runtime behavior.
-
-Audit configuration names semantically, not only syntactically. Trace each new
-or changed value to its declaration, documentation, consumers, serialized form,
-logs, and generated paths. Flag values that repurpose a business/config field as
-a cache version, migration marker, experiment tag, feature switch, or unrelated
-namespace even when the workaround functions correctly.
-
-For model- or recipe-specific cache invalidation, require the cache fingerprint
-to derive from the actual semantic inputs. Do not accept a fabricated tokenizer,
-model, or dataset name merely to avoid reusing an old artifact. Prefer a general
-mechanism that fingerprints the effective tokenizer or processor identity,
-template, preprocessing policy, and other output-affecting settings, with tests
-for both stability and invalidation.
 
 ### Performance And Scalability
 
@@ -165,9 +167,6 @@ For each candidate:
 - Check whether existing tests already cover it.
 - Check it against the repository principles: correctness, measured or reasoned
   performance impact, and user/developer clarity.
-- Ask whether every changed config value would be truthful and unsurprising when
-  persisted, logged, or used in an artifact path. If understanding it requires
-  knowing a hidden workaround, keep the semantic-naming finding.
 - Merge duplicates that point to the same root cause.
 - Assign a verdict: `CONFIRMED`, `DOWNGRADED`, `QUESTION`, or `DROP`.
 

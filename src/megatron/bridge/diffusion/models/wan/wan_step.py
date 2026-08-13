@@ -28,6 +28,7 @@ from megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_w
 )
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,20 @@ class WanForwardStep:  # noqa: D101
         with straggler_timer(bdata=True):
             batch = wan_data_step(qkv_format, data_iterator)
         timers("batch-generator").stop()
+
+        packed_seq_params = batch.get("packed_seq_params")
+        if packed_seq_params is not None:
+            self_attention = packed_seq_params["self_attention"]
+            cross_attention = packed_seq_params["cross_attention"]
+            accumulate_flops_metadata(
+                state,
+                batch["video_latents"],
+                vp_stage=get_model_chunk_vp_stage(model),
+                cu_seqlens=self_attention.cu_seqlens_q_padded,
+                cu_seqlens_unpadded=self_attention.cu_seqlens_q,
+                cross_cu_seqlens=cross_attention.cu_seqlens_kv_padded,
+                cross_cu_seqlens_unpadded=cross_attention.cu_seqlens_kv,
+            )
 
         check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
         check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

@@ -12,17 +12,64 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 import pytest
 import torch
 
+import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    compute_mel_features,
+    compute_mel_features_with_length,
     inference_expanded_image_token_counts,
     inference_merged_sequence_length,
     inference_num_image_tiles,
     select_inference_next_token,
     temporal_model_frames,
+    valid_audio_feature_lengths,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
+
+
+def test_compute_mel_features_preserves_physical_rows_and_mask_length(monkeypatch):
+    extractor_kwargs = {}
+
+    class _Extractor:
+        def __call__(self, waveform, **kwargs):
+            del waveform
+            extractor_kwargs.update(kwargs)
+            return {
+                "input_features": torch.ones(1, 9, 4),
+                "attention_mask": torch.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 0]]),
+            }
+
+    monkeypatch.setattr(omni_utils, "_parakeet_feature_extractor", lambda num_mel_bins, sampling_rate: _Extractor())
+
+    mel, valid_length = compute_mel_features_with_length([0.0] * 1280, num_mel_bins=4)
+
+    assert mel.shape == (9, 4)
+    assert valid_length == 8
+    assert extractor_kwargs["return_attention_mask"] is True
+    assert compute_mel_features([0.0] * 1280, num_mel_bins=4).shape == (9, 4)
+
+
+@pytest.mark.parametrize(
+    ("attention_mask", "match"),
+    [
+        (torch.tensor([[1, 0, 1]]), "contiguous valid prefix"),
+        (torch.tensor([[0, 0, 0]]), "at least one valid frame"),
+        (torch.tensor([[1.0, 0.5, 0.0]]), "binary values"),
+    ],
+)
+def test_valid_audio_feature_lengths_rejects_invalid_masks(attention_mask, match):
+    with pytest.raises(ValueError, match=match):
+        valid_audio_feature_lengths(attention_mask, num_frames=3)
+
+
+def test_real_parakeet_extractor_marks_centered_stft_boundary_frame_invalid():
+    mel, valid_length = compute_mel_features_with_length(np.zeros(1280, dtype=np.float32))
+
+    assert mel.shape == (9, 128)
+    assert valid_length == 8
 
 
 def test_temporal_model_frames_duplicates_single_frame_for_temporal_embedder():

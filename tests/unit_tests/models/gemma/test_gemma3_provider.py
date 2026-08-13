@@ -220,11 +220,9 @@ class TestGemma3UtilityFunctions:
         for i in range(1, 4):
             assert _is_local_attn_layer(i, pattern) is True
 
-        # Layer 4: 4 % 5 = 4, should be local (True)
-        assert _is_local_attn_layer(4, pattern) is True
-
-        # Layer 5: 5 % 5 = 0, should be global (False)
-        assert _is_local_attn_layer(5, pattern) is False
+        # Layers 4-5: the two global layers in the pattern
+        for i in range(4, 6):
+            assert _is_local_attn_layer(i, pattern) is False
 
 
 class TestGemma3CustomComponents:

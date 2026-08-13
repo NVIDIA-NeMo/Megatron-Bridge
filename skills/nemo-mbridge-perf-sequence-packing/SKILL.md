@@ -1,6 +1,6 @@
 ---
 name: nemo-mbridge-perf-sequence-packing
-description: Validate and use packed sequences and long-context training in Megatron-Bridge, including equal-token offline pack-length sizing for LLM SFT and PEFT, the distinction from VLM in-batch packing, CP constraints, and packed-artifact cache identity. Use when investigating stale or misleading packed-data paths as well as runtime packing behavior.
+description: Validate and use packed sequences and long-context training in Megatron-Bridge, including offline LLM packing, collate-time VLM packing, Energon online packing, and CP constraints.
 license: Apache-2.0
 ---
 
@@ -111,6 +111,35 @@ cfg.dataset.enable_in_batch_packing = True
 cfg.train.micro_batch_size = 2
 ```
 
+Energon online packing for Qwen-VL uses Energon's per-worker candidate buffer
+instead of limiting selection to one collator micro batch:
+
+```python
+cfg.dataset.packing_buffer_size = 16
+cfg.dataset.micro_batch_size = 1
+cfg.train.micro_batch_size = 1
+cfg.model.calculate_per_token_loss = True
+cfg.ddp.average_in_collective = False
+```
+
+`packing_buffer_size` is the sole native-packing selector; leave the legacy
+collator- and step-owned packing flags at their defaults. Use `vlm_step`. The
+buffer size counts prepared candidate samples per worker, not bytes or packed
+tokens. Since prepared image/video patch tensors remain in
+host memory until selection, start at 8-16 for high-resolution or video data
+and measure worker RSS, first-batch latency, and bin fill before increasing it.
+This path does not write offline packs; the source WebDataset shards remain
+unchanged. It supports eager Qwen-VL with MBS1 and rejects MTP, CUDA graphs,
+Qwen3-VL DistTrain, and PP. Requested MoE expert-parallel communication overlap
+is disabled with a warning. Standard eager `alltoall` EP has functional coverage
+for Qwen3.6-35B-A3B at TP1/PP1/EP8 with overlap disabled; this is not performance
+evidence. Other EP dispatchers are accepted with fixed-width native packs but do
+not yet have equivalent runtime evidence. The Qwen-VL model derives a MoE
+padding mask from logical and physical THD boundaries so fixed-width gaps do not
+enter auxiliary-loss, z-loss, or expert-bias statistics. Current MCore may still
+dispatch padded positions; expert-capacity/token-dropping configurations lack
+native-packing runtime coverage.
+
 Long-context baseline:
 
 ```python
@@ -219,31 +248,9 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
     raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
 ```
 
-## Packed Artifact Identity
-
-Treat the readable packed-path prefix and the cache fingerprint as separate
-concepts:
-
-- Keep `offline_packing_specs.tokenizer_model_name` truthful. It is an optional
-  readable tokenizer namespace, not a cache version, template label, run tag,
-  or migration escape hatch.
-- Derive builder-managed cache invalidation from every semantic input that can
-  change packed rows. Include tokenizer identity or immutable revision/path,
-  the effective chat-template hash, EOS/BOS/PAD IDs and EOS policy,
-  preprocessing settings, sequence limits, and packing/alignment settings.
-- When template or preprocessing behavior changes, update the general
-  fingerprint policy. Do not add a model-specific fake tokenizer name to force
-  a new directory.
-- Add paired regression tests: equivalent effective inputs must produce the
-  same path, while a changed tokenizer template or preprocessing policy must
-  produce a different path.
-- Review generated paths and metadata as user-facing diagnostics. A name that
-  is technically unique but semantically false obscures provenance and invites
-  more recipe-specific aliases.
-
 ## Pitfalls
 
-1. Offline packed SFT and VLM in-batch packing are different features with opposite micro-batch rules.
+1. Offline packed SFT, collate-time VLM packing, and Energon online packing are different features. Offline and Energon packing use physical MBS1; collate-time packing uses MBS greater than one.
 2. When CP is enabled, packed sequence lengths must respect `2 * context_parallel_size` divisibility.
 3. For finetuning with CP, `calculate_per_token_loss=True` and `ddp.average_in_collective=False` are required.
 4. `pad_cu_seqlens=True` also requires `pad_to_max_length=True`.
@@ -253,7 +260,8 @@ concepts:
 8. `global_batch_size` must be divisible by and no smaller than data parallel size when offline packing uses MBS1.
 9. Derive `pad_seq_to_mult` from CP/TP/SP for both SFT and PEFT; do not hardcode different values by workload type.
 10. `pad_to_max_length` controls final pack width and is conditional on fixed-shape execution requirements.
-11. A recipe-specific `tokenizer_model_name` used only to invalidate stale packs hides missing fingerprint inputs; fix the generic fingerprint instead.
+11. Energon `packing_buffer_size` is per worker and also affects validation; global/eval batch counts refer to physical packs rather than source conversations.
+12. Exact Energon loader resume requires unchanged shards/splits, DP world size, worker counts, shuffle settings/seed, processor, sequence length, topology, and packing-buffer size.
 
 ## Verification
 
@@ -264,9 +272,10 @@ uv run python -m pytest tests/unit_tests/training/utils/test_packed_seq_utils.py
 uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequence or enable_in_batch_packing or offline_and_in_batch_packing_are_mutually_exclusive or context_parallel_seq_length_divisibility or context_parallel_finetuning_validations" -v && \
 uv run python -m pytest tests/unit_tests/data/packing/test_in_batch.py -v && \
 uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "deferred_in_batch_packing or packed_metadata" -v && \
+uv run python -m pytest tests/unit_tests/models/qwen_vl/data/test_energon.py tests/unit_tests/data/builders/test_energon_builder.py -v && \
+uv run python -m pytest tests/unit_tests/tutorials/test_multimodal_data_tutorials.py -k "native_packing_loader" -v && \
 uv run python -m pytest tests/unit_tests/data/datasets/test_packed_parquet.py -k "negative_index_zeroes_loss_mask" -v && \
-uv run python -m pytest tests/unit_tests/data/datasets/test_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v && \
-uv run python -m pytest tests/unit_tests/data/builders/test_gpt_sft_builder.py -k "pack_path" -v
+uv run python -m pytest tests/unit_tests/data/datasets/test_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v
 ```
 
 Success criteria:
@@ -274,5 +283,5 @@ Success criteria:
 - all selected tests pass
 - offline and in-batch configuration validation remains mutually exclusive
 - packed metadata reaches the training step in MCore THD form
+- native Energon packing restores pending groups exactly and flushes finite partial buffers without dropping samples
 - mapped padding rows do not contribute to loss
-- equivalent packing inputs reuse one cache path, while changed semantic inputs invalidate it

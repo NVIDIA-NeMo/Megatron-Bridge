@@ -168,6 +168,7 @@ def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backe
 
     assert cfg.tokenizer.tokenizer_model == gb200_glm5._GLM52_MODEL_ID
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": gb200_glm5._GLM52_MODEL_REVISION}
+    assert cfg.tokenizer.chat_template is None
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 6
     assert cfg.model.context_parallel_size == cp
@@ -243,7 +244,7 @@ def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.hf_dataset.split == "train[:10000]"
     assert cfg.dataset.hf_dataset.load_kwargs == {"revision": gb200_glm5._TULU3_REVISION}
-    assert cfg.dataset.hf_output_root == "work/data/glm5-2/tulu3-full-sft-gb200-8k-v6"
+    assert cfg.dataset.hf_output_root == "work/data/glm5-2/tulu3-full-sft-gb200-8k-v5"
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 8192
     assert (
         cfg.dataset.offline_packing_specs.max_single_sequence_length
@@ -254,14 +255,6 @@ def test_glm52_gb200_sft_uses_8k_packed_tulu3() -> None:
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.tokenizer.chat_template is None
-
-
-def test_glm52_gb200_peft_uses_pinned_hf_chat_template() -> None:
-    cfg = gb200.glm52_peft_192gpu_gb200_bf16_config()
-
-    assert cfg.tokenizer.chat_template is None
-    assert cfg.dataset.hf_output_root == "work/data/glm5-2/tulu3-peft-gb200-v2"
 
 
 def test_glm52_gb200_recipes_do_not_depend_on_h100_recipes() -> None:

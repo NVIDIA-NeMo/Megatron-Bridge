@@ -18,7 +18,10 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from transformers import PretrainedConfig
 
+from megatron.bridge.models.conversion import model_bridge as model_bridge_module
+from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
@@ -30,6 +33,59 @@ class DummyBridge(MegatronModelBridge):
 
     def mapping_registry(self):  # pragma: no cover - not used in tests
         return MegatronMappingRegistry()
+
+
+def test_modelopt_plan_skips_unmapped_task_slot_and_keeps_later_task(monkeypatch):
+    first_name = "first.weight"
+    unmapped_name = "unmapped.amax"
+    last_name = "last.weight"
+
+    class MappedBridge(DummyBridge):
+        def mapping_registry(self):
+            return MegatronMappingRegistry(
+                AutoMapping(first_name, "hf.first.weight"),
+                AutoMapping(last_name, "hf.last.weight"),
+            )
+
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+    model.first = torch.nn.Linear(1, 1, bias=False)
+    model.unmapped = torch.nn.Module()
+    model.unmapped.register_buffer("amax", torch.ones(1))
+    model.last = torch.nn.Linear(1, 1, bias=False)
+    bridge = MappedBridge()
+    global_names = [first_name, unmapped_name, last_name]
+
+    monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _model: global_names)
+    monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+    monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _model: [model])
+    monkeypatch.setattr(model_bridge_module, "_get_pg_collection_from_model", lambda _model: None)
+    monkeypatch.setattr(model_bridge_module, "_get_pp_rank", lambda _model: 0)
+    monkeypatch.setattr(
+        model_bridge_module,
+        "_megatron_local_name_to_global",
+        lambda _models, _config, local_name, _vp_stage: local_name,
+    )
+
+    tasks = bridge.build_conversion_tasks(PretrainedConfig(), [model])
+
+    assert tasks[0].global_param_name == first_name
+    assert tasks[1] is None
+    assert tasks[2].global_param_name == last_name
+
+    monkeypatch.setattr(modelopt_utils, "get_modelopt_quant_exporter", lambda _mode: ("unused", lambda *_args: ()))
+    monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 1)
+    monkeypatch.setattr(modelopt_utils.model_bridge_utils, "_get_pg_collection_from_model", lambda _model: None)
+
+    export_tasks = modelopt_utils.build_modelopt_export_plan(
+        tasks,
+        model=[model],
+        bridge=bridge,
+        quant_mode="nvfp4",
+        ignore_patterns=[],
+    )
+
+    assert [task.global_param_name for task in export_tasks] == [first_name, last_name]
 
 
 def test_hf_weight_tuple_iter_finalized_preserves_two_field_abi():
@@ -51,6 +107,98 @@ def test_hf_weight_tuple_iter_finalized_allows_empty_export_hook():
     weight = HFWeightTuple("hf.weight", torch.ones(2))
 
     assert list(weight.iter_finalized(cpu=False, export_hook=lambda *_args: iter(()))) == []
+
+
+def test_truncate_vocab_padding_handles_nested_config_and_vocab_aliases():
+    bridge = DummyBridge()
+    bridge.hf_config = SimpleNamespace(thinker_config=SimpleNamespace(text_config=SimpleNamespace(vocab_size=3)))
+    task = SimpleNamespace(
+        global_param_name="language_model.output_layer.weight",
+        mapping=SimpleNamespace(hf_param="lm_head.weight"),
+    )
+    padded_weight = torch.arange(10).reshape(5, 2)
+    weights = {
+        "lm_head.weight": padded_weight,
+        "model.layers.1.shared_head.head.weight": padded_weight.clone(),
+        "unrelated.weight": torch.ones(4, 2),
+    }
+
+    result = bridge._truncate_vocab_padding(task, weights)
+
+    assert result["lm_head.weight"].shape == (3, 2)
+    assert result["model.layers.1.shared_head.head.weight"].shape == (3, 2)
+    assert result["unrelated.weight"].shape == (4, 2)
+
+
+@pytest.mark.parametrize("is_remote_pp", [False, True])
+def test_truncate_vocab_padding_handles_fp8_scale_task(is_remote_pp):
+    bridge = DummyBridge()
+    bridge.hf_config = SimpleNamespace(vocab_size=5)
+    task = SimpleNamespace(
+        global_param_name="output_layer.weight_scale_inv",
+        mapping=SimpleNamespace(hf_param="lm_head.weight", scale_block_size=1 if is_remote_pp else None),
+        megatron_module=None if is_remote_pp else SimpleNamespace(weight=torch.ones(8, 4)),
+        param_weight=None if is_remote_pp else torch.ones(8, 2),
+    )
+
+    result = bridge._truncate_vocab_padding(task, {"lm_head.weight_scale_inv": torch.ones(8, 2)})
+
+    assert result["lm_head.weight_scale_inv"].shape == (5, 2)
+
+
+@pytest.mark.parametrize("exported_vocab_size", [3, 5])
+def test_quantized_stream_truncates_only_padded_vocab(monkeypatch, exported_vocab_size):
+    bridge = DummyBridge()
+    checker_results = []
+
+    class VocabMapping:
+        hf_param = "lm_head.weight"
+
+        def megatron_to_hf_quant(
+            self,
+            weight,
+            module,
+            quantization_checker,
+            quant_fn,
+            quant_block_size,
+        ):
+            checker_results.append(quantization_checker("output_layer.weight"))
+            return {
+                self.hf_param: weight,
+                f"{self.hf_param}_scale_inv": torch.ones(weight.shape[0], 1),
+            }
+
+    exported_weight = torch.arange(exported_vocab_size * 2).reshape(exported_vocab_size, 2)
+    task = WeightConversionTask(
+        param_name="output_layer.weight",
+        global_param_name="output_layer.weight",
+        mapping=VocabMapping(),
+        param_weight=exported_weight,
+    )
+    model = SimpleNamespace(config=SimpleNamespace(share_embeddings_and_output_weights=False))
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.quant_bridge.unwrap_model",
+        lambda _model: [model],
+    )
+    monkeypatch.setattr(bridge, "_with_progress_tracking", lambda tasks, *_args: tasks)
+
+    exported = list(
+        bridge.stream_weights_megatron_to_hf_quant(
+            model,
+            SimpleNamespace(config=SimpleNamespace(vocab_size=3)),
+            quantization_checker=lambda _name: True,
+            quant_fn=Mock(),
+            quant_block_size=(1, 2),
+            conversion_tasks=[task],
+            show_progress=False,
+        )
+    )
+
+    assert checker_results == [True]
+    assert exported[0].param_name == "lm_head.weight"
+    assert exported[0].weight.shape == (3, 2)
+    assert exported[1].param_name == "lm_head.weight_scale_inv"
+    assert exported[1].weight.shape == (3, 1)
 
 
 def _with_export_hook(task, exporter, finalizer=None):
