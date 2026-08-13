@@ -2012,7 +2012,7 @@ ssm = [
     { name = "mamba-ssm" },
 ]
 te = [
-    { name = "transformer-engine", extra = ["core-cu13", "pytorch"] },
+    { name = "megatron-core", extra = ["te"] },
 ]
 tensor-inspect = [
     { name = "nvdlfw-inspect" },
@@ -2079,6 +2079,7 @@ requires-dist = [
     { name = "librosa", marker = "extra == 'audio'" },
     { name = "mamba-ssm", marker = "extra == 'ssm'" },
     { name = "megatron-core", extras = ["dev", "mlm"], editable = "3rdparty/Megatron-LM" },
+    { name = "megatron-core", extras = ["te"], marker = "extra == 'te'", editable = "3rdparty/Megatron-LM" },
     { name = "mistral-common", specifier = ">=1.10.0" },
     { name = "mlflow", specifier = ">=3.15.1" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
@@ -2098,7 +2099,6 @@ requires-dist = [
     { name = "timm" },
     { name = "torch", specifier = ">=2.6.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'" },
     { name = "transformers", specifier = ">=5.8,<=5.12.1" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.25.0" },
@@ -2191,6 +2191,9 @@ mlm = [
     { name = "tiktoken" },
     { name = "transformers" },
     { name = "wandb" },
+]
+te = [
+    { name = "transformer-engine" },
 ]
 
 [package.metadata]
@@ -4591,40 +4594,11 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.18.0"
-source = { registry = "https://pypi.nvidia.com/" }
-wheels = [
-    { url = "https://pypi.nvidia.com/transformer-engine/transformer_engine-2.18.0-py3-none-any.whl", hash = "sha256:9d7c4bd74247e57eeed2af46f7b91c133cc405404953f1f3f2e38be8c47cdb7e" },
-]
-
-[package.optional-dependencies]
-core-cu13 = [
-    { name = "transformer-engine-cu13" },
-]
-pytorch = [
-    { name = "transformer-engine-torch" },
-]
-
-[[package]]
-name = "transformer-engine-cu13"
-version = "2.18.0"
-source = { registry = "https://pypi.nvidia.com/" }
-dependencies = [
-    { name = "importlib-metadata" },
-    { name = "packaging" },
-    { name = "pydantic" },
-]
-wheels = [
-    { url = "https://pypi.nvidia.com/transformer-engine-cu13/transformer_engine_cu13-2.18.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:d5e9049256d66e1fb1743b5e1ff78e65a580bc09c371f4977ca71cdf7899fca4" },
-    { url = "https://pypi.nvidia.com/transformer-engine-cu13/transformer_engine_cu13-2.18.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:38e842ab60fdb9f7ca4d0345bdea1f7f9219a3d712a169b4973a95bc38011263" },
-]
-
-[[package]]
-name = "transformer-engine-torch"
-version = "2.18.0"
-source = { registry = "https://pypi.nvidia.com/" }
+version = "2.18.0+e7c550c5"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=e7c550c5f80636cf841a8204b1d6f85a5f3f28b7#e7c550c5f80636cf841a8204b1d6f85a5f3f28b7" }
 dependencies = [
     { name = "einops" },
+    { name = "importlib-metadata" },
     { name = "nvdlfw-inspect" },
     { name = "nvidia-cudnn-frontend" },
     { name = "onnx" },
@@ -4632,9 +4606,7 @@ dependencies = [
     { name = "packaging" },
     { name = "pydantic" },
     { name = "torch", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine-cu13" },
 ]
-sdist = { url = "https://pypi.nvidia.com/transformer-engine-torch/transformer_engine_torch-2.18.0.tar.gz", hash = "sha256:47b812b1cb7b6941fedd3d160a2239a346ee88c28c60937a694f49f54ddccf79" }
 
 [[package]]
 name = "transformers"
