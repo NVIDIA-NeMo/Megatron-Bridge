@@ -14,7 +14,8 @@ summary: >
   round-trip tensor equality, numerical forward parity, and deterministic
   image-conditioned inference. Bounded multimodal pretraining, full SFT,
   post-SFT export and inference, packed 8K SFT with CP2, LoRA PEFT, and
-  canonical dense-decoder performance are also verified.
+  canonical dense-decoder performance are also verified. Checkpoint resume
+  remains unverified.
 verification_index:
   model_level:
     verified:
@@ -116,8 +117,8 @@ items:
     status: verified
     precision: bf16
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
-      examples/conversion/compare_hf_and_megatron/compare.py
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task model-comparison
       --hf_model_path meta-models/Muse-Glimmer-30B
       --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e
       --model_class MuseGlimmerForConditionalGeneration
@@ -185,19 +186,22 @@ items:
         logger.save_config_filepath=work/model-verification/muse-glimmer-30b/pretrain-reference-resolved.yaml
       last_verified: 2026-08-12
       metrics:
-        initial_loss: 12.23545
-        final_loss: 1.526005
-        last_10_steps_step_time_ms_avg: 1092.84
-        last_10_steps_model_tflops_per_gpu_avg: 40.59
+        initial_loss: 12.23977
+        final_loss: 1.4103
+        last_10_steps_step_time_ms_avg: 1035.34
+        last_10_steps_model_tflops_per_gpu_avg: 42.49
       expected_result: >
         On 32 H100 GPUs at TP8/PP2/DP2, the command trains the complete
         randomly initialized HybridModel for exactly 100 optimizer steps on
         the revision-pinned public CORD-v2 multimodal dataset. All losses and
         gradient norms remain finite, with zero skipped and zero NaN
-        iterations. Loss decreases from 12.23545 to 1.526005; steps 91-100
-        average 1,092.84 ms and 40.59 model TFLOP/s/GPU. Complete step-50 and
-        step-100 model, optimizer, scheduler, RNG, metadata, train-state, and
-        resolved-config artifacts are saved and reloadable.
+        iterations. Loss decreases from 12.23977 to 1.410300; steps 91-100
+        average 1,035.34 ms and 42.49 model TFLOP/s/GPU. The persisted
+        post-setup config records the exact runtime. Complete step-50 and
+        step-100 checkpoints each contain 32 nonempty distributed shards and
+        1,550 state entries, including model, optimizer, scheduler, and RNG
+        state, plus metadata, train state, and the native HybridModel run
+        config.
 
   sft:
     H100:
@@ -300,8 +304,8 @@ items:
       expected_result: >
         On 32 H100 GPUs, the command loads the complete imported HybridModel
         and completes exactly 100 full-model SFT optimizer steps at sequence
-        length 8192 with in-batch packing, TP1/PP4/CP2, sequence parallelism,
-        A2A context-parallel communication, and selective core-attention
+        length 8192 with in-batch packing, TP1/PP4/CP2, A2A context-parallel
+        communication, and selective core-attention
         recompute. Every loss and gradient norm is finite, with zero skipped
         and zero NaN iterations. Loss decreases from 1.034497 to 0.03382061;
         steps 91-100 average 1,419.91 ms and 16.07 model TFLOP/s/GPU. The
@@ -322,23 +326,30 @@ items:
         --max_steps 100
         --save_dir work/model-verification/muse-glimmer-30b/peft-checkpoints
         --save_interval 100 checkpoint.load=null
+        checkpoint.async_save=false ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/muse-glimmer-30b/peft-resolved.yaml
       last_verified: 2026-08-12
       metrics:
-        initial_loss: 0.7254401
-        final_loss: 0.03141141
-        last_10_steps_step_time_ms_avg: 4812.79
-        last_10_steps_model_tflops_per_gpu_avg: 283.95
+        initial_loss: 0.7263421
+        final_loss: 0.03298394
+        last_10_steps_step_time_ms_avg: 4823.07
+        last_10_steps_model_tflops_per_gpu_avg: 283.36
       expected_result: >
         The command loads the complete imported native HybridModel checkpoint,
         freezes the base model, and inserts LoRA dim 8 / alpha 16 adapters only
         into the native linear_qkv and linear_proj attention projections. All
         100 optimizer-step rows are present exactly once with finite loss, zero
         skipped iterations, and zero NaN iterations. Loss decreases from
-        0.7254401 to 0.03141141, all four metrics are recorded, and the complete
-        eight-shard iter_0000100 adapter checkpoint is saved with its run config,
-        metadata, and train state.
+        0.7263421 to 0.03298394; steps 91-100 average 4,823.07 ms and 283.36
+        model TFLOP/s/GPU. The persisted post-setup config records the exact
+        runtime. The complete eight-shard iter_0000100 checkpoint contains all
+        208 expected adapter tensors, its run config, metadata, and train state.
+        A direct reload restores model and optimizer at step 100, completes
+        finite step 101 with zero skipped or NaN iterations, and saves a
+        distinct complete eight-shard checkpoint.
 
   checkpoint_resume:
     H100:
@@ -368,24 +379,29 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 1fbf9630639f83f0fbfbc840a2f77878bc9a6a97  # pragma: allowlist secret
+      bridge_commit: 8be93c49130954e3257158db774d59075d2beaa6  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
         --recipe muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config
         --mode pretrain --max_steps 50
+        checkpoint.async_save=false ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/muse-glimmer-30b/performance-resolved.yaml
       last_verified: 2026-08-12
       metrics:
-        initial_loss: 12.26874
-        final_loss: 0.5229914
-        last_10_steps_step_time_ms_avg: 9353.63
-        last_10_steps_model_tflops_per_gpu_avg: 429.18
+        initial_loss: 12.26882
+        final_loss: 2.442728
+        last_10_steps_step_time_ms_avg: 9373.06
+        last_10_steps_model_tflops_per_gpu_avg: 428.24
       expected_result: >
         The exact 32-H100 command completes all 50 fixed-shape mock-token dense
         decoder steps at TP4/PP4/CP2, a 9|15|15|13 split of all 52 language
         layers, sequence length 4096, MBS6/GBS192, BF16 model and gradient state,
         and FP8 current-scaling Transformer GEMMs. The vision and projection
         towers are frozen and excluded from the fixed-shape decoder workload.
-        Loss remains finite from 12.26874 to 0.5229914 with zero skipped or NaN
-        iterations. Steps 41-50 average 9,353.63 ms and 429.18 model
-        TFLOP/s/GPU, and the process exits successfully without checkpoint
-        output.
+        Loss remains finite from 12.26882 to 2.442728 with zero skipped or NaN
+        iterations. Steps 41-50 average 9,373.06 ms and 428.24 model
+        TFLOP/s/GPU. The persisted post-setup config records the exact runtime,
+        and the process exits successfully without checkpoint output.
