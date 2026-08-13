@@ -31,7 +31,7 @@ if grep -q -- '--mount=type=secret,id=GH_TOKEN' "$dockerfile"; then
 fi
 mcore_reinstall_line=$(grep -n 'uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM' "$dockerfile" | cut -d: -f1)
 helper_assertion_line=$(grep -n "find 3rdparty/Megatron-LM/megatron/core/datasets -maxdepth 1 -name 'helpers_cpp\*\.so'" "$dockerfile" | cut -d: -f1)
-final_copy_line=$(grep -n '^COPY --chmod=644 \. /opt/Megatron-Bridge$' "$dockerfile" | cut -d: -f1)
+final_copy_line=$(grep -nE '^COPY (--chmod=644|--chown=1000:1000) \. /opt/Megatron-Bridge$' "$dockerfile" | cut -d: -f1)
 [[ -n "$mcore_reinstall_line" ]]
 [[ -n "$helper_assertion_line" ]]
 [[ -n "$final_copy_line" ]]
@@ -243,6 +243,14 @@ if grep -qE 'mcore_(commit|ref)|MCORE_COMMIT|uv sync --all-extras --all-groups' 
   echo "Test template must use the already-validated MCore in the built image" >&2
   exit 1
 fi
+grep -Fq 'VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"' "$composite_action"
+grep -q 'MOUNT_FS: ${{ inputs.is_unit_test == '\''false'\'' }}' "$composite_action"
+grep -q 'HF_HOME=/home/TestData/HF_HOME' "$composite_action"
+grep -q 'NEMO_HOME=/home/TestData/nemo_home' "$composite_action"
+grep -q 'HF_HOME=/home/ubuntu/.cache/huggingface' "$composite_action"
+grep -q 'NEMO_HOME=/home/ubuntu/.cache/nemo' "$composite_action"
+grep -q 'HF_MODULES_CACHE=/home/ubuntu/.cache/huggingface/modules' "$composite_action"
+grep -q -- '--env HF_MODULES_CACHE=\$HF_MODULES_CACHE' "$composite_action"
 
 # The baseline dependency layer must be structurally independent of the mutable
 # dispatched checkout. CI validates the ordering statically so this regression
