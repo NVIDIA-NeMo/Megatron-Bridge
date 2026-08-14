@@ -195,6 +195,10 @@ def test_modelopt_export_tp2_pp2_ep2_matches_canonical_export(monkeypatch) -> No
             weight_amax=2.0 + rank,
             input_amax=3.0 + rank,
         )
+        pp_module.parallel_state = ParallelState(
+            data_parallel_group=local_group,
+            tensor_parallel_group=local_group,
+        )
         pp_global_name = f"decoder.layers.{rank}.mlp.linear_fc1.weight"
         pp_hf_name = f"model.layers.{rank}.mlp.up_proj.weight"
         pp_task = _task(pp_module, pp_global_name, pp_hf_name)
@@ -228,6 +232,10 @@ def test_modelopt_export_tp2_pp2_ep2_matches_canonical_export(monkeypatch) -> No
             expert_weight,
             weight_amax=2.0 + rank,
             input_amax=3.0 + rank,
+        )
+        expert_module.parallel_state = ParallelState(
+            data_parallel_group=local_group,
+            tensor_parallel_group=local_group,
         )
         expert_global_name = f"decoder.layers.0.mlp.experts.linear_fc2.weight{rank}"
         expert_hf_name = f"model.layers.0.mlp.experts.{rank}.down_proj.weight"
