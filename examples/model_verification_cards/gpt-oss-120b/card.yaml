@@ -9,9 +9,9 @@ summary: >
   GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export,
   manual HF/Megatron forward-pass correlation, deterministic Megatron
   inference, bounded H100 pretraining, H100 SFT, H100 PEFT, and H100
-  checkpoint resume, and H100 SFT export/inference are verified. CPU
-  conversion, long-context SFT, and performance verification remain planned
-  but not yet verified.
+  checkpoint resume, H100 SFT export/inference, and H100 long-context SFT are
+  verified. CPU conversion and performance verification remain planned but not
+  yet verified.
 verification_index:
   model_level:
     verified:
@@ -24,8 +24,7 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
-      unverified: [sft_long_context]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
   performance:
     GB200: unverified
 model:
@@ -276,23 +275,47 @@ items:
 
   sft_long_context:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 4
+      command: >
+        ./scripts/training/train.sh --nodes 6 --gpus-per-node 8
+        --recipe gpt_oss_120b_sft_48gpu_h100_bf16_32k_config --mode sft
+        --dataset tulu3
+        --pretrained_checkpoint work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000
+        --max_steps 20 --seq_length 32768
+        --lr 1e-6 --min_lr 0 --warmup_iters 2
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="b5c939de8f754692c1647ca79fbf85e8c1e70f8a"'
+        dataset.hf_output_root=work/data/tulu3/gpt-oss-120b-sft-long-context-32k-cp4-pp6-nofuse-gbs4-b14afda60f1b
+        dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true
+        +dataset.offline_packing_specs.pad_seq_to_mult=8
+        scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0
+        checkpoint.load=null checkpoint.save=null
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-08-13
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 6.666666
+        final_loss: 1.238030
+        last_10_steps_step_time_ms_avg: 24388.780
+        last_10_steps_model_tflops_per_gpu_avg: 5.070
       expected_result: >
-        A model-appropriate long-context topology and memory plan must be
-        resolved before a public command is recorded. Future verification must
-        exercise sequence packing with context parallelism greater than one,
-        use the topology-derived packing alignment, complete at least 10 steps
-        with finite losses and zero skipped or NaN iterations, and record all
-        required metrics.
+        Completed 20 long-context full-SFT optimizer steps from the imported
+        checkpoint on 48x H100 with 32K sequence length, immutable Tulu3
+        selection, assistant-token masking, offline packing, TP2/SP, CP4 with
+        a2a context-parallel communication, PP6, EP4, disabled cross-entropy
+        and bias-activation fusions, and selective MoE-activation recompute.
+        All 20 optimizer-step rows are present exactly once with finite losses,
+        zero skipped iterations, and zero NaN iterations. Loss decreases from
+        6.666666 to 1.238030, all four metrics are recorded, and no checkpoint
+        is saved because this bounded long-context verification run disables
+        checkpoint output.
 
   peft:
     H100:
