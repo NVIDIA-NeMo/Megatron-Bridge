@@ -650,9 +650,9 @@ def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 4
 
-    assert cfg.model.recompute_granularity == "full"
-    assert cfg.model.recompute_method == "uniform"
-    assert cfg.model.recompute_num_layers == 1
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
     assert cfg.model.recompute_modules is None
     assert cfg.model.apply_rope_fusion is False
     assert cfg.model.cuda_graph_impl == "none"

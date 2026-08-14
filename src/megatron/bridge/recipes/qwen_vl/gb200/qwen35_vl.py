@@ -52,9 +52,12 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 4
 
-    cfg.model.recompute_granularity = "full"
-    cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
+    # The projector-only workload fits comfortably without activation
+    # recompute on GB200. Recompute repeats the expensive Gated DeltaNet
+    # forward kernels and materially reduces sustained throughput.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
     cfg.model.recompute_modules = None
 
     # Qwen-VL's multimodal inputs are not yet a safe full-iteration graph
