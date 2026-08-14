@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Builder-backed configuration objects for Muse Glimmer."""
+"""Native HybridModel configuration objects for Muse Glimmer."""
 
 from __future__ import annotations
 

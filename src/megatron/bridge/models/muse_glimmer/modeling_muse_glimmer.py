@@ -41,7 +41,7 @@ from torch import Tensor
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from megatron.bridge.models.gemma.modules import extend_instance
-from megatron.bridge.models.muse_glimmer.model_config import (
+from megatron.bridge.models.muse_glimmer.muse_glimmer_config import (
     MuseGlimmerModelConfig,
     MuseGlimmerVisionModelConfig,
 )

@@ -14,19 +14,20 @@
 
 """Muse Glimmer model, builder, configuration, and bridge exports."""
 
-from megatron.bridge.models.muse_glimmer.configuration_muse_glimmer import (
+from transformers import (
     MuseGlimmerConfig,
     MuseGlimmerTextConfig,
     MuseGlimmerVisionConfig,
 )
-from megatron.bridge.models.muse_glimmer.model_config import (
+
+from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import MuseGlimmerModel
+from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import MuseGlimmerBridge
+from megatron.bridge.models.muse_glimmer.muse_glimmer_builder import MuseGlimmerModelBuilder
+from megatron.bridge.models.muse_glimmer.muse_glimmer_config import (
     MuseGlimmerModelConfig,
     MuseGlimmerTransformerConfig,
     MuseGlimmerVisionModelConfig,
 )
-from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import MuseGlimmerModel
-from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import MuseGlimmerBridge
-from megatron.bridge.models.muse_glimmer.muse_glimmer_builder import MuseGlimmerModelBuilder
 
 
 __all__ = [

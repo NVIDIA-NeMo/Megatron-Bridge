@@ -35,12 +35,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     split_qkv_weights,
 )
 from megatron.bridge.models.conversion.utils import remove_non_pickleables
-from megatron.bridge.models.muse_glimmer.model_config import (
+from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import MuseGlimmerModel
+from megatron.bridge.models.muse_glimmer.muse_glimmer_config import (
     MuseGlimmerModelConfig,
     MuseGlimmerTransformerConfig,
     MuseGlimmerVisionModelConfig,
 )
-from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import MuseGlimmerModel
 
 
 class MuseGlimmerQKVGMapping(MegatronParamMapping[dict[str, torch.Tensor]]):

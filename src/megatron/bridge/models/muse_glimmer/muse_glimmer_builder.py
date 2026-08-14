@@ -21,11 +21,11 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.training.models.hybrid import HybridModelBuilder
 from megatron.training.vocab_utils import calculate_padded_vocab_size
 
-from megatron.bridge.models.muse_glimmer.model_config import MuseGlimmerModelConfig
 from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
     MuseGlimmerModel,
     get_muse_glimmer_hybrid_stack_spec,
 )
+from megatron.bridge.models.muse_glimmer.muse_glimmer_config import MuseGlimmerModelConfig
 
 
 class MuseGlimmerModelBuilder(HybridModelBuilder):
