@@ -274,8 +274,8 @@ def test_modelopt_export_tp2_pp2_ep2_matches_canonical_export(monkeypatch) -> No
         expected_ep_tensors = {name: tensor for expert in terminal_experts for name, tensor in expert.items()}
         _assert_tensors_equal(ep_tensors, expected_ep_tensors)
 
-        # Mixed expert formats do not export before EP: their canonical tensor
-        # families differ, so ranks must take the regular gather-first path.
+        # Mixed expert formats emit different canonical tensor families. Every
+        # rank must reject the group before any lazy tensor collective begins.
         mixed_module = _quantized_linear(
             expert_weight,
             weight_amax=2.0 + rank,
@@ -293,15 +293,14 @@ def test_modelopt_export_tp2_pp2_ep2_matches_canonical_export(monkeypatch) -> No
             megatron_module=mixed_module,
             param_weight=mixed_module.weight,
         )
-        mixed_plan = build_modelopt_export_plan(
-            [mixed_task],
-            model=_model(num_moe_experts=_WORLD_SIZE),
-        )
-        assert not getattr(
-            mixed_plan.conversion_tasks[0].mapping,
-            "is_modelopt_pre_ep_export",
-            False,
-        )
+        with pytest.raises(
+            RuntimeError,
+            match="Inconsistent ModelOpt state for pre-EP expert group",
+        ):
+            build_modelopt_export_plan(
+                [mixed_task],
+                model=_model(num_moe_experts=_WORLD_SIZE),
+            )
 
         # Grouped EP: exchange per-expert state, pack each expert independently,
         # then stack every canonical tensor family under the grouped HF name.
