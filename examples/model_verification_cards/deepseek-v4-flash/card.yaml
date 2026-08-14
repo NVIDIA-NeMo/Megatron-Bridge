@@ -32,8 +32,8 @@ verification_index:
       - manual_forward_pass
   training:
     GB200:
-      verified: [sft, sft_long_context, sft_export_inference]
-      unverified: [pretrain, checkpoint_resume]
+      verified: [sft, sft_export_inference]
+      unverified: [pretrain, sft_long_context, checkpoint_resume]
       unsupported: [peft]
   performance:
     GB200: verified
@@ -158,13 +158,14 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The current library recipe resolves to TP1/PP1/EP64/CP1/DP2 with GBS/MBS 256/1,
-        HybridEP natural routing, native fused cross entropy, selective recompute over
-        moe, mhc, mla_up_proj, and layernorm, attention activation offload, and MXFP8
-        parameter gather and gradient-buffer reuse. Expert capacity, paged stash, and
-        CUDA graphs remain disabled. Verification requires 100 finite steps with no
-        skipped or NaN iterations and complete checkpoints at steps 50 and 100; the
-        existing eight-step screen is insufficient for verified status.
+        The current library recipe resolves to TP1/PP1/EP64/CP1 with dense DP128,
+        expert DP2, and GBS/MBS 256/1. It uses HybridEP natural routing, native fused
+        cross entropy, selective recompute over moe, mhc, mla_up_proj, and layernorm,
+        attention activation offload, and MXFP8 parameter gather and gradient-buffer
+        reuse. Expert capacity, paged stash, and CUDA graphs remain disabled.
+        Verification requires 100 finite steps with no skipped or NaN iterations and
+        complete checkpoints at steps 50 and 100; the existing eight-step screen is
+        insufficient for verified status.
 
   sft:
     GB200:
@@ -205,8 +206,9 @@ items:
         last_10_steps_step_time_ms_avg: 13806.500
         last_10_steps_model_tflops_per_gpu_avg: 13.620
       expected_result: >
-        On 64 GB200 (16 nodes x 4 GPUs), TP=1/PP=4/EP=8/CP=2/DP=1, GBS/MBS 128/1.
-        OpenMathInstruct-2 thinking data with offline packing, seq_length=1024.
+        On 64 GB200 (16 nodes x 4 GPUs), TP1/PP4/EP8/CP2 with dense DP8 and expert
+        DP1, GBS/MBS 128/1. OpenMathInstruct-2 thinking data uses offline packing
+        at seq_length=1024.
         Full recompute (granularity=full) is required to fit in memory at seq=1024
         with CP=2. HybridEP dispatcher and DSA kernel fusion are enabled via the
         GB200-specific recipe. The run completes 100 steps with finite LM and MTP
@@ -246,47 +248,23 @@ items:
 
   sft_long_context:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 3ecb452af619bef88083e10a7738362df8f5d0bf  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
-      command: >
-        ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config
-        --step-func dsv4_step
-        --pretrained_checkpoint work/models/deepseek-v4-flash-megatron
-        --save_dir work/model-verification/dsv4-flash/sft-ref
-        --save_interval 100 --max_steps 100
-        model.pipeline_model_parallel_size=4
-        'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL'
-        model.context_parallel_size=2 model.cp_partition_mode=contiguous
-        model.expert_model_parallel_size=8
-        model.moe_grouped_gemm=false
-        model.recompute_granularity=full model.recompute_method=uniform
-        model.recompute_num_layers=1
-        dataset.seq_length=1024
-        scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
-        validation.eval_interval=0 validation.eval_iters=0
-        rng.seed=5678
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null
-        ddp.overlap_grad_reduce=false
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-        dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-07
+      command: null
+      last_verified: null
       metrics:
-        initial_loss: 0.94383
-        final_loss: 0.28370
-        last_10_steps_step_time_ms_avg: 13806.500
-        last_10_steps_model_tflops_per_gpu_avg: 13.620
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        Same run as sft.GB200. CP=2 with contiguous partitioning and offline-packed
-        OpenMathInstruct-2 at seq_length=1024 demonstrates sequence packing and
-        context parallelism working together over 100 training steps with finite loss
-        and no skipped or NaN iterations.
+        The imported seq_length=1024 SFT run verifies offline packing and CP=2 plumbing,
+        but it is not a long-context result. Verification requires a separately sized
+        long-context run with finite loss, no skipped or NaN iterations, and all four
+        metrics recorded over at least 100 optimizer steps.
 
   peft:
     all:
@@ -366,8 +344,9 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: 731.400
       expected_result: >
         On 128 GB200 (32 nodes x 4 GPUs) with contiguous NVLink-domain placement,
-        PP=1/EP=64/CP=1/TP=1/DP=2, GBS/MBS 2048/1, FP8-MX with HybridEP dispatcher
-        and full-iteration CUDA graphs. The 50-step run completes with finite losses,
-        no skipped or NaN iterations, and all four metrics recorded. First iteration
-        takes approximately 24 minutes for CUDA graph compilation and kernel warmup;
-        subsequent iterations run at approximately 8.1 seconds per step at steady state.
+        PP1/EP64/CP1/TP1 with dense DP128 and expert DP2, GBS/MBS 2048/1, FP8-MX
+        with HybridEP dispatcher and full-iteration CUDA graphs. The 50-step run
+        completes with finite losses, no skipped or NaN iterations, and all four
+        metrics recorded. First iteration takes approximately 24 minutes for CUDA
+        graph compilation and kernel warmup; subsequent iterations run at
+        approximately 8.1 seconds per step at steady state.

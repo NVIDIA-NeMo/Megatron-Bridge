@@ -80,8 +80,8 @@ Available Blackwell pretraining recipes:
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
 - `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config`: 128-GPU GB200
-  Adam MXFP8 with PP1/EP64/DP2/HybridEP, selective recompute, attention
-  activation offload, and MXFP8 parameter gather/buffer reuse
+  Adam MXFP8 with PP1/EP64/dense-DP128/expert-DP2/HybridEP, selective recompute,
+  attention activation offload, and MXFP8 parameter gather/buffer reuse
 - `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config`: 256-GPU GB300
   Adam MXFP8 with PP4/VPP4/EP64/HybridEP (requires the PR #4824 container and
   dev-MCore stack described above)
