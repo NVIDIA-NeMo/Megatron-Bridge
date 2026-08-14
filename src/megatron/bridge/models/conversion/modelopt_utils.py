@@ -647,7 +647,11 @@ def build_modelopt_export_plan(
     num_experts = None
     eligible_groups: set[str] = set()
     global_expert_orders: dict[str, tuple[int, ...]] = {}
-    local_expert_orders: dict[str, tuple[int, ...]] = {}
+    local_pre_ep_groups: dict[str, tuple[tuple[int, ...], QuantizedWeightState]] = {}
+    from modelopt.torch.export.quantized_weight import (
+        quantized_weight_export_states_compatible,
+    )
+
     if candidate_groups:
         model_config = model_bridge_utils.unwrap_model(model)[0].config
         num_experts = getattr(model_config, "num_moe_experts", None)
@@ -655,30 +659,45 @@ def build_modelopt_export_plan(
         experts_per_rank = num_experts // ep_world_size if valid_layout else 0
         for group_key, task_indices in candidate_groups.items():
             experts = tuple(sorted(candidate_experts[task_index] for task_index in task_indices))
-            if valid_layout and len(experts) == experts_per_rank and len(set(experts)) == experts_per_rank:
-                local_expert_orders[group_key] = experts
+            group_states = tuple(states[concrete_tasks[task_index].global_param_name] for task_index in task_indices)
+            compatible_states = group_states and all(
+                quantized_weight_export_states_compatible(group_states[0], state) for state in group_states[1:]
+            )
+            if (
+                valid_layout
+                and len(experts) == experts_per_rank
+                and len(set(experts)) == experts_per_rank
+                and compatible_states
+            ):
+                local_pre_ep_groups[group_key] = experts, group_states[0]
+
+    local_expert_orders = {group_key: value[0] for group_key, value in local_pre_ep_groups.items()}
 
     if ep_world_size > 1:
-        gathered_experts: list[dict[str, tuple[int, ...]] | None] = [None] * ep_world_size
+        gathered_groups: list[dict[str, tuple[tuple[int, ...], QuantizedWeightState]] | None] = [None] * ep_world_size
         torch.distributed.all_gather_object(
-            gathered_experts,
-            local_expert_orders,
+            gathered_groups,
+            local_pre_ep_groups,
             group=ep_group,
         )
-        group_keys = set().union(*(rank_groups or {} for rank_groups in gathered_experts))
+        group_keys = set().union(*(rank_groups or {} for rank_groups in gathered_groups))
         for group_key in group_keys:
-            rank_orders = [(rank_groups or {}).get(group_key, ()) for rank_groups in gathered_experts]
+            rank_entries = [(rank_groups or {}).get(group_key) for rank_groups in gathered_groups]
+            rank_orders = [entry[0] if entry is not None else () for entry in rank_entries]
+            rank_states = [entry[1] for entry in rank_entries if entry is not None]
             global_order = tuple(expert for rank_order in rank_orders for expert in rank_order)
             if (
                 isinstance(num_experts, int)
                 and all(len(rank_order) == experts_per_rank for rank_order in rank_orders)
                 and len(set(global_order)) == len(global_order)
                 and set(global_order) == set(range(num_experts))
+                and len(rank_states) == ep_world_size
+                and all(quantized_weight_export_states_compatible(rank_states[0], state) for state in rank_states[1:])
             ):
                 eligible_groups.add(group_key)
                 global_expert_orders[group_key] = global_order
     else:
-        for group_key, local_order in local_expert_orders.items():
+        for group_key, (local_order, _) in local_pre_ep_groups.items():
             if isinstance(num_experts, int) and set(local_order) == set(range(num_experts)):
                 eligible_groups.add(group_key)
                 global_expert_orders[group_key] = local_order

@@ -48,9 +48,10 @@ def _quantized_linear(
     *,
     weight_amax: float,
     input_amax: float,
+    w4a16: bool = False,
 ) -> torch.nn.Module:
     module = torch.nn.Linear(weight.shape[1], weight.shape[0], bias=False, device=weight.device, dtype=weight.dtype)
-    quant_config = copy.deepcopy(mtq.NVFP4_DEFAULT_CFG)
+    quant_config = copy.deepcopy(mtq.W4A16_NVFP4_CFG if w4a16 else mtq.NVFP4_DEFAULT_CFG)
     quant_config["algorithm"] = {"method": "max", "distributed_sync": False}
     mtq.quantize(
         module,
@@ -60,7 +61,8 @@ def _quantized_linear(
     with torch.no_grad():
         module.weight.copy_(weight)
     module.weight_quantizer.amax = torch.tensor(weight_amax, device=weight.device)
-    module.input_quantizer.amax = torch.tensor(input_amax, device=weight.device)
+    if module.input_quantizer.is_enabled:
+        module.input_quantizer.amax = torch.tensor(input_amax, device=weight.device)
     return module
 
 
@@ -271,6 +273,35 @@ def test_modelopt_export_tp2_pp2_ep2_matches_canonical_export(monkeypatch) -> No
         ]
         expected_ep_tensors = {name: tensor for expert in terminal_experts for name, tensor in expert.items()}
         _assert_tensors_equal(ep_tensors, expected_ep_tensors)
+
+        # Mixed expert formats do not export before EP: their canonical tensor
+        # families differ, so ranks must take the regular gather-first path.
+        mixed_module = _quantized_linear(
+            expert_weight,
+            weight_amax=2.0 + rank,
+            input_amax=3.0 + rank,
+            w4a16=rank == 1,
+        )
+        mixed_module.parallel_state = ParallelState(
+            data_parallel_group=local_group,
+            tensor_parallel_group=local_group,
+        )
+        mixed_task = WeightConversionTask(
+            param_name="decoder.layers.0.mlp.experts.linear_fc2.weight0",
+            global_param_name=expert_global_name,
+            mapping=AutoMapping(expert_global_name, expert_hf_name),
+            megatron_module=mixed_module,
+            param_weight=mixed_module.weight,
+        )
+        mixed_plan = build_modelopt_export_plan(
+            [mixed_task],
+            model=_model(num_moe_experts=_WORLD_SIZE),
+        )
+        assert not getattr(
+            mixed_plan.conversion_tasks[0].mapping,
+            "is_modelopt_pre_ep_export",
+            False,
+        )
 
         # Grouped EP: exchange per-expert state, pack each expert independently,
         # then stack every canonical tensor family under the grouped HF name.
