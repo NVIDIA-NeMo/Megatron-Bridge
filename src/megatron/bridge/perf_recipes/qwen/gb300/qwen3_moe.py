@@ -271,9 +271,6 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_flex_dispatcher_num_sms = None
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_grouped_gemm = True
-    cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_ncclep_zero_copy = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
@@ -282,6 +279,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg, cross_entropy_impl="native")
+
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.use_transformer_engine_op_fuser = True
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
