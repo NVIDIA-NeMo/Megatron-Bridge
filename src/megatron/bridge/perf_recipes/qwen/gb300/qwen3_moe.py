@@ -286,7 +286,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.high_priority_a2a_comm_stream = True
     cfg.model.moe_ncclep_static_shape = True
-    cfg.model.moe_router_padding_for_quantization = True
+    # cfg.model.moe_router_padding_for_quantization = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
