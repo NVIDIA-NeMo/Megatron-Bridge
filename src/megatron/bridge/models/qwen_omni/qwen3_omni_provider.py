@@ -42,6 +42,12 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3Omni
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 
 
+def _bool_config_enabled(value) -> bool:
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _use_qwen3_vl_self_attention(layer_spec) -> None:
     """Install the mRoPE-aware Qwen3-VL attention module on standard attention specs."""
     if layer_spec is None:
@@ -98,9 +104,12 @@ class Qwen3OmniModelProvider(GPTModelProvider):
     moe_router_load_balancing_type: str = "aux_loss"
     moe_aux_loss_coeff: float = 1e-3
     moe_router_pre_softmax: bool = False
+    moe_router_dtype: str = "fp32"
+    moe_router_score_function: str = "softmax"
     moe_token_dispatcher_type: str = "alltoall"
     moe_permute_fusion: bool = True
     masked_softmax_fusion: bool = False
+    moe_enable_routing_replay: bool = False
 
     image_token_id: int = 151655
     video_token_id: int = 151656
@@ -146,6 +155,11 @@ class Qwen3OmniModelProvider(GPTModelProvider):
             )
 
         use_local_attention = self.attention_backend in {AttnBackend.local, "local"}
+        if use_local_attention and _bool_config_enabled(self.sequence_parallel):
+            raise ValueError(
+                "Qwen3-Omni sequence_parallel requires a Transformer Engine attention backend; "
+                "attention_backend=local selects the torch local attention path."
+            )
         if HAVE_TE and not use_local_attention:
             language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
                 num_experts=self.num_moe_experts,

@@ -39,6 +39,9 @@ from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import (
     gpt_oss_20b_pretrain_16gpu_h100_fp8mx_config as gpt_oss_20b_pretrain_mxfp8_config,
 )
 from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import (
+    gpt_oss_20b_sft_8gpu_h100_bf16_32k_config as gpt_oss_20b_sft_32k_config,
+)
+from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import (
     gpt_oss_20b_sft_8gpu_h100_bf16_config as gpt_oss_20b_sft_config,
 )
 from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import (
@@ -72,6 +75,7 @@ __all__ = [
     "gpt_oss_20b_pretrain_fp8_current_scaling_config",
     "gpt_oss_20b_pretrain_mxfp8_config",
     "gpt_oss_20b_sft_config",
+    "gpt_oss_20b_sft_32k_config",
     "gpt_oss_20b_sft_fp8_current_scaling_config",
     "gpt_oss_20b_sft_mxfp8_config",
     "gpt_oss_20b_sft_openmathinstruct2_thinking_packed_config",

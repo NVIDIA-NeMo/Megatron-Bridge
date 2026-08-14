@@ -311,6 +311,15 @@ class TestAutoBridge:
         # Nested text_config carries num_hidden_layers.
         assert _mtp_source_key_prefixes(glm_src, {"text_config": {"num_hidden_layers": 47}}) == ("model.layers.47.",)
 
+        # Step3.7 stores multiple MTP layers after the regular decoder layers.
+        step37_src = src("model.layers.45.*", "model.layers.46.*", "model.layers.47.*")
+        step37_config = {"text_config": {"num_hidden_layers": 45, "num_nextn_predict_layers": 3}}
+        assert _mtp_source_key_prefixes(step37_src, step37_config) == (
+            "model.layers.45.",
+            "model.layers.46.",
+            "model.layers.47.",
+        )
+
         # No matching source keys -> nothing to strip.
         assert _mtp_source_key_prefixes(src(), {"num_hidden_layers": 47}) == ()
 
@@ -1342,6 +1351,64 @@ class TestAutoBridge:
 
         assert (tmp_path / "config.json").exists()
         mock_save_hf_weights.assert_called_once()
+
+    @pytest.mark.parametrize("tie_word_embeddings", [True, False])
+    def test_save_hf_pretrained_truncates_vocab_padding(self, tmp_path, tie_word_embeddings):
+        """Export removes Megatron-only vocab rows before Transformers reload."""
+        from megatron.bridge.models.gpt_provider import local_layer_spec
+        from megatron.bridge.training.model_load_save import temporary_distributed_context
+
+        torch.manual_seed(1234)
+        source_path = tmp_path / "source"
+        export_path = tmp_path / "export"
+        config = _make_tiny_llama_config(
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            vocab_size=127,
+            tie_word_embeddings=tie_word_embeddings,
+        )
+        hf_model = transformers.LlamaForCausalLM(config).eval()
+        hf_model.save_pretrained(source_path)
+        _save_minimal_fast_tokenizer(source_path)
+        input_ids = torch.tensor([[1, 7, 19, 3]])
+        with torch.no_grad():
+            expected_logits = hf_model(input_ids).logits
+
+        bridge = AutoBridge.from_hf_pretrained(source_path)
+        provider = bridge.to_megatron_provider()
+        provider.transformer_layer_spec = local_layer_spec
+        provider.persist_layer_norm = False
+        provider.finalize()
+
+        with temporary_distributed_context(backend="gloo"):
+            megatron_model = provider.provide_distributed_model(
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+                mixed_precision_wrapper=None,
+            )
+            model = megatron_model[0]
+            # Simulate the full tensor gathered from a padded training topology without requiring multiple ranks.
+            padded_embedding = torch.nn.Parameter(
+                torch.cat((model.embedding.word_embeddings.weight, torch.zeros(1, config.hidden_size)))
+            )
+            model.embedding.word_embeddings.weight = padded_embedding
+            if tie_word_embeddings:
+                model.output_layer.weight = padded_embedding
+            else:
+                model.output_layer.weight = torch.nn.Parameter(
+                    torch.cat((model.output_layer.weight, torch.zeros(1, config.hidden_size)))
+                )
+
+            bridge.save_hf_pretrained(megatron_model, export_path, show_progress=False)
+
+        reloaded = transformers.AutoModelForCausalLM.from_pretrained(export_path, local_files_only=True).eval()
+        assert reloaded.config.vocab_size == config.vocab_size
+        with torch.no_grad():
+            actual_logits = reloaded(input_ids).logits
+        torch.testing.assert_close(actual_logits, expected_logits, rtol=0, atol=0)
 
     @pytest.mark.parametrize("artifact_source", ["hf_model_id", "source_path"])
     @patch("torch.distributed.is_initialized", return_value=False)
