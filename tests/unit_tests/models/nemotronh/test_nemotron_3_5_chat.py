@@ -54,7 +54,7 @@ class _NemotronLightningTokenizer:
         "{% set truncate_history_thinking = true %}"
         "<|im_start|>system\n{{ content }}<|im_end|>\n"
         "<|im_start|>user\n{{ content }}<|im_end|>\n"
-        "<|im_start|>assistant\n<think>{{ reasoning_content }}</think>{{ content }}<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n{{ reasoning_content }}</think>{{ content }}<|im_end|>\n"
         "<|im_start|>tool\n{{ content }}<|im_end|>\n"
     )
 
@@ -72,6 +72,7 @@ class _NemotronLightningTokenizer:
             "<|im_end|>\n": [IM_END, NEWLINE],
             "<|im_end|>": [IM_END],
             "<think>": [THINK_OPEN],
+            "<think>\n": [THINK_OPEN, NEWLINE],
             "<think></think>": [THINK_OPEN, THINK_CLOSE],
             "\n": [NEWLINE],
         }
@@ -108,7 +109,7 @@ class _NemotronLightningTokenizer:
                     reasoning = None
                 input_ids.append(THINK_OPEN)
                 if isinstance(reasoning, str) and reasoning:
-                    input_ids.append(TEXT_IDS[reasoning])
+                    input_ids.extend([NEWLINE, TEXT_IDS[reasoning]])
                 input_ids.append(THINK_CLOSE)
                 content = message.get("content")
                 if isinstance(content, str) and content:

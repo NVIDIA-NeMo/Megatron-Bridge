@@ -1109,7 +1109,7 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
             trim_leading_token_sequences = ()
             if all(marker in template for marker in ("truncate_history_thinking", "<think>", "</think>")):
                 empty_think_tokens = tokenize_text_without_special_tokens(tokenizer, "<think></think>")
-                think_open_tokens = tokenize_text_without_special_tokens(tokenizer, "<think>")
+                think_open_tokens = tokenize_text_without_special_tokens(tokenizer, "<think>\n")
                 if empty_think_tokens and think_open_tokens:
                     trim_leading_token_sequences = (empty_think_tokens, think_open_tokens)
             return AssistantMaskBoundaryConfig(

@@ -40,6 +40,6 @@ Per-row template controls belong under `chat_template_kwargs`:
 `enable_thinking` selects the prefix for a new generation. For completed SFT assistant turns, include or omit
 `reasoning_content` to represent thinking or non-thinking data. `truncate_history_thinking=true`, the official
 default, removes earlier reasoning text while retaining its empty `<think></think>` boundary; set it to `false`
-to preserve reasoning from all historical assistant turns. The assistant prompt token `<think>` and an empty
+to preserve reasoning from all historical assistant turns. The assistant thinking prefix `<think>\n` and an empty
 `<think></think>` pair are masked. For non-empty reasoning, the reasoning text and closing `</think>` token are
 supervised, along with final-answer and structured tool-call tokens. System, user, and tool-response tokens are masked.
