@@ -73,19 +73,20 @@ def test_modelopt_plan_skips_unmapped_task_slot_and_keeps_later_task(monkeypatch
     assert tasks[1] is None
     assert tasks[2].global_param_name == last_name
 
-    monkeypatch.setattr(modelopt_utils, "get_modelopt_quant_exporter", lambda _mode: ("unused", lambda *_args: ()))
+    monkeypatch.setattr(modelopt_utils, "collect_modelopt_quant_states", lambda _tasks: {})
+    monkeypatch.setattr(
+        modelopt_utils,
+        "build_modelopt_quantization_config",
+        lambda *_args, **_kwargs: {},
+    )
     monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 1)
-    monkeypatch.setattr(modelopt_utils.model_bridge_utils, "_get_pg_collection_from_model", lambda _model: None)
 
-    export_tasks = modelopt_utils.build_modelopt_export_plan(
+    plan = modelopt_utils.build_modelopt_export_plan(
         tasks,
         model=[model],
-        bridge=bridge,
-        quant_mode="nvfp4",
-        ignore_patterns=[],
     )
 
-    assert [task.global_param_name for task in export_tasks] == [first_name, last_name]
+    assert [task.global_param_name for task in plan.conversion_tasks] == [first_name, last_name]
 
 
 def test_hf_weight_tuple_iter_finalized_preserves_two_field_abi():

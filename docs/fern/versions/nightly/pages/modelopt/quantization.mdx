@@ -140,46 +140,24 @@ Use `AutoBridge.export_hf_weights_modelopt()` when you need to stream ModelOpt d
 already-loaded Megatron model instead of writing a full checkpoint through the export script. This is useful for
 integrations that consume Hugging Face weight names directly, such as inference-engine refit paths.
 
-The API currently only supports `quant_mode="nvfp4"`. Quantized parameters are yielded as the original Hugging Face
-`*.weight` name plus the ModelOpt NVFP4 scale tensors:
+The initialized ModelOpt quantizer graph determines the deployment format. Use
+`get_hf_modelopt_quantization_config()` for the matching Hugging Face configuration and
+`export_hf_weights_modelopt()` for its canonical named tensors. Unquantized parameters keep their regular Hugging
+Face names, and quantizer-internal tensors are skipped.
 
-- `*.weight`
-- `*.weight_scale`
-- `*.weight_scale_2`
-
-Unquantized parameters are yielded under their regular Hugging Face names. Quantizer-internal tensors are skipped.
-
-```python
-from safetensors.torch import save_file
-
-state_dict = {}
-for name, weight in bridge.export_hf_weights_modelopt(
-    model,
-    quant_mode="nvfp4",
-    cpu=True,
-    show_progress=False,
-):
-    state_dict[name] = weight.contiguous()
-
-save_file(state_dict, "modelopt-nvfp4.safetensors")
-```
-
-For large models, consume the iterator directly in the downstream writer or refit path instead of materializing the
-full `state_dict`.
+The programmatic API is an in-memory integration surface, not a standalone checkpoint writer. Use the export script
+above when you need a complete checkpoint on disk. For a refit integration, initialize the consumer from the returned
+configuration before streaming the matching tensors:
 
 ```python
+quantization_config = bridge.get_hf_modelopt_quantization_config(model)
+refit_engine.configure_quantization(quantization_config)
 for name, weight in bridge.export_hf_weights_modelopt(
     model,
-    quant_mode="nvfp4",
-    ignore_patterns=["lm_head", "*self_attn.o_proj*"],
     show_progress=False,
 ):
     refit_engine.replace_weight(name, weight)
 ```
-
-`ignore_patterns` are matched against Hugging Face parameter names. The matcher handles the optional `model.` prefix
-and ModelOpt scale suffixes, so a pattern can target the logical parameter name without separately listing
-`*.weight_scale` and `*.weight_scale_2`.
 
 ### Supported Models For PTQ
 

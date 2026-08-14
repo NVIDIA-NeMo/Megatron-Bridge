@@ -167,6 +167,8 @@ class WeightConversionTask(Generic[MappingT]):
             dtype; bridges that requantize on export skip it (no scale companions).
         export_hook: Export-only transformation applied after mapping conversion and
             before final device placement.
+        grouped_export_hook: Export-only transformation applied to each canonical
+            expert before a grouped HF tensor is stacked.
 
     """
 
@@ -179,6 +181,9 @@ class WeightConversionTask(Generic[MappingT]):
     param_weight: Optional[torch.Tensor] = None
     weight_dtype: Optional[torch.dtype] = None
     export_hook: Optional[Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]] = field(
+        default=None, compare=False, repr=False
+    )
+    grouped_export_hook: Optional[Callable[[str, torch.Tensor, int], Iterable[HFWeightTuple]]] = field(
         default=None, compare=False, repr=False
     )
 
@@ -1164,21 +1169,34 @@ class MegatronModelBridge(
         except ValueError:
             return None
 
-        merged_result: Dict[str, torch.Tensor] = {}
-        for group_key, value in converted_weights_dict.items():
-            if group_key not in grouped_buffers:
-                grouped_buffers[group_key] = {}
+        updated_group_keys: Dict[str, None] = {}
+        grouped_export_hook = getattr(task, "grouped_export_hook", None)
 
-            if ep_size == 1:
-                grouped_buffers[group_key][local_expert_number] = value
+        def store_expert(group_key: str, expert_number: int, value: torch.Tensor) -> None:
+            if grouped_export_hook is None:
+                exported = (HFWeightTuple(group_key, value),)
             else:
-                if value.ndim > 0 and value.shape[0] == ep_size:
-                    for i in range(ep_size):
-                        global_expert_number = local_expert_number + (i * experts_per_rank)
-                        grouped_buffers[group_key][global_expert_number] = value[i]
-                else:
-                    grouped_buffers[group_key][local_expert_number] = value
+                value = self._align_grouped_expert_for_export(
+                    task,
+                    group_key,
+                    value,
+                    hf_state_dict,
+                )
+                exported = grouped_export_hook(group_key, value, expert_number)
+            for exported_name, exported_tensor in exported:
+                grouped_buffers.setdefault(exported_name, {})[expert_number] = exported_tensor
+                updated_group_keys[exported_name] = None
 
+        for group_key, value in converted_weights_dict.items():
+            if ep_size > 1 and value.ndim > 0 and value.shape[0] == ep_size:
+                for i in range(ep_size):
+                    global_expert_number = local_expert_number + (i * experts_per_rank)
+                    store_expert(group_key, global_expert_number, value[i])
+            else:
+                store_expert(group_key, local_expert_number, value)
+
+        merged_result: Dict[str, torch.Tensor] = {}
+        for group_key in updated_group_keys:
             if len(grouped_buffers[group_key]) != num_experts:
                 continue
 
@@ -1200,7 +1218,11 @@ class MegatronModelBridge(
                     torch.cuda.empty_cache()
                 merged = torch.stack(cpu_tensors, dim=0)
 
-            if getattr(task.mapping, "transpose_on_export", False):
+            if grouped_export_hook is None and getattr(
+                task.mapping,
+                "transpose_on_export",
+                False,
+            ):
                 if group_key in hf_state_dict:
                     # Adaptive: only transpose when the stacked shape doesn't match the original HF
                     # shape but the transposed shape does.  This handles configurations where the
@@ -1217,6 +1239,25 @@ class MegatronModelBridge(
             merged_result[group_key] = merged
 
         return merged_result or None
+
+    @staticmethod
+    def _align_grouped_expert_for_export(
+        task: "WeightConversionTask",
+        hf_name: str,
+        tensor: torch.Tensor,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Apply a grouped mapping's final transpose before per-expert export."""
+        if not getattr(task.mapping, "transpose_on_export", False):
+            return tensor
+        if hf_name not in hf_state_dict:
+            return tensor.transpose(-1, -2).contiguous()
+
+        expected = tuple(hf_state_dict[hf_name].shape[1:])
+        if tuple(tensor.shape) == expected:
+            return tensor
+        transposed = tensor.transpose(-1, -2).contiguous()
+        return transposed if tuple(transposed.shape) == expected else tensor
 
     def load_weights_hf_to_megatron(
         self,
