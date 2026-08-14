@@ -660,6 +660,7 @@ def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
 
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.average_in_collective is False
     assert cfg.ddp.overlap_grad_reduce is False
     assert cfg.ddp.overlap_param_gather is False
     assert cfg.comm_overlap.tp_comm_overlap is False

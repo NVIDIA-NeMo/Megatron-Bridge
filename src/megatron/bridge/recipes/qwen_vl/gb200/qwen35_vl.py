@@ -68,6 +68,7 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.optimizer.overlap_param_gather = False
