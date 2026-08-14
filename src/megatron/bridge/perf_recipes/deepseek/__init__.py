@@ -29,6 +29,8 @@ from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3 import (
     deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config,
     deepseek_v3_pretrain_256gpu_gb300_bf16_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8cs_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp2_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp4_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_partial_cg_dev_config,
