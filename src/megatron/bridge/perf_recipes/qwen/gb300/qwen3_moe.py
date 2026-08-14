@@ -290,6 +290,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
     cfg.model.high_priority_a2a_comm_stream = True
     # cfg.model.moe_router_padding_for_quantization = True
 
+    cfg.model.offload_modules = []
     cfg.model.moe_paged_stash = True
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
