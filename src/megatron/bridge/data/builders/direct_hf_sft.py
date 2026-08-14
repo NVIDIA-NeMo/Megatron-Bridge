@@ -51,6 +51,9 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 logger = logging.getLogger(__name__)
 
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
+_DEEPSEEK_V4_TOKENIZER_SIZE = 129280
+_DEEPSEEK_V4_ASSISTANT_TOKEN = "<｜Assistant｜>"
+_DEEPSEEK_V4_ASSISTANT_TOKEN_ID = 128804
 
 
 def _as_source(entry: "HFDatasetSourceConfig | Mapping[str, Any]") -> HFDatasetSourceConfig:
@@ -257,6 +260,26 @@ def select_direct_hf_sft_collate(
     raise ValueError("Prompt-completion preprocessing supports text-only examples.")
 
 
+def _model_collate_key(processor: Any) -> str:
+    tokenizer = get_processor_tokenizer(processor)
+    name_or_path = getattr(tokenizer, "name_or_path", "")
+    convert_tokens_to_ids = getattr(tokenizer, "convert_tokens_to_ids", None)
+    try:
+        has_deepseek_v4_fingerprint = len(tokenizer) == _DEEPSEEK_V4_TOKENIZER_SIZE and (
+            callable(convert_tokens_to_ids)
+            and convert_tokens_to_ids(_DEEPSEEK_V4_ASSISTANT_TOKEN) == _DEEPSEEK_V4_ASSISTANT_TOKEN_ID
+        )
+    except TypeError:
+        has_deepseek_v4_fingerprint = False
+    if (
+        isinstance(name_or_path, str)
+        and "deepseek-v4" in name_or_path.lower().replace("_", "-")
+        and has_deepseek_v4_fingerprint
+    ):
+        return "deepseek-v4"
+    return type(processor).__name__
+
+
 def load_direct_hf_sft_train_examples(config: DirectHFSFTDatasetConfig) -> list[dict[str, Any]]:
     """Load the training rows, blending them when the config names several sources."""
     sources = config.training_sources
@@ -278,17 +301,24 @@ def build_direct_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
-    from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
+    from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
 
     if examples is None:
         examples = load_direct_hf_sft_examples(source, config.preprocessing)
-    if collate_impl is None and model_collate_required_for_all_examples(type(processor).__name__):
+    collate_key = _model_collate_key(processor)
+    if collate_impl is None and always_use_model_collate(collate_key):
         if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
             raise ValueError(
                 f"Processor type '{type(processor).__name__}' requires chat preprocessing through its "
                 "model-owned collator."
             )
-        selected_collate = None
+        if collate_key == "deepseek-v4":
+            selected_collate = partial(
+                resolve_model_collate(collate_key),
+                loss_mode=config.preprocessing.loss_mode,
+            )
+        else:
+            selected_collate = None
     else:
         selected_collate = select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl)
     return DirectSFTDataset(
