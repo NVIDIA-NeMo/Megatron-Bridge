@@ -216,15 +216,15 @@ items:
       last_verified: 2026-08-14
       metrics:
         initial_loss: 11.89514
-        final_loss: 7.228763
-        last_10_steps_step_time_ms_avg: 20785.22
-        last_10_steps_model_tflops_per_gpu_avg: 1639.99
+        final_loss: 6.827579
+        last_10_steps_step_time_ms_avg: 20857.82
+        last_10_steps_model_tflops_per_gpu_avg: 1634.30
       expected_result: >
         On exactly 256 GB300 GPUs, the canonical 50-step mock-data MXFP8
         performance recipe must finish at TP1/PP2/VP8/CP1/EP32/ETP1 and
         GBS/MBS 8192/1 with finite keyed loss and throughput rows, zero skipped
         or NaN iterations, and a saved post-setup configuration. The final ten
         steps must reach at least 1,571 model-TFLOP/s/GPU; the verified run
-        averaged 1,639.99 model-TFLOP/s/GPU and 20,785.22 ms. Mock data, forced
+        averaged 1,634.30 model-TFLOP/s/GPU and 20,857.82 ms. Mock data, forced
         expert balancing, and reduced-precision optimizer moments make this
         benchmark-only evidence, not convergence evidence.
