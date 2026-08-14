@@ -858,6 +858,7 @@ class AutoBridge(Generic[MegatronModelT]):
         cpu: bool = True,
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
+        expand_shared_outer: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -871,6 +872,9 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress: Display progress bar during export
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
+            expand_shared_outer: Replicate the shared factor across experts under per-expert
+                names (vLLM 2D ``pack_moe``) instead of a shared ``[1, ...]`` tensor (SGLang).
+                Default ``False``; no effect for non-shared-outer adapters.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
@@ -881,6 +885,7 @@ class AutoBridge(Generic[MegatronModelT]):
             cpu=cpu,
             show_progress=show_progress,
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+            expand_shared_outer=expand_shared_outer,
         )
 
     def save_hf_adapter(
@@ -891,6 +896,7 @@ class AutoBridge(Generic[MegatronModelT]):
         base_model_name_or_path: Optional[str] = None,
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
+        expand_shared_outer: bool = False,
     ) -> None:
         """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
 
@@ -909,6 +915,8 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress: Display progress bar during export.
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
+            expand_shared_outer: Replicate the shared factor across experts under per-expert
+                names (vLLM 2D ``pack_moe``). Default ``False`` keeps the PEFT shared ``[1, ...]`` layout.
 
         Example:
             >>> bridge.save_hf_adapter(
@@ -949,6 +957,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 cpu=True,
                 show_progress=show_progress,
                 exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+                expand_shared_outer=expand_shared_outer,
             )
         ]
         if not raw_adapter_weights:

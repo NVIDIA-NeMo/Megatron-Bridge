@@ -1424,3 +1424,138 @@ class TestExportAdapterScript:
         mock_enable_legacy.assert_called_once_with([model_chunk], state_dicts[0], tmp_path)
         mock_load.assert_called_once_with(state_dicts[1], str(tmp_path), validate_access_integrity=False)
         model_chunk.load_state_dict.assert_called_once_with({"adapter": "weights"}, strict=False)
+
+
+class TestStreamSharedOuterAdapterWeights:
+    """Tests for ``MegatronPeftBridge._stream_shared_outer_adapter_weights``.
+
+    Verifies the two export contracts for the shared-outer grouped-expert LoRA
+    adapter: the default SGLang shared ``[1, ...]`` layout vs. the ``expand_shared_outer``
+    per-expert 2D (vLLM ``pack_moe``) layout, plus the unchanged per-expert side.
+    """
+
+    def _make_bridge(self):
+        return MegatronPeftBridge()
+
+    def _run(
+        self, bridge, linear_in, linear_out, num_experts, expand, cpu=False, mapping_registry=None, megatron_model=None
+    ):
+        # linear_in_task / linear_out_task are unused by this method.
+        task = SimpleNamespace(global_base_prefix="mlp.experts", adapter_key=None)
+        gen = bridge._stream_shared_outer_adapter_weights(
+            megatron_model=megatron_model,
+            mapping_registry=mapping_registry,
+            adapter_task=task,
+            linear_in_tensor=linear_in,
+            linear_out_tensor=linear_out,
+            num_moe_experts=num_experts,
+            cpu=cpu,
+            expand_shared_outer=expand,
+        )
+        return list(gen)
+
+    def _mapping(self):
+        # ``_get_base_hf_param_names_for_adapter`` looks up ``f"{prefix}{suffix}"``.
+        # Both the shared side (``.weight0``) and the per-expert side (``.weight{idx}``)
+        # map to per-expert HF names for the same grouped-expert linear (``gate_proj``);
+        # the shared-side branch strips the expert index via ``_strip_hf_expert_index``.
+        mapping = MagicMock()
+
+        def lookup(name):
+            idx = name.rsplit(".weight", 1)[1]
+            return SimpleNamespace(hf_param=f"model.layers.0.mlp.experts.{idx}.gate_proj.weight")
+
+        mapping.megatron_to_hf_lookup.side_effect = lookup
+        return mapping
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_shared_side_default_emits_shared_1d_aggregate(self, _mock_ep):
+        """expand=False: shared 2D side is unsqueezed to [1, out, in] under expert-agnostic names."""
+        bridge = self._make_bridge()
+        linear_in = torch.randn(4, 8)  # [rank, hidden] shared across experts
+        linear_out = torch.randn(2, 2, 4)  # [num_experts, out, rank] per-expert side
+
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch.object(bridge, "_select_expert_adapter_weight", side_effect=lambda w, g, i, n: w[i]),
+            patch.object(bridge, "_get_fused_adapter_linear_out_slices", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            out = self._run(
+                bridge, linear_in, linear_out, num_experts=2, expand=False, mapping_registry=self._mapping()
+            )
+
+        # Shared side (linear_in/A): one [1, rank, hidden] tensor under an expert-agnostic name.
+        shared = [t for t in out if t.param_name.endswith(".lora_A.weight")]
+        # One [1, rank, hidden] tensor under an expert-agnostic name (experts.gate_proj.lora_A).
+        assert len(shared) == 1
+        assert shared[0].weight.shape == (1, 4, 8)
+        assert shared[0].param_name == "model.layers.0.mlp.experts.gate_proj.lora_A.weight"
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_shared_side_expanded_emits_per_expert_2d(self, _mock_ep):
+        """expand=True: shared side replicated under per-expert 2D names (vLLM pack_moe)."""
+        bridge = self._make_bridge()
+        linear_in = torch.randn(4, 8)
+        linear_out = torch.randn(2, 2, 4)
+
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch.object(bridge, "_select_expert_adapter_weight", side_effect=lambda w, g, i, n: w[i]),
+            patch.object(bridge, "_get_fused_adapter_linear_out_slices", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            out = self._run(
+                bridge, linear_in, linear_out, num_experts=2, expand=True, mapping_registry=self._mapping()
+            )
+
+        shared = [t for t in out if t.param_name.endswith(".lora_A.weight")]
+        # One 2D tensor per expert, kept 2D (no unsqueeze), per-expert names.
+        assert len(shared) == 2
+        assert [t.param_name for t in shared] == [
+            "model.layers.0.mlp.experts.0.gate_proj.lora_A.weight",
+            "model.layers.0.mlp.experts.1.gate_proj.lora_A.weight",
+        ]
+        for t in shared:
+            assert t.weight.shape == (4, 8)
+        # Same underlying shared tensor reused across experts (not cloned).
+        assert shared[0].weight.data_ptr() == shared[1].weight.data_ptr()
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_per_expert_side_unaffected_by_flag(self, _mock_ep):
+        """The per-expert 3D side emits one slice per expert regardless of expand."""
+        bridge = self._make_bridge()
+        linear_in = torch.randn(4, 8)
+        linear_out = torch.randn(2, 2, 4)  # per-expert side
+
+        results = {}
+        for expand in (False, True):
+            with (
+                patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+                patch.object(bridge, "_select_expert_adapter_weight", side_effect=lambda w, g, i, n: w[i]),
+                patch.object(bridge, "_get_fused_adapter_linear_out_slices", return_value=None),
+                patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+            ):
+                out = self._run(
+                    bridge, linear_in, linear_out, num_experts=2, expand=expand, mapping_registry=self._mapping()
+                )
+            results[expand] = [
+                (t.param_name, tuple(t.weight.shape)) for t in out if t.param_name.endswith(".lora_B.weight")
+            ]
+
+        assert results[False] == results[True]
+        assert [n for n, _ in results[False]] == [
+            "model.layers.0.mlp.experts.0.gate_proj.lora_B.weight",
+            "model.layers.0.mlp.experts.1.gate_proj.lora_B.weight",
+        ]
+        for _, shape in results[False]:
+            assert shape == (2, 4)
