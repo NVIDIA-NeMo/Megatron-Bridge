@@ -278,11 +278,15 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
-    _benchmark_common(cfg, cross_entropy_impl="native")
+    _benchmark_common(cfg)
 
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_grouped_gemm = True
     cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_ncclep_static_shape = True
+    cfg.model.moe_router_padding_for_quantization = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
