@@ -307,10 +307,16 @@ class Qwen35TokenClassificationModelProvider(Qwen35VLModelProvider):
             The Megatron Qwen3.5 VL token-classification model for this stage.
 
         Raises:
-            ValueError: If ``num_labels`` is not a positive integer.
+            ValueError: If ``num_labels`` is not positive or ``logit_dtype`` is configured.
         """
         if self.num_labels is None or self.num_labels <= 0:
             raise ValueError(f"num_labels must be a positive integer, got {self.num_labels!r}.")
+        if self.logit_dtype is not None:
+            raise ValueError(
+                "Qwen3.5 token classification replaces the language-model output layer with a replicated "
+                "classification head, which does not support true mixed-precision output GEMMs. "
+                "Set logit_dtype=None."
+            )
 
         model = cast(
             Qwen3VLForTokenClassification,
@@ -566,6 +572,7 @@ def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optio
             "vocab_size": provider.vocab_size,
             "max_sequence_length": provider.language_max_sequence_length,
             "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
+            "logit_dtype": provider.logit_dtype,
             "parallel_output": True,
             "share_embeddings_and_output_weights": provider.share_embeddings_and_output_weights,
             "position_embedding_type": "mrope",
