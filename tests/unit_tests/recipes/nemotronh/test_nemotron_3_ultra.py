@@ -137,7 +137,7 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
     assert cfg.mixed_precision.bf16 is True
     assert cfg.mixed_precision.fp8 is None
     assert cfg.mixed_precision.grad_reduce_in_fp32 is True
-    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 64
@@ -146,7 +146,7 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.min_offloaded_tensor_size == 350_000_000
@@ -157,6 +157,7 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
     assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.ddp.num_buckets == 48
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.checkpoint.ckpt_format == "torch_dist"
     assert cfg.ddp.check_for_nan_in_grad is True

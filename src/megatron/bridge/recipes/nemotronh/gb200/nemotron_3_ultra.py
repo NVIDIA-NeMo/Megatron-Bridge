@@ -27,7 +27,7 @@ from megatron.bridge.training.config import ConfigContainer
 def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a convergence-safe Nemotron 3 Ultra pretrain config for 256 GB200 GPUs.
 
-    The recipe adopts the performance configuration's TP2/PP4/EP64 HybridEP
+    The recipe adopts the performance configuration's PP4/EP64 HybridEP
     execution and targeted expert-activation offload. It keeps BF16 compute,
     natural expert routing, numerical checks, and the library recipe's training
     objective instead of benchmark-only policy.
@@ -37,7 +37,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     """
     cfg = _nemotron_3_ultra_large_scale_bf16_config()
 
-    cfg.model.tensor_model_parallel_size = 2
+    # TP4 gives BF16 and safely padded HybridEP dispatch enough activation
+    # headroom for naturally routed real-data batches on GB200.
+    cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
@@ -52,10 +54,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    # Natural routing can produce uneven token counts. Avoid padding every
-    # HybridEP rank to the most-loaded rank, which can exhaust allocator
-    # headroom for otherwise valid real-data batches.
-    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
+    # Bridge finalization enables this safety path for eager HybridEP so
+    # different local token counts cannot produce mismatched collectives.
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.min_offloaded_tensor_size = 350_000_000
@@ -70,6 +71,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.ddp.use_megatron_fsdp = False
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.num_buckets = 48
     cfg.ddp.average_in_collective = False
     # Keep the distributed optimizer's memory-efficient parameter handling;
     # optimizer/scheduler values continue to come from the library recipe.
