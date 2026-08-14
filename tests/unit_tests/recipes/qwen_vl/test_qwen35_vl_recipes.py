@@ -669,6 +669,8 @@ def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
 
     assert cfg.dataset.do_validation is False
     assert cfg.dataset.pad_to_max_length is True
+    assert cfg.train.eval_interval == 0
+    assert cfg.train.eval_iters == 0
     assert cfg.validation.eval_interval == 0
     assert cfg.validation.eval_iters == 0
     assert cfg.checkpoint.load is None

@@ -76,6 +76,8 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
 
     cfg.dataset.do_validation = False
     cfg.dataset.pad_to_max_length = True
+    cfg.train.eval_interval = 0
+    cfg.train.eval_iters = 0
     cfg.validation.eval_interval = 0
     cfg.validation.eval_iters = 0
     cfg.checkpoint.load = None
