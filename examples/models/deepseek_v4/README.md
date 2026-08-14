@@ -80,7 +80,8 @@ Available Blackwell pretraining recipes:
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
 - `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config`: 128-GPU GB200
-  Adam MXFP8 with PP2/EP64/HybridEP
+  Adam MXFP8 with PP1/EP64/DP2/HybridEP, selective recompute, attention
+  activation offload, and MXFP8 parameter gather/buffer reuse
 - `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config`: 256-GPU GB300
   Adam MXFP8 with PP4/VPP4/EP64/HybridEP (requires the PR #4824 container and
   dev-MCore stack described above)
@@ -103,7 +104,8 @@ variants additionally enable GLU interleaving; the existing recipe identities
 retain their checkpoint tensor layout. The library recipes retain unlimited
 natural-routing capacity. All variants retain their precision-specific
 training policies: full-iteration CUDA graphs, FP8 parameter gather/buffer
-reuse, and reduced-precision gradient reduction remain disabled.
+reuse, and reduced-precision gradient reduction remain disabled except for the
+validated FP8 parameter gather/buffer reuse in the high-scale GB200 recipe.
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 

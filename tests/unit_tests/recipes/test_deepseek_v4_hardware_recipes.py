@@ -207,8 +207,8 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.model.apply_dsa_kernel_fusion is True
     assert cfg.model.quant_recipe is not None
     assert cfg.model.moe_router_padding_for_fp8 is True
-    assert cfg.mixed_precision.fp8_param_gather is False
-    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert cfg.mixed_precision.fp8_param_gather is True
+    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
     assert cfg.mixed_precision.grad_reduce_in_fp32 is True
     assert cfg.ddp.grad_reduce_in_fp32 is True
     assert cfg.optimizer.main_grads_dtype == torch.float32
@@ -216,21 +216,18 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.moe_mlp_glu_interleave_size == 32
-    assert cfg.model.pipeline_model_parallel_size == 2
-    assert len(cfg.model.pipeline_model_parallel_layout) == 2
-    assert cfg.model.pipeline_model_parallel_layout[0][0] == "embedding"
-    assert cfg.model.pipeline_model_parallel_layout[-1][-2:] == ["mtp", "loss"]
-    assert sum(stage.count("decoder") for stage in cfg.model.pipeline_model_parallel_layout) == cfg.model.num_layers
-    assert cfg.model.recompute_modules == ["mhc", "mla_up_proj"]
-    assert cfg.model.fine_grained_activation_offloading is False
-    assert cfg.model.offload_modules == []
-    assert cfg.model.fine_grained_offloading_max_inflight_offloads is None
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
     assert getattr(cfg.model, "moe_expert_rank_capacity_factor", None) is None
     assert getattr(cfg.model, "moe_paged_stash", False) is False
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert "NVTE_CPU_OFFLOAD_V1" not in cfg.env_vars
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
 
     perf_cfg = flash_perf_config()
     assert perf_cfg.model.pipeline_model_parallel_size == 1
@@ -243,6 +240,7 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert perf_cfg.model.fine_grained_activation_offloading is False
     assert perf_cfg.model.offload_modules == []
     assert perf_cfg.mixed_precision.fp8_param_gather is True
+    assert perf_cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
     assert perf_cfg.ddp.grad_reduce_in_fp32 is False
     assert perf_cfg.ddp.check_for_nan_in_grad is False
 
