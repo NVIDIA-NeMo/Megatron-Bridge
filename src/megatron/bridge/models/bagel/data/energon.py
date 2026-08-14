@@ -288,6 +288,8 @@ def cook_bagel_vlm_sample(
 class BagelT2ITaskEncoder(TaskEncoder):
     """Register configured BAGEL T2I sample processing."""
 
+    decoder = None
+
     def __init__(
         self,
         tokenizer: PreTrainedTokenizerBase,
@@ -311,6 +313,8 @@ class BagelT2ITaskEncoder(TaskEncoder):
 
 class BagelEditingTaskEncoder(TaskEncoder):
     """Register configured BAGEL Editing sample processing."""
+
+    decoder = None
 
     def __init__(
         self,
@@ -339,6 +343,8 @@ class BagelEditingTaskEncoder(TaskEncoder):
 
 class BagelVLMTaskEncoder(TaskEncoder):
     """Register configured BAGEL VLM sample processing."""
+
+    decoder = None
 
     def __init__(
         self,

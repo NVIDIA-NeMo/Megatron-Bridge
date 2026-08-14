@@ -51,6 +51,7 @@ def test_editing_task_encoder_processes_images_instruction_and_sequence_plan() -
 
     random.seed(42)
     encoder = BagelEditingTaskEncoder(tokenizer, transform, vit_transform, 16, 14)
+    assert encoder.decoder is None
     assert getattr(encoder.cookers[0].cook, "__stateless__", False)
     sample = encoder.cookers[0].cook(crude_sample)
 
@@ -93,6 +94,7 @@ def test_t2i_task_encoder_processes_caption_image_and_sequence_plan() -> None:
 
     random.seed(42)
     encoder = BagelT2ITaskEncoder(tokenizer, transform, 16)
+    assert encoder.decoder is None
     assert getattr(encoder.cookers[0].cook, "__stateless__", False)
     sample = encoder.cookers[0].cook(crude_sample)
 
@@ -138,6 +140,7 @@ def test_vlm_task_encoder_processes_image_conversation_and_sequence_plan() -> No
         return torch.ones((3, 14, 28))
 
     encoder = BagelVLMTaskEncoder(tokenizer, transform, 14)
+    assert encoder.decoder is None
     assert getattr(encoder.cookers[0].cook, "__stateless__", False)
     sample = encoder.cookers[0].cook(crude_sample)
 
