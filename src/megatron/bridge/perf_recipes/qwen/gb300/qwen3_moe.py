@@ -276,17 +276,24 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     _benchmark_common(cfg)
 
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_grouped_gemm = True
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.moe_ncclep_static_shape = True
     # cfg.model.moe_router_padding_for_quantization = True
+
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
