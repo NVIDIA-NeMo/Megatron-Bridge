@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
+    _enable_ncclep,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     load_quantization_recipe,
@@ -489,6 +490,14 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, BF16, NCCL EP=8."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config()
+    # MCore A2A overlap supports at most one MTP layer; Lightning uses MTP=2.
+    _enable_ncclep(cfg, mxfp8=False, moe_a2a_overlap=False)
+    return cfg
+
+
 def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config()
@@ -518,6 +527,14 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_ncclep_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8, NCCL EP=8."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config()
+    # MCore A2A overlap supports at most one MTP layer; Lightning uses MTP=2.
+    _enable_ncclep(cfg, mxfp8=True, moe_a2a_overlap=False)
     return cfg
 
 
