@@ -105,7 +105,8 @@ retain their checkpoint tensor layout. The library recipes retain unlimited
 natural-routing capacity. All variants retain their precision-specific
 training policies: full-iteration CUDA graphs, FP8 parameter gather/buffer
 reuse, and reduced-precision gradient reduction remain disabled except for the
-validated FP8 parameter gather/buffer reuse in the high-scale GB200 recipe.
+provisional FP8 parameter gather/buffer reuse in the high-scale GB200 recipe;
+that PP1 configuration still requires 100-step checkpoint and resume validation.
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 
