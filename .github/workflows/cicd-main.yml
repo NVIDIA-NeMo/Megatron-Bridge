@@ -567,6 +567,10 @@ jobs:
               --skip-file /opt/import-check/import_check_skip.txt
 
   cicd-unit-tests-core:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard-id: [0, 1, 2]
     if: |
       (
         success()
@@ -579,7 +583,7 @@ jobs:
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
-    name: Launch_Unit_Tests_Core
+    name: Launch_Unit_Tests_Core_${{ matrix.shard-id }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -603,6 +607,8 @@ jobs:
           script: Launch_Unit_Tests_Core
           timeout: 30
           is_unit_test: "true"
+          shard-id: ${{ matrix.shard-id }}
+          num-shards: 3
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
