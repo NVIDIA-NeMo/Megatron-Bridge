@@ -12,18 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Megatron-FSDP wrapper compatibility helpers."""
+"""DeepSeek model-owned data preprocessing."""
 
-try:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-        FullyShardedDataParallelV1,
-        FullyShardedDataParallelV2,
-    )
+from megatron.bridge.models.deepseek.data.collate_fn import deepseek_v4_collate_fn
 
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
-    MCORE_HAS_MEGATRON_FSDP_V2 = True
-except ImportError:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallel,)
-    MCORE_HAS_MEGATRON_FSDP_V2 = False
+__all__ = ["deepseek_v4_collate_fn"]
