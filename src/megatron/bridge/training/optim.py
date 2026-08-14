@@ -169,11 +169,16 @@ def _validate_precision_aware_optimizer_runtime_state(
     sub_optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
     validated = 0
     expected = {
-        "master_weight_dtype": config.main_params_dtype,
         "exp_avg_dtype": config.exp_avg_dtype,
         "exp_avg_sq_dtype": config.exp_avg_sq_dtype,
-        "store_param_remainders": config.store_param_remainders,
     }
+    if config.use_precision_aware_optimizer_no_fp8_or_ds_fp8:
+        expected.update(
+            {
+                "master_weight_dtype": config.main_params_dtype,
+                "store_param_remainders": config.store_param_remainders,
+            }
+        )
     for distributed_optimizer in sub_optimizers:
         inner = getattr(distributed_optimizer, "optimizer", None)
         if not isinstance(inner, fused_adam_class):
@@ -193,14 +198,9 @@ def _validate_precision_aware_optimizer_runtime_state(
 
     if validated:
         G_LOGGER.info(
-            "Validated effective precision-aware Adam state for %d Transformer Engine FusedAdam instance(s): "
-            "main_params=%s, main_grads=%s, exp_avg=%s, exp_avg_sq=%s, param_remainders=%s.",
+            "Validated effective precision-aware Adam state for %d Transformer Engine FusedAdam instance(s): %s.",
             validated,
-            config.main_params_dtype,
-            config.main_grads_dtype,
-            config.exp_avg_dtype,
-            config.exp_avg_sq_dtype,
-            config.store_param_remainders,
+            ", ".join(f"{name}={value}" for name, value in expected.items()),
         )
     return validated
 

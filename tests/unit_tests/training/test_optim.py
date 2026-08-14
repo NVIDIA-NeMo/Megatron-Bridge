@@ -172,13 +172,14 @@ class _FakeFusedAdam(torch.optim.Optimizer):
         master_weights: bool = False,
         master_weight_dtype: torch.dtype = torch.float32,
         exp_avg_dtype: torch.dtype = torch.float32,
+        exp_avg_sq_dtype: torch.dtype | None = None,
         store_param_remainders: bool = False,
     ) -> None:
         super().__init__([param], {"lr": 1e-3})
         self.master_weights = master_weights
         self.master_weight_dtype = master_weight_dtype
         self.exp_avg_dtype = exp_avg_dtype
-        self.exp_avg_sq_dtype = exp_avg_dtype
+        self.exp_avg_sq_dtype = exp_avg_dtype if exp_avg_sq_dtype is None else exp_avg_sq_dtype
         self.store_param_remainders = store_param_remainders
         self.name_to_dtype_map = {"exp_avg": exp_avg_dtype, "exp_avg_sq": exp_avg_dtype}
         self.override_load_calls = 0
@@ -249,6 +250,7 @@ class TestValidatePrecisionAwareOptimizerRuntimeState:
     def _config() -> SimpleNamespace:
         return SimpleNamespace(
             use_precision_aware_optimizer=True,
+            use_precision_aware_optimizer_no_fp8_or_ds_fp8=True,
             main_params_dtype=torch.float16,
             main_grads_dtype=torch.bfloat16,
             exp_avg_dtype=torch.bfloat16,
@@ -286,6 +288,43 @@ class TestValidatePrecisionAwareOptimizerRuntimeState:
         with (
             patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
             pytest.raises(RuntimeError, match="param_remainders: requested=True, effective=False"),
+        ):
+            _validate_precision_aware_optimizer_runtime_state(distributed, config)
+
+    def test_ignores_te_master_state_when_mcore_owns_master_params(self):
+        param = torch.zeros(4, dtype=torch.bfloat16)
+        inner = _FakeFusedAdam(
+            param,
+            master_weights=False,
+            master_weight_dtype=torch.float16,
+            exp_avg_dtype=torch.bfloat16,
+            store_param_remainders=False,
+        )
+        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
+        config = self._config()
+        config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = False
+        config.main_params_dtype = torch.float32
+        config.store_param_remainders = True
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            assert _validate_precision_aware_optimizer_runtime_state(distributed, config) == 1
+
+    @pytest.mark.parametrize("state_name", ["exp_avg_dtype", "exp_avg_sq_dtype"])
+    def test_rejects_moment_mismatch_when_mcore_owns_master_params(self, state_name: str):
+        param = torch.zeros(4, dtype=torch.bfloat16)
+        moment_dtypes = {
+            "exp_avg_dtype": torch.bfloat16,
+            "exp_avg_sq_dtype": torch.bfloat16,
+        }
+        moment_dtypes[state_name] = torch.float32
+        inner = _FakeFusedAdam(param, master_weights=False, **moment_dtypes)
+        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
+        config = self._config()
+        config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = False
+
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            pytest.raises(RuntimeError, match=state_name),
         ):
             _validate_precision_aware_optimizer_runtime_state(distributed, config)
 
