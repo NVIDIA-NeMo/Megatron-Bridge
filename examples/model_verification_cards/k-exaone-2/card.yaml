@@ -162,10 +162,11 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The exported 512-GPU H100 recipe must complete a bounded public-data
         pretraining run at TP4/PP16/EP32 with natural routing, finite loss, no
-        skipped or NaN iterations, all four required metrics, and reloadable
+        skipped or NaN iterations, all five required metrics, and reloadable
         middle and final checkpoints.
 
   sft:
@@ -180,6 +181,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The exported 512-GPU H100 full-SFT recipe must load the pinned
         checkpoint and complete a bounded immutable-dataset run at
@@ -211,11 +213,12 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         No long-context SFT result is claimed. Future verification must first
         resolve a supported long-context topology, then verify sequence
         packing and context parallelism together with finite loss, no skipped
-        or NaN iterations, and all four required metrics.
+        or NaN iterations, and all five required metrics.
 
   peft:
     H100:
@@ -229,11 +232,12 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The exported 128-GPU H100 PEFT recipe must load the pinned checkpoint,
         verify that LoRA targets the model-native attention projections, and
         complete a bounded immutable-dataset run at TP4/PP8/EP16 with finite
-        loss, no skipped or NaN iterations, all four required metrics, and a
+        loss, no skipped or NaN iterations, all five required metrics, and a
         reloadable adapter checkpoint.
 
   checkpoint_resume:
@@ -248,6 +252,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]

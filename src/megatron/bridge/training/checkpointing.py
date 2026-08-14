@@ -1167,12 +1167,14 @@ def save_checkpoint(
     # Collect rng state across data parallel ranks.
     if pg_collection is None:
         pg_collection = get_pg_collection(model)
-    rng_state = get_rng_state(
-        data_parallel_random_init=cfg.rng.data_parallel_random_init,
-        ckpt_format=ckpt_cfg.ckpt_format,
-        pg_collection=pg_collection,
-        module_name=module_name,
-    )
+    rng_state = None
+    if ckpt_cfg.save_rng:
+        rng_state = get_rng_state(
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            ckpt_format=ckpt_cfg.ckpt_format,
+            pg_collection=pg_collection,
+            module_name=module_name,
+        )
 
     # Collect rerun state across all ranks
     rerun_state_machine = get_rerun_state_machine()
