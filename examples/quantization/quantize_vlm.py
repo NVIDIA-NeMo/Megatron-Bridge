@@ -369,21 +369,26 @@ def main(
                 f"[yellow]No --megatron-save-path specified. Using default path: {megatron_save_path}[/yellow]"
             )
 
-    if is_rank_0:
-        console.print("[green]Testing model AFTER quantization...[/green]")
-
-    # Use provided test image path or fall back to default
-    if test_image_path:
-        _custom_prompt_forward_loop_func(
-            unwrapped_model, processor, is_rank_0, prompts, test_image_path=test_image_path
-        )
-    else:
-        _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts)
-
-    # Save quantized model in Megatron format
+    # Save quantized model in Megatron format BEFORE the test-generation sanity
+    # check below, so the checkpoint is on disk even if that step fails.
     if is_rank_0:
         console.print(f"Saving quantized Megatron checkpoint in {megatron_save_path}...")
     bridge.save_megatron_model(megatron_model, megatron_save_path)
+
+    if is_rank_0:
+        console.print("[green]Testing model AFTER quantization...[/green]")
+
+    # No torch.no_grad() here previously -- every decode step in the test
+    # generation retained a full backward-pass graph it never uses, which was
+    # enough to OOM a 27B TP=8 model at ~79GB/79.18GB.
+    with torch.no_grad():
+        # Use provided test image path or fall back to default
+        if test_image_path:
+            _custom_prompt_forward_loop_func(
+                unwrapped_model, processor, is_rank_0, prompts, test_image_path=test_image_path
+            )
+        else:
+            _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts)
 
 
 if __name__ == "__main__":

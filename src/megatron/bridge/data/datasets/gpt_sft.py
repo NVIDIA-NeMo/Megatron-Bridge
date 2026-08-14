@@ -686,7 +686,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
         self,
         file_path: str,
         tokenizer: MegatronTokenizer,
-        use_hf_tokenizer_chat_template: bool = False,
+        use_hf_tokenizer_chat_template: bool = True,
         loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
         tool_schemas: str | dict | None = None,
         **kwargs,
@@ -712,7 +712,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
         Args:
             file_path: Path to the dataset file
             tokenizer: Tokenizer instance
-            use_hf_tokenizer_chat_template: If True, use HuggingFace tokenizer's apply_chat_template
+            use_hf_tokenizer_chat_template: If True, use HuggingFace tokenizer's ``apply_chat_template``. Defaults to
+                True; set to False only for the legacy special-token formatter.
             loss_mode: Assistant-only, final-assistant-turn, or full-sequence loss.
             tool_schemas: Tool schemas for function calling (JSON string or dict)
             **kwargs: Additional arguments passed to parent GPTSFTDataset
