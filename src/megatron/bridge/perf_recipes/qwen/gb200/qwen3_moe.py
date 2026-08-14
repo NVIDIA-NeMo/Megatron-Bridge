@@ -271,7 +271,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_hybridep_num_sms = None
-    cfg.model.moe_flex_dispatcher_num_sms = None
+    # cfg.model.moe_flex_dispatcher_num_sms = None
     cfg.model.moe_ncclep_zero_copy = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
@@ -436,7 +436,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_ncclep_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_hybridep_num_sms = None
-    cfg.model.moe_flex_dispatcher_num_sms = None
+    # cfg.model.moe_flex_dispatcher_num_sms = None
 
     _benchmark_common(cfg, cross_entropy_impl="native")
     _enable_ncclep_full_iteration_mxfp8(cfg)
