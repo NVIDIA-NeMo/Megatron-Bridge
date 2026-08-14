@@ -636,11 +636,11 @@ def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     cfg = _qwen35_vl_gb200_module.qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config()
 
     _assert_basic_config(cfg)
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_dtype is None
     assert cfg.model.virtual_pipeline_model_parallel_size is None
-    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.context_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.calculate_per_token_loss is True
 

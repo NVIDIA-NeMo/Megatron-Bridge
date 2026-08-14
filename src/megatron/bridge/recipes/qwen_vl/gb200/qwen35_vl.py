@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-import torch
-
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config,
     qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config,
@@ -41,11 +39,14 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     """
     cfg = qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config()
 
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.pipeline_dtype = torch.bfloat16
+    # TP2 leaves enough memory headroom for cold Gated DeltaNet autotuning
+    # while PP1 removes pipeline bubbles. With DP8 and MBS4, GBS32 executes as
+    # one microbatch per rank; TP1/MBS2 exhausts GB200 memory during autotuning.
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 2
+    cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.calculate_per_token_loss = True
 
