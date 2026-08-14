@@ -19,6 +19,7 @@ import torch
 
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config,
@@ -115,6 +116,7 @@ def test_h100_large_scale_pretrain_adopts_execution_config_without_benchmark_pol
 
     assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert cfg.ddp.num_distributed_optimizer_instances == 1
     assert cfg.ddp.outer_dp_sharding_strategy == "no_shard"
@@ -166,6 +168,55 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.unit
+def test_gb200_mxfp8_fsdp_pretrain_adopts_execution_config_without_benchmark_policy() -> None:
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config()
+
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.fp8 == "e4m3"
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.min_offloaded_tensor_size == 350_000_000
+    assert cfg.model.offload_modules == ["fused_group_mlp"]
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe_act"]
+
+    assert cfg.dist.use_megatron_fsdp is True
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+    assert cfg.ddp.num_distributed_optimizer_instances == 4
+    assert cfg.ddp.outer_dp_sharding_strategy == "optim"
+    assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.bfloat16
+    assert cfg.ddp.megatron_fsdp_main_params_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.bfloat16
+    assert cfg.ddp.keep_fp8_transpose_cache is False
+    assert cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
+
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
 
 
 @pytest.mark.unit
