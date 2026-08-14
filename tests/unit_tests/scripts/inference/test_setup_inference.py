@@ -195,89 +195,6 @@ def test_resource_validation_rejects_invalid_values(options, message):
 
 
 @pytest.mark.parametrize(
-    ("options", "message"),
-    [
-        (("--task", "model-comparison", "--staged-model-comparison"), "comparison-artifact-path"),
-        (("--comparison-artifact-path", "/shared/result.pt"), "staged-model-comparison"),
-        (("--comparison-hf-partition", "interactive"), "staged-model-comparison"),
-        (("--comparison-hf-max-gpu-memory", "60GiB"), "staged-model-comparison"),
-        (
-            (
-                "--task",
-                "text-generation",
-                "--staged-model-comparison",
-                "--comparison-artifact-path",
-                "/shared/result.pt",
-            ),
-            "task model-comparison",
-        ),
-        (
-            (
-                "--task",
-                "model-comparison",
-                "--staged-model-comparison",
-                "--comparison-artifact-path",
-                "relative.pt",
-            ),
-            "absolute container path",
-        ),
-    ],
-)
-def test_staged_comparison_validation_rejects_invalid_combinations(options, message):
-    module = _load_setup_inference_module()
-    args, _ = module.parse_args(_launcher_args(*options))
-
-    with pytest.raises(ValueError, match=message):
-        module._validate_args(args)
-
-
-def test_staged_comparison_artifact_requires_explicit_containing_mount():
-    module = _load_setup_inference_module()
-    args, _ = module.parse_args(
-        _launcher_args(
-            "--task",
-            "model-comparison",
-            "--staged-model-comparison",
-            "--comparison-artifact-path",
-            "/shared/results/hf.pt",
-        )
-    )
-
-    module._validate_staged_comparison_mount(args, ["/host:/shared"])
-    with pytest.raises(ValueError, match="explicit --mount"):
-        module._validate_staged_comparison_mount(args, ["/host:/other"])
-
-
-def test_staged_comparison_resolves_repository_relative_artifact_path():
-    module = _load_setup_inference_module()
-    args, _ = module.parse_args(
-        _launcher_args(
-            "--task",
-            "model-comparison",
-            "--staged-model-comparison",
-            "--comparison-artifact-path",
-            "work/model-verification/hf.pt",
-        )
-    )
-
-    module._validate_args(args)
-
-    assert args.comparison_artifact_path == "/opt/Megatron-Bridge/work/model-verification/hf.pt"
-    module._validate_staged_comparison_mount(args, ["/host/repo:/opt/Megatron-Bridge"])
-
-
-@pytest.mark.parametrize(
-    "option",
-    ["--hf-output-path", "--hf-input-path", "--hf-device-map=auto", "--hf-max-gpu-memory=60GiB"],
-)
-def test_staged_comparison_rejects_internal_entry_point_options(option):
-    module = _load_setup_inference_module()
-
-    with pytest.raises(ValueError, match="managed by --staged-model-comparison"):
-        module._validate_staged_comparison_args([option])
-
-
-@pytest.mark.parametrize(
     ("task_name", "inference_args", "message"),
     [
         ("legacy-full-prefix-generation", [], "requires --legacy-full-prefix"),
@@ -396,27 +313,6 @@ def test_slurm_executor_can_skip_explicit_gpu_request(tmp_path, monkeypatch):
     assert executor.kwargs["additional_parameters"] == {"export": "PATH"}
 
 
-def test_slurm_executor_can_override_nodes_and_tasks_for_hf_stage(tmp_path, monkeypatch):
-    module = _load_setup_inference_module()
-
-    class _SlurmExecutor:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    module.run.Packager = lambda: "packager"
-    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
-    module.run.SlurmExecutor = _SlurmExecutor
-    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
-    args, _ = module.parse_args(_launcher_args("--nodes", "3", "--gpus-per-node", "8"))
-
-    executor = module._build_executor(args, [], [], nodes=1, ntasks_per_node=1, partition="interactive")
-
-    assert executor.kwargs["nodes"] == 1
-    assert executor.kwargs["ntasks_per_node"] == 1
-    assert executor.kwargs["gpus_per_node"] == 8
-    assert executor.kwargs["partition"] == "interactive"
-
-
 def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
     module = _load_setup_inference_module()
     scripts = []
@@ -498,91 +394,6 @@ def test_main_submission_wait_detach_and_dry_run_modes(
 
     assert run_calls == expected_run
     assert len(dryrun_calls) == expected_dryrun
-
-
-def test_main_builds_dependent_hf_and_megatron_comparison_jobs(monkeypatch):
-    module = _load_setup_inference_module()
-    executor_calls = []
-    task_calls = []
-    add_calls = []
-
-    class _Experiment:
-        def __init__(self, name):
-            assert name == "staged-test"
-            self.jobs = []
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            pass
-
-        def add(self, task, *, executor, name, dependencies=None):
-            add_calls.append((task, executor, name, dependencies))
-            return f"{name}-id"
-
-        def run(self, **_kwargs):
-            raise AssertionError("dry run must not submit")
-
-        def dryrun(self):
-            pass
-
-    def _build_executor(*_args, **kwargs):
-        executor_calls.append(kwargs)
-        return f"executor-{len(executor_calls)}"
-
-    def _build_task(task_name, inference_args):
-        task_calls.append((task_name, inference_args))
-        return f"task-{len(task_calls)}"
-
-    module.run.Experiment = _Experiment
-    monkeypatch.setattr(module, "_build_executor", _build_executor)
-    monkeypatch.setattr(module, "_build_task", _build_task)
-
-    module.main(
-        _launcher_args(
-            "--task",
-            "model-comparison",
-            "--nodes",
-            "3",
-            "--gpus-per-node",
-            "8",
-            "--staged-model-comparison",
-            "--comparison-artifact-path",
-            "/shared/results/hf.pt",
-            "--comparison-hf-partition",
-            "interactive",
-            "--comparison-hf-max-gpu-memory",
-            "60GiB",
-            "--mount",
-            "/shared",
-            "--experiment-name",
-            "staged-test",
-            "--dry-run",
-            "--hf_model_path",
-            "org/model",
-            "--prompt",
-            "hello",
-        )
-    )
-
-    assert executor_calls == [{}, {"nodes": 1, "ntasks_per_node": 1, "partition": "interactive"}]
-    assert task_calls[0][0] == "model-comparison"
-    assert task_calls[0][1][-6:] == [
-        "--hf-output-path",
-        "/shared/results/hf.pt",
-        "--hf-device-map",
-        "auto",
-        "--hf-max-gpu-memory",
-        "60GiB",
-    ]
-    assert task_calls[1][1][-2:] == ["--hf-input-path", "/shared/results/hf.pt"]
-    assert add_calls[0][1:] == ("executor-2", "model-comparison-hf", None)
-    assert add_calls[1][1:] == (
-        "executor-1",
-        "model-comparison-megatron",
-        ["model-comparison-hf-id"],
-    )
 
 
 def test_main_propagates_synchronous_inference_failure(monkeypatch):

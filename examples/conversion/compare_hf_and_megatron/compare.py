@@ -96,12 +96,10 @@ import importlib
 import io
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
 import torch
 import torch.distributed as dist
-from accelerate.utils import get_max_memory
 from megatron.core import parallel_state
 from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.inference.utils import InferenceMode
@@ -117,7 +115,6 @@ from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_ope
 
 # Cosine similarity threshold: require at least 99% similarity (1% cosine distance)
 SIMILARITY_THRESHOLD = 0.99
-HF_STAGE_ARTIFACT_VERSION = 1
 
 
 sys.path.append(os.path.dirname(__file__))
@@ -501,31 +498,15 @@ def _load_hf_model(args, is_vl_model: bool):
 
     print_rank_0("Loading HuggingFace model...")
     model_class = get_model_class(args.model_class, is_vl_model)
-    hf_device_map = args.hf_device if args.hf_device_map == "cuda" else args.hf_device_map
     load_kwargs = {
         "torch_dtype": torch.bfloat16,
-        "device_map": hf_device_map,
         "trust_remote_code": is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
         **_hf_revision_kwargs(args.hf_revision),
     }
-    if args.hf_max_gpu_memory is not None:
-        if args.hf_device_map != "auto":
-            raise ValueError("--hf-max-gpu-memory requires --hf-device-map auto.")
-        max_memory = get_max_memory()
-        for device_index in range(torch.cuda.device_count()):
-            max_memory[device_index] = args.hf_max_gpu_memory
-        load_kwargs["max_memory"] = max_memory
-    if args.hf_offload_folder is not None:
-        load_kwargs["offload_folder"] = args.hf_offload_folder
-        load_kwargs["offload_state_dict"] = True
-    hf_model = model_class.from_pretrained(
-        args.hf_model_path,
-        **load_kwargs,
-    )
-    hf_model = hf_model.eval()
+    hf_model = model_class.from_pretrained(args.hf_model_path, **load_kwargs).to(args.hf_device).eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
 
     # Register debug hooks if enabled
@@ -691,118 +672,6 @@ def _load_hf_reference_logits(path, input_ids, tokenizer):
     return hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape
 
 
-def _hf_input_device(hf_model) -> torch.device:
-    """Return the device that should receive Hugging Face input tensors."""
-    input_embeddings = hf_model.get_input_embeddings()
-    if input_embeddings is not None and hasattr(input_embeddings, "weight"):
-        return input_embeddings.weight.device
-    return next(hf_model.parameters()).device
-
-
-def _move_optional_tensor(tensor: torch.Tensor | None, device: torch.device) -> torch.Tensor | None:
-    """Move an optional tensor to a device."""
-    return tensor.to(device) if tensor is not None else None
-
-
-def _cpu_optional_tensor(tensor: torch.Tensor | None) -> torch.Tensor | None:
-    """Detach an optional tensor and copy it to CPU."""
-    return tensor.detach().cpu() if tensor is not None else None
-
-
-def _save_hf_stage_artifact(
-    path_value: str,
-    args: argparse.Namespace,
-    *,
-    hf_logits: torch.Tensor,
-    hf_next_token: torch.Tensor,
-    input_ids: torch.Tensor,
-    pixel_values: torch.Tensor | None,
-    image_grid_thw: torch.Tensor | None,
-    token_type_ids: torch.Tensor | None,
-) -> None:
-    """Atomically save HF logits and exact comparison inputs for a dependent job."""
-    path = Path(path_value)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    payload = {
-        "format_version": HF_STAGE_ARTIFACT_VERSION,
-        "hf_model_path": args.hf_model_path,
-        "hf_revision": args.hf_revision or "",
-        "prompt": args.prompt,
-        "image_path": args.image_path or "",
-        "tp": args.tp,
-        "hf_logits": hf_logits.detach().float().cpu(),
-        "hf_next_token": hf_next_token.detach().reshape(1).cpu(),
-        "input_ids": input_ids.detach().cpu(),
-        "pixel_values": _cpu_optional_tensor(pixel_values),
-        "image_grid_thw": _cpu_optional_tensor(image_grid_thw),
-        "token_type_ids": _cpu_optional_tensor(token_type_ids),
-    }
-    try:
-        torch.save(payload, temporary_path)
-        os.replace(temporary_path, path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-    print_rank_0(f"Saved Hugging Face comparison artifact: {path}")
-
-
-def _validate_optional_input_tensor(
-    payload: dict[str, object],
-    key: str,
-    expected: torch.Tensor | None,
-) -> None:
-    """Validate one optional tokenized input from a staged HF artifact."""
-    actual = payload.get(key)
-    if actual is None and expected is None:
-        return
-    if not isinstance(actual, torch.Tensor) or expected is None or not torch.equal(actual, expected.cpu()):
-        raise ValueError(f"Staged Hugging Face artifact input '{key}' does not match the current comparison input.")
-
-
-def _load_hf_stage_artifact(
-    path_value: str,
-    args: argparse.Namespace,
-    *,
-    input_ids: torch.Tensor,
-    pixel_values: torch.Tensor | None,
-    image_grid_thw: torch.Tensor | None,
-    token_type_ids: torch.Tensor | None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Load and validate logits produced by the staged Hugging Face job."""
-    path = Path(path_value)
-    payload = torch.load(path, map_location="cpu", weights_only=True)
-    if not isinstance(payload, dict):
-        raise ValueError(f"Staged Hugging Face artifact is not a dictionary: {path}")
-
-    expected_metadata = {
-        "format_version": HF_STAGE_ARTIFACT_VERSION,
-        "hf_model_path": args.hf_model_path,
-        "hf_revision": args.hf_revision or "",
-        "prompt": args.prompt,
-        "image_path": args.image_path or "",
-        "tp": args.tp,
-    }
-    for key, expected in expected_metadata.items():
-        if payload.get(key) != expected:
-            raise ValueError(
-                f"Staged Hugging Face artifact metadata '{key}' does not match: "
-                f"expected {expected!r}, found {payload.get(key)!r}."
-            )
-
-    _validate_optional_input_tensor(payload, "input_ids", input_ids)
-    _validate_optional_input_tensor(payload, "pixel_values", pixel_values)
-    _validate_optional_input_tensor(payload, "image_grid_thw", image_grid_thw)
-    _validate_optional_input_tensor(payload, "token_type_ids", token_type_ids)
-    hf_logits = payload.get("hf_logits")
-    hf_next_token = payload.get("hf_next_token")
-    if not isinstance(hf_logits, torch.Tensor) or hf_logits.ndim != 1:
-        raise ValueError("Staged Hugging Face artifact must contain one-dimensional 'hf_logits'.")
-    if not isinstance(hf_next_token, torch.Tensor) or hf_next_token.numel() != 1:
-        raise ValueError("Staged Hugging Face artifact must contain one 'hf_next_token'.")
-    print_rank_0(f"Loaded validated Hugging Face comparison artifact: {path}")
-    return hf_logits.float(), hf_next_token.long().reshape(1)
-
-
 def _load_megatron_model(args):
     """Load Megatron model from checkpoint or convert from HF.
 
@@ -948,14 +817,6 @@ def compare_models_one_step(args) -> None:
     """
     print_rank_0("=== STARTING MODEL COMPARISON (1-STEP) ===")
 
-    if (args.hf_output_path is not None or args.hf_input_path is not None) and args.roundtrip_hf:
-        raise ValueError("Staged Hugging Face artifacts cannot be combined with --roundtrip_hf.")
-    if (args.hf_output_path is not None or args.hf_input_path is not None) and args.hf_logits_path:
-        raise ValueError("Staged Hugging Face artifacts cannot be combined with --hf-logits-path.")
-    staged_hf_world_size = int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", "1")))
-    if args.hf_output_path is not None and staged_hf_world_size != 1:
-        raise ValueError("--hf-output-path must run as one task so one process owns the Hugging Face device map.")
-
     if torch.cuda.is_available():
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         torch.cuda.set_device(local_rank)
@@ -970,6 +831,18 @@ def compare_models_one_step(args) -> None:
         print_rank_0("Warning: Image provided but model is not a vision-language model. Ignoring image.")
         args.image_path = None
 
+    # Load Megatron model (and bridge)
+    megatron_model, bridge = _load_megatron_model(args)
+
+    # Optionally perform HF round-trip export and use exported HF model for comparison
+    if args.hf_logits_path:
+        hf_model = None
+    elif getattr(args, "roundtrip_hf", False):
+        hf_model = _export_and_load_roundtrip_hf_model(args, is_vl_model, megatron_model, bridge)
+    else:
+        # Load HF model directly from the hub/path
+        hf_model = _load_hf_model(args, is_vl_model)
+
     # Setup tokenizer and processor
     tokenizer, processor = _setup_tokenizer_and_processor(args, is_vl_model)
 
@@ -978,63 +851,6 @@ def compare_models_one_step(args) -> None:
     input_ids, pixel_values, image_grid_thw, token_type_ids = process_inputs(
         tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
-
-    if args.hf_output_path is not None:
-        hf_model = _load_hf_model(args, is_vl_model)
-        input_device = _hf_input_device(hf_model)
-        input_ids = input_ids.to(input_device)
-        pixel_values = _move_optional_tensor(pixel_values, input_device)
-        image_grid_thw = _move_optional_tensor(image_grid_thw, input_device)
-        token_type_ids = _move_optional_tensor(token_type_ids, input_device)
-        print_rank_0(f"Input shape: {input_ids.shape}")
-        print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
-        hf_logits, hf_next_token, _, _, _ = _run_hf_inference(
-            hf_model,
-            input_ids,
-            pixel_values,
-            image_grid_thw,
-            tokenizer,
-            token_type_ids=token_type_ids,
-        )
-        if hf_logits is None or hf_next_token is None:
-            raise RuntimeError("Hugging Face comparison stage did not produce logits and a next token.")
-        _save_hf_stage_artifact(
-            args.hf_output_path,
-            args,
-            hf_logits=hf_logits,
-            hf_next_token=hf_next_token,
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            image_grid_thw=image_grid_thw,
-            token_type_ids=token_type_ids,
-        )
-        del hf_model
-        gc.collect()
-        torch.cuda.empty_cache()
-        return
-
-    # Load Megatron model (and bridge)
-    megatron_model, bridge = _load_megatron_model(args)
-
-    hf_logits = None
-    hf_next_token = None
-    if args.hf_input_path is not None:
-        if _is_rank_0():
-            hf_logits, hf_next_token = _load_hf_stage_artifact(
-                args.hf_input_path,
-                args,
-                input_ids=input_ids,
-                pixel_values=pixel_values,
-                image_grid_thw=image_grid_thw,
-                token_type_ids=token_type_ids,
-            )
-    elif not args.hf_logits_path:
-        # Optionally perform HF round-trip export and use exported HF model for comparison
-        if getattr(args, "roundtrip_hf", False):
-            hf_model = _export_and_load_roundtrip_hf_model(args, is_vl_model, megatron_model, bridge)
-        else:
-            # Load HF model directly from the hub/path
-            hf_model = _load_hf_model(args, is_vl_model)
 
     # Move to GPU
     input_ids = input_ids.cuda()
@@ -1048,25 +864,24 @@ def compare_models_one_step(args) -> None:
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
 
-    if args.hf_input_path is None:
-        if args.hf_logits_path:
-            hf_logits, hf_next_token, _, _, _ = _load_hf_reference_logits(args.hf_logits_path, input_ids, tokenizer)
-        else:
-            hf_logits, hf_next_token, _, _, _ = _run_hf_inference(
-                hf_model,
-                input_ids,
-                pixel_values,
-                image_grid_thw,
-                tokenizer,
-                token_type_ids=token_type_ids,
-            )
+    # Run HF model forward pass
+    if args.hf_logits_path:
+        hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _load_hf_reference_logits(
+            args.hf_logits_path, input_ids, tokenizer
+        )
+    else:
+        hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
+            hf_model,
+            input_ids,
+            pixel_values,
+            image_grid_thw,
+            tokenizer,
+            token_type_ids=token_type_ids,
+        )
 
-            del hf_model
-            gc.collect()
-            torch.cuda.empty_cache()
-    elif hf_logits is not None and hf_next_token is not None:
-        hf_logits = hf_logits.to(input_ids.device)
-        hf_next_token = hf_next_token.to(input_ids.device)
+    del hf_model
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # Broadcast HF results to all ranks
     if torch.distributed.is_initialized():
@@ -1213,32 +1028,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hf-revision",
         help="Immutable Hugging Face Hub revision used for model, config, and tokenizer loading.",
-    )
-    staged_mode = parser.add_mutually_exclusive_group()
-    staged_mode.add_argument(
-        "--hf-output-path",
-        help="Run only the Hugging Face forward pass and save a staged comparison artifact.",
-    )
-    staged_mode.add_argument(
-        "--hf-input-path",
-        help="Skip Hugging Face loading and compare Megatron against a staged comparison artifact.",
-    )
-    parser.add_argument(
-        "--hf-device-map",
-        choices=("cuda", "auto"),
-        default="cuda",
-        help="Transformers device map for Hugging Face loading (default: cuda).",
-    )
-    parser.add_argument(
-        "--hf-offload-folder",
-        help="Optional Transformers disk-offload folder used with a distributed Hugging Face device map.",
-    )
-    parser.add_argument(
-        "--hf-max-gpu-memory",
-        help=(
-            "Optional per-GPU Transformers max_memory limit used with --hf-device-map auto "
-            "to reserve loading and inference workspace (for example, 60GiB)."
-        ),
     )
     parser.add_argument(
         "--prompt",

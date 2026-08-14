@@ -125,7 +125,6 @@ class _OfflineModelProvider:
 
     def __init__(self) -> None:
         self.apply_rope_fusion = False
-        self.bf16 = False
         self.context_parallel_size = 1
         self.cross_entropy_fusion_impl = "native"
         self.csa_compress_ratios = [0] * 33
@@ -134,7 +133,6 @@ class _OfflineModelProvider:
         self.dsa_indexer_skip_topk_offset = 0
         self.dsa_indexer_topk_freq = 1
         self.experimental_attention_variant = "dsa"
-        self.fp16 = False
         self.make_vocab_size_divisible_by = 128
         self.moe_flex_dispatcher_backend = None
         self.mtp_num_layers = 1
@@ -144,7 +142,6 @@ class _OfflineModelProvider:
         self.rotary_scaling_factor = 1
         self.seq_length = 4096
         self.tensor_model_parallel_size = 1
-        self.use_cpu_initialization = False
         self.use_te_rng_tracker = False
         self.use_transformer_engine_op_fuser = False
         self.vocab_size = 256000
