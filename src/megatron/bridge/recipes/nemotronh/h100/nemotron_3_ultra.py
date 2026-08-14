@@ -186,7 +186,9 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "block"
-    cfg.model.recompute_num_layers = 64
+    # Recompute every model layer: the 64-layer performance setting leaves too
+    # little headroom for naturally routed real-data batches on 80-GB H100s.
+    cfg.model.recompute_num_layers = 108
     cfg.model.recompute_modules = None
     cfg.model.mlp_chunks_for_training = 64
     cfg.model.mamba_chunk_size = 256

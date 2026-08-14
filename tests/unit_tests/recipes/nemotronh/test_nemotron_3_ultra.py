@@ -109,7 +109,7 @@ def test_h100_large_scale_pretrain_adopts_execution_config_without_benchmark_pol
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.recompute_granularity == "full"
     assert cfg.model.recompute_method == "block"
-    assert cfg.model.recompute_num_layers == 64
+    assert cfg.model.recompute_num_layers == 108
     assert cfg.model.mlp_chunks_for_training == 64
     assert cfg.model.mamba_chunk_size == 256
 
