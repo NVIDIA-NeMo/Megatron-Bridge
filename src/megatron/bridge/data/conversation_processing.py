@@ -529,6 +529,27 @@ def shared_chat_template_kwargs_from_examples(examples: Sequence[Mapping[str, An
     return kwargs
 
 
+def _normalize_assistant_tool_call_arguments(turn: dict[str, Any]) -> None:
+    """Parse OpenAI JSON-string tool arguments for chat-template consumption."""
+    if turn.get("role") != CHATML_ASSISTANT_ROLE or not isinstance(turn.get("tool_calls"), list):
+        return
+
+    for tool_call in turn["tool_calls"]:
+        function = tool_call.get("function") if isinstance(tool_call, Mapping) else None
+        if not isinstance(function, MutableMapping):
+            continue
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str):
+            continue
+        try:
+            parsed_arguments = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Assistant tool call function.arguments must be valid JSON.") from exc
+        if not isinstance(parsed_arguments, dict):
+            raise ValueError("Assistant tool call function.arguments must be a JSON object.")
+        function["arguments"] = parsed_arguments
+
+
 def normalize_chat_conversation(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -560,6 +581,7 @@ def normalize_chat_conversation(
             raise ValueError("Chat conversation turns must be dictionaries.")
         turn = dict(raw_turn)
         if "role" in turn and "content" in turn:
+            _normalize_assistant_tool_call_arguments(turn)
             normalized.append(turn)
             continue
         if "from" in turn and "value" in turn:
@@ -1084,10 +1106,17 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                     if (token_ids := tokenize_text_without_special_tokens(tokenizer, marker))
                 }
             )
+            trim_leading_token_sequences = ()
+            if all(marker in template for marker in ("truncate_history_thinking", "<think>", "</think>")):
+                empty_think_tokens = tokenize_text_without_special_tokens(tokenizer, "<think></think>")
+                think_open_tokens = tokenize_text_without_special_tokens(tokenizer, "<think>\n")
+                if empty_think_tokens and think_open_tokens:
+                    trim_leading_token_sequences = (empty_think_tokens, think_open_tokens)
             return AssistantMaskBoundaryConfig(
                 role_start_tokens=role_start_tokens,
                 role_end_tokens={role: end_tokens for role in role_start_tokens},
                 role_end_token_variants={role: end_token_variants for role in role_start_tokens},
+                trim_leading_token_sequences=trim_leading_token_sequences,
             )
     return None
 

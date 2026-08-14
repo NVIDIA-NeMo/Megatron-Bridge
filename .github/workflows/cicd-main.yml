@@ -67,7 +67,7 @@ env:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@c1a0837f362a1a696e647238ab1cf916b2a7cf4a # v1.8.6
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
@@ -693,7 +693,7 @@ jobs:
             local gpu_count
             gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
             if [ -n "$gpu_count" ]; then
-              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-${gpu_count}/"
+              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-x${gpu_count}/"
             else
               echo "${RUNNER_PREFIX}"
             fi

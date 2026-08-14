@@ -358,6 +358,13 @@ class TestQwen35TokenClassificationBridge:
         assert model.language_model.output_layer.dropout.p == 0.2
         assert model.language_model.output_layer.output_in_fp32 is False
 
+    def test_provider_rejects_logit_dtype_for_classification_head(self, mock_pretrained):
+        provider = Qwen35TokenClassificationBridge().provider_bridge(mock_pretrained)
+        provider.logit_dtype = torch.float32
+
+        with pytest.raises(ValueError, match="does not support true mixed-precision output GEMMs"):
+            provider.provide(pre_process=False, post_process=True)
+
     def test_mapping_registry_uses_score_and_omits_lm_and_mtp(self, mock_pretrained):
         bridge = Qwen35TokenClassificationBridge()
 
