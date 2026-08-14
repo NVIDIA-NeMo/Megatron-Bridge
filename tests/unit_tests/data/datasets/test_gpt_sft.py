@@ -154,6 +154,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default", global_
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
@@ -553,6 +554,7 @@ class TestDataGPTSFTChatDataset:
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",

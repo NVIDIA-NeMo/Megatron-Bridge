@@ -467,7 +467,7 @@ def build_gpt_sft_split(
 
     options = dict(dataset_kwargs or {})
     chat = options.pop("chat", False)
-    use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", False)
+    use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", True)
     chat_loss_mode = options.pop("chat_loss_mode", "assistant")
     tool_schemas = options.pop("tool_schemas", None)
     dataset_init_kwargs = {
