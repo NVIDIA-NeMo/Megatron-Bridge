@@ -93,8 +93,8 @@ def test_manifest_plan_maps_official_sources_to_canonical_wds_indices(tmp_path: 
         world_size=1,
         worker_id=0,
         num_workers=0,
-        num_used_data=2,
-    ) == [1, 0]
+        num_used_data=4,
+    ) == [1, 0, 1, 0]
 
 
 def test_planned_loader_restores_physical_indices_and_position() -> None:

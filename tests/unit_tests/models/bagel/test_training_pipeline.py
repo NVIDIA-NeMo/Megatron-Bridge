@@ -215,6 +215,8 @@ def test_32gpu_recipe_uses_pure_dp_fsdp_topology():
     config = bagel_7b_pretrain_32gpu_h100_bf16_config()
     assert config.train.global_batch_size == 32
     assert config.train.micro_batch_size == 1
+    assert config.dataset.t2i_num_used_data == 40
+    assert config.dataset.editing_num_used_data == 40
     assert config.model.tensor_model_parallel_size == 1
     assert config.model.pipeline_model_parallel_size == 1
     assert config.model.context_parallel_size == 1

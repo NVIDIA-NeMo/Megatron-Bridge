@@ -48,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--world-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--num-batches", type=int, default=100)
+    parser.add_argument("--t2i-num-used-data", type=int, default=10)
+    parser.add_argument("--editing-num-used-data", type=int, default=10)
     parser.add_argument("--save-after", type=int)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
@@ -147,11 +149,11 @@ def build_worker_pipeline(
     world_size: int,
     worker_id: int,
     num_workers: int,
+    num_used_data: tuple[int, int, int],
 ) -> tuple[BagelPacker, list[BagelPlannedLoader]]:
     """Build three full-WDS readers and the official BAGEL packer for one worker."""
     worker_config = WorkerConfig(rank=0, world_size=1, num_workers=0)
     group_dirs = ("t2i", "editing", "vlm")
-    num_used_data = (10, 10, 1000)
     datasets = [
         build_raw_dataset(dataset_root / group, encoder, worker_config) for group, encoder in zip(group_dirs, encoders)
     ]
@@ -188,6 +190,7 @@ class IndependentBagelWorkerDataset(torch.utils.data.IterableDataset):
         world_size: int,
         num_workers: int,
         batches_per_worker: int,
+        num_used_data: tuple[int, int, int],
     ) -> None:
         """Store immutable data, topology, and cooker configuration."""
         super().__init__()
@@ -199,6 +202,7 @@ class IndependentBagelWorkerDataset(torch.utils.data.IterableDataset):
         self.world_size = world_size
         self.num_workers = num_workers
         self.batches_per_worker = batches_per_worker
+        self.num_used_data = num_used_data
 
     def __iter__(self) -> Iterator[dict[str, object]]:
         """Build independent plans and yield this worker's packed batches."""
@@ -217,6 +221,7 @@ class IndependentBagelWorkerDataset(torch.utils.data.IterableDataset):
                 world_size=self.world_size,
                 worker_id=worker_id,
                 num_workers=self.num_workers,
+                num_used_data=self.num_used_data,
             )
             set_worker_rng(torch_initial_seed, worker_id)
             for _ in range(self.batches_per_worker):
@@ -245,6 +250,7 @@ def verify_restore(
                 world_size=args.world_size,
                 worker_id=0,
                 num_workers=1,
+                num_used_data=(args.t2i_num_used_data, args.editing_num_used_data, 1000),
             )
             set_worker_rng(torch_initial_seed, 0)
             loader = BagelExternalLoader(packer, length=args.num_batches, stateful_loaders=source_loaders)
@@ -270,6 +276,7 @@ def verify_restore(
                 world_size=args.world_size,
                 worker_id=0,
                 num_workers=1,
+                num_used_data=(args.t2i_num_used_data, args.editing_num_used_data, 1000),
             )
             restored = BagelExternalLoader(
                 restored_packer,
@@ -335,6 +342,7 @@ def main() -> None:
                 world_size=args.world_size,
                 num_workers=args.num_workers,
                 batches_per_worker=args.num_batches // args.num_workers,
+                num_used_data=(args.t2i_num_used_data, args.editing_num_used_data, 1000),
             )
             loader = torch.utils.data.DataLoader(
                 dataset,

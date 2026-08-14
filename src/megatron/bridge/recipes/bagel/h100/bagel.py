@@ -69,6 +69,8 @@ def bagel_7b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a 32-GPU pure-data-parallel Megatron-FSDP BAGEL configuration."""
     cfg = bagel_7b_pretrain_8gpu_h100_bf16_config()
     cfg.train.global_batch_size = 32
+    cfg.dataset.t2i_num_used_data = 40
+    cfg.dataset.editing_num_used_data = 40
     return cfg
 
 

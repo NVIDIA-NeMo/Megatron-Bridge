@@ -28,6 +28,11 @@ class _RestorableDataset(Protocol):
     def restore_sample(self, key: tuple[str | int, ...]) -> object: ...
 
 
+def _repeat_to_length(items: Sequence[T], length: int) -> list[T]:
+    """Match BAGEL's repeated file selection up to num_used_data."""
+    return (list(items) * (length // len(items) + 1))[:length]
+
+
 def shuffle_and_shard(
     items: Sequence[T],
     *,
@@ -125,20 +130,16 @@ def plan_manifest_indices(
     }
     dataset_group = manifest["dataset_group"]
     if dataset_group == "t2i_pretrain":
-        parquet_paths = cast(list[str], planning["parquet_paths"])[:num_used_data]
+        parquet_paths = _repeat_to_length(cast(list[str], planning["parquet_paths"]), num_used_data)
         row_counts = cast(dict[str, list[int]], planning["row_counts"])
         planned = plan_t2i_sources(parquet_paths, row_counts, **shard_args)
     elif dataset_group == "unified_edit":
         rows = cast(list[dict[str, object]], planning["row_groups"])
-        selected = set(sorted({cast(str, row["parquet"]) for row in rows})[:num_used_data])
+        selected = _repeat_to_length(sorted({cast(str, row["parquet"]) for row in rows}), num_used_data)
         row_groups = [
-            (cast(str, row["parquet"]), cast(int, row["row_group"])) for row in rows if row["parquet"] in selected
+            (path, cast(int, row["row_group"])) for path in selected for row in rows if row["parquet"] == path
         ]
-        row_counts = {
-            (cast(str, row["parquet"]), cast(int, row["row_group"])): cast(int, row["rows"])
-            for row in rows
-            if row["parquet"] in selected
-        }
+        row_counts = {(cast(str, row["parquet"]), cast(int, row["row_group"])): cast(int, row["rows"]) for row in rows}
         planned = plan_editing_sources(row_groups, row_counts, **shard_args)
     elif dataset_group == "vlm_sft":
         planned = plan_vlm_sources(
