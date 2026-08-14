@@ -208,6 +208,8 @@ def _validate_precision_aware_optimizer_runtime_state(
 @contextmanager
 def memory_efficient_precision_aware_optimizer_state_checkpointing(
     optimizer: MegatronOptimizer | None,
+    *,
+    enabled: bool,
 ) -> Iterator[int]:
     """Stage expanded precision-aware Adam checkpoint tensors on CPU.
 
@@ -221,11 +223,12 @@ def memory_efficient_precision_aware_optimizer_state_checkpointing(
 
     Args:
         optimizer: Optimizer participating in checkpointing.
+        enabled: Whether to stage compatible optimizer state on CPU.
 
     Yields:
         Number of compatible FusedAdam instances using CPU staging.
     """
-    if optimizer is None:
+    if not enabled or optimizer is None:
         yield 0
         return
 

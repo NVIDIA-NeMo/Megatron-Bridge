@@ -152,6 +152,7 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
 
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=4096,
@@ -228,6 +229,7 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
 
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=8192,

@@ -312,7 +312,7 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
         distributed, inner, param = self._distributed_optimizer()
 
         with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
-            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed) as patched:
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True) as patched:
                 state = inner.get_unscaled_state(param, "exp_avg")
                 assert patched == 1
                 assert state.device.type == "cpu"
@@ -334,7 +334,7 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
             distributed.is_stub_optimizer = True
 
         with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
-            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed) as patched:
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True) as patched:
                 assert patched == 0
 
         assert "get_unscaled_state" not in inner.__dict__
@@ -344,7 +344,7 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
 
         with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
             with memory_efficient_precision_aware_optimizer_state_checkpointing(
-                _ChainedOpt(distributed_optimizers)
+                _ChainedOpt(distributed_optimizers), enabled=True
             ) as patched:
                 assert patched == 2
                 assert all("get_unscaled_state" in opt.optimizer.__dict__ for opt in distributed_optimizers)
@@ -355,10 +355,19 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
         distributed, inner, _ = self._distributed_optimizer()
 
         with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=None):
-            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed) as patched:
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True) as patched:
                 assert patched == 0
-        with memory_efficient_precision_aware_optimizer_state_checkpointing(None) as patched:
+        with memory_efficient_precision_aware_optimizer_state_checkpointing(None, enabled=True) as patched:
             assert patched == 0
+
+        assert "get_unscaled_state" not in inner.__dict__
+
+    def test_disabled_is_noop(self):
+        distributed, inner, _ = self._distributed_optimizer()
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=False) as patched:
+                assert patched == 0
 
         assert "get_unscaled_state" not in inner.__dict__
 
@@ -369,7 +378,7 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
             patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
             pytest.raises(RuntimeError, match="save failed"),
         ):
-            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True):
                 raise RuntimeError("save failed")
 
         assert "get_unscaled_state" not in inner.__dict__

@@ -130,6 +130,7 @@ def _assert_common_config(cfg: ConfigContainer):
     assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.ddp.use_distributed_optimizer is True
     assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
 
 
 def test_default_hf_path_is_public_model_id():
@@ -234,6 +235,7 @@ def test_cord_v2_8gpu_sft_recipe_uses_validated_execution_tuning(fake_processor)
     assert cfg.model.moe_router_fusion is True
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe", "layernorm"]
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is True
 
 
 @pytest.mark.parametrize(
@@ -338,6 +340,16 @@ def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
     assert cfg.dataset.seq_length == 8192
     assert cfg.dataset.enable_in_batch_packing is True
     assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 8
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is True
+
+
+def test_cord_v2_8gpu_peft_does_not_enable_checkpoint_cpu_staging(fake_processor):
+    cfg = _build_config(
+        _h100_recipe_module.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
 
 
 def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):

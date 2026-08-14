@@ -3162,6 +3162,7 @@ class TestMegatronLMCompatibility:
         mock_cfg.checkpoint.load_optim = True
         mock_cfg.checkpoint.load_rng = False  # Skip RNG loading for this test
         mock_cfg.checkpoint.ckpt_format = "torch_dist"  # Set format explicitly
+        mock_cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu = True
         mock_cfg.model = Mock()
         mock_cfg.model.fp16 = False
         mock_cfg.model.bf16 = False
@@ -3217,7 +3218,7 @@ class TestMegatronLMCompatibility:
 
         # Verify checkpoint version was set
         mock_set_version.assert_called_with(3.0)
-        mock_cpu_staging.assert_called_once_with(mock_optimizer)
+        mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=True)
 
 
 class TestGetTrainStateFromStateDict:
@@ -3958,7 +3959,8 @@ class TestFSDPDTensorFunctionality:
             mock_model.sharded_state_dict.assert_called_once()
             assert "model" in result
 
-    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self):
+    @pytest.mark.parametrize("cpu_staging", [False, True])
+    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self, cpu_staging):
         """Load-time optimizer scaffolding should not depend on save_optim."""
         from unittest.mock import Mock
 
@@ -3973,7 +3975,12 @@ class TestFSDPDTensorFunctionality:
         mock_scheduler = Mock()
         mock_scheduler.state_dict.return_value = {"scheduler": "state"}
 
-        ckpt_cfg = CheckpointConfig(ckpt_format="torch_dist", save_optim=False, save_rng=False)
+        ckpt_cfg = CheckpointConfig(
+            ckpt_format="torch_dist",
+            save_optim=False,
+            save_rng=False,
+            stage_precision_aware_optimizer_state_on_cpu=cpu_staging,
+        )
         with patch(
             "megatron.bridge.training.checkpointing.memory_efficient_precision_aware_optimizer_state_checkpointing"
         ) as mock_cpu_staging:
@@ -3991,7 +3998,7 @@ class TestFSDPDTensorFunctionality:
 
         assert result["optimizer"] == {"optimizer": {"param_groups": []}}
         assert result["opt_param_scheduler"] == {"scheduler": "state"}
-        mock_cpu_staging.assert_called_once_with(mock_optimizer)
+        mock_cpu_staging.assert_called_once_with(mock_optimizer, enabled=cpu_staging)
         mock_optimizer.sharded_state_dict.assert_called_once()
 
     @pytest.mark.parametrize("ckpt_format", ["torch_dist", "fsdp_dtensor"])

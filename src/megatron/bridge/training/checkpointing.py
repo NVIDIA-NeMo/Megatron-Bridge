@@ -2052,7 +2052,10 @@ def generate_state_dict(
     include_optimizer_state = ckpt_cfg.save_optim or is_loading
     if include_optimizer_state:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
-            with memory_efficient_precision_aware_optimizer_state_checkpointing(optimizer):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(
+                optimizer,
+                enabled=ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu,
+            ):
                 if ckpt_cfg.ckpt_format == "torch_dist":
                     state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
                 elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
@@ -3111,7 +3114,10 @@ def _load_checkpoint_from_path(
                     # require grad without this context.
                     with (
                         torch.no_grad(),
-                        memory_efficient_precision_aware_optimizer_state_checkpointing(optimizer),
+                        memory_efficient_precision_aware_optimizer_state_checkpointing(
+                            optimizer,
+                            enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
+                        ),
                     ):
                         optimizer.load_state_dict(state_dict["optimizer"])
 
