@@ -13,6 +13,8 @@
 # limitations under the License.
 """GB300 performance recipes for DeepSeek V3."""
 
+import torch
+
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs,
@@ -26,6 +28,46 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+
+
+def _apply_agentic_mcore_gb300_mxfp8_settings(cfg: ConfigContainer, *, include_nvlink_domain_size: bool) -> None:
+    """Apply the settings shared by the OCI-AGA 1371/1571 TFLOPS runs."""
+    cfg.train.global_batch_size = 8192
+    cfg.train.manual_gc_interval = 10
+    cfg.dataset.create_attention_mask = False
+
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.fused_residual_rmsnorm = True
+    cfg.model.make_vocab_size_divisible_by = 3232
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.0
+    cfg.model.moe_router_padding_for_quantization = True
+
+    _enable_deepseek_precision_aware_optimizer(cfg)
+    cfg.optimizer.optimizer_cuda_graph = True
+
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL": "True",
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NCCL_GRAPH_REGISTER": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_IN_FLIGHT_S2G_DISPATCH_API": 8,
+        "NUM_OF_STAGES_DISPATCH_API": 10,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_EXT_MARGIN_SM": 16,
+        "NVTE_FUSED_ATTN": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "USE_MNNVL": 1,
+    }
+    if include_nvlink_domain_size:
+        cfg.env_vars["NVLINK_DOMAIN_SIZE"] = 72
 
 
 def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
@@ -182,6 +224,41 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp4_config() -> ConfigContainer:
+    """Reproduce the OCI-AGA 1371 TFLOPS PP4/EP32 full-iteration graph configuration."""
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.attention_backend = "flash"
+    cfg.mixed_precision.fp8_dot_product_attention = False
+    cfg.model.fp8_dot_product_attention = False
+    cfg.model.fp8_output_proj = False
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(tttt|)*14tmL")
+
+    _apply_agentic_mcore_gb300_mxfp8_settings(cfg, include_nvlink_domain_size=False)
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp2_config() -> ConfigContainer:
+    """Reproduce the OCI-AGA 1571 TFLOPS PP2/EP32 full-iteration graph configuration."""
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.attention_backend = None
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.fp8_dot_product_attention = True
+    cfg.model.fp8_output_proj = True
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(tttt|)*14tmL")
+
+    _apply_agentic_mcore_gb300_mxfp8_settings(cfg, include_nvlink_domain_size=True)
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
     return cfg
 
 
