@@ -14,18 +14,12 @@
 
 """Declared Megatron-Core support window for pip-installed Megatron Bridge.
 
-Bridge is developed against the Megatron-Core commit pinned in
-``3rdparty/Megatron-LM``, but a pip-installed Bridge must also work with the
-publicly installable Megatron-Core 0.18.x line. The lower bound is therefore
-explicit, while the upper bound moves with the pin:
-
-    public compatibility floor  <=  megatron-core  <  next minor of the pin
-
-With the pin at 0.20.0 that resolves to ``>=0.18.0,<0.21``. When the pin moves,
-:data:`MCORE_PIN_VERSION`, the compatibility floor, and the bound in
-``pyproject.toml`` must be reviewed together. ``tests/unit_tests/compat/test_mcore_version.py``
-fails if the pin drifts from the submodule or the package bound drifts from the
-declared window.
+Bridge supports the Megatron-Core minor pinned in ``3rdparty/Megatron-LM`` and
+the two preceding minors. Both bounds move with the pin, so with the pin at
+0.20.0 the window is ``>=0.18.0,<0.21``. :data:`MCORE_PIN_VERSION`, the
+compatibility floor, and the bound in ``pyproject.toml`` must be reviewed
+together. ``tests/unit_tests/compat/test_mcore_version.py`` fails if the pin
+drifts from the submodule or the package bound drifts from the declared window.
 """
 
 import logging

@@ -96,23 +96,13 @@ The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://gi
 
 ### Supported Megatron-Core versions
 
-A pip-installed Megatron Bridge is not restricted to the exact submodule pin. Bridge keeps
-compatibility with the publicly installable Megatron-Core 0.18.x line while accepting releases
-through the current pin:
+Bridge supports a rolling three-minor Megatron-Core window: if the pinned minor is N, the supported
+minors are N, N-1, and N-2. When the pin advances, the lower bound advances too, so older minors are
+not supported indefinitely. With the current pin at `0.20`, package installation enforces
+`megatron-core>=0.18.0,<0.21`.
 
-> `megatron-core>=0.18.0` and below the next minor after the current pin
-
-With the pin at Megatron-Core `0.20.0`, that resolves to `megatron-core>=0.18.0,<0.21`.
-Installing Megatron Bridge alongside a
-Megatron-Core already inside that window leaves it in place; anything outside it fails at
-install time, and `megatron.bridge.compat.mcore_version.check_mcore_version()` logs a warning at
-import time. When the submodule pin moves to a new minor release, both bounds and the compatibility
-layer are reviewed together.
-
-Where an API used by Bridge exists only in the pinned commit, Bridge ships a compatibility
-shim so the older release keeps working — for example `megatron.training.models.gpt`, which was
-added after 0.18.x was cut, falls back to
-`megatron.bridge.compat.mcore_gpt`.
+Compatibility shims cover APIs missing from older supported minors; for example,
+`megatron.bridge.compat.mcore_gpt` provides the GPT builder interface on 0.18.x.
 
 ## ⚡ Quickstart
 
