@@ -24,6 +24,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from megatron.core import parallel_state
+from megatron.core.extensions.transformer_engine import HAVE_TE, TENorm
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.backends import get_backend
 from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
@@ -132,20 +133,18 @@ class MuseGlimmerWeightlessRMSNorm(nn.Module):
 
 
 def _centered_rms_norm_cls(config: TransformerConfig) -> type[nn.Module]:
-    """Select the backend-native centered RMSNorm when it supports Muse semantics."""
-    if config.transformer_impl == "local":
-        return MuseGlimmerCenteredRMSNorm
-    return get_backend(config.transformer_impl).layer_norm(rms_norm=True)
+    """Use TE for affine normalization whenever it is available."""
+    return TENorm if HAVE_TE else MuseGlimmerCenteredRMSNorm
 
 
 def _standard_rms_norm(config: TransformerConfig, hidden_size: int, eps: float) -> nn.Module:
-    """Build a standard-gamma RMSNorm with the configured model backend."""
-    if config.transformer_impl == "local":
+    """Build a standard-gamma RMSNorm with TE when it is available."""
+    if not HAVE_TE:
         return MuseGlimmerRMSNorm(config, hidden_size, eps=eps)
 
     norm_config = copy(config)
     norm_config.layernorm_zero_centered_gamma = False
-    return get_backend(config.transformer_impl).layer_norm(rms_norm=True)(
+    return TENorm(
         norm_config,
         hidden_size,
         eps=eps,
@@ -156,15 +155,15 @@ def _vision_layer_norm(
     config: MuseGlimmerVisionModelConfig,
     transformer_config: TransformerConfig,
 ) -> nn.Module:
-    """Build the vision LayerNorm with TE unless the local backend is explicit."""
-    if transformer_config.transformer_impl == "local":
+    """Build the vision LayerNorm with TE when it is available."""
+    if not HAVE_TE:
         return nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
 
     norm_config = copy(transformer_config)
     norm_config.normalization = "LayerNorm"
     norm_config.layernorm_zero_centered_gamma = False
     norm_config.sequence_parallel = False
-    return get_backend(transformer_config.transformer_impl).layer_norm()(
+    return TENorm(
         norm_config,
         config.hidden_size,
         eps=config.layer_norm_epsilon,

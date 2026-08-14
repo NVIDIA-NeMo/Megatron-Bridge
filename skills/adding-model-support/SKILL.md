@@ -185,6 +185,9 @@ Transformer Engine version pinned by Megatron-Core. Use the backend-provided `TE
 corresponding TE module) for affine LayerNorm and RMSNorm whenever TE implements the required
 semantics. Preserve `eps`, parameter dtype/device initialization, sequence-parallel metadata, and
 `zero_centered_gamma`; standard-gamma and zero-centered-gamma norms are not interchangeable.
+The attention/linear backend and normalization choice need not be coupled: a local attention spec
+may still use `TENorm`. Retain a semantics-equivalent local fallback when model construction must
+work in an environment where Transformer Engine itself is unavailable.
 
 Do not introduce a dummy affine parameter merely to reach a fused kernel. For example, current TE
 RMSNorm always owns a learnable `weight`, so a genuinely weightless/scaleless RMSNorm must retain a

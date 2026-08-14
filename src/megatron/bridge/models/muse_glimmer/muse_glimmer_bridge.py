@@ -216,7 +216,7 @@ class MuseGlimmerBridge(MegatronModelBridge):
             params_dtype=params_dtype,
             fp16=params_dtype == torch.float16,
             bf16=params_dtype == torch.bfloat16,
-            transformer_impl="transformer_engine",
+            transformer_impl="local",
             output_multiplier=float(text_config.output_multiplier),
             final_logit_softcapping=float(text_config.final_logit_softcapping),
         )
