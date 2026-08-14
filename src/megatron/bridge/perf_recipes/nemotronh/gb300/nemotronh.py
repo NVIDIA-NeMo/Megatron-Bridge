@@ -421,7 +421,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, MXFP8, NCCL EP=8."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config()
-    _enable_ncclep(cfg, mxfp8=True, moe_a2a_overlap=True)
+    _enable_ncclep(cfg, mxfp8=True, moe_a2a_overlap=False)
     return cfg
 
 
