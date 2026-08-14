@@ -262,6 +262,13 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp2_config() -> ConfigContai
     return cfg
 
 
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp2_no_opt_cg_config() -> ConfigContainer:
+    """Agentic PP2 reproduction with optimizer CUDA graph disabled for an A/B check."""
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp2_config()
+    cfg.optimizer.optimizer_cuda_graph = False
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, NVFP4."""
     cfg = deepseek_v3_pretrain_config()
