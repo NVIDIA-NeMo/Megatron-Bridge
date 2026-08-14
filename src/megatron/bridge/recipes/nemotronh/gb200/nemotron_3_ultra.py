@@ -62,10 +62,13 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.min_offloaded_tensor_size = 350_000_000
     cfg.model.offload_modules = ["fused_group_mlp"]
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-    cfg.model.recompute_granularity = None
+    # Recompute the expert activation output while offloading its larger input.
+    # Keeping both halves of this memory policy prevents CPU activation growth
+    # across pipeline iterations while preserving the training objective.
+    cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = None
+    cfg.model.recompute_modules = ["moe_act"]
 
     cfg.dist.use_megatron_fsdp = False
     cfg.ddp.use_megatron_fsdp = False

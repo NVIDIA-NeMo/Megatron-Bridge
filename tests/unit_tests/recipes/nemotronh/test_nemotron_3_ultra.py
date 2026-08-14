@@ -151,8 +151,8 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.min_offloaded_tensor_size == 350_000_000
     assert cfg.model.offload_modules == ["fused_group_mlp"]
-    assert cfg.model.recompute_granularity is None
-    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe_act"]
 
     assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
