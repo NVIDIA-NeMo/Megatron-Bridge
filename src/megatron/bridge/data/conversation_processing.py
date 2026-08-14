@@ -37,6 +37,21 @@ _LEGACY_CHAT_ROLE_ALIASES = {"human": "user", "gpt": CHATML_ASSISTANT_ROLE}
 # will tokenize. Sized to admit payloads that print themselves in full — a few hundred frame
 # reprs, or a float array below numpy's summarization threshold — and reject the rest.
 _MAX_SCANNED_REPR_CHARS = 65536
+_PIPELINE_CONTROLLED_CHAT_TEMPLATE_KWARGS = frozenset(
+    {
+        "add_generation_prompt",
+        "chat_template",
+        "continue_final_message",
+        "max_length",
+        "padding",
+        "return_assistant_tokens_mask",
+        "return_dict",
+        "return_tensors",
+        "tokenize",
+        "tools",
+        "truncation",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -436,23 +451,72 @@ def _conversation_from_example(
 def chat_template_kwargs_from_example(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Return optional HF chat-template kwargs stored alongside a conversation."""
+    """Return optional HF chat-template kwargs stored alongside a conversation.
+
+    Rows may provide model-template controls such as ``enable_thinking`` or
+    ``truncate_history_thinking`` under ``chat_template_kwargs``. Rendering
+    and tokenization controls remain owned by the data pipeline, while tool
+    schemas use the established top-level ``tools`` field.
+
+    Raises:
+        ValueError: If ``chat_template_kwargs`` is not a string-keyed mapping or
+            attempts to override a pipeline-controlled argument.
+    """
     if not isinstance(example_or_conversation, Mapping):
         return {}
 
-    kwargs: dict[str, Any] = {}
+    raw_kwargs = example_or_conversation.get("chat_template_kwargs")
+    if raw_kwargs is None:
+        kwargs: dict[str, Any] = {}
+    elif not isinstance(raw_kwargs, Mapping) or not all(isinstance(key, str) for key in raw_kwargs):
+        raise ValueError("chat_template_kwargs must be a string-keyed mapping.")
+    else:
+        controlled_keys = sorted(_PIPELINE_CONTROLLED_CHAT_TEMPLATE_KWARGS.intersection(raw_kwargs))
+        if controlled_keys:
+            joined_keys = ", ".join(controlled_keys)
+            raise ValueError(f"chat_template_kwargs cannot override pipeline-controlled arguments: {joined_keys}.")
+        kwargs = dict(raw_kwargs)
+        truncate_history = kwargs.get("truncate_history_thinking")
+        if truncate_history is not None and not isinstance(truncate_history, bool):
+            raise ValueError("chat_template_kwargs.truncate_history_thinking must be a boolean.")
+
     tools = example_or_conversation.get("tools")
     if tools is not None:
         kwargs["tools"] = tools
     return kwargs
 
 
+def resolve_chat_template_kwargs(template_owner: Any, template_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate canonical chat controls to a template's native parameter names.
+
+    MBridge exposes ``truncate_history_thinking`` consistently. Templates that
+    implement the inverse ``preserve_thinking`` control receive the equivalent
+    negated value only at the rendering boundary.
+
+    Args:
+        template_owner: Processor or tokenizer that owns the chat template.
+        template_kwargs: Canonical chat-template keyword arguments.
+
+    Returns:
+        A copied mapping adapted to the selected template.
+    """
+    kwargs = dict(template_kwargs)
+    if "truncate_history_thinking" not in kwargs:
+        return kwargs
+    tokenizer = get_processor_tokenizer(template_owner)
+    template = _get_chat_template(template_owner, tokenizer)
+    if template is not None and "preserve_thinking" in template and "truncate_history_thinking" not in template:
+        truncate_history = kwargs.pop("truncate_history_thinking")
+        kwargs["preserve_thinking"] = not truncate_history
+    return kwargs
+
+
 def shared_chat_template_kwargs_from_examples(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Return dataset-wide chat-template kwargs shared by a processor batch.
 
-    Processor-batched VLM collators accept one tool schema for the whole
-    microbatch. Datasets using these collators must therefore use a shared tool
-    registry instead of varying tool definitions per row.
+    Processor-batched VLM collators accept one set of template kwargs for the
+    whole microbatch. Datasets using these collators must therefore keep those
+    controls and any tool registry identical across rows.
 
     Raises:
         ValueError: If rows in one processor batch use different template kwargs.
@@ -461,7 +525,7 @@ def shared_chat_template_kwargs_from_examples(examples: Sequence[Mapping[str, An
         return {}
     kwargs = chat_template_kwargs_from_example(examples[0])
     if any(chat_template_kwargs_from_example(example) != kwargs for example in examples[1:]):
-        raise ValueError("All examples in one processor batch must use the same chat-template tools.")
+        raise ValueError("All examples in one processor batch must use the same chat-template kwargs and tools.")
     return kwargs
 
 
@@ -562,7 +626,7 @@ def _apply_tokenized_chat_template(
     apply_chat_template = _get_explicit_attribute(template_owner, "apply_chat_template")
     if apply_chat_template is None:
         raise ValueError("Chat preprocessing requires a processor or tokenizer with apply_chat_template.")
-    kwargs = dict(tokenize_kwargs)
+    kwargs = resolve_chat_template_kwargs(template_owner, tokenize_kwargs)
     try:
         return apply_chat_template(conversation, **kwargs)
     except TypeError:
@@ -1122,13 +1186,16 @@ def _assistant_mask_from_hf_chat_template(
             continue
 
         try:
-            tokenized_chat = apply_chat_template(
+            tokenized_chat = _apply_tokenized_chat_template(
+                template_owner,
                 conversation,
-                tokenize=True,
-                add_generation_prompt=False,
-                return_dict=True,
-                return_assistant_tokens_mask=True,
-                **chat_template_kwargs,
+                {
+                    "tokenize": True,
+                    "add_generation_prompt": False,
+                    "return_dict": True,
+                    "return_assistant_tokens_mask": True,
+                    **chat_template_kwargs,
+                },
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
