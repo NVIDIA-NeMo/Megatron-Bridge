@@ -38,7 +38,7 @@ bridge = AutoBridge.from_hf_pretrained(
 model_config = bridge.get_model_config()
 
 # Apply deployment-specific parallelism before construction.
-model_config.transformer.tensor_model_parallel_size = 8
+model_config.tensor_model_parallel_size = 8
 models = bridge.get_model(model_config)
 ```
 

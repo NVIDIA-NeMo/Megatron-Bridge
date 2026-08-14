@@ -26,6 +26,7 @@ from megatron.bridge.models.muse_glimmer import (
     MuseGlimmerModelBuilder,
     MuseGlimmerModelConfig,
     MuseGlimmerTextConfig,
+    MuseGlimmerTransformerConfig,
     MuseGlimmerVisionConfig,
 )
 from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
@@ -124,6 +125,24 @@ def test_config_conversion_uses_model_config_path_only() -> None:
     assert model_config.vision_config is model_config.vision
     assert model_config.vision_config.depth == 4
     assert model_config.vision_config.spatial_merge_size == 2
+
+
+def test_model_config_owns_transformer_type_and_routes_flat_overrides() -> None:
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
+
+    assert MuseGlimmerModelConfig.transformer_config_class is MuseGlimmerTransformerConfig
+    assert "TRANSFORMER_CONFIG_CLASS" not in MuseGlimmerBridge.__dict__
+
+    model_config.tensor_model_parallel_size = 8
+    model_config.seq_length = 512
+
+    assert model_config.transformer.tensor_model_parallel_size == 8
+    assert "tensor_model_parallel_size" not in model_config.__dict__
+    assert model_config.seq_length == 512
+    assert "seq_length" in model_config.__dict__
+
+    with pytest.raises(AttributeError, match="declares a field"):
+        model_config.tesnor_model_parallel_size = 4
 
 
 def test_config_conversion_uses_top_level_embedding_sharing_contract() -> None:

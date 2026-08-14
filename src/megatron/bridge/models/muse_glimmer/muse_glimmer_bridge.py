@@ -138,7 +138,6 @@ class MuseGlimmerBridge(MegatronModelBridge):
     """Builder-backed bridge for the complete Muse Glimmer multimodal model."""
 
     MODEL_CONFIG_CLASS = MuseGlimmerModelConfig
-    TRANSFORMER_CONFIG_CLASS = MuseGlimmerTransformerConfig
 
     @staticmethod
     def _validate_architecture(hf_config: PretrainedConfig) -> tuple[Any, Any]:
