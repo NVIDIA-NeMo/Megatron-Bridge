@@ -88,7 +88,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]

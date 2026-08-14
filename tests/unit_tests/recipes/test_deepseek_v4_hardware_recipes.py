@@ -64,7 +64,7 @@ def test_base_recipes_enable_precision_independent_fusions(
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
     assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
     assert cfg.model.use_transformer_engine_op_fuser is False
-    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.comm_overlap.overlap_grad_reduce is True
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 
