@@ -60,6 +60,7 @@ class _AsyncLLM:
             generated_log_probs=[-0.3],
             prompt_top_n_logprobs=[{"prompt-token": -0.1}],
             generated_top_n_logprobs=[{"generated-token": -0.3}],
+            failed=lambda: False,
         )
 
 
@@ -151,3 +152,44 @@ def test_generate_prints_requested_log_probabilities(
     assert "Generated log probs: [-0.3]" in rendered
     assert "Prompt top-n logprobs: [{'prompt-token': -0.1}]" in rendered
     assert "Generated top-n logprobs: [{'generated-token': -0.3}]" in rendered
+
+
+@pytest.mark.unit
+def test_generate_rejects_failed_inference_requests(
+    async_text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _failed_generate(_self, _prompt, _sampling_params):
+        return types.SimpleNamespace(
+            request_id=7,
+            status=types.SimpleNamespace(name="FAILED"),
+            generated_text="",
+            failed=lambda: True,
+        )
+
+    monkeypatch.setattr(_AsyncLLM, "generate", _failed_generate)
+    args = types.SimpleNamespace(
+        max_seq_length=32,
+        max_new_tokens=2,
+        max_batch_size=None,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=1.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        coordinator_host=None,
+        coordinator_port=None,
+    )
+    tokenizer = types.SimpleNamespace(tokenize=lambda prompt: [1, 2])
+
+    with pytest.raises(RuntimeError, match="request 7.*FAILED"):
+        asyncio.run(
+            async_text_generation_entrypoint._generate(
+                args,
+                model=object(),
+                tokenizer=tokenizer,
+                prompts=["prompt"],
+                sampling_params=object(),
+            )
+        )

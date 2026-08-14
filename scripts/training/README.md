@@ -171,7 +171,9 @@ repository's `ChatMLWebdataset` tar-member contract.
 The [DataComp tutorial](../../tutorials/data/datacomp/README.md) documents a
 complete image-caption preparation and training flow; the
 [multimodal Energon tutorial](../../tutorials/data/energon/README.md) documents
-the general tar-member contract.
+the general tar-member contract. The
+[Nemotron Image Training v3 tutorial](../../tutorials/data/energon/nemotron-image-v3.md) shows a pinned small-subset
+download, conversion, and Qwen3-VL `train.sh` launch through this selector.
 
 ### OpenMathInstruct-2
 
