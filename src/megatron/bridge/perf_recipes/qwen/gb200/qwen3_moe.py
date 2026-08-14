@@ -297,6 +297,8 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
     }
     return cfg
 
