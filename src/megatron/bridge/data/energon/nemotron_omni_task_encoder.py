@@ -16,7 +16,7 @@
 
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass, fields
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import torch
 
@@ -128,7 +128,8 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
     assistant masking, modality-token expansion, padding, and in-batch packing
     are performed by the canonical expanded-sequence collator for both
     Direct-HF and Energon datasets. ``collapse_image_tokens=True`` selects the
-    deprecated LLaVA compatibility contract.
+    deprecated LLaVA compatibility contract. Processor-driven temporal video
+    resizing is an Energon option and requires the canonical contract.
     """
 
     def __init__(
@@ -143,6 +144,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         video_nframes: int = 8,
         use_temporal_video_embedder: bool = False,
         patch_dim: int = 16,
+        temporal_video_resize_mode: Literal["fixed_512", "processor"] = "fixed_512",
         pad_to_max_length: bool = False,
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
@@ -168,6 +170,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         self.video_nframes = video_nframes
         self.use_temporal_video_embedder = use_temporal_video_embedder
         self.patch_dim = patch_dim
+        self.temporal_video_resize_mode = temporal_video_resize_mode
         self.collapse_image_tokens = collapse_image_tokens
 
     def collate_fn(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -188,6 +191,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
             video_nframes=self.video_nframes,
             use_temporal_video_embedder=self.use_temporal_video_embedder,
             patch_dim=self.patch_dim,
+            temporal_video_resize_mode=self.temporal_video_resize_mode,
         )
 
     def batch(self, samples: list[HFEnergonSample]) -> NemotronOmniTaskBatch:

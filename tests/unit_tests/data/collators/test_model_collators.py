@@ -2634,6 +2634,8 @@ def test_nemotron_omni_expanded_collate_emits_one_placeholder_per_temporal_featu
         "input_ids": input_ids,
         "attention_mask": torch.ones_like(input_ids),
         "visual_inputs": GenericVisualInputs(pixel_values=torch.ones(1, 1, 768)),
+        "imgs_sizes": torch.tensor([[512, 512], [512, 512]]),
+        "num_frames": torch.tensor([2]),
     }
     examples = [{"conversation": [{"role": "user", "content": "one tubelet"}]}]
     monkeypatch.setattr(

@@ -869,6 +869,32 @@ def test_super_vl_rectangular_image_and_video_use_exact_visual_token_counts(
 
 
 @pytest.mark.run_only_on("GPU")
+def test_real_radio_ragged_rectangular_multiframe_video_forward(single_rank_model_parallel):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider()
+    provider.finalize()
+    model = provider.provide().cuda().eval()
+    input_ids = torch.tensor([[7, 18, 18, 18, 18, 18, 9, 10]], device="cuda")
+    patch_features = 3 * model.patch_dim**2
+
+    with torch.no_grad():
+        output = model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            pixel_values=torch.randn(1, 40, patch_features, device="cuda"),
+            imgs_sizes=torch.tensor(
+                [[32, 64], [32, 64], [32, 96], [32, 96]],
+                dtype=torch.int32,
+                device="cuda",
+            ),
+            num_frames=torch.tensor([2, 2], dtype=torch.int32, device="cuda"),
+        )
+
+    assert output.shape == (1, 8, 128)
+    assert torch.isfinite(output).all()
+
+
+@pytest.mark.run_only_on("GPU")
 def test_packed_mamba_resets_state_between_samples(single_rank_model_parallel):
     del single_rank_model_parallel
     provider = _TinyOmniProvider()

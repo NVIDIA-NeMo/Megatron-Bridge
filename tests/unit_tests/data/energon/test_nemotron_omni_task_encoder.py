@@ -108,6 +108,33 @@ class _Processor:
         return output
 
 
+class _AspectVideoImageProcessor:
+    max_num_patches = 13312
+    _is_video_mode = False
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *, images, return_tensors):
+        assert self._is_video_mode is True
+        assert return_tensors is None
+        self.calls.append(images)
+        sizes = []
+        pixels = []
+        token_counts = []
+        for image in images:
+            if image.width * 9 == image.height * 16:
+                height, width = 384, 672
+            elif image.width == image.height * 2:
+                height, width = 352, 704
+            else:
+                raise AssertionError(f"Unexpected test aspect ratio {image.size}")
+            sizes.append((height, width))
+            pixels.append(torch.ones(3, height, width))
+            token_counts.append((height // 16) * (width // 16) // 4)
+        return {"pixel_values": pixels, "imgs_sizes": sizes, "num_tokens": token_counts}
+
+
 def _sample(conversation, *, key="sample", imgs=None, videos=None, audio=None):
     return ChatMLSample(
         **sample_metadata_kwargs(key=key, restore_key=(), subflavors={}),
@@ -402,6 +429,127 @@ def test_energon_temporal_video_defaults_to_expanded_contract(monkeypatch):
     assert int((batch.input_ids == IMAGE_TOKEN_ID).sum().item()) == 256
     assert batch.attention_mask.sum().item() == 261
     assert batch.num_frames.tolist() == [2]
+
+
+@pytest.mark.parametrize("resize_mode", ["fixed_512", "processor"])
+def test_energon_temporal_mode_all_text_batch_has_no_visual_metadata(monkeypatch, resize_mode):
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    processor = _Processor([[1, 21, PAD_AND_END_ID]])
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=16,
+        use_temporal_video_embedder=True,
+        temporal_video_resize_mode=resize_mode,
+        pad_to_multiple_of=1,
+    )
+    encoded = encoder.encode_sample(_sample([{"role": "user", "content": "Describe the clip."}]))
+
+    batch = encoder.batch([encoded])
+
+    assert batch.visual_inputs is None
+    assert batch.imgs_sizes is None
+    assert batch.num_frames is None
+    assert batch.num_image_tiles is None
+
+
+def test_energon_processor_temporal_video_uses_per_tubelet_feature_counts(monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    rows = [
+        [1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21, PAD_AND_END_ID],
+        [2, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 31, PAD_AND_END_ID],
+    ]
+    processor = _Processor(rows)
+    processor.image_processor = _AspectVideoImageProcessor()
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=512,
+        temporal_patch_size=2,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        temporal_video_resize_mode="processor",
+        pad_to_multiple_of=1,
+    )
+    source_samples = [
+        _sample(
+            [{"role": "user", "content": [{"type": "video"}]}],
+            key="wide-16-9",
+            videos=[[Image.new("RGB", (160, 90)), Image.new("RGB", (160, 90))]],
+        ),
+        _sample(
+            [{"role": "user", "content": [{"type": "video"}]}],
+            key="wide-2-1",
+            videos=[[Image.new("RGB", (200, 100)), Image.new("RGB", (200, 100))]],
+        ),
+    ]
+
+    batch = encoder.batch([encoder.encode_sample(sample) for sample in source_samples])
+
+    assert [(row == IMAGE_TOKEN_ID).sum().item() for row in batch.input_ids] == [252, 242]
+    assert batch.attention_mask.sum(dim=1).tolist() == [257, 247]
+    assert batch.imgs_sizes.tolist() == [[384, 672], [384, 672], [352, 704], [352, 704]]
+    assert batch.num_frames.tolist() == [2, 2]
+    assert batch.num_image_tiles.tolist() == [1, 1]
+    assert batch.visual_inputs.pixel_values.shape == (1, 3952, 768)
+    assert len(processor.image_processor.calls) == 2
+
+
+def test_energon_processor_temporal_video_packing_preserves_ragged_boundaries(monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    rows = [
+        [1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21, PAD_AND_END_ID],
+        [2, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 31, PAD_AND_END_ID],
+    ]
+    processor = _Processor(rows)
+    processor.image_processor = _AspectVideoImageProcessor()
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=512,
+        temporal_patch_size=2,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        temporal_video_resize_mode="processor",
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=8,
+        pad_to_multiple_of=1,
+    )
+    samples = [
+        _sample(
+            [{"role": "user", "content": [{"type": "video"}]}],
+            key="wide-16-9",
+            videos=[[Image.new("RGB", (160, 90)), Image.new("RGB", (160, 90))]],
+        ),
+        _sample(
+            [{"role": "user", "content": [{"type": "video"}]}],
+            key="wide-2-1",
+            videos=[[Image.new("RGB", (200, 100)), Image.new("RGB", (200, 100))]],
+        ),
+    ]
+
+    batch = encoder.batch([encoder.encode_sample(sample) for sample in samples])
+
+    assert batch.input_ids.shape == (1, 512)
+    assert int((batch.input_ids == IMAGE_TOKEN_ID).sum().item()) == 494
+    assert batch.cu_seqlens_q.tolist() == [0, 257, 504]
+    assert batch.cu_seqlens_q_padded.tolist() == [0, 264, 512]
+    assert batch.total_tokens == 512
+    assert batch.padding_mask.sum().item() == 8
+
+
+def test_energon_processor_temporal_video_rejects_legacy_contract():
+    encoder = NemotronOmniTaskEncoder(
+        processor=_Processor([[1]]),
+        use_temporal_video_embedder=True,
+        temporal_video_resize_mode="processor",
+        collapse_image_tokens=True,
+        pad_to_multiple_of=1,
+    )
+
+    with pytest.raises(ValueError, match="canonical expanded-sequence"):
+        encoder.collate_fn([{"conversation": [{"role": "user", "content": "text"}]}])
 
 
 def test_energon_multiple_raw_video_bytes_keep_placeholder_order():
