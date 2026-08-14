@@ -50,9 +50,11 @@ def _quantized_linear(
     input_amax: float,
 ) -> torch.nn.Module:
     module = torch.nn.Linear(weight.shape[1], weight.shape[0], bias=False, device=weight.device, dtype=weight.dtype)
+    quant_config = copy.deepcopy(mtq.NVFP4_DEFAULT_CFG)
+    quant_config["algorithm"] = {"method": "max", "distributed_sync": False}
     mtq.quantize(
         module,
-        copy.deepcopy(mtq.NVFP4_DEFAULT_CFG),
+        quant_config,
         lambda model: model(torch.ones(1, weight.shape[1], device=weight.device, dtype=weight.dtype)),
     )
     with torch.no_grad():
