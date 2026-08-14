@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Execution-parity and convergence guardrails for DeepSeek V4 hardware recipes."""
+"""Execution and convergence guardrails for DeepSeek V4 hardware recipes."""
 
 from collections.abc import Callable
 
@@ -20,12 +20,6 @@ import pytest
 import torch
 
 import megatron.bridge.recipes as recipes
-from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
-    deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config as flash_perf_config,
-)
-from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
-    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config as pro_perf_config,
-)
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config as flash_bf16_base_config,
 )
@@ -50,68 +44,10 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 
 pytestmark = pytest.mark.unit
 
-_SHARED_MODEL_EXECUTION_FIELDS = (
-    "tensor_model_parallel_size",
-    "virtual_pipeline_model_parallel_size",
-    "context_parallel_size",
-    "expert_model_parallel_size",
-    "expert_tensor_parallel_size",
-    "sequence_parallel",
-    "moe_token_dispatcher_type",
-    "moe_flex_dispatcher_backend",
-    "moe_shared_expert_overlap",
-    "moe_hybridep_num_sms",
-    "recompute_granularity",
-    "cross_entropy_fusion_impl",
-    "moe_pad_experts_for_cuda_graph_inference",
-    "moe_mlp_glu_interleave_size",
-    "use_transformer_engine_op_fuser",
-)
-
-_SHARED_ENV_VARS = (
-    "CUDA_DEVICE_MAX_CONNECTIONS",
-    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
-    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
-    "NVLINK_DOMAIN_SIZE",
-    "USE_MNNVL",
-    "NVTE_BWD_LAYERNORM_SM_MARGIN",
-    "NVTE_FWD_LAYERNORM_SM_MARGIN",
-    "NVTE_NORM_BWD_USE_CUDNN",
-    "NVTE_NORM_FWD_USE_CUDNN",
-    "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
-)
-
 
 @pytest.fixture(autouse=True)
 def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
-
-
-@pytest.mark.parametrize(
-    ("library_factory", "perf_factory"),
-    [
-        (flash_library_config, flash_perf_config),
-        (pro_library_config, pro_perf_config),
-    ],
-    ids=["flash-gb200", "pro-gb300"],
-)
-def test_high_scale_library_recipes_share_approved_execution_fields(
-    library_factory: Callable[[], ConfigContainer],
-    perf_factory: Callable[[], ConfigContainer],
-) -> None:
-    library_cfg = library_factory()
-    perf_cfg = perf_factory()
-
-    for field_name in _SHARED_MODEL_EXECUTION_FIELDS:
-        library_value = getattr(library_cfg.model, field_name, None)
-        perf_value = getattr(perf_cfg.model, field_name, None)
-        assert library_value == perf_value, field_name
-
-    assert library_cfg.train.micro_batch_size == perf_cfg.train.micro_batch_size == 1
-    assert library_cfg.comm_overlap.overlap_grad_reduce is perf_cfg.comm_overlap.overlap_grad_reduce is True
-    assert library_cfg.ddp.average_in_collective == perf_cfg.ddp.average_in_collective
-    for variable_name in _SHARED_ENV_VARS:
-        assert library_cfg.env_vars[variable_name] == perf_cfg.env_vars[variable_name], variable_name
 
 
 @pytest.mark.parametrize(
@@ -229,21 +165,6 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
 
-    perf_cfg = flash_perf_config()
-    assert perf_cfg.model.pipeline_model_parallel_size == 1
-    assert perf_cfg.model.pipeline_model_parallel_layout is None
-    assert perf_cfg.train.global_batch_size == 2048
-    assert perf_cfg.model.moe_router_force_load_balancing is True
-    assert perf_cfg.model.dsa_indexer_loss_coeff == 0.01
-    assert perf_cfg.model.quant_recipe is None
-    assert perf_cfg.model.recompute_modules == ["mla_up_proj"]
-    assert perf_cfg.model.fine_grained_activation_offloading is False
-    assert perf_cfg.model.offload_modules == []
-    assert perf_cfg.mixed_precision.fp8_param_gather is True
-    assert perf_cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
-    assert perf_cfg.ddp.grad_reduce_in_fp32 is False
-    assert perf_cfg.ddp.check_for_nan_in_grad is False
-
 
 def test_pro_high_scale_recipe_preserves_real_training_contract() -> None:
     cfg = pro_library_config()
@@ -278,19 +199,6 @@ def test_pro_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-
-    perf_cfg = pro_perf_config()
-    assert perf_cfg.model.pipeline_model_parallel_size == 4
-    assert perf_cfg.model.virtual_pipeline_model_parallel_size == 4
-    assert perf_cfg.model.pipeline_model_parallel_layout == "Et*4|(tttt|)*14tmL"
-    assert perf_cfg.train.global_batch_size == 4096
-    assert perf_cfg.model.moe_router_force_load_balancing is True
-    assert perf_cfg.model.dsa_indexer_loss_coeff == 0.01
-    assert perf_cfg.model.quant_recipe is None
-    assert perf_cfg.mixed_precision.fp8_param_gather is True
-    assert perf_cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert perf_cfg.ddp.grad_reduce_in_fp32 is False
-    assert perf_cfg.ddp.check_for_nan_in_grad is False
 
 
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:

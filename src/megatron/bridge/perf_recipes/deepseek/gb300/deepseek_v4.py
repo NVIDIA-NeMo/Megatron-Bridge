@@ -21,7 +21,7 @@ from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
-    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config as deepseek_v4_pro_256gpu_library_config,
+    deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 
@@ -52,10 +52,24 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Pro pretrain: 256× GB300, MXFP8, dev Megatron-Core required."""
-    cfg = deepseek_v4_pro_256gpu_library_config()
+    cfg = deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config()
 
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 4096
-    cfg.train.manual_gc_interval = 100
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.pipeline_model_parallel_layout = "Et*4|(tttt|)*14tmL"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["mla_up_proj", "mhc"]
 
     _benchmark_common(cfg, cross_entropy_impl="native")
 
@@ -89,6 +103,11 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.optimizer.main_grads_dtype = torch.bfloat16
     cfg.dist.enable_megatron_core_experimental = True
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
