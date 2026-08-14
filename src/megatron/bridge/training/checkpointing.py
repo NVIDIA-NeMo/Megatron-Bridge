@@ -1719,7 +1719,12 @@ def cleanup_old_non_persistent_checkpoint(
     """
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
         return
-    save_dir = Path(save_dir)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        save_dir = msc.Path(save_dir)
+    else:
+        msc = None
+        save_dir = Path(save_dir)
 
     iter_prefix = "iter_"
     iter_ckpts = save_dir.glob(f"{iter_prefix}*")
@@ -1745,7 +1750,10 @@ def cleanup_old_non_persistent_checkpoint(
         with _CHECKPOINT_CLEANUP_LOCK:
             for ckpt in _iter_ckpts:
                 if ckpt.exists():
-                    shutil.rmtree(ckpt)
+                    if msc is not None:
+                        msc.delete(str(ckpt), recursive=True)
+                    else:
+                        shutil.rmtree(ckpt)
 
     if do_async:
         threading.Thread(target=remove_iter_ckpts, args=(rm_iter_ckpts,)).start()
@@ -1816,7 +1824,11 @@ def maybe_save_dataloader_state(
 
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
-    torch.save(dataloader_save_dict, data_state_save_path)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        msc.torch.save(dataloader_save_dict, data_state_save_path)
+    else:
+        torch.save(dataloader_save_dict, data_state_save_path)
 
 
 def maybe_load_dataloader_state(

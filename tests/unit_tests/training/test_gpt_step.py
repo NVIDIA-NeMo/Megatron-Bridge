@@ -760,7 +760,10 @@ class TestGetBatch:
 
     def test_mcore_schedule_plan_routes_with_chunk_padding_mask(self, monkeypatch):
         """The pinned MCore EP-overlap callable must pass its chunk-local router mask."""
-        from megatron.core.models.common import fine_grained_callables
+        try:
+            from megatron.core.models.common import fine_grained_callables
+        except ImportError:
+            from megatron.core.models.gpt import fine_grained_callables
 
         observed = {}
 

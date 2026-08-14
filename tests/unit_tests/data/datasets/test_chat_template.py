@@ -309,8 +309,8 @@ class TestGPTSFTChatDataset:
     """Test cases for GPTSFTChatDataset with HF chat template support."""
 
     @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
-    def test_chat_dataset_init_with_hf_template(self, mock_dataset_class):
-        """Test GPTSFTChatDataset initialization with HF chat template enabled."""
+    def test_chat_dataset_defaults_to_hf_template(self, mock_dataset_class):
+        """Test GPTSFTChatDataset defaults to the HF chat template."""
         # Mock the indexed dataset
         mock_dataset = MagicMock()
         mock_dataset.__len__.return_value = 10
@@ -328,7 +328,6 @@ class TestGPTSFTChatDataset:
             file_path="test.jsonl",
             tokenizer=mock_tokenizer,
             max_seq_length=512,
-            use_hf_tokenizer_chat_template=True,
             tool_schemas=None,
         )
 
@@ -427,14 +426,19 @@ class TestGPTSFTChatDataset:
             file_path="test.jsonl",
             tokenizer=mock_tokenizer,
             max_seq_length=512,
-            use_hf_tokenizer_chat_template=True,
         )
 
+        tools = [{"type": "function", "function": {"name": "lookup"}}]
         example = {
             "conversations": [
                 {"from": "User", "value": "Hello"},
                 {"from": "Assistant", "value": "Hi!"},
             ],
+            "chat_template_kwargs": {
+                "enable_thinking": True,
+                "truncate_history_thinking": False,
+            },
+            "tools": tools,
             "metadata_key": "test_value",
         }
 
@@ -451,6 +455,15 @@ class TestGPTSFTChatDataset:
         assert result["metadata"]["metadata_key"] == "test_value"
         # Verify conversations not in metadata by default
         assert "conversations" not in result["metadata"]
+        assert mock_hf_tokenizer.apply_chat_template.call_args_list[0].kwargs == {
+            "tokenize": True,
+            "add_generation_prompt": False,
+            "return_dict": True,
+            "enable_thinking": True,
+            "truncate_history_thinking": False,
+            "tools": tools,
+            "return_assistant_tokens_mask": True,
+        }
 
     @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_collate_fn_handles_loss_mask(self, mock_dataset_class):
