@@ -44,7 +44,6 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
-    cfg.model.moe_hybridep_num_sms = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_router_fusion = True
     cfg.model.moe_router_force_load_balancing = True
@@ -60,6 +59,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.fine_grained_offloading_max_inflight_offloads = None
 
     _benchmark_common(cfg, cross_entropy_impl="native")
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_hybridep_num_sms = None
 
     set_full_iteration_cuda_graph(cfg.model)
     cfg.model.cuda_graph_warmup_steps = 3

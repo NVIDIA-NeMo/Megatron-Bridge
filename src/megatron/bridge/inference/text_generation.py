@@ -31,6 +31,7 @@ from pathlib import Path
 import torch
 from megatron.core.inference.apis import SamplingParams
 from megatron.core.inference.config import InferenceConfig, MambaInferenceStateConfig
+from megatron.core.inference.contexts.dynamic_context import DynamicInferenceContext
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.utils import get_attr_wrapped_model
 from transformers import AutoConfig, AutoTokenizer
@@ -342,6 +343,18 @@ def build_inference_config(
             f"so it is divisible by tensor parallel size {tp}."
         )
         max_requests = rounded
+
+    max_tokens_limit = max_tokens or DynamicInferenceContext.DEFAULT_MAX_TOKENS
+    if max_requests is not None and max_requests > max_tokens_limit:
+        if max_batch_size is not None:
+            raise ValueError(f"--max_batch_size ({max_batch_size}) cannot exceed --max_tokens ({max_tokens_limit}).")
+        max_requests = max_tokens_limit // tp * tp
+        if max_requests == 0:
+            raise ValueError(f"--max_tokens ({max_tokens_limit}) must be at least --tp ({tp}).")
+        print_rank_0(
+            f"Capping max batch size at {max_requests} because active requests cannot exceed "
+            f"max tokens ({max_tokens_limit})."
+        )
 
     return InferenceConfig(
         block_size_tokens=effective_block_size,

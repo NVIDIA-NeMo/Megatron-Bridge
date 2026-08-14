@@ -80,7 +80,8 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_grouped_gemm = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_aux_loss_coeff = 0.0
