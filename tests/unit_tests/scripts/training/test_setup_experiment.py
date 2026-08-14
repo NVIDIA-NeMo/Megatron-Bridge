@@ -32,7 +32,11 @@ def _load_setup_experiment_module():
     torchx = types.ModuleType("torchx")
     torchx_specs = types.ModuleType("torchx.specs")
     torchx_specs_api = types.ModuleType("torchx.specs.api")
-    torchx_specs_api.AppState = types.SimpleNamespace(SUCCEEDED="SUCCEEDED", FAILED="FAILED")
+    torchx_specs_api.AppState = types.SimpleNamespace(
+        SUCCEEDED="SUCCEEDED",
+        FAILED="FAILED",
+        SUBMITTED="SUBMITTED",
+    )
     torchx.specs = torchx_specs
     torchx_specs.api = torchx_specs_api
     fake_modules = {
@@ -309,13 +313,13 @@ def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
 
     class _Experiment:
         def __init__(self, _name):
-            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.SUCCEEDED)]
+            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.SUBMITTED)]
 
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
-            pass
+            self.jobs[0].state = module.AppState.SUCCEEDED
 
         def add(self, _task, *, executor, name):
             assert executor is sentinel_executor
@@ -631,13 +635,13 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
 
     class _Experiment:
         def __init__(self, _name):
-            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.SUCCEEDED)]
+            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.SUBMITTED)]
 
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
-            pass
+            self.jobs[0].state = module.AppState.SUCCEEDED
 
         def add(self, _task, *, executor, name):
             assert executor is sentinel_executor
@@ -688,13 +692,13 @@ def test_main_propagates_synchronous_training_failure(monkeypatch):
 
     class _Experiment:
         def __init__(self, _name):
-            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.FAILED)]
+            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.SUBMITTED)]
 
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
-            pass
+            self.jobs[0].state = module.AppState.FAILED
 
         def add(self, *_args, **_kwargs):
             pass

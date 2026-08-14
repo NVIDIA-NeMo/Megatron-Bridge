@@ -349,8 +349,10 @@ def main(argv: list[str] | None = None) -> None:
             experiment.dryrun()
             return
         experiment.run(detach=not args.wait, tail_logs=args.wait)
-        if args.wait:
-            _raise_on_failed_tasks(experiment)
+    # NeMo Run performs its synchronous wait in Experiment.__exit__, so job
+    # states are terminal only after leaving the context manager.
+    if args.wait:
+        _raise_on_failed_tasks(experiment)
 
 
 if __name__ == "__main__":
