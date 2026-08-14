@@ -620,6 +620,25 @@ class TestTranslateHybrid:
         assert "hybrid_layer_pattern='M*M*/*E'" in output
         assert "tokenizer_prompt_format='nemotron-h-aligned'" in output
 
+    def test_unified_hybrid_pattern_takes_precedence_over_legacy_mtp_pattern(self):
+        """A unified pattern keeps MLM precedence over the deprecated MTP field."""
+        result = translate(
+            {
+                "hybrid-layer-pattern": "M*M*/EE/EE",
+                "mtp-num-layers": 2,
+                "mtp-hybrid-override-pattern": "*E",
+            }
+        )
+
+        output = emit_recipe(result, recipe_name="hybrid_model")
+
+        assert result.overrides["model.hybrid_layer_pattern"] == "M*M*/EE/EE"
+        assert "model.mtp_hybrid_override_pattern" not in result.overrides
+        assert ("mtp-hybrid-override-pattern", "*E") in result.skipped
+        assert any("already contains unified MTP sections" in note for note in result.notes)
+        assert "hybrid_layer_pattern='M*M*/EE/EE'" in output
+        assert "mtp_hybrid_override_pattern" not in output
+
     def test_sft_default_does_not_override_multimodal_prompt_format(self):
         """The globally present MLM SFT default is ignored for non-SFT tokenizers."""
         result = translate(
@@ -668,6 +687,7 @@ class TestTranslateHybrid:
         compile(output, "<generated-moe-recipe>", "exec")
         assert "expert_tensor_parallelism: int = 4" in output
         assert "expert_tensor_parallel_size=expert_tensor_parallelism" in output
+        assert "random_seed=5678" in output
         assert "rng=RNGConfig(seed=5678)" in output
         spec = ["megatron.core.models.mamba.mamba_layer_specs", "mamba_stack_spec"]
         overrides = emit_overrides(translate({"spec": spec}))

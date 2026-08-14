@@ -580,6 +580,18 @@ def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool
         else:
             result.add_override(bridge_path, arg_val)
 
+    # MLM gives an already-unified Hybrid pattern precedence over the deprecated
+    # standalone MTP pattern. Avoid passing both to HybridModelProvider, whose
+    # legacy normalization would otherwise replace the unified MTP suffix.
+    hybrid_pattern = result.overrides.get("model.hybrid_layer_pattern")
+    mtp_override_key = "model.mtp_hybrid_override_pattern"
+    if isinstance(hybrid_pattern, str) and "/" in hybrid_pattern and mtp_override_key in result.overrides:
+        mtp_override = result.overrides.pop(mtp_override_key)
+        result.skipped.append(("mtp-hybrid-override-pattern", mtp_override))
+        result.add_note(
+            "mtp-hybrid-override-pattern ignored because hybrid-layer-pattern already contains unified MTP sections"
+        )
+
     # Handle bf16/fp16 → mixed_precision string
     if "mixed_precision._bf16" in result.overrides:
         del result.overrides["mixed_precision._bf16"]
@@ -990,7 +1002,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
 
     # Dataset
     lines.append("        dataset=GPTDatasetConfig(")
-    lines.append("            random_seed=1234,")
+    lines.append(f"            random_seed={_fmt_val(rng_seed)},")
     ds_defaults = {
         "reset_attention_mask": False,
         "reset_position_ids": False,
