@@ -52,6 +52,10 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    # Natural routing can produce uneven token counts. Avoid padding every
+    # HybridEP rank to the most-loaded rank, which can exhaust allocator
+    # headroom for otherwise valid real-data batches.
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.min_offloaded_tensor_size = 350_000_000
@@ -67,6 +71,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.num_distributed_optimizer_instances = 1
     cfg.ddp.average_in_collective = False
+    # Keep the distributed optimizer's memory-efficient parameter handling;
+    # optimizer/scheduler values continue to come from the library recipe.
+    cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.overlap_param_gather = True
     cfg.checkpoint.ckpt_format = "torch_dist"
 

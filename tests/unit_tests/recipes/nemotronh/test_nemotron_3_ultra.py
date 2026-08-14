@@ -146,6 +146,7 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.min_offloaded_tensor_size == 350_000_000
@@ -156,6 +157,7 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
     assert cfg.dist.use_megatron_fsdp is False
     assert cfg.ddp.use_megatron_fsdp is False
     assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.checkpoint.ckpt_format == "torch_dist"
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.ddp.check_for_large_grads is True
