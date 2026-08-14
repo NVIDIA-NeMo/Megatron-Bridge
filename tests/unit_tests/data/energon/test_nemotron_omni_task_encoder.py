@@ -221,8 +221,8 @@ def test_energon_batch_preserves_real_tokens_when_pad_id_equals_turn_end(monkeyp
 def test_energon_audio_uses_shared_collator_token_expansion(monkeypatch):
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
     monkeypatch.setattr(
-        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=4: torch.ones(9, num_mel_bins),
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=4: (torch.ones(9, num_mel_bins), 8),
     )
     processor = _Processor([[1, IMG_END_ID, 21, PAD_AND_END_ID]])
     encoder = NemotronOmniTaskEncoder(
@@ -240,18 +240,16 @@ def test_energon_audio_uses_shared_collator_token_expansion(monkeypatch):
 
     batch = encoder.batch([encoded])
 
-    assert batch.input_ids.tolist() == [
-        [1, IMG_END_ID, SO_START_ID, SO_EMBEDDING_ID, SO_EMBEDDING_ID, SO_END_ID, 21, PAD_AND_END_ID]
-    ]
+    assert batch.input_ids.tolist() == [[1, IMG_END_ID, SO_START_ID, SO_EMBEDDING_ID, SO_END_ID, 21, PAD_AND_END_ID]]
     assert batch.sound_clips.shape == (1, 9, 4)
-    assert batch.sound_length.tolist() == [9]
+    assert batch.sound_length.tolist() == [8]
 
 
 def test_energon_audio_placeholder_uses_framed_shared_expansion(monkeypatch):
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
     monkeypatch.setattr(
-        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=4: torch.ones(9, num_mel_bins),
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=4: (torch.ones(9, num_mel_bins), 8),
     )
     processor = _Processor([[1, SO_EMBEDDING_ID, 21, PAD_AND_END_ID]])
     encoder = NemotronOmniTaskEncoder(
@@ -269,9 +267,7 @@ def test_energon_audio_placeholder_uses_framed_shared_expansion(monkeypatch):
 
     batch = encoder.batch([encoded])
 
-    assert batch.input_ids.tolist() == [
-        [1, SO_START_ID, SO_EMBEDDING_ID, SO_EMBEDDING_ID, SO_END_ID, 21, PAD_AND_END_ID]
-    ]
+    assert batch.input_ids.tolist() == [[1, SO_START_ID, SO_EMBEDDING_ID, SO_END_ID, 21, PAD_AND_END_ID]]
 
 
 def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
@@ -525,8 +521,8 @@ def test_hf_and_energon_packing_are_identical_for_image_video_audio(monkeypatch,
         lambda frame, *, height, width, patch_dim: torch.ones(2, 3),
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=4: torch.ones(9, num_mel_bins),
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features_with_length",
+        lambda waveform, sampling_rate=16000, num_mel_bins=4: (torch.ones(9, num_mel_bins), 8),
     )
     rows = [
         [1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21, PAD_AND_END_ID],
@@ -611,12 +607,12 @@ def test_hf_and_energon_packing_are_identical_for_image_video_audio(monkeypatch,
     for key in tensor_keys:
         assert torch.equal(hf_batch[key], energon_batch[key]), key
     assert hf_batch["attention_mask"] is energon_batch["attention_mask"] is None
-    assert hf_batch["total_tokens"] == energon_batch["total_tokens"] == 800
-    assert hf_batch["cu_seqlens_q"].tolist() == [0, 265, 789]
-    assert hf_batch["cu_seqlens_q_padded"].tolist() == [0, 272, 800]
+    assert hf_batch["total_tokens"] == energon_batch["total_tokens"] == 792
+    assert hf_batch["cu_seqlens_q"].tolist() == [0, 264, 787]
+    assert hf_batch["cu_seqlens_q_padded"].tolist() == [0, 264, 792]
     if not collapse_image_tokens:
-        assert hf_batch["input_ids"].shape == (1, 800)
-        assert hf_batch["padding_mask"].sum().item() == 11
+        assert hf_batch["input_ids"].shape == (1, 792)
+        assert hf_batch["padding_mask"].sum().item() == 5
         assert torch.equal(hf_batch["padding_mask"], energon_batch["padding_mask"])
     assert torch.equal(
         hf_batch["visual_inputs"].pixel_values,

@@ -25,7 +25,7 @@ from typing import Any
 class _ModelCollateSpec:
     module_name: str
     symbol_name: str
-    required_for_all_examples: bool = False
+    always_use_model_collate: bool = False
 
 
 _MODEL_COLLATE_SPECS = {
@@ -42,7 +42,7 @@ _MODEL_COLLATE_SPECS = {
     "NemotronH_Nano_Omni_Reasoning_V3Processor": _ModelCollateSpec(
         "megatron.bridge.models.nemotron_omni.data.collate_fn",
         "nemotron_omni_expanded_collate_fn",
-        required_for_all_examples=True,
+        always_use_model_collate=True,
     ),
     "PixtralProcessor": _ModelCollateSpec(
         "megatron.bridge.models.ministral3.data.collate_fn", "ministral3_collate_fn"
@@ -54,13 +54,18 @@ _MODEL_COLLATE_SPECS = {
     ),
     "Glm4vProcessor": _ModelCollateSpec("megatron.bridge.models.glm_vl.data.collate_fn", "glm4v_collate_fn"),
     "KimiK25Processor": _ModelCollateSpec("megatron.bridge.models.kimi_vl.data.collate_fn", "kimi_k25_vl_collate_fn"),
+    "deepseek-v4": _ModelCollateSpec(
+        "megatron.bridge.models.deepseek.data.collate_fn",
+        "deepseek_v4_collate_fn",
+        always_use_model_collate=True,
+    ),
 }
 
 
-def model_collate_required_for_all_examples(processor_type: str) -> bool:
+def always_use_model_collate(processor_type: str) -> bool:
     """Return whether a processor must always use its model-owned collator."""
     spec = _MODEL_COLLATE_SPECS.get(processor_type)
-    return spec is not None and spec.required_for_all_examples
+    return spec is not None and spec.always_use_model_collate
 
 
 @lru_cache(maxsize=None)

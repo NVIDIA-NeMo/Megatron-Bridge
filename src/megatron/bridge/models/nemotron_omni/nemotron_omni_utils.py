@@ -297,6 +297,80 @@ def _parakeet_feature_extractor(num_mel_bins: int, sampling_rate: int) -> Any:
     )
 
 
+def valid_audio_feature_lengths(attention_mask: torch.Tensor, *, num_frames: int) -> torch.Tensor:
+    """Convert Parakeet feature masks to contiguous-prefix frame lengths.
+
+    Parakeet retains a padded boundary frame in ``input_features`` while its
+    feature-level attention mask records the semantic frame count. Bridge's
+    sound encoder accepts that mask in compressed form as ``sound_length``.
+
+    Args:
+        attention_mask: Binary mask with shape ``(batch, frames)``.
+        num_frames: Physical frame width of the corresponding feature tensor.
+
+    Returns:
+        Long tensor containing one valid frame length per batch item.
+
+    Raises:
+        ValueError: If the mask is empty, non-binary, has the wrong shape, or
+            is not a non-empty contiguous prefix for every batch item.
+    """
+    mask = torch.as_tensor(attention_mask)
+    if mask.ndim != 2:
+        raise ValueError(f"Parakeet feature attention_mask must be 2-D, got shape {tuple(mask.shape)}.")
+    if num_frames < 1 or mask.shape[1] != num_frames:
+        raise ValueError(
+            "Parakeet feature attention_mask width must match the physical feature width; "
+            f"got mask shape {tuple(mask.shape)} and num_frames={num_frames}."
+        )
+    if not bool(torch.all((mask == 0) | (mask == 1))):
+        raise ValueError("Parakeet feature attention_mask must contain only binary values.")
+
+    prefix_mask = mask.to(dtype=torch.bool)
+    lengths = prefix_mask.sum(dim=1, dtype=torch.long)
+    if bool(torch.any(lengths == 0)):
+        raise ValueError("Parakeet feature attention_mask must contain at least one valid frame per sample.")
+    expected_mask = torch.arange(num_frames, device=mask.device)[None, :] < lengths[:, None]
+    if not torch.equal(prefix_mask, expected_mask):
+        raise ValueError("Parakeet feature attention_mask must contain one contiguous valid prefix per sample.")
+    return lengths
+
+
+def compute_mel_features_with_length(
+    waveform: Union[np.ndarray, list],
+    sampling_rate: int = 16000,
+    num_mel_bins: int = 128,
+) -> tuple[torch.Tensor, int]:
+    """Convert one waveform to physical mel features and its valid frame length.
+
+    Args:
+        waveform: 1-D float32 numpy array (or list) of the mono waveform.
+        sampling_rate: Sampling rate of *waveform* (must match the extractor).
+        num_mel_bins: Number of mel frequency bins.
+
+    Returns:
+        A ``(mel, valid_length)`` pair. ``mel`` has physical shape
+        ``(frames, num_mel_bins)`` and may include padded boundary rows;
+        ``valid_length`` is derived from Parakeet's feature attention mask.
+    """
+    extractor = _parakeet_feature_extractor(num_mel_bins, sampling_rate)
+    features = extractor(
+        waveform,
+        sampling_rate=sampling_rate,
+        return_tensors="pt",
+        return_attention_mask=True,
+    )
+    input_features = torch.as_tensor(features["input_features"])
+    if input_features.ndim != 3 or input_features.shape[0] != 1:
+        raise ValueError(
+            "compute_mel_features_with_length expects one waveform and Parakeet features with shape "
+            f"(1, frames, mel_bins), got {tuple(input_features.shape)}."
+        )
+    mel = input_features.squeeze(0)
+    lengths = valid_audio_feature_lengths(features["attention_mask"], num_frames=mel.shape[0])
+    return mel, int(lengths[0].item())
+
+
 def compute_mel_features(
     waveform: Union[np.ndarray, list],
     sampling_rate: int = 16000,
@@ -315,14 +389,15 @@ def compute_mel_features(
     Returns:
         Float tensor of shape ``(frames, num_mel_bins)`` -- a single clip
         ready to be batched and passed as ``sound_clips`` to the model.
+
+        Call :func:`compute_mel_features_with_length` when the corresponding
+        semantic frame length is also required.
     """
-    extractor = _parakeet_feature_extractor(num_mel_bins, sampling_rate)
-    features = extractor(
+    mel, _ = compute_mel_features_with_length(
         waveform,
         sampling_rate=sampling_rate,
-        return_tensors="pt",
+        num_mel_bins=num_mel_bins,
     )
-    mel = features["input_features"].squeeze(0)
     return mel
 
 
