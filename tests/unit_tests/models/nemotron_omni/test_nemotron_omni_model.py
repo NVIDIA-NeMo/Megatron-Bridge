@@ -561,6 +561,48 @@ def test_padded_placeholder_is_not_treated_as_media():
     assert torch.equal(output[3, 0], torch.zeros(3))
 
 
+def test_text_containing_the_placeholder_trains_with_a_caller_mask():
+    """A row with no media may still spell the placeholder in ordinary prose.
+
+    The media token is a normal vocabulary entry, so text can contain it -- a
+    problem statement quoting ``<image>``, for instance. Derived masks answer
+    "is this a real token", which cannot distinguish that from an anchor, so
+    without a caller-supplied mask the merge demands a feature that was never
+    meant to exist.
+    """
+    model = _BoundaryModel(torch.empty(0, 3))
+    input_ids = torch.tensor([[7, 18, 9]])
+
+    with pytest.raises(ValueError, match="1 valid placeholders for 0 projected features"):
+        model(input_ids=input_ids)
+
+    output = model(
+        input_ids=input_ids,
+        media_token_validity_mask=torch.tensor([[True, False, True]]),
+    )
+
+    # The spared placeholder keeps the language embedding the forward gave it.
+    # That embedding is of token id 0, because the forward masks media tokens
+    # out of the text before embedding regardless of the validity mask.
+    assert torch.equal(output, torch.tensor([[[7.0] * 3], [[0.0] * 3], [[9.0] * 3]]))
+
+
+def test_caller_mask_takes_precedence_over_the_derived_one():
+    """An explicit mask must win, or the caller cannot express this at all."""
+    model = _BoundaryModel(torch.empty(0, 3))
+    input_ids = torch.tensor([[7, 18, 9]])
+
+    # A padding mask marks every position valid, so on its own it would treat
+    # the placeholder as an anchor and raise.
+    output = model(
+        input_ids=input_ids,
+        padding_mask=torch.zeros(1, 3, dtype=torch.bool),
+        media_token_validity_mask=torch.tensor([[True, False, True]]),
+    )
+
+    assert output.shape == (3, 1, 3)
+
+
 def test_media_merge_supports_backward_for_batch_size_one():
     language_embeddings = torch.randn(4, 1, 3, requires_grad=True)
     media_embeddings = torch.randn(2, 3, requires_grad=True)
