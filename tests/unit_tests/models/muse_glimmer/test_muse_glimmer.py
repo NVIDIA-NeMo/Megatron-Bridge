@@ -17,6 +17,8 @@ from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear
 from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.training.models.hybrid import HybridModelConfig
+from transformer_engine.pytorch import LayerNorm as TELayerNorm
+from transformer_engine.pytorch import RMSNorm as TERMSNorm
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.param_mapping import merge_qkv_weights, split_qkv_weights
@@ -33,6 +35,8 @@ from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import (
     MuseGlimmerRMSNorm,
     MuseGlimmerVisionAttention,
     MuseGlimmerVisionModel,
+    MuseGlimmerWeightlessRMSNorm,
+    _standard_rms_norm,
     get_muse_glimmer_hybrid_stack_spec,
 )
 from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import (
@@ -108,6 +112,7 @@ def test_config_conversion_uses_model_config_path_only() -> None:
     assert isinstance(model_config, MuseGlimmerModelConfig)
     assert isinstance(model_config, HybridModelConfig)
     assert model_config.get_builder_cls() is MuseGlimmerModelBuilder
+    assert model_config.transformer_impl == "transformer_engine"
     assert model_config.num_layers == 4
     assert model_config.hidden_size == 64
     assert model_config.ffn_hidden_size == 128
@@ -279,6 +284,7 @@ def test_full_head_gate_qkv_layout_round_trips() -> None:
 
 def test_centered_and_final_norms_use_their_native_expressions() -> None:
     config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).transformer
+    config.transformer_impl = "local"
     hidden_states = torch.tensor([[0.25, -0.5, 1.0, -2.0]], dtype=torch.float32)
     centered = MuseGlimmerCenteredRMSNorm(config, hidden_size=4, eps=1e-5)
     final = MuseGlimmerRMSNorm(config, hidden_size=4, eps=1e-5)
@@ -292,6 +298,45 @@ def test_centered_and_final_norms_use_their_native_expressions() -> None:
 
     torch.testing.assert_close(centered(hidden_states), expected_centered)
     torch.testing.assert_close(final(hidden_states), expected_final)
+
+
+def test_transformer_engine_backend_builds_all_affine_norms_with_te() -> None:
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
+    config = model_config.transformer
+    config.use_cpu_initialization = True
+    config.params_dtype = torch.float32
+
+    centered_norm_cls = get_muse_glimmer_hybrid_stack_spec(
+        config
+    ).submodules.attention_layer.submodules.input_layernorm
+    centered_norm = centered_norm_cls(config, config.hidden_size, eps=config.layernorm_epsilon)
+    final_norm = _standard_rms_norm(config, config.hidden_size, config.layernorm_epsilon)
+    vision_model = MuseGlimmerVisionModel(model_config.vision, config)
+
+    assert isinstance(centered_norm, TERMSNorm)
+    assert centered_norm.zero_centered_gamma is True
+    assert isinstance(final_norm, TERMSNorm)
+    assert final_norm.zero_centered_gamma is False
+    assert isinstance(vision_model.ln_pre, TELayerNorm)
+    assert isinstance(vision_model.ln_post, TELayerNorm)
+    assert all(isinstance(layer.norm1, TELayerNorm) for layer in vision_model.layers)
+    assert all(isinstance(layer.norm2, TELayerNorm) for layer in vision_model.layers)
+    assert set(final_norm.state_dict()) == {"weight", "_extra_state"}
+    assert set(vision_model.ln_pre.state_dict()) == {"weight", "bias", "_extra_state"}
+
+    registry = MuseGlimmerBridge().mapping_registry()
+    assert registry.megatron_to_hf_lookup("decoder.final_norm.weight") is not None
+    for name, _ in vision_model.named_parameters():
+        assert registry.megatron_to_hf_lookup(f"vision_tower.{name}") is not None
+
+
+def test_weightless_rms_norm_does_not_add_a_transformer_engine_parameter() -> None:
+    config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).transformer
+
+    norm = MuseGlimmerWeightlessRMSNorm(config, hidden_size=config.kv_channels)
+
+    assert dict(norm.named_parameters()) == {}
+    assert norm.state_dict() == {}
 
 
 def test_centered_norm_sharded_state_dict_identifies_tensor_parallel_replicas() -> None:
@@ -336,8 +381,10 @@ def test_mapping_registry_covers_complete_checkpoint() -> None:
 
 
 def test_tiny_vision_model_preserves_expected_token_count() -> None:
-    vision_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).vision
-    model = MuseGlimmerVisionModel(vision_config)
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
+    model_config.transformer_impl = "local"
+    vision_config = model_config.vision
+    model = MuseGlimmerVisionModel(vision_config, model_config.transformer)
     pixel_values = torch.randn(16, 24)
     grid_thw = torch.tensor([[1, 4, 4]])
 
@@ -391,8 +438,10 @@ def test_vision_attention_matches_eager_reference_with_finite_backward() -> None
 
 
 def test_vision_layer_recomputation_is_training_only() -> None:
-    vision_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config()).vision
-    model = MuseGlimmerVisionModel(vision_config, recompute_layers=True)
+    model_config = MuseGlimmerBridge().hf_config_to_model_config(_tiny_hf_config())
+    model_config.transformer_impl = "local"
+    vision_config = model_config.vision
+    model = MuseGlimmerVisionModel(vision_config, model_config.transformer, recompute_layers=True)
     pixel_values = torch.randn(16, 24)
     grid_thw = torch.tensor([[1, 4, 4]])
 
@@ -413,6 +462,7 @@ def tiny_hybrid_model() -> Iterator[MuseGlimmerModel]:
     auto_bridge = AutoBridge.from_hf_config(_tiny_hf_config())
     model_config = auto_bridge.get_model_config()
     model_config.use_cpu_initialization = True
+    model_config.transformer_impl = "local"
     model_config.params_dtype = torch.float32
     model_config.bf16 = False
     model_config.bias_activation_fusion = False
@@ -517,6 +567,9 @@ def test_checkpoint_schema_omits_only_empty_backend_norm_state(tiny_hybrid_model
         "decoder.layers.0.self_attention.post_layernorm._extra_state": SimpleNamespace(data=None),
         "decoder.layers.0.pre_mlp_layernorm._extra_state": SimpleNamespace(data=None),
         "decoder.layers.0.mlp.post_layernorm._extra_state": SimpleNamespace(data=None),
+        "decoder.final_norm._extra_state": SimpleNamespace(data=None),
+        "vision_tower.ln_pre._extra_state": SimpleNamespace(data=None),
+        "vision_tower.layers.0.norm1._extra_state": SimpleNamespace(data=None),
         "decoder.layers.0.self_attention.linear_qkv._extra_state": SimpleNamespace(data={"scale": 1}),
         "decoder.layers.0.input_layernorm.weight": norm_weight,
     }
@@ -534,6 +587,9 @@ def test_checkpoint_schema_omits_only_empty_backend_norm_state(tiny_hybrid_model
     assert "decoder.layers.0.self_attention.post_layernorm._extra_state" not in result
     assert "decoder.layers.0.pre_mlp_layernorm._extra_state" not in result
     assert "decoder.layers.0.mlp.post_layernorm._extra_state" not in result
+    assert "decoder.final_norm._extra_state" not in result
+    assert "vision_tower.ln_pre._extra_state" not in result
+    assert "vision_tower.layers.0.norm1._extra_state" not in result
     assert "decoder.layers.0.self_attention.linear_qkv._extra_state" in result
     assert "decoder.layers.0.input_layernorm.weight" in result
     assert norm_weight.replica_id == (0, 3, 4)
@@ -550,7 +606,7 @@ def test_checkpoint_schema_rejects_stateful_backend_norm_state(tiny_hybrid_model
             "megatron.bridge.models.muse_glimmer.modeling_muse_glimmer.get_pg_rank",
             side_effect=[3, 4],
         ),
-        pytest.raises(ValueError, match="centered RMSNorm extra state must be empty"),
+        pytest.raises(ValueError, match="Transformer Engine norm extra state must be empty"),
     ):
         tiny_hybrid_model.sharded_state_dict()
 

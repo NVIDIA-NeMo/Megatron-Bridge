@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import functools
+from copy import copy
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -57,7 +58,12 @@ if TYPE_CHECKING:
 
 
 def _rms_norm(hidden_states: Tensor, eps: float) -> Tensor:
-    """Apply the float32 RMS expression used by the Hugging Face reference."""
+    """Apply the parameter-free RMS expression used by the HF reference.
+
+    Transformer Engine 2.17 RMSNorm always owns an affine weight, so Muse's
+    scaleless Q/K, embedding, and perception norms cannot use it without
+    changing the architecture and checkpoint schema.
+    """
     normalized = hidden_states.float() * torch.pow(
         hidden_states.float().pow(2).mean(dim=-1, keepdim=True) + eps,
         -0.5,
@@ -130,6 +136,39 @@ def _centered_rms_norm_cls(config: TransformerConfig) -> type[nn.Module]:
     if config.transformer_impl == "local":
         return MuseGlimmerCenteredRMSNorm
     return get_backend(config.transformer_impl).layer_norm(rms_norm=True)
+
+
+def _standard_rms_norm(config: TransformerConfig, hidden_size: int, eps: float) -> nn.Module:
+    """Build a standard-gamma RMSNorm with the configured model backend."""
+    if config.transformer_impl == "local":
+        return MuseGlimmerRMSNorm(config, hidden_size, eps=eps)
+
+    norm_config = copy(config)
+    norm_config.layernorm_zero_centered_gamma = False
+    return get_backend(config.transformer_impl).layer_norm(rms_norm=True)(
+        norm_config,
+        hidden_size,
+        eps=eps,
+    )
+
+
+def _vision_layer_norm(
+    config: MuseGlimmerVisionModelConfig,
+    transformer_config: TransformerConfig,
+) -> nn.Module:
+    """Build the vision LayerNorm with TE unless the local backend is explicit."""
+    if transformer_config.transformer_impl == "local":
+        return nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+
+    norm_config = copy(transformer_config)
+    norm_config.normalization = "LayerNorm"
+    norm_config.layernorm_zero_centered_gamma = False
+    norm_config.sequence_parallel = False
+    return get_backend(transformer_config.transformer_impl).layer_norm()(
+        norm_config,
+        config.hidden_size,
+        eps=config.layer_norm_epsilon,
+    )
 
 
 class MuseGlimmerSelfAttention(SelfAttention):
@@ -239,10 +278,10 @@ def customize_muse_glimmer_language_model(model: HybridModel) -> None:
     if hasattr(model, "embedding"):
         extend_instance(model.embedding, MuseGlimmerEmbeddingNormMixin)
     if hasattr(model, "decoder") and getattr(model.decoder, "final_norm", None) is not None:
-        model.decoder.final_norm = MuseGlimmerRMSNorm(
+        model.decoder.final_norm = _standard_rms_norm(
             model.config,
             model.config.hidden_size,
-            eps=model.config.layernorm_epsilon,
+            model.config.layernorm_epsilon,
         )
     if hasattr(model, "output_layer"):
         extend_instance(model.output_layer, MuseGlimmerOutputLayerMixin)
@@ -468,11 +507,11 @@ class MuseGlimmerVisionMLP(nn.Module):
 class MuseGlimmerVisionEncoderLayer(nn.Module):
     """Pre-normalized Muse vision transformer layer."""
 
-    def __init__(self, config: MuseGlimmerVisionModelConfig) -> None:
+    def __init__(self, config: MuseGlimmerVisionModelConfig, transformer_config: TransformerConfig) -> None:
         super().__init__()
-        self.norm1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.norm1 = _vision_layer_norm(config, transformer_config)
         self.attn = MuseGlimmerVisionAttention(config)
-        self.norm2 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.norm2 = _vision_layer_norm(config, transformer_config)
         self.mlp = MuseGlimmerVisionMLP(config)
 
     def forward(
@@ -488,15 +527,23 @@ class MuseGlimmerVisionEncoderLayer(nn.Module):
 class MuseGlimmerVisionModel(nn.Module):
     """Muse vision tower with 3:1 window/full attention and 2x2 pixel shuffle."""
 
-    def __init__(self, config: MuseGlimmerVisionModelConfig, *, recompute_layers: bool = False) -> None:
+    def __init__(
+        self,
+        config: MuseGlimmerVisionModelConfig,
+        transformer_config: TransformerConfig,
+        *,
+        recompute_layers: bool = False,
+    ) -> None:
         super().__init__()
         self.config = config
         self.recompute_layers = recompute_layers
         self.patch_embedder = MuseGlimmerVisionPatchEmbedder(config)
         self.rotary_emb = MuseGlimmerVisionRotaryEmbedding(config)
-        self.ln_pre = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
-        self.layers = nn.ModuleList([MuseGlimmerVisionEncoderLayer(config) for _ in range(config.num_hidden_layers)])
-        self.ln_post = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.ln_pre = _vision_layer_norm(config, transformer_config)
+        self.layers = nn.ModuleList(
+            [MuseGlimmerVisionEncoderLayer(config, transformer_config) for _ in range(config.num_hidden_layers)]
+        )
+        self.ln_post = _vision_layer_norm(config, transformer_config)
 
     def _pixel_shuffle(self, hidden_states: Tensor, grid_thw: Tensor) -> Tensor:
         outputs = []
@@ -566,11 +613,16 @@ class MuseGlimmerVisionAdapter(nn.Module):
 class MuseGlimmerModel(HybridModel):
     """Native MCore Hybrid model with the Muse vision modules attached."""
 
-    _CENTERED_NORM_EXTRA_STATE_SUFFIXES = (
+    _EMPTY_NORM_EXTRA_STATE_SUFFIXES = (
         "input_layernorm._extra_state",
         "self_attention.post_layernorm._extra_state",
         "pre_mlp_layernorm._extra_state",
         "mlp.post_layernorm._extra_state",
+        "decoder.final_norm._extra_state",
+        "vision_tower.ln_pre._extra_state",
+        "vision_tower.ln_post._extra_state",
+        "norm1._extra_state",
+        "norm2._extra_state",
     )
     _CENTERED_NORM_WEIGHT_SUFFIXES = (
         "input_layernorm.weight",
@@ -614,6 +666,7 @@ class MuseGlimmerModel(HybridModel):
         if pre_process:
             self.vision_tower = MuseGlimmerVisionModel(
                 config.vision,
+                config.transformer,
                 recompute_layers=config.recompute_vision_layers,
             )
             self.vision_adapter = MuseGlimmerVisionAdapter(config)
@@ -639,12 +692,10 @@ class MuseGlimmerModel(HybridModel):
     ) -> dict[str, Any]:
         """Return a backend-stable Muse checkpoint schema.
 
-        Transformer Engine RMSNorm adds an empty ``_extra_state`` object that
-        the local centered RMSNorm does not expose. Muse conversion uses the
-        local backend so it can run on CPU, while training may use Transformer
-        Engine. Omitting only these empty norm objects keeps those checkpoints
-        interchangeable without relaxing strict loading for parameters or
-        stateful Transformer Engine modules.
+        Transformer Engine affine norms add empty ``_extra_state`` objects that
+        the explicit local fallback does not expose. Omitting only those empty
+        objects keeps checkpoints backend-interchangeable without relaxing
+        strict loading for parameters or stateful Transformer Engine modules.
         """
         metadata = ensure_metadata_has_dp_cp_group(metadata)
         sharded_state_dict = super().sharded_state_dict(prefix, sharded_offsets, metadata)
@@ -652,7 +703,7 @@ class MuseGlimmerModel(HybridModel):
         for key in list(sharded_state_dict):
             if key.endswith(self._CENTERED_NORM_WEIGHT_SUFFIXES):
                 sharded_state_dict[key].replica_id = replica_id
-            elif key.endswith(self._CENTERED_NORM_EXTRA_STATE_SUFFIXES):
+            elif key.endswith(self._EMPTY_NORM_EXTRA_STATE_SUFFIXES):
                 extra_state = sharded_state_dict.pop(key)
                 extra_state_data = getattr(extra_state, "data", None)
                 has_extra_state = (
@@ -661,7 +712,7 @@ class MuseGlimmerModel(HybridModel):
                     else extra_state_data is not None and bool(extra_state_data)
                 )
                 if has_extra_state:
-                    raise ValueError(f"Muse centered RMSNorm extra state must be empty: {key}.")
+                    raise ValueError(f"Muse Transformer Engine norm extra state must be empty: {key}.")
         return sharded_state_dict
 
     def freeze(

@@ -178,6 +178,24 @@ reusable across multiple model families.
 Shared conversion infrastructure provides hooks and base classes — subclass them locally rather
 than adding conditionals to shared code.
 
+#### Prefer Transformer Engine normalization
+
+Before implementing a model-specific normalization with raw PyTorch operations, inspect the
+Transformer Engine version pinned by Megatron-Core. Use the backend-provided `TENorm` (or the
+corresponding TE module) for affine LayerNorm and RMSNorm whenever TE implements the required
+semantics. Preserve `eps`, parameter dtype/device initialization, sequence-parallel metadata, and
+`zero_centered_gamma`; standard-gamma and zero-centered-gamma norms are not interchangeable.
+
+Do not introduce a dummy affine parameter merely to reach a fused kernel. For example, current TE
+RMSNorm always owns a learnable `weight`, so a genuinely weightless/scaleless RMSNorm must retain a
+parameter-free implementation until TE exposes matching semantics. Adding an all-ones frozen weight
+would change state-dict keys, optimizer state, distributed-checkpoint schema, and conversion coverage.
+
+TE and reference framework kernels can differ numerically even when their architecture and weights
+match. Keep exact HF↔Megatron weight round-trip as the conversion gate, then assess forward behavior
+with the correlation criteria in the parity-testing skill rather than reverting to a slower norm only
+to reproduce one framework's operation ordering.
+
 #### Strategy 1: Create a local mapping subclass
 
 If the model has a layer whose weight layout doesn't match any existing mapping class, create a
