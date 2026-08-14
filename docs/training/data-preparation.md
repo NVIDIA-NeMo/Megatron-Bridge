@@ -189,6 +189,13 @@ dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
 
 Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
 
+Model-specific Jinja controls can be supplied per row under `chat_template_kwargs`, for example
+`{"truncate_history_thinking": false}` to retain all historical reasoning. Megatron Bridge translates this canonical
+control to model-template-specific parameter names where necessary. The data pipeline owns tokenization,
+truncation, padding, and template selection, so those controls cannot be overridden from a dataset row. Tool
+schemas remain in the top-level `tools` field. Processor-batched VLM rows must use identical template kwargs and
+tools within a microbatch.
+
 To train on several sources at once, pass a list to `source`. Each entry in `source_weights` is an epoch count for its source: `1.0` keeps every row once, `2.5` keeps every row twice plus half of them again, and `0.5` keeps half of them. Fractional passes draw without replacement and round up to a whole row. Omitting the weights gives every source one pass.
 
 ```python
