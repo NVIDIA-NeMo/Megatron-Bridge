@@ -8,6 +8,8 @@ Qwen 3.5/3.6 models feature a hybrid architecture combining GDN (Gated DeltaNet)
 
 Qwen 3.5/3.6 models are supported via Megatron Bridge with auto-detected configuration and weight mapping.
 
+For dense Qwen3.5 checkpoints, Megatron Bridge also supports the Hugging Face `Qwen3_5ForSequenceClassification` architecture for checkpoint conversion and native Megatron model construction. Sequence-classification models return raw scores with shape `[N, num_labels]`; task losses remain external, and `context_parallel_size` must be `1`. No sequence-classification training recipe is currently provided.
+
 ```{important}
 Use `transformers` >= 5.2.0 for Qwen3.5 and >= 5.8.1 for Qwen3.6.
 ```

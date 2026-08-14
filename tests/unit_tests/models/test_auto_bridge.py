@@ -558,6 +558,28 @@ class TestAutoBridge:
             mock_token_classification_from_pretrained.assert_not_called()
             mock_causal_lm_from_pretrained.assert_not_called()
 
+    def test_sequence_classification_config_only_provider_and_mappings(self):
+        from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config
+
+        from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+            Qwen35SequenceClassificationModelProvider,
+        )
+
+        config = Qwen3_5Config(num_labels=3)
+        config.architectures = ["Qwen3_5ForSequenceClassification"]
+        config.text_config.pad_token_id = 7
+
+        bridge = AutoBridge.from_hf_config(config)
+        provider = bridge.to_megatron_provider(load_weights=False)
+        hf_params = {str(mapping.hf_param) for mapping in bridge._model_bridge.mapping_registry().mappings}
+
+        assert isinstance(provider, Qwen35SequenceClassificationModelProvider)
+        assert provider.num_labels == 3
+        assert provider.pad_token_id == 7
+        assert "score.weight" in hf_params
+        assert "score.bias" not in hf_params
+        assert "lm_head.weight" not in hf_params
+
     def test_token_classification_config_only_provider_and_mappings(self):
         from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config
 

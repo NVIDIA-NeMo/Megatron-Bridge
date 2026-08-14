@@ -18,18 +18,25 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
 
 from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.sequence_classification import PreTrainedSequenceClassification
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.sequence_classification import (
+    Qwen3VLForSequenceClassification,
+    _sequence_classification_output_processor,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import (
     Qwen3VLForTokenClassification,
     _token_classification_output_processor,
 )
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
+    Qwen35SequenceClassificationBridge,
     Qwen35TokenClassificationBridge,
     Qwen35VLBridge,
     Qwen35VLMoEBridge,
@@ -38,6 +45,7 @@ from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
     _TRANSFORMERS_HAS_QWEN3_5_MOE,
     _TRANSFORMERS_HAS_QWEN3_5_TOKEN_CLASSIFICATION,
+    Qwen35SequenceClassificationModelProvider,
     Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
@@ -281,6 +289,143 @@ class TestQwen35VLBridgeMappingRegistry:
     def test_mapping_registry_has_vision_patch_embed(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("patch_embed" in n for n in names)
+
+
+# =====================================================================
+# Tests for Qwen35SequenceClassificationBridge
+# =====================================================================
+
+
+class TestQwen35SequenceClassificationBridge:
+    @pytest.fixture
+    def mock_pretrained(self):
+        vl_pretrained = _make_mock_pretrained(_make_dense_text_config(), _make_vision_config())
+        pretrained = Mock(spec=PreTrainedSequenceClassification)
+        pretrained.config = vl_pretrained.config
+        pretrained.config.num_labels = 3
+        pretrained.config.text_config.pad_token_id = 7
+        return pretrained
+
+    def test_provider_persists_sequence_head_config(self, mock_pretrained):
+        provider = Qwen35SequenceClassificationBridge().provider_bridge(mock_pretrained)
+
+        assert isinstance(provider, Qwen35SequenceClassificationModelProvider)
+        assert provider.num_labels == 3
+        assert provider.pad_token_id == 7
+        assert provider.mtp_num_layers == 0
+        assert provider.mtp_enabled is False
+        assert provider.share_embeddings_and_output_weights is False
+        serialized = ConfigContainer._convert_value_to_dict(provider)
+        restored = instantiate(serialized)
+        assert isinstance(restored, Qwen35SequenceClassificationModelProvider)
+        assert restored.num_labels == 3
+        assert restored.pad_token_id == 7
+
+    def test_provider_reconstructs_sequence_head(self, mock_pretrained):
+        provider = Qwen35SequenceClassificationBridge().provider_bridge(mock_pretrained)
+        restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+        restored.init_method = torch.nn.init.zeros_
+        restored.perform_initialization = True
+        tp_group = object()
+        model = SimpleNamespace(
+            pg_collection=SimpleNamespace(tp=tp_group),
+            language_model=SimpleNamespace(
+                post_process=True,
+                output_layer=torch.nn.Linear(provider.hidden_size, provider.vocab_size),
+            ),
+        )
+
+        with patch.object(Qwen35VLModelProvider, "provide", return_value=model):
+            result = restored.provide(pre_process=False, post_process=True)
+
+        assert result is model
+        assert restored.MODEL_CLASS is Qwen3VLForSequenceClassification
+        assert isinstance(model.language_model.output_layer, LinearForLastLayer)
+        assert model.language_model.output_layer.out_features == 3
+        assert model.language_model.output_layer.bias is None
+        assert model.language_model.output_layer.tp_group is tp_group
+        assert model.language_model.output_layer.dropout.p == 0.0
+        assert model.language_model.output_layer.output_in_fp32 is False
+
+    def test_mapping_registry_roundtrips_score_weight(self):
+        registry = Qwen35SequenceClassificationBridge().mapping_registry()
+        names = {str(name) for mapping in registry.mappings for name in (mapping.megatron_param, mapping.hf_param)}
+
+        assert "score.weight" in names
+        assert "language_model.output_layer.weight" in names
+        assert "score.bias" not in names
+        assert not any("lm_head" in name or "mtp." in name for name in names)
+
+        head = LinearForLastLayer(
+            input_size=4,
+            output_size=3,
+            sequence_parallel=False,
+            bias=False,
+            output_in_fp32=False,
+        )
+        source_weight = torch.arange(12, dtype=torch.float32).view(3, 4)
+        mapping = registry.megatron_to_hf_lookup("language_model.output_layer.weight")
+        assert mapping is not None
+        converted = mapping.hf_to_megatron(source_weight, head)
+        head.weight.data.copy_(converted)
+        exported = mapping.megatron_to_hf(head.weight.data, head)
+        assert torch.equal(exported["score.weight"], source_weight)
+
+
+def test_sequence_classification_output_processor_pools_unpacked_logits() -> None:
+    logits = torch.arange(24, dtype=torch.float32).view(4, 3, 2)
+    input_ids = torch.tensor(
+        [
+            [11, 12, 0, 0],
+            [0, 21, 22, 0],
+            [0, 0, 0, 0],
+        ]
+    )
+
+    scores = _sequence_classification_output_processor(
+        hidden_states=torch.empty_like(logits),
+        output_layer=Mock(return_value=(logits, None)),
+        output_weight=None,
+        input_ids=input_ids,
+        packed_seq_params=None,
+        runtime_gather_output=None,
+        config=SimpleNamespace(pad_token_id=0),
+    )
+
+    expected = logits[torch.tensor([1, 2, 0]), torch.arange(3)]
+    assert torch.equal(scores, expected)
+
+
+def test_sequence_classification_output_processor_pools_packed_thd_logits() -> None:
+    logits = torch.arange(16, dtype=torch.float32).view(8, 1, 2)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=torch.tensor([0, 3, 5], dtype=torch.int32),
+        cu_seqlens_q_padded=torch.tensor([0, 4, 8], dtype=torch.int32),
+    )
+
+    scores = _sequence_classification_output_processor(
+        hidden_states=torch.empty_like(logits),
+        output_layer=Mock(return_value=(logits, None)),
+        output_weight=None,
+        input_ids=None,
+        packed_seq_params=packed_seq_params,
+        runtime_gather_output=None,
+        config=SimpleNamespace(pad_token_id=None),
+    )
+
+    assert torch.equal(scores, logits[torch.tensor([2, 5]), 0])
+
+
+def test_sequence_classification_model_injects_output_processor() -> None:
+    model = Qwen3VLForSequenceClassification.__new__(Qwen3VLForSequenceClassification)
+    expected = torch.ones(1)
+
+    with patch.object(Qwen3VLModel, "forward", return_value=expected) as base_forward:
+        result = model.forward(input_ids=torch.ones(1, 1, dtype=torch.long))
+
+    assert result is expected
+    assert base_forward.call_args.kwargs["output_processor"] is _sequence_classification_output_processor
 
 
 # =====================================================================
