@@ -20,6 +20,8 @@ import torch
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp2_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp4_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
@@ -155,6 +157,54 @@ def test_deepseek_v3_gb300_large_scale_matches_final_r050_config() -> None:
     assert cfg.model.fp8_output_proj is True
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+
+
+@pytest.mark.parametrize(
+    ("recipe", "expected_pp", "expected_vpp", "expected_fp8_attention", "expected_main_grads", "has_nvlink_size"),
+    [
+        (deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp4_config, 4, 4, False, torch.float32, False),
+        (deepseek_v3_pretrain_256gpu_gb300_fp8mx_agentic_pp2_config, 2, 8, True, torch.bfloat16, True),
+    ],
+)
+def test_deepseek_v3_gb300_agentic_repro_configs(
+    recipe, expected_pp, expected_vpp, expected_fp8_attention, expected_main_grads, has_nvlink_size
+) -> None:
+    cfg = recipe()
+
+    assert cfg.train.train_iters == 50
+    assert cfg.train.global_batch_size == 8192
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.manual_gc_interval == 10
+    assert cfg.dataset.create_attention_mask is False
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == expected_pp
+    assert cfg.model.virtual_pipeline_model_parallel_size == expected_vpp
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_layout == "Et*4|(tttt|)*14tmL"
+
+    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 0.0
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.fused_residual_rmsnorm is True
+    assert cfg.model.make_vocab_size_divisible_by == 3232
+    assert cfg.model.fp8_dot_product_attention is expected_fp8_attention
+    assert cfg.model.fp8_output_proj is expected_fp8_attention
+    assert cfg.mixed_precision.fp8_dot_product_attention is expected_fp8_attention
+
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.optimizer_cuda_graph is True
+    assert cfg.optimizer.main_grads_dtype == expected_main_grads
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert ("NVLINK_DOMAIN_SIZE" in cfg.env_vars) is has_nvlink_size
 
 
 def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
