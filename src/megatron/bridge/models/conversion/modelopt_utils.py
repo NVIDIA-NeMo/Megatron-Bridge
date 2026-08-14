@@ -415,10 +415,7 @@ def _is_weight_task(task: WeightConversionTask) -> bool:
 
 def _is_quantizer_state_task(task: WeightConversionTask) -> bool:
     """Return whether a task carries ModelOpt's internal quantizer state."""
-    return any(
-        segment.endswith(("quantizer", "quantizers"))
-        for segment in task.global_param_name.split(".")
-    )
+    return any(segment.endswith(("quantizer", "quantizers")) for segment in task.global_param_name.split("."))
 
 
 def _quantization_layer_name(hf_weight_name: str) -> str:
@@ -523,11 +520,7 @@ def build_modelopt_export_plan(
     model: list[torch.nn.Module],
 ) -> ModelOptExportPlan:
     """Prepare topology-aware conversion tasks for ModelOpt HF export."""
-    concrete_tasks = [
-        task
-        for task in conversion_tasks
-        if task is not None and not _is_quantizer_state_task(task)
-    ]
+    concrete_tasks = [task for task in conversion_tasks if task is not None and not _is_quantizer_state_task(task)]
     config_weights = collect_modelopt_config_weights(concrete_tasks)
     states = collect_modelopt_quant_states(concrete_tasks)
     sync_groups: list[object | None] = []

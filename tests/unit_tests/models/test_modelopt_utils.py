@@ -460,9 +460,7 @@ def test_build_modelopt_export_plan_omits_internal_quantizer_state(monkeypatch):
         model=_model(),
     )
 
-    assert [task.global_param_name for task in plan.conversion_tasks] == [
-        weight_task.global_param_name
-    ]
+    assert [task.global_param_name for task in plan.conversion_tasks] == [weight_task.global_param_name]
 
 
 def test_build_modelopt_export_plan_packs_grouped_experts_independently(monkeypatch):
