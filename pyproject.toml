@@ -133,7 +133,7 @@ override-dependencies = [
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
-    "nvidia-modelopt @ git+https://github.com/NVIDIA/Model-Optimizer.git@10a055476e4965738c4eda0acef9778172aab904",
+    "nvidia-modelopt @ git+https://github.com/NVIDIA/Model-Optimizer.git@722b80bd40b623b9527f6af710cee4f12a5ad8c5",
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
