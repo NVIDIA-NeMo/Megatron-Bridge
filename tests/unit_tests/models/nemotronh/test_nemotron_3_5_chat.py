@@ -51,9 +51,10 @@ class _NemotronLightningTokenizer:
     truncation_side = "right"
     added_tokens_decoder: dict[int, Any] = {}
     chat_template = (
+        "{% set truncate_history_thinking = true %}"
         "<|im_start|>system\n{{ content }}<|im_end|>\n"
         "<|im_start|>user\n{{ content }}<|im_end|>\n"
-        "<|im_start|>assistant\n{{ content }}<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n{{ reasoning_content }}</think>{{ content }}<|im_end|>\n"
         "<|im_start|>tool\n{{ content }}<|im_end|>\n"
     )
 
@@ -70,6 +71,9 @@ class _NemotronLightningTokenizer:
             "<|im_start|>tool\n": [IM_START, USER_ROLE, NEWLINE],
             "<|im_end|>\n": [IM_END, NEWLINE],
             "<|im_end|>": [IM_END],
+            "<think>": [THINK_OPEN],
+            "<think>\n": [THINK_OPEN, NEWLINE],
+            "<think></think>": [THINK_OPEN, THINK_CLOSE],
             "\n": [NEWLINE],
         }
         return marker_ids.get(text, [TEXT_IDS.get(text, 99)])
@@ -105,7 +109,7 @@ class _NemotronLightningTokenizer:
                     reasoning = None
                 input_ids.append(THINK_OPEN)
                 if isinstance(reasoning, str) and reasoning:
-                    input_ids.append(TEXT_IDS[reasoning])
+                    input_ids.extend([NEWLINE, TEXT_IDS[reasoning]])
                 input_ids.append(THINK_CLOSE)
                 content = message.get("content")
                 if isinstance(content, str) and content:
@@ -140,12 +144,12 @@ def _supervised_ids(tokenized: Any) -> list[int]:
 
 
 @pytest.mark.parametrize(
-    ("truncate_history", "expected_first_reasoning"),
-    [(True, []), (False, [TEXT_IDS["reason one"]])],
+    ("truncate_history", "expected_first_thinking"),
+    [(True, []), (False, [TEXT_IDS["reason one"], THINK_CLOSE])],
 )
 def test_nemotron_lightning_forwards_thinking_controls_and_masks_assistant_turns(
     truncate_history: bool,
-    expected_first_reasoning: list[int],
+    expected_first_thinking: list[int],
 ) -> None:
     tokenizer = _NemotronLightningTokenizer()
     example = {
@@ -169,13 +173,10 @@ def test_nemotron_lightning_forwards_thinking_controls_and_masks_assistant_turns
     assert all(kwargs["enable_thinking"] is True for kwargs in semantic_kwargs)
     assert all(kwargs["truncate_history_thinking"] is truncate_history for kwargs in semantic_kwargs)
     assert _supervised_ids(tokenized) == [
-        THINK_OPEN,
-        *expected_first_reasoning,
-        THINK_CLOSE,
+        *expected_first_thinking,
         TEXT_IDS["answer one"],
         IM_END,
         NEWLINE,
-        THINK_OPEN,
         TEXT_IDS["reason two"],
         THINK_CLOSE,
         TEXT_IDS["answer two"],
@@ -184,7 +185,7 @@ def test_nemotron_lightning_forwards_thinking_controls_and_masks_assistant_turns
     ]
 
 
-def test_nemotron_lightning_without_reasoning_supervises_empty_thinking_boundary() -> None:
+def test_nemotron_lightning_without_reasoning_masks_empty_thinking_boundary() -> None:
     tokenizer = _NemotronLightningTokenizer()
     example = {
         "messages": [
@@ -203,8 +204,6 @@ def test_nemotron_lightning_without_reasoning_supervises_empty_thinking_boundary
     assert semantic_kwargs
     assert all(kwargs["enable_thinking"] is False for kwargs in semantic_kwargs)
     assert _supervised_ids(tokenized) == [
-        THINK_OPEN,
-        THINK_CLOSE,
         TEXT_IDS["answer one"],
         IM_END,
         NEWLINE,
@@ -233,7 +232,6 @@ def test_nemotron_lightning_tool_reasoning_and_calls_are_supervised() -> None:
     batch = text_chat_collate_fn([example], tokenizer, warn_on_all_masked=False)
 
     expected_targets = [
-        THINK_OPEN,
         TEXT_IDS["reason one"],
         THINK_CLOSE,
         NEWLINE,
@@ -243,7 +241,6 @@ def test_nemotron_lightning_tool_reasoning_and_calls_are_supervised() -> None:
         TOOL_CALL_CLOSE,
         IM_END,
         NEWLINE,
-        THINK_OPEN,
         TEXT_IDS["reason two"],
         THINK_CLOSE,
         TEXT_IDS["Seattle is 12 C."],

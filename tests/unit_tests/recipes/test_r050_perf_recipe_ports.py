@@ -178,6 +178,8 @@ def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_shared_expert_overlap is False
 
     assert cfg.model.cuda_graph_impl == "full_iteration"

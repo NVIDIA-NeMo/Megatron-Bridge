@@ -2,6 +2,8 @@
 
 Evaluation of the `nemo-mbridge-perf-activation-recompute` skill before publication through NVSkills-Eval.
 
+> **Refresh required:** the skill guidance and evaluation task changed on 2026-08-12. The results below are retained as historical evidence for the previous version and do not validate the current version.
+
 This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
 
 ## Evaluation Summary
@@ -13,7 +15,8 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 - Dataset: 1 evaluation tasks
 - Attempts per task: 1
 - Pass threshold: 50%
-- Overall verdict: PASS
+- Historical verdict: PASS
+- Current-version verdict: pending a fresh NVSkills-Eval run
 
 ## Agents Used
 
@@ -77,6 +80,6 @@ Top findings:
 
 This tier was not run or did not produce findings in this report.
 
-## Publication Recommendation
+## Historical Publication Recommendation
 
-The skill is suitable to proceed toward NVSkills-Eval publication based on this benchmark. Skill owners should keep this file with the skill and refresh it when the evaluation dataset, skill behavior, or target agents materially change.
+The previous skill version was suitable to proceed toward publication based on this benchmark. Because the evaluation dataset and skill behavior have now changed materially, rerun NVSkills-Eval before treating the current version as benchmark-validated.
