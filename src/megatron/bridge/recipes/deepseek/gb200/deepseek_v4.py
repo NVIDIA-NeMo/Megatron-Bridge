@@ -88,7 +88,8 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    # MCore warns of TE CE stability issues, and matched GB200 testing found no throughput or memory benefit.
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
@@ -285,4 +286,35 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config() -> ConfigContainer
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = True
+    return cfg
+
+
+def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigContainer:
+    """Return the GB200-optimized offline-packed OpenMath SFT config.
+
+    This variant adds HybridEP dispatch, safe uneven-input padding, DSA indexer
+    training, and MoE fusions to the hardware-agnostic packed SFT recipe. It
+    preserves non-grouped expert GEMMs for checkpoint export compatibility.
+    """
+    from megatron.bridge.recipes.deepseek.deepseek_v4 import (
+        deepseek_v4_flash_sft_openmath_thinking_packed_config,
+    )
+
+    cfg = deepseek_v4_flash_sft_openmath_thinking_packed_config()
+
+    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_indexer_loss_coeff = 0.01
+    cfg.model.dsa_indexer_use_sparse_loss = True
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+    cfg.model.moe_grouped_gemm = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_router_fusion = True
+
+    # MCore warns of TE CE stability issues, and matched GB200 testing found no throughput or memory benefit.
+    cfg.model.cross_entropy_fusion_impl = "native"
     return cfg

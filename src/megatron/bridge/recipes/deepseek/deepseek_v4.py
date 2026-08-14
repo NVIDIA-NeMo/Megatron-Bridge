@@ -93,6 +93,9 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
     Pre-pack data with ``prepare_gpt_sft_packed_data.py`` before running SFT.
     When using CP>1, pass ``model.cp_partition_mode=contiguous`` (required for DSv4 CSA
     attention) and ``pad_seq_to_mult=4`` to ensure divisibility by cp_size.
+
+    For GB200-optimized training with HybridEP dispatcher and DSA kernel fusion,
+    use ``deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config`` instead.
     """
     cfg = deepseek_v4_flash_sft_config()
     # DSv4 hybrid attention requires contiguous CP partition when CP > 1;

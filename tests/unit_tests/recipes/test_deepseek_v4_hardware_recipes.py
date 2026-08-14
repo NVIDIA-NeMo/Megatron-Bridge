@@ -29,6 +29,9 @@ from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config as flash_library_config,
 )
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config as flash_packed_sft_config,
+)
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config as pro_bf16_base_config,
 )
@@ -64,7 +67,7 @@ def test_base_recipes_enable_precision_independent_fusions(
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
     assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
     assert cfg.model.use_transformer_engine_op_fuser is False
-    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.cross_entropy_fusion_impl == "native"
     assert cfg.comm_overlap.overlap_grad_reduce is True
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 
@@ -128,6 +131,25 @@ def test_flash_mxfp8_recipe_uses_activation_offload_to_fit() -> None:
     assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
     assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+
+
+def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
+    cfg = flash_packed_sft_config()
+
+    assert cfg.model.cp_partition_mode == "contiguous"
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 2
+    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_indexer_loss_coeff == 0.01
+    assert cfg.model.dsa_indexer_use_sparse_loss is True
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_num_sms == 16
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_permute_fusion is True
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_grouped_gemm is False
+    assert cfg.model.cross_entropy_fusion_impl == "native"
 
 
 def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
@@ -203,4 +225,5 @@ def test_pro_high_scale_recipe_preserves_real_training_contract() -> None:
 
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:
     assert recipes.deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config is flash_library_config
+    assert recipes.deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config is flash_packed_sft_config
     assert recipes.deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config is pro_library_config
