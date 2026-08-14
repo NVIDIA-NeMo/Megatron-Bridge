@@ -504,71 +504,75 @@ class Gemma4Bridge(MegatronModelBridge):
         """Text-only CausalLM: weights at ``model.*``; override in VL subclass."""
         return "model."
 
-    def _moe_mapping_registry(self) -> MegatronMappingRegistry:
+    def _moe_mapping_registry(self, megatron_prefix: str = "") -> MegatronMappingRegistry:
         """Parameter mappings for the MoE variant."""
+        mp = megatron_prefix
+        hp = self._hf_layer_prefix()
         param_mappings = {
-            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            "decoder.final_layernorm.weight": "model.norm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
-            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
-                "model.layers.*.post_attention_layernorm.weight"
+            f"{mp}embedding.word_embeddings.weight": f"{hp}embed_tokens.weight",
+            f"{mp}decoder.final_layernorm.weight": f"{hp}norm.weight",
+            f"{mp}decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": (
+                f"{hp}layers.*.input_layernorm.weight"
             ),
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.pre_feedforward_layernorm_2.weight",
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-            "decoder.layers.*.mlp.post_shared_expert_layernorm.weight": (
-                "model.layers.*.post_feedforward_layernorm_1.weight"
+            f"{mp}decoder.layers.*.self_attention.q_layernorm.weight": f"{hp}layers.*.self_attn.q_norm.weight",
+            f"{mp}decoder.layers.*.self_attention.k_layernorm.weight": f"{hp}layers.*.self_attn.k_norm.weight",
+            f"{mp}decoder.layers.*.self_attention.linear_proj.weight": f"{hp}layers.*.self_attn.o_proj.weight",
+            f"{mp}decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
+                f"{hp}layers.*.post_attention_layernorm.weight"
             ),
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.router.proj.weight",
+            f"{mp}decoder.layers.*.pre_mlp_layernorm.weight": f"{hp}layers.*.pre_feedforward_layernorm_2.weight",
+            f"{mp}decoder.layers.*.mlp.shared_experts.linear_fc2.weight": f"{hp}layers.*.mlp.down_proj.weight",
+            f"{mp}decoder.layers.*.mlp.post_shared_expert_layernorm.weight": (
+                f"{hp}layers.*.post_feedforward_layernorm_1.weight"
+            ),
+            f"{mp}decoder.layers.*.mlp.router.weight": f"{hp}layers.*.router.proj.weight",
         }
 
         mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
         mapping_list.extend(
             [
                 _Gemma4QKVMapping(
-                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                    q="model.layers.*.self_attn.q_proj.weight",
-                    k="model.layers.*.self_attn.k_proj.weight",
-                    v="model.layers.*.self_attn.v_proj.weight",
+                    megatron_param=f"{mp}decoder.layers.*.self_attention.linear_qkv.weight",
+                    q=f"{hp}layers.*.self_attn.q_proj.weight",
+                    k=f"{hp}layers.*.self_attn.k_proj.weight",
+                    v=f"{hp}layers.*.self_attn.v_proj.weight",
                 ),
                 GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                    gate="model.layers.*.mlp.gate_proj.weight",
-                    up="model.layers.*.mlp.up_proj.weight",
+                    megatron_param=f"{mp}decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate=f"{hp}layers.*.mlp.gate_proj.weight",
+                    up=f"{hp}layers.*.mlp.up_proj.weight",
                 ),
                 FusedGatedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    hf_param="model.layers.*.experts.gate_up_proj",
+                    megatron_param=f"{mp}decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    hf_param=f"{hp}layers.*.experts.gate_up_proj",
                 ),
                 FusedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.experts.down_proj",
+                    megatron_param=f"{mp}decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param=f"{hp}layers.*.experts.down_proj",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.layer_scalar",
-                    hf_param="model.layers.*.layer_scalar",
+                    megatron_param=f"{mp}decoder.layers.*.layer_scalar",
+                    hf_param=f"{hp}layers.*.layer_scalar",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.mlp.router.per_expert_scale",
-                    hf_param="model.layers.*.router.per_expert_scale",
+                    megatron_param=f"{mp}decoder.layers.*.mlp.router.per_expert_scale",
+                    hf_param=f"{hp}layers.*.router.per_expert_scale",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.mlp.router.scale",
-                    hf_param="model.layers.*.router.scale",
+                    megatron_param=f"{mp}decoder.layers.*.mlp.router.scale",
+                    hf_param=f"{hp}layers.*.router.scale",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.pre_shared_expert_layernorm.weight",
-                    hf_param="model.layers.*.pre_feedforward_layernorm.weight",
+                    megatron_param=f"{mp}decoder.layers.*.pre_shared_expert_layernorm.weight",
+                    hf_param=f"{hp}layers.*.pre_feedforward_layernorm.weight",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.mlp.post_moe_layernorm.weight",
-                    hf_param="model.layers.*.post_feedforward_layernorm_2.weight",
+                    megatron_param=f"{mp}decoder.layers.*.mlp.post_moe_layernorm.weight",
+                    hf_param=f"{hp}layers.*.post_feedforward_layernorm_2.weight",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.post_ffn_layernorm.weight",
-                    hf_param="model.layers.*.post_feedforward_layernorm.weight",
+                    megatron_param=f"{mp}decoder.layers.*.post_ffn_layernorm.weight",
+                    hf_param=f"{hp}layers.*.post_feedforward_layernorm.weight",
                 ),
             ]
         )

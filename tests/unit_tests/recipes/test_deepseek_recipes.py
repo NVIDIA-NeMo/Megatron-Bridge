@@ -459,6 +459,33 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
 
 
 @pytest.mark.parametrize(
+    ("recipe_name", "expected_dispatcher"),
+    [
+        ("deepseek_v4_flash_pretrain_config", "alltoall"),
+        ("deepseek_v4_flash_pretrain_mxfp8_config", "alltoall"),
+        ("deepseek_v4_flash_pretrain_muon_config", "alltoall"),
+        ("deepseek_v4_flash_sft_config", "alltoall"),
+        ("deepseek_v4_flash_no_mtp_sft_config", "alltoall"),
+        ("deepseek_v4_pro_pretrain_config", "alltoall"),
+        ("deepseek_v4_pro_pretrain_mxfp8_config", "alltoall"),
+        ("deepseek_v4_flash_pretrain_gb200_config", "flex"),
+        ("deepseek_v4_flash_pretrain_mxfp8_gb200_config", "flex"),
+        ("deepseek_v4_flash_pretrain_muon_gb200_config", "flex"),
+    ],
+)
+def test_deepseek_v4_recipes_keep_hardware_qualified_dispatcher(
+    recipe_name: str, expected_dispatcher: str, monkeypatch: pytest.MonkeyPatch
+):
+    cfg = _build_deepseek_v4_recipe(recipe_name, monkeypatch)
+
+    assert cfg.model.moe_token_dispatcher_type == expected_dispatcher
+    if expected_dispatcher == "flex":
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.model.moe_flex_dispatcher_num_sms == 16
+        assert cfg.model.moe_hybridep_num_sms is None
+
+
+@pytest.mark.parametrize(
     "recipe_name",
     [
         "deepseek_v4_flash_pretrain_config",

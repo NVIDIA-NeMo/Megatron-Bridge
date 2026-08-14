@@ -102,7 +102,8 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
         apt-get autoremove -y && \
         rm -rf /var/lib/apt/lists/* && \
     popd; \
-    fi
+    fi && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
@@ -171,7 +172,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
-    uv cache prune ${UV_CACHE_PRUNE_ARGS}
+    uv cache prune ${UV_CACHE_PRUNE_ARGS} && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
 COPY scripts/install_diffusion_deps.sh scripts/diffusion-deps.lock /opt/Megatron-Bridge/scripts/
 
@@ -181,39 +183,16 @@ ARG INSTALL_DIFFUSION_DEPS=false
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$INSTALL_DIFFUSION_DEPS" = "true" ]; then \
         bash scripts/install_diffusion_deps.sh; \
-    fi
+    fi && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
-ARG RUNTIME_UID=65532
-ARG RUNTIME_GID=65532
-RUN groupadd --gid "${RUNTIME_GID}" nemo-runtime && \
-    useradd --no-log-init --uid "${RUNTIME_UID}" --gid "${RUNTIME_GID}" \
-        --create-home --home-dir /home/nemo-runtime --shell /bin/bash nemo-runtime && \
-    chown "${RUNTIME_UID}:${RUNTIME_GID}" /opt/Megatron-Bridge && \
-    # NeMo Run recipes use this canonical experiment root. ARC runners are
-    # root, so missing ownership is otherwise hidden until non-root execution.
-    install -d -o "${RUNTIME_UID}" -g "${RUNTIME_GID}" /nemo_run
+COPY --chown=1000:1000 . /opt/Megatron-Bridge
 
-# Preserve repository file and directory modes: a blanket 0644 mode makes
-# copied directories untraversable by the final non-root user.
-COPY --chown=${RUNTIME_UID}:${RUNTIME_GID} . /opt/Megatron-Bridge
+# CI writes coverage beside the checked-out source, installs that source editable into the
+# prepared environment, and uses /nemo_run for runtime outputs. Keep those paths owned by the
+# existing unprivileged base-image user instead of relying on a root final user.
+RUN install -d -o 1000 -g 1000 -m 0755 /nemo_run /home/ubuntu/.cache && \
+    chown 1000:1000 /opt/Megatron-Bridge
 
-ENV HOME=/home/nemo-runtime \
-    XDG_CACHE_HOME=/tmp/regent-cache/xdg \
-    UV_CACHE_DIR=/tmp/regent-cache/uv
-
-USER ${RUNTIME_UID}:${RUNTIME_GID}
-
-# Keep dependency state immutable while proving the launcher worktree and
-# runtime-owned cache roots are usable without root. This stays after the
-# source COPY so the check also covers its effective ownership.
-RUN test "$(id -u)" = "${RUNTIME_UID}" && \
-    test -x /usr/local/bin/uv && \
-    test -x /opt/venv/bin/python && \
-    mkdir -p "${XDG_CACHE_HOME}" "${UV_CACHE_DIR}" && \
-    test -r /opt/Megatron-Bridge/pyproject.toml && \
-    test -x /opt/Megatron-Bridge/tests/unit_tests && \
-    test -r /opt/Megatron-Bridge/tests/unit_tests/Launch_Unit_Tests_Core.sh && \
-    touch /nemo_run/.nonroot-write-probe && \
-    rm /nemo_run/.nonroot-write-probe && \
-    touch /opt/Megatron-Bridge/.nonroot-write-probe && \
-    rm /opt/Megatron-Bridge/.nonroot-write-probe
+ENV HOME=/home/ubuntu
+USER 1000:1000

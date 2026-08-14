@@ -24,12 +24,15 @@ trap 'rm -rf "$object_store"' EXIT
 git -C "$object_store" init --quiet
 
 main_sha=$(awk '$2 == "refs/heads/main" {print $1}' <<<"$refs")
-if [[ -n "$main_sha" ]] && \
-  git -C "$object_store" fetch --quiet --filter=blob:none --no-tags "$repo" "$main_sha" "$revision"; then
-  if git -C "$object_store" merge-base --is-ancestor "$revision" "$main_sha"; then
-    exit 0
+dev_sha=$(awk '$2 == "refs/heads/dev" {print $1}' <<<"$refs")
+for protected_sha in "$main_sha" "$dev_sha"; do
+  if [[ -n "$protected_sha" ]] && \
+    git -C "$object_store" fetch --quiet --filter=blob:none --no-tags "$repo" "$protected_sha" "$revision"; then
+    if git -C "$object_store" merge-base --is-ancestor "$revision" "$protected_sha"; then
+      exit 0
+    fi
   fi
-fi
+done
 
 while IFS=$'\t' read -r sha ref; do
   if [[ "$sha" != "$revision" ]]; then

@@ -23,6 +23,7 @@ from megatron.bridge.data.collators.sequence_padding import use_processor_right_
 from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
+    resolve_chat_template_kwargs,
     shared_chat_template_kwargs_from_examples,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
@@ -68,6 +69,7 @@ def qwen3_omni_collate_fn(
     )
     conversations = [example["conversation"] for example in examples]
     template_kwargs = shared_chat_template_kwargs_from_examples(examples)
+    template_kwargs = resolve_chat_template_kwargs(processor, template_kwargs)
     with use_processor_right_padding(processor):
         processed = processor.apply_chat_template(
             conversations,

@@ -40,6 +40,7 @@ class TestGptOssBridge:
             "vocab_size": 201088,
             "hidden_act": "silu",
             "sliding_window": 4096,
+            "attention_bias": True,
         }
 
     @pytest.fixture
@@ -64,6 +65,15 @@ class TestGptOssBridge:
         # Key fields mapped from HF config
         assert provider.num_layers == mock_pretrained.config.num_hidden_layers
         assert provider.num_moe_experts == mock_pretrained.config.num_local_experts
+        assert provider.add_qkv_bias == mock_pretrained.config.attention_bias
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_megatron_to_hf_config_preserves_attention_bias(self, mock_pretrained):
+        bridge = GPTOSSBridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+
+        hf_config = bridge.megatron_to_hf_config(provider)
+
+        assert hf_config["attention_bias"] is True
