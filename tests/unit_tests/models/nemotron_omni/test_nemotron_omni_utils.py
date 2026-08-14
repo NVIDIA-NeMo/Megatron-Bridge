@@ -23,8 +23,10 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     inference_expanded_image_token_counts,
     inference_merged_sequence_length,
     inference_num_image_tiles,
+    processor_patchify_temporal_frames,
     select_inference_next_token,
     temporal_model_frames,
+    temporal_tubelet_feature_counts,
     valid_audio_feature_lengths,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
@@ -94,6 +96,68 @@ def test_temporal_model_frames_preserves_zero_and_non_temporal_inputs():
 def test_temporal_model_frames_rejects_invalid_patch_size():
     with pytest.raises(ValueError, match="must be greater than 0"):
         temporal_model_frames([object()], 0)
+
+
+def test_processor_patchify_temporal_frames_preserves_processor_pixels_and_sizes():
+    class _VideoImageProcessor:
+        _is_video_mode = False
+
+        def __call__(self, *, images, return_tensors):
+            assert self._is_video_mode is True
+            assert len(images) == 2
+            assert return_tensors is None
+            return {
+                "pixel_values": torch.arange(2 * 3 * 32 * 64, dtype=torch.float32).reshape(2, 3, 32, 64),
+                "imgs_sizes": [(32, 64), (32, 64)],
+                "num_tokens": [2, 2],
+            }
+
+    image_processor = _VideoImageProcessor()
+
+    patches, imgs_sizes = processor_patchify_temporal_frames(
+        [object(), object()],
+        image_processor=image_processor,
+        patch_dim=16,
+    )
+
+    assert patches.shape == (1, 16, 768)
+    assert imgs_sizes.tolist() == [[32, 64], [32, 64]]
+    assert image_processor._is_video_mode is False
+    first_patch = patches[0, 0].reshape(3, 16, 16)
+    expected = torch.arange(3 * 32 * 64, dtype=torch.float32).reshape(3, 32, 64)[:, :16, :16]
+    assert torch.equal(first_patch, expected)
+
+
+def test_temporal_tubelet_feature_counts_uses_each_post_resize_grid():
+    counts = temporal_tubelet_feature_counts(
+        torch.tensor([[384, 672], [384, 672], [352, 704], [352, 704]]),
+        torch.tensor([2, 2]),
+        temporal_patch_size=2,
+        patch_dim=16,
+    )
+
+    assert counts.tolist() == [252, 242]
+
+
+def test_temporal_tubelet_feature_counts_preserves_incomplete_final_group():
+    counts = temporal_tubelet_feature_counts(
+        torch.tensor([[384, 672], [384, 672], [384, 672]]),
+        torch.tensor([3]),
+        temporal_patch_size=2,
+        patch_dim=16,
+    )
+
+    assert counts.tolist() == [252, 252]
+
+
+def test_temporal_tubelet_feature_counts_rejects_mixed_grids_within_tubelet():
+    with pytest.raises(ValueError, match="inconsistent frame sizes"):
+        temporal_tubelet_feature_counts(
+            torch.tensor([[384, 672], [352, 704]]),
+            torch.tensor([2]),
+            temporal_patch_size=2,
+            patch_dim=16,
+        )
 
 
 def test_inference_num_image_tiles_uses_post_shuffle_dynamic_image_counts():

@@ -20,7 +20,7 @@ import copy
 import tempfile
 import warnings
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -38,7 +38,9 @@ from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     COMPACT_IMAGE_PLACEHOLDER,
     patchify_temporal_frame,
+    processor_patchify_temporal_frames,
     temporal_model_frames,
+    temporal_tubelet_feature_counts,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -237,10 +239,16 @@ def _prepare_temporal_rows(
     video_fps: float,
     video_nframes: int,
     patch_dim: int,
+    temporal_video_resize_mode: Literal["fixed_512", "processor"],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], torch.Tensor]:
     """Build row-local temporal prompts and one packed all-frame vision tensor."""
     if temporal_patch_size < 1:
         raise ValueError("temporal_patch_size must be at least 1.")
+    if temporal_video_resize_mode not in ("fixed_512", "processor"):
+        raise ValueError(
+            "temporal_video_resize_mode must be either 'fixed_512' or 'processor', "
+            f"got {temporal_video_resize_mode!r}."
+        )
     frame_height = frame_width = VISION_FRAME_SIZE
     token_rows: list[torch.Tensor] = []
     mask_examples: list[dict[str, Any]] = []
@@ -294,11 +302,20 @@ def _prepare_temporal_rows(
                             row_placeholder_count += 1
                         text_parts.append("\n".join(video_lines))
                         model_frames = temporal_model_frames(frames, temporal_patch_size)
-                        all_patches.extend(
-                            _patchify_frame(frame, height=frame_height, width=frame_width, patch_dim=patch_dim)
-                            for frame in model_frames
-                        )
-                        all_sizes.extend([[frame_height, frame_width]] * len(model_frames))
+                        if temporal_video_resize_mode == "processor":
+                            packed_frames, frame_sizes = processor_patchify_temporal_frames(
+                                model_frames,
+                                image_processor=processor.image_processor,
+                                patch_dim=patch_dim,
+                            )
+                            all_patches.append(packed_frames.squeeze(0))
+                            all_sizes.extend(frame_sizes.tolist())
+                        else:
+                            all_patches.extend(
+                                _patchify_frame(frame, height=frame_height, width=frame_width, patch_dim=patch_dim)
+                                for frame in model_frames
+                            )
+                            all_sizes.extend([[frame_height, frame_width]] * len(model_frames))
                         all_num_frames.append(len(model_frames))
                     elif isinstance(item, Mapping) and item.get("type") == "text":
                         text_parts.append(str(item.get("text", "")))
@@ -851,12 +868,17 @@ def nemotron_omni_collate_fn(
     video_nframes: int = 8,
     use_temporal_video_embedder: bool = False,
     patch_dim: int = 16,
+    temporal_video_resize_mode: Literal["fixed_512", "processor"] = "fixed_512",
     collapse_image_tokens: bool = False,
 ) -> dict[str, Any]:
     """Build one model-ready Omni batch from either HF or Energon examples.
 
     The canonical :class:`NemotronOmniModel` consumes the processor-expanded
     token sequence, with one image placeholder for every projected feature.
+    ``temporal_video_resize_mode="processor"`` uses the image processor's
+    aspect-preserving video grid and derives each tubelet's placeholder count
+    from its returned size metadata. The default ``"fixed_512"`` preserves the
+    prior square policy and Direct-HF behavior.
     Use :func:`nemotron_omni_llava_collate_fn` for the legacy LLaVA
     collapse/expand contract.
     """
@@ -868,6 +890,11 @@ def nemotron_omni_collate_fn(
             FutureWarning,
             stacklevel=2,
         )
+        if use_temporal_video_embedder and temporal_video_resize_mode == "processor":
+            raise ValueError(
+                "Processor-driven temporal video sizing is supported only by the canonical expanded-sequence "
+                "NemotronOmniModel; the deprecated LLaVA collapse/expand contract requires fixed_512."
+            )
     _validate_nemotron_omni_visual_keys(visual_keys)
     del start_of_response_token, min_pixels, max_pixels
     if not examples:
@@ -891,6 +918,7 @@ def nemotron_omni_collate_fn(
             video_fps=video_fps,
             video_nframes=video_nframes,
             patch_dim=patch_dim,
+            temporal_video_resize_mode=temporal_video_resize_mode,
         )
         use_per_image_token_counts = False
     else:
@@ -936,13 +964,18 @@ def nemotron_omni_collate_fn(
         adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
         batch["input_ids"] = adjusted["input_ids"]
         batch["attention_mask"] = adjusted["attention_mask"]
-    elif use_temporal_video_embedder and num_tiles is not None:
-        tokens_per_tubelet = _pixel_shuffled_token_count(
-            height=VISION_FRAME_SIZE,
-            width=VISION_FRAME_SIZE,
+    elif use_temporal_video_embedder and num_tiles is not None and num_tiles.numel() > 0:
+        replacement_counts = temporal_tubelet_feature_counts(
+            batch["imgs_sizes"],
+            batch["num_frames"],
+            temporal_patch_size=temporal_patch_size,
             patch_dim=patch_dim,
         )
-        replacement_counts = torch.full_like(num_tiles, tokens_per_tubelet)
+        if replacement_counts.numel() != num_tiles.numel():
+            raise ValueError(
+                "Temporal vision metadata produced "
+                f"{replacement_counts.numel()} feature counts for {num_tiles.numel()} compact placeholders."
+            )
         adjusted, loss_mask = _adjust_image_placeholders(
             batch,
             loss_mask,

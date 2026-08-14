@@ -27,12 +27,12 @@ COMPACT_IMAGE_PLACEHOLDER = "<img><image></img>"
 
 
 def patchify_temporal_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> torch.Tensor:
-    """Resize and normalize one frame for MCore's square temporal RADIO path.
+    """Resize and normalize one frame for the fixed temporal RADIO policy.
 
-    The public HF processor preserves aspect ratio, but pinned MCore requires
-    temporal tubelets to share one square spatial grid. This helper is shared
-    by training collation and inference so both paths use the same antialiased
-    bicubic interpolation, RADIO normalization, and patch layout.
+    This compatibility helper intentionally places every frame on the supplied
+    canvas. It is shared by fixed-policy training collation and inference so
+    both paths use the same antialiased bicubic interpolation, RADIO
+    normalization, and patch layout.
 
     Args:
         frame: PIL-compatible image with ``convert("RGB")`` support.
@@ -87,6 +87,185 @@ def temporal_model_frames(frames: Sequence[_FrameT], temporal_patch_size: int) -
     if len(model_frames) == 1 and temporal_patch_size > 1:
         model_frames *= temporal_patch_size
     return model_frames
+
+
+def processor_patchify_temporal_frames(
+    frames: Sequence[Any],
+    *,
+    image_processor: Any,
+    patch_dim: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply the public processor's video resize policy and pack normalized frames.
+
+    The Nemotron Omni remote image processor selects a patch-grid size using a
+    separate aspect-preserving video policy. It exposes that policy through the
+    same temporary ``_is_video_mode`` switch used by the public multimodal
+    processor. Reusing the processor output here keeps Bridge pixels, grid
+    metadata, and placeholder counts aligned with HF/vLLM preprocessing.
+
+    Args:
+        frames: Frames belonging to one source video, in model order.
+        image_processor: Nemotron Omni dynamic-resolution image processor.
+        patch_dim: Vision patch edge length.
+
+    Returns:
+        A pair containing packed patches with shape
+        ``[1, total_patches, 3 * patch_dim**2]`` and one ``(height, width)``
+        metadata row per frame.
+
+    Raises:
+        ValueError: If the processor contract or returned frame metadata is
+            incompatible with RADIO's packed temporal input.
+    """
+    if not frames:
+        raise ValueError("Processor-driven temporal preprocessing requires at least one frame.")
+    if patch_dim <= 0:
+        raise ValueError("patch_dim must be greater than 0.")
+    if not hasattr(image_processor, "_is_video_mode"):
+        raise ValueError(
+            "Processor-driven temporal preprocessing requires a Nemotron Omni image processor "
+            "with the public '_is_video_mode' video contract."
+        )
+
+    previous_video_mode = image_processor._is_video_mode
+    image_processor._is_video_mode = True
+    try:
+        processed = image_processor(images=list(frames), return_tensors=None)
+    finally:
+        image_processor._is_video_mode = previous_video_mode
+
+    pixel_values = processed.get("pixel_values")
+    if isinstance(pixel_values, list):
+        frame_tensors = [torch.as_tensor(value) for value in pixel_values]
+    elif torch.is_tensor(pixel_values) and pixel_values.ndim == 4:
+        frame_tensors = list(pixel_values.unbind(0))
+    elif torch.is_tensor(pixel_values) and pixel_values.ndim == 3:
+        frame_tensors = [pixel_values]
+    else:
+        shape = getattr(pixel_values, "shape", None)
+        raise ValueError(f"Video image processor returned unsupported pixel_values shape {shape}.")
+
+    raw_imgs_sizes = processed.get("imgs_sizes")
+    if raw_imgs_sizes is None:
+        raise ValueError("Video image processor must return imgs_sizes metadata.")
+    imgs_sizes = torch.as_tensor(raw_imgs_sizes, dtype=torch.long)
+    if imgs_sizes.ndim != 2 or imgs_sizes.shape != (len(frame_tensors), 2):
+        raise ValueError(
+            "Video image processor must return one (height, width) row per frame; "
+            f"got {tuple(imgs_sizes.shape)} for {len(frame_tensors)} frames."
+        )
+    if len(frame_tensors) != len(frames):
+        raise ValueError(f"Video image processor returned {len(frame_tensors)} tensors for {len(frames)} frames.")
+
+    reported_tokens = processed.get("num_tokens")
+    if reported_tokens is None or len(reported_tokens) != len(frame_tensors):
+        count = None if reported_tokens is None else len(reported_tokens)
+        raise ValueError(
+            "Video image processor must return one num_tokens entry per frame; "
+            f"got {count} entries for {len(frame_tensors)} frames."
+        )
+
+    patches = []
+    for frame_index, (frame, size, reported_count) in enumerate(
+        zip(frame_tensors, imgs_sizes.tolist(), reported_tokens, strict=True)
+    ):
+        if frame.ndim != 3:
+            raise ValueError(f"Processed video frame {frame_index} must have shape [3,H,W], got {tuple(frame.shape)}.")
+        channels, height, width = frame.shape
+        expected_height, expected_width = (int(value) for value in size)
+        if channels != 3 or (height, width) != (expected_height, expected_width):
+            raise ValueError(
+                f"Processed video frame {frame_index} shape {tuple(frame.shape)} does not match "
+                f"imgs_sizes row {(expected_height, expected_width)}."
+            )
+        if height % patch_dim or width % patch_dim:
+            raise ValueError(f"Video frame {height}x{width} is not divisible by patch_dim={patch_dim}.")
+        patch_rows, patch_cols = height // patch_dim, width // patch_dim
+        if patch_rows % 2 or patch_cols % 2:
+            raise ValueError(f"Video patch grid {patch_rows}x{patch_cols} is not divisible by the 2x2 pixel shuffle.")
+        expected_count = (patch_rows * patch_cols) // 4
+        if int(reported_count) != expected_count:
+            raise ValueError(
+                f"Video image processor reported {int(reported_count)} tokens for frame {frame_index}, "
+                f"but grid {patch_rows}x{patch_cols} produces {expected_count}."
+            )
+        patches.append(
+            frame.reshape(channels, patch_rows, patch_dim, patch_cols, patch_dim)
+            .permute(1, 3, 0, 2, 4)
+            .reshape(patch_rows * patch_cols, channels * patch_dim * patch_dim)
+            .contiguous()
+        )
+
+    return torch.cat(patches, dim=0).unsqueeze(0).contiguous(), imgs_sizes
+
+
+def temporal_tubelet_feature_counts(
+    imgs_sizes: torch.Tensor,
+    num_frames: torch.Tensor,
+    *,
+    temporal_patch_size: int,
+    patch_dim: int,
+    pixel_shuffle_factor: int = 2,
+) -> torch.Tensor:
+    """Compute projected RADIO feature counts in temporal tubelet order.
+
+    Args:
+        imgs_sizes: One ``(height, width)`` row per ungrouped input frame.
+        num_frames: Number of frame rows owned by each image or video item.
+        temporal_patch_size: Frames fused into one video tubelet.
+        patch_dim: Vision patch edge length.
+        pixel_shuffle_factor: Spatial reduction factor per dimension.
+
+    Returns:
+        One feature count per image or temporal tubelet, aligned with compact
+        ``<img><image></img>`` wrappers.
+
+    Raises:
+        ValueError: If metadata is inconsistent, a patch grid cannot be
+            shuffled, or frames inside one tubelet use different grids.
+    """
+    if imgs_sizes.ndim != 2 or imgs_sizes.shape[1] != 2:
+        raise ValueError(f"imgs_sizes must have shape [N, 2], got {tuple(imgs_sizes.shape)}.")
+    if temporal_patch_size <= 0:
+        raise ValueError("temporal_patch_size must be greater than 0.")
+    if patch_dim <= 0:
+        raise ValueError("patch_dim must be greater than 0.")
+    if pixel_shuffle_factor <= 0:
+        raise ValueError("pixel_shuffle_factor must be greater than 0.")
+
+    frame_counts = [int(count) for count in num_frames.reshape(-1).tolist()]
+    if not frame_counts or any(count <= 0 for count in frame_counts):
+        raise ValueError("num_frames must contain positive entries.")
+    if sum(frame_counts) != imgs_sizes.shape[0]:
+        raise ValueError(
+            f"num_frames accounts for {sum(frame_counts)} frames but imgs_sizes has {imgs_sizes.shape[0]} rows."
+        )
+
+    sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
+    feature_counts = []
+    frame_offset = 0
+    for media_index, frame_count in enumerate(frame_counts):
+        group_width = 1 if frame_count == 1 else temporal_patch_size
+        for group_start in range(0, frame_count, group_width):
+            group = sizes[frame_offset + group_start : frame_offset + min(group_start + group_width, frame_count)]
+            if any(size != group[0] for size in group[1:]):
+                raise ValueError(
+                    f"Temporal tubelet {len(feature_counts)} in media item {media_index} has inconsistent "
+                    f"frame sizes {group}."
+                )
+            height, width = group[0]
+            if height <= 0 or width <= 0 or height % patch_dim or width % patch_dim:
+                raise ValueError(f"Frame size {height}x{width} is not divisible by patch_dim={patch_dim}.")
+            patch_rows, patch_cols = height // patch_dim, width // patch_dim
+            if patch_rows % pixel_shuffle_factor or patch_cols % pixel_shuffle_factor:
+                raise ValueError(
+                    f"Patch grid {patch_rows}x{patch_cols} is not divisible by the "
+                    f"{pixel_shuffle_factor}x{pixel_shuffle_factor} pixel shuffle."
+                )
+            feature_counts.append((patch_rows * patch_cols) // (pixel_shuffle_factor**2))
+        frame_offset += frame_count
+
+    return torch.tensor(feature_counts, dtype=torch.int, device=imgs_sizes.device)
 
 
 def inference_num_image_tiles(
