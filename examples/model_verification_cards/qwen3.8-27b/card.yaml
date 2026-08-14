@@ -3,12 +3,12 @@
 
 title: qwen3_8_27b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. All workloads in this card target GB200 hardware. Conversion and
-  deterministic inference and all required functional training gates are
-  verified. No dense-27B GB200 performance or Megatron FSDP recipe is
-  available.
+  Performance scope: pretrain_performance.GB200 uses the tuned canonical
+  projector-only MockVLM recipe and records 451.720 model TFLOP/s/GPU on 16
+  GB200 GPUs; timing from all functional items remains sanity evidence. All
+  workloads in this card target GB200 hardware. Conversion, deterministic
+  inference, and all required functional training gates are verified. No
+  dense-27B Megatron FSDP recipe is available.
 verification_index:
   model_level:
     verified:
@@ -21,6 +21,8 @@ verification_index:
   training:
     GB200:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    GB200: verified
 model:
   hf_id: Qwen/Qwen3.8-27B
   hf_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0  # pragma: allowlist secret
@@ -428,3 +430,41 @@ items:
         totaling 56,110,835,024 bytes, its tracker records iteration 20, both
         built-in evaluation passes completed at loss 5.043188, and the process
         exited successfully in 17m27s.
+
+  pretrain_performance:
+    GB200:
+      status: verified
+      precision: bf16
+      bridge_commit: bdab7530dde9196c24d580bd3bb6ee23c0e8323a  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
+        --additional-slurm-params segment=4
+        --recipe qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config
+        --mode pretrain --pretrained_checkpoint
+        work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+        --max_steps 20 --warmup_iters 2
+        dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export
+        tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export
+        model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
+        logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-performance/resolved-config.yaml
+        scheduler.lr_decay_iters=20
+      last_verified: 2026-08-14
+      metrics:
+        initial_loss: 6.853174
+        final_loss: 4.975722
+        last_10_steps_step_time_ms_avg: 3105.340
+        last_10_steps_model_tflops_per_gpu_avg: 451.720
+        peak_allocated_memory_gib: 42.244
+      expected_result: >
+        On 16 GB200 GPUs in one NVL72 domain, the exact canonical BF16
+        projector-only MockVLM recipe completes 20 steps at TP4/PP2/CP2,
+        sequence length 4096, and MBS4/GBS32. Language and vision weights are
+        frozen while the multimodal projector trains. The recipe keeps fused
+        Gated DeltaNet execution enabled, disables unnecessary activation
+        recompute, evaluation, and checkpoint output, and retains NaN and
+        large-gradient checks. Loss remains finite from 6.853174 to 4.975722
+        with zero skipped or NaN iterations. Excluding first-iteration kernel
+        compilation, steps 11-20 average 3,105.340 ms and 451.720 model
+        TFLOP/s/GPU; peak allocated memory is 42.244 GiB. The process exits
+        successfully. This mock projector-only result is throughput evidence,
+        not full-model convergence evidence.
