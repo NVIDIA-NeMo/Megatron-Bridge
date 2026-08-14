@@ -24,6 +24,7 @@ from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
     nemotron_3_super_pretrain_64gpu_gb300_bf16_config,
     nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
+    nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
 )
 
 
@@ -192,5 +193,38 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× VR200, FP8-MX (alias of GB300)."""
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config()
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
+        # offloading weights;
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by the
+        # op fuser + fused weighted squared-ReLU with moe_act activation recompute
+        # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
