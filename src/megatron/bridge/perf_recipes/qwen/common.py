@@ -79,7 +79,6 @@ def _enable_ncclep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.moe_router_padding_for_quantization = True
-    cfg.model.moe_ncclep_static_shape = True
     cfg.model.moe_ncclep_zero_copy = False
 
     cfg.mixed_precision.fp8_dot_product_attention = True

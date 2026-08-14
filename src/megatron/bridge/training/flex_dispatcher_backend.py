@@ -80,11 +80,6 @@ def apply_flex_dispatcher_backend(
                 )
             _fallback_to_alltoall(model_config)
             return
-        if getattr(model_config, "moe_expert_rank_capacity_factor", None) is None:
-            raise ValueError(
-                "NCCL EP requires moe_expert_rank_capacity_factor to size its receive buffer. "
-                "Set it explicitly for the workload before enabling the ncclep backend."
-            )
     else:
         if get_rank_safe() == 0:
             logger.warning(

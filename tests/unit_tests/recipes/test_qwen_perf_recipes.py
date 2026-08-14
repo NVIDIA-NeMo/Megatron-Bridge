@@ -68,8 +68,8 @@ def test_qwen3_30b_gb200_bf16_ncclep_config():
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.moe_ncclep_static_shape is False
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.use_transformer_engine_op_fuser is False
     assert cfg.model.moe_ncclep_zero_copy is False
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_flex_dispatcher_num_sms is None
@@ -83,7 +83,6 @@ def test_qwen3_30b_gb200_mxfp8_ncclep_config():
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.moe_ncclep_static_shape is True
     assert cfg.model.moe_ncclep_zero_copy is False
     assert cfg.model.moe_paged_stash is True
     assert cfg.model.moe_grouped_gemm is True
@@ -101,8 +100,8 @@ def test_qwen3_30b_gb300_bf16_ncclep_config():
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.moe_ncclep_static_shape is False
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.use_transformer_engine_op_fuser is False
     assert cfg.model.moe_ncclep_zero_copy is False
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_flex_dispatcher_num_sms is None
@@ -119,7 +118,6 @@ def test_qwen3_30b_gb300_mxfp8_ncclep_config():
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-    assert cfg.model.moe_ncclep_static_shape is True
     assert cfg.model.moe_ncclep_zero_copy is False
     assert cfg.model.moe_paged_stash is True
     assert cfg.model.moe_grouped_gemm is True

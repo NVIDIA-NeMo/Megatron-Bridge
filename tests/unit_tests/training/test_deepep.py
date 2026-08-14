@@ -435,15 +435,24 @@ class TestNCCLEP:
         assert config.moe_shared_expert_overlap is False
 
     @patch("torch.cuda.get_device_properties")
-    def test_apply_requires_receive_capacity_factor(self, mock_get_device_properties):
+    def test_apply_allows_eager_mode_without_capacity_factor(self, mock_get_device_properties):
         mock_properties = MagicMock()
         mock_properties.major = 10
         mock_properties.name = "NVIDIA GB200"
         mock_get_device_properties.return_value = mock_properties
-        config = SimpleNamespace(num_moe_experts=8, moe_expert_rank_capacity_factor=None)
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=None,
+        )
 
-        with pytest.raises(ValueError, match="NCCL EP requires moe_expert_rank_capacity_factor"):
-            apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="ncclep")
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="ncclep")
+
+        assert config.moe_token_dispatcher_type == "flex"
+        assert config.moe_flex_dispatcher_backend == "ncclep"
+        assert config.moe_shared_expert_overlap is False
 
     @patch("torch.cuda.get_device_properties")
     def test_validate_unsupported_gpu_raises_error(self, mock_get_device_properties):
