@@ -451,6 +451,33 @@ def test_build_modelopt_export_plan_omits_internal_quantizer_state(monkeypatch):
     assert [task.global_param_name for task in plan.conversion_tasks] == [weight_task.global_param_name]
 
 
+def test_build_modelopt_export_plan_orders_tasks_by_hf_name(monkeypatch):
+    tasks = [
+        _task(
+            "decoder.layers.1.mlp.linear_fc1.weight",
+            "model.layers.1.mlp.up_proj.weight",
+        ),
+        _task(
+            "decoder.layers.0.mlp.linear_fc1.weight",
+            "model.layers.0.mlp.up_proj.weight",
+        ),
+    ]
+    states = {task.global_param_name: _state(w4a16=True) for task in tasks}
+    monkeypatch.setattr(modelopt_utils, "collect_modelopt_quant_states", lambda _tasks: states)
+    monkeypatch.setattr(
+        modelopt_utils,
+        "collect_modelopt_config_weights",
+        lambda _tasks: set(states),
+    )
+
+    plan = build_modelopt_export_plan(tasks, model=_model())
+
+    assert [_hf_task.mapping.hf_param for _hf_task in plan.conversion_tasks] == [
+        "model.layers.0.mlp.up_proj.weight",
+        "model.layers.1.mlp.up_proj.weight",
+    ]
+
+
 def test_build_modelopt_export_plan_packs_grouped_experts_independently(monkeypatch):
     hf_name = "model.layers.0.mlp.experts.gate_up_proj.weight"
     tasks = [

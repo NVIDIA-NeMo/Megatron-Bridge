@@ -854,6 +854,10 @@ def build_modelopt_export_plan(
     if ep_world_size > 1 and ep_group is not pp_group:
         config_sync_groups.append(ep_group)
 
+    # Native layerwise loaders retain incomplete parent modules. Canonical HF
+    # order keeps each module's weight and scale tensors adjacent during refit.
+    export_tasks.sort(key=_hf_weight_names)
+
     return ModelOptExportPlan(
         conversion_tasks=export_tasks,
         quantization_config=build_modelopt_quantization_config(
