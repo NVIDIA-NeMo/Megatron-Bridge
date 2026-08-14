@@ -24,6 +24,7 @@ from typing import Any
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
+from torchx.specs.api import AppState
 
 
 logger = logging.getLogger(__name__)
@@ -304,6 +305,13 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     return _build_parser().parse_known_args(argv)
 
 
+def _raise_on_failed_tasks(experiment: Any) -> None:
+    """Raise when a synchronous NeMo Run training task did not succeed."""
+    unsuccessful = [f"{job.id}={job.state}" for job in experiment.jobs if job.state != AppState.SUCCEEDED]
+    if unsuccessful:
+        raise RuntimeError(f"Training failed: {', '.join(unsuccessful)}")
+
+
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
@@ -341,6 +349,8 @@ def main(argv: list[str] | None = None) -> None:
             experiment.dryrun()
             return
         experiment.run(detach=not args.wait, tail_logs=args.wait)
+        if args.wait:
+            _raise_on_failed_tasks(experiment)
 
 
 if __name__ == "__main__":

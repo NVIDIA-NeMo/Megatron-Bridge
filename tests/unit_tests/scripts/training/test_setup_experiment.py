@@ -29,24 +29,32 @@ def _load_setup_experiment_module():
     nemo_run_config = types.ModuleType("nemo_run.config")
     nemo_run_config.get_nemorun_home = lambda: str(Path.home() / ".nemo_run")
     nemo_run.config = nemo_run_config
-    previous = sys.modules.get("nemo_run")
-    previous_config = sys.modules.get("nemo_run.config")
-    sys.modules["nemo_run"] = nemo_run
-    sys.modules["nemo_run.config"] = nemo_run_config
+    torchx = types.ModuleType("torchx")
+    torchx_specs = types.ModuleType("torchx.specs")
+    torchx_specs_api = types.ModuleType("torchx.specs.api")
+    torchx_specs_api.AppState = types.SimpleNamespace(SUCCEEDED="SUCCEEDED", FAILED="FAILED")
+    torchx.specs = torchx_specs
+    torchx_specs.api = torchx_specs_api
+    fake_modules = {
+        "nemo_run": nemo_run,
+        "nemo_run.config": nemo_run_config,
+        "torchx": torchx,
+        "torchx.specs": torchx_specs,
+        "torchx.specs.api": torchx_specs_api,
+    }
+    previous_modules = {name: sys.modules.get(name) for name in fake_modules}
+    sys.modules.update(fake_modules)
     try:
         spec = importlib.util.spec_from_file_location("test_training_setup_experiment", script)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     finally:
-        if previous is None:
-            sys.modules.pop("nemo_run", None)
-        else:
-            sys.modules["nemo_run"] = previous
-        if previous_config is None:
-            sys.modules.pop("nemo_run.config", None)
-        else:
-            sys.modules["nemo_run.config"] = previous_config
+        for name, previous in previous_modules.items():
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
     return module
 
 
@@ -301,7 +309,7 @@ def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
 
     class _Experiment:
         def __init__(self, _name):
-            pass
+            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.SUCCEEDED)]
 
         def __enter__(self):
             return self
@@ -623,7 +631,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
 
     class _Experiment:
         def __init__(self, _name):
-            pass
+            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.SUCCEEDED)]
 
         def __enter__(self):
             return self
@@ -673,6 +681,47 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     submission_options = {"--submission-dry-run", "--dry-run", "--wait"}
     expected_training_options = [option for option in extra_options if option not in submission_options]
     assert scripts[0].args == [*training_args, *expected_training_options]
+
+
+def test_main_propagates_synchronous_training_failure(monkeypatch):
+    module = _load_setup_experiment_module()
+
+    class _Experiment:
+        def __init__(self, _name):
+            self.jobs = [types.SimpleNamespace(id="training", state=module.AppState.FAILED)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, *_args, **_kwargs):
+            pass
+
+        def run(self, **kwargs):
+            assert kwargs == {"detach": False, "tail_logs": True}
+
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: object())
+
+    with pytest.raises(RuntimeError, match="training=FAILED"):
+        module.main(
+            [
+                "--gpus-per-node",
+                "1",
+                "--account",
+                "account",
+                "--partition",
+                "partition",
+                "--container-image",
+                "image.sqsh",
+                "--wait",
+                "--recipe",
+                "gpt_oss_20b_pretrain_config",
+            ]
+        )
 
 
 def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
