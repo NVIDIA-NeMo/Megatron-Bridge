@@ -14,7 +14,7 @@
 
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from megatron.training.models.base import (
     BuildConfigT,  # noqa: F401
@@ -27,6 +27,7 @@ from megatron.training.models.base import (
     ModelConfig as _MegatronModelConfig,
 )
 
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix, instantiate
 
 
@@ -71,6 +72,42 @@ def deserialize_model_config(data: dict[str, Any]) -> _MegatronModelConfig:
         raise ValueError(f"Cannot deserialize: outer target produced {type(result).__name__}, not ModelConfig")
     result.builder = builder
     return result
+
+
+class ModelConfigOverrideMixin:
+    """Route flat overrides to their declared owner and reject unknown fields.
+
+    Builder-backed model configs store Megatron-Core transformer settings in a
+    nested ``transformer`` dataclass while exposing flat assignment for recipe
+    compatibility. This mixin keeps that convenience without allowing typos to
+    create phantom configuration attributes. Subclasses declare the nested
+    config type through ``transformer_config_class``.
+    """
+
+    transformer_config_class: ClassVar[type[TransformerConfig]]
+
+    def __setattr__(self, name: str, value: Any, /) -> None:
+        """Assign a declared outer or nested field and reject phantom fields."""
+        try:
+            transformer = object.__getattribute__(self, "transformer")
+        except AttributeError:
+            object.__setattr__(self, name, value)
+            return
+
+        model_fields = getattr(type(self), "__dataclass_fields__", {})
+        transformer_fields = getattr(type(transformer), "__dataclass_fields__", {})
+        descriptor = getattr(type(self), name, None)
+
+        if name == "transformer" or name in model_fields:
+            object.__setattr__(self, name, value)
+        elif name in transformer_fields:
+            setattr(transformer, name, value)
+        elif name == "builder" or name.startswith("_") or hasattr(descriptor, "__set__"):
+            object.__setattr__(self, name, value)
+        else:
+            raise AttributeError(
+                f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
+            )
 
 
 class ModelConfig(_MegatronModelConfig):

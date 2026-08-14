@@ -21,7 +21,7 @@ from typing import Any, ClassVar
 
 from megatron.training.models.hybrid import HybridModelConfig
 
-from megatron.bridge.models.common import deserialize_model_config
+from megatron.bridge.models.common import ModelConfigOverrideMixin, deserialize_model_config
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
 from megatron.bridge.utils.instantiate_utils import _resolve_target
@@ -67,10 +67,11 @@ class MuseGlimmerVisionModelConfig:
 
 
 @dataclass(kw_only=True)
-class MuseGlimmerModelConfig(HybridModelConfig):
+class MuseGlimmerModelConfig(ModelConfigOverrideMixin, HybridModelConfig):
     """Complete builder configuration for Muse Glimmer."""
 
     builder: ClassVar[str] = "megatron.bridge.models.muse_glimmer.MuseGlimmerModelBuilder"
+    transformer_config_class: ClassVar[type[TransformerConfig]] = MuseGlimmerTransformerConfig
     hybrid_attention_layers_include_mlp: ClassVar[bool] = True
 
     vision: MuseGlimmerVisionModelConfig = field(default_factory=MuseGlimmerVisionModelConfig)
