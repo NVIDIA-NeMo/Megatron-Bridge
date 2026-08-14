@@ -90,10 +90,11 @@ RUN pip install "fastapi==0.139.1" \
     "jupyterlab>=4.5.10" \
     "jupyter-server>=2.20.0" \
     "mistune>=3.3.0" \
-    "GitPython>=3.1.55" && \
+    "GitPython>=3.1.58" && \
     # Address CVE from transitive dependency
-    pip uninstall -y opencv-python-headless nvidia-dali-cuda130
-
+    # Remove the package pulled in by Humming kernels.
+    # Humming-backed vLLM quantization is unavailable without pyelftools.
+    pip uninstall -y opencv-python-headless nvidia-dali-cuda130 pyelftools
 # Remove PyTorch's bundled third-party onnx source tree (build artifact, not used at runtime).
 # The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
 RUN rm -rf /opt/pytorch/pytorch/third_party/onnx

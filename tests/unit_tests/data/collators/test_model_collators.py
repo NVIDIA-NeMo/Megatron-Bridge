@@ -76,7 +76,13 @@ class _DummyProcessor:
                 "<|im_end|>": [103],
                 "<|im_end|>\n": [103, 104],
             }
-            return {"input_ids": mapping.get(text, [1])}
+            if text in mapping:
+                return {"input_ids": mapping[text]}
+            # Non-assistant role markers must tokenize to distinct ids so that content
+            # (default) never collides with a role-boundary token in the safety check.
+            if isinstance(text, str) and text.startswith("<|im_start|>"):
+                return {"input_ids": [199]}
+            return {"input_ids": [1]}
 
     def __init__(self):
         self.tokenizer = self._Tok()
@@ -225,6 +231,31 @@ def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
 
     assert proc.processor_kwargs[-1]["min_pixels"] == qwen_vl_collate.QWEN_VL_MIN_PIXELS
     assert proc.processor_kwargs[-1]["max_pixels"] == qwen_vl_collate.QWEN_VL_MAX_PIXELS
+
+
+def test_qwen2_5_collate_fn_pads_mm_token_type_ids_with_sequence(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _TokenTypeProcessor(_DummyProcessor):
+        def __call__(self, *args, **kwargs):
+            batch = super().__call__(*args, **kwargs)
+            batch["mm_token_type_ids"] = torch.tensor([[0, 1, 0]])
+            return batch
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    batch = collate.qwen2_5_collate_fn(
+        examples,
+        _TokenTypeProcessor(),
+        sequence_length=8,
+        pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].shape == batch["mm_token_type_ids"].shape == (1, 4)
+    assert batch["mm_token_type_ids"].tolist() == [[0, 1, 0, 0]]
 
 
 def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
@@ -590,6 +621,8 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
             def __call__(self, text, add_special_tokens=False):
+                if isinstance(text, str) and text.startswith("<|im_start|>"):
+                    return {"input_ids": [199]}
                 return {"input_ids": [1]}
 
         def __init__(self):
@@ -669,7 +702,11 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
                     "<|im_end|>": [103],
                     "<|im_end|>\n": [103, 104],
                 }
-                return {"input_ids": mapping.get(text, [42])}
+                if text in mapping:
+                    return {"input_ids": mapping[text]}
+                if isinstance(text, str) and text.startswith("<|im_start|>"):
+                    return {"input_ids": [199]}
+                return {"input_ids": [42]}
 
         def __init__(self):
             self.tokenizer = self._Tok()
@@ -710,6 +747,8 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
             def __call__(self, text, add_special_tokens=False):
+                if isinstance(text, str) and text.startswith("<|im_start|>"):
+                    return {"input_ids": [199]}
                 return {"input_ids": [1]}
 
         def __init__(self):
@@ -902,6 +941,48 @@ def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch)
     assert batch["visual_inputs"].mm_token_type_ids.tolist() == [[0, 1, 0, 0, 0, 2, 2, 0]]
     assert processor.padding_values == [False, False]
     assert processor.tokenizer.padding_side == "left"
+
+
+def test_glm4v_collate_flattens_structured_assistant_content(monkeypatch):
+    class _GlmProcessor:
+        class _Tokenizer:
+            padding_side = "left"
+            pad_token_id = 0
+
+        def __init__(self):
+            self.tokenizer = self._Tokenizer()
+            self.conversations = None
+
+        def apply_chat_template(self, conversations, **kwargs):
+            self.conversations = conversations
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "attention_mask": torch.ones((1, 3), dtype=torch.long),
+                "mm_token_type_ids": torch.zeros((1, 3), dtype=torch.long),
+            }
+
+    monkeypatch.setattr(
+        glm_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
+    )
+    monkeypatch.setattr(glm_vl_collate, "_glm4v_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(
+        glm_vl_collate,
+        "_build_glm4v_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: torch.ones_like(input_ids, dtype=torch.float32),
+    )
+    assistant_content = [{"type": "text", "text": "A picture."}]
+    example = {
+        "conversation": [
+            {"role": "user", "content": "Describe."},
+            {"role": "assistant", "content": assistant_content},
+        ]
+    }
+    processor = _GlmProcessor()
+
+    glm_vl_collate.glm4v_collate_fn([example], processor)
+
+    assert processor.conversations[0][-1]["content"] == "A picture."
+    assert example["conversation"][-1]["content"] == assistant_content
 
 
 @pytest.mark.parametrize(
@@ -1781,7 +1862,11 @@ class _NemotronOmniTokenizer:
                 "<|im_end|>": [102],
                 "<|im_end|>\n": [102, 103],
             }
-            return {"input_ids": marker_tokens.get(texts, [1])}
+            if texts in marker_tokens:
+                return {"input_ids": marker_tokens[texts]}
+            if texts.startswith("<|im_start|>"):
+                return {"input_ids": [199]}
+            return {"input_ids": [1]}
         self.tokenized_texts = list(texts)
         max_len = max(len(row) for row in self.tokenized_rows)
         out = torch.full((len(self.tokenized_rows), max_len), self.pad_token_id, dtype=torch.long)

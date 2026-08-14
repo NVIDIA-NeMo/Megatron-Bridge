@@ -79,7 +79,7 @@ override-dependencies = [
     "apache-tvm-ffi==0.1.11",
     "levenshtein; sys_platform == 'never'",
     "pytest==8.4.2",
-    "wandb>=0.25.0",
+    "wandb==0.27.2",
     "nvidia-lm-eval==25.11.1",
     "lilcom==1.8.1",
     "onnx==1.21.0",                             # TRT-LLM hard dependency

@@ -113,10 +113,18 @@ The durable constraints for packed sequences in Bridge are:
   evaluation CP constraints and `CP * TP` when sequence parallelism is enabled
 - for fine-tuning with CP enabled, per-token loss behavior and reduction
   settings matter
+- Megatron Bridge automatically enables safe uneven-input padding for eager
+  HybridEP configs; this pads only to the group-wide aligned maximum before
+  dispatch and trims the padding after combine
 - CUDA-graph-friendly packed metadata requires additional padding constraints
 
 Model-family support is not universal. Some families and recipe paths explicitly
 opt out of packed sequences or related packing modes.
+
+HybridEP CUDA-graph configs preserve their explicit uneven-input setting because
+the safety path performs a host scalar synchronization that is not capture-safe.
+They must provide equal per-rank dispatch shapes. Disable CUDA graphs when packed
+runtime token counts can differ so Bridge can enable safe padding.
 
 ## Relationship to Long-Sequence Training
 

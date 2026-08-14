@@ -30,7 +30,6 @@ from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -72,8 +71,7 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -121,8 +119,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -171,8 +168,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -222,8 +218,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -274,8 +269,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -957,7 +951,9 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.attention_backend = "auto"
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "native"
+    # Native fused cross entropy materializes a full FP32 vocabulary-sized
+    # softmax buffer. Use the TE kernel to keep the 248K-token loss bounded.
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     # MoE settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -971,10 +967,12 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
+    # Full SFT retains FP32 optimizer state alongside the FSDP communication
+    # pools, so recompute each transformer layer to bound live activations.
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
@@ -1017,6 +1015,7 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.fsdp_double_buffer = True
+    cfg.ddp.megatron_fsdp_max_pool_double_buffer = True
     cfg.ddp.nccl_ub = False
     cfg.ddp.fsdp_db_use_persist_buf_on_alloc_fail = True
     cfg.ddp.overlap_grad_reduce = True

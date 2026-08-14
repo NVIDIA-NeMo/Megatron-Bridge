@@ -93,7 +93,10 @@ class GLM5Bridge(MegatronModelBridge):
 
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = True
-        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_token_dispatcher_type = "flex"
+        provider.moe_flex_dispatcher_backend = "hybridep"
+        provider.moe_flex_dispatcher_num_sms = 16
+        provider.moe_permute_fusion_into_hybridep = False
         provider.moe_router_load_balancing_type = "seq_aux_loss"
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
@@ -111,6 +114,10 @@ class GLM5Bridge(MegatronModelBridge):
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
+        # GlmMoeDsaConfig may normalize qk_rope_head_dim to head_dim while
+        # loading GLM-5.2. Recover the RoPE width from the model's invariant:
+        # total QK width = non-RoPE width + RoPE width.
+        provider.qk_pos_emb_head_dim = hf_config.qk_head_dim - hf_config.qk_nope_head_dim
 
         # GLM5-specific: rotary_base is nested in rope_parameters
         provider.rotary_base = hf_config.rope_parameters["rope_theta"]
@@ -229,7 +236,7 @@ class GLM5Bridge(MegatronModelBridge):
         )
 
         hf_config = self.hf_config
-        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
+        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
         num_transformer_layers = hf_config.num_hidden_layers
         for mtp_layer in range(num_mtp_layers):
             # MTP specific mappings

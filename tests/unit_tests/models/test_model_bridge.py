@@ -18,7 +18,10 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from transformers import PretrainedConfig
 
+from megatron.bridge.models.conversion import model_bridge as model_bridge_module
+from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
@@ -30,6 +33,59 @@ class DummyBridge(MegatronModelBridge):
 
     def mapping_registry(self):  # pragma: no cover - not used in tests
         return MegatronMappingRegistry()
+
+
+def test_modelopt_plan_skips_unmapped_task_slot_and_keeps_later_task(monkeypatch):
+    first_name = "first.weight"
+    unmapped_name = "unmapped.amax"
+    last_name = "last.weight"
+
+    class MappedBridge(DummyBridge):
+        def mapping_registry(self):
+            return MegatronMappingRegistry(
+                AutoMapping(first_name, "hf.first.weight"),
+                AutoMapping(last_name, "hf.last.weight"),
+            )
+
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+    model.first = torch.nn.Linear(1, 1, bias=False)
+    model.unmapped = torch.nn.Module()
+    model.unmapped.register_buffer("amax", torch.ones(1))
+    model.last = torch.nn.Linear(1, 1, bias=False)
+    bridge = MappedBridge()
+    global_names = [first_name, unmapped_name, last_name]
+
+    monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _model: global_names)
+    monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+    monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _model: [model])
+    monkeypatch.setattr(model_bridge_module, "_get_pg_collection_from_model", lambda _model: None)
+    monkeypatch.setattr(model_bridge_module, "_get_pp_rank", lambda _model: 0)
+    monkeypatch.setattr(
+        model_bridge_module,
+        "_megatron_local_name_to_global",
+        lambda _models, _config, local_name, _vp_stage: local_name,
+    )
+
+    tasks = bridge.build_conversion_tasks(PretrainedConfig(), [model])
+
+    assert tasks[0].global_param_name == first_name
+    assert tasks[1] is None
+    assert tasks[2].global_param_name == last_name
+
+    monkeypatch.setattr(modelopt_utils, "get_modelopt_quant_exporter", lambda _mode: ("unused", lambda *_args: ()))
+    monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 1)
+    monkeypatch.setattr(modelopt_utils.model_bridge_utils, "_get_pg_collection_from_model", lambda _model: None)
+
+    export_tasks = modelopt_utils.build_modelopt_export_plan(
+        tasks,
+        model=[model],
+        bridge=bridge,
+        quant_mode="nvfp4",
+        ignore_patterns=[],
+    )
+
+    assert [task.global_param_name for task in export_tasks] == [first_name, last_name]
 
 
 def test_hf_weight_tuple_iter_finalized_preserves_two_field_abi():
@@ -283,6 +339,65 @@ def test_stream_weights_megatron_to_hf_transforms_grouped_tensor_once_after_accu
         "hf.grouped.scale",
         "hf.grouped.scale_2",
     ]
+
+
+def test_grouped_export_retries_stack_on_cpu_after_cuda_oom(monkeypatch, caplog):
+    class FakeCudaTensor:
+        is_cuda = True
+
+        def __init__(self, value):
+            self.value = value
+
+        def cpu(self):
+            return torch.tensor([self.value])
+
+    original_stack = torch.stack
+    stack_devices = []
+
+    def stack_with_cuda_oom(tensors, dim=0):
+        stack_devices.append([type(tensor).__name__ for tensor in tensors])
+        if isinstance(tensors[0], FakeCudaTensor):
+            raise torch.OutOfMemoryError("simulated grouped-export CUDA OOM")
+        return original_stack(tensors, dim=dim)
+
+    monkeypatch.setattr(torch, "stack", stack_with_cuda_oom)
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: 1,
+    )
+    mapping = SimpleNamespace(is_grouped_export=True, ep_size=1)
+    model_config = SimpleNamespace(num_moe_experts=2)
+    buffers = {}
+
+    first = MegatronModelBridge._accumulate_grouped_export(
+        None,
+        SimpleNamespace(
+            mapping=mapping,
+            param_name="decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        ),
+        {"hf.grouped": FakeCudaTensor(1.0)},
+        model_config,
+        buffers,
+        {},
+    )
+    with caplog.at_level("WARNING"):
+        second = MegatronModelBridge._accumulate_grouped_export(
+            None,
+            SimpleNamespace(
+                mapping=mapping,
+                param_name="decoder.layers.0.mlp.experts.linear_fc2.weight1",
+            ),
+            {"hf.grouped": FakeCudaTensor(2.0)},
+            model_config,
+            buffers,
+            {},
+        )
+
+    assert first is None
+    torch.testing.assert_close(second["hf.grouped"], torch.tensor([[1.0], [2.0]]))
+    assert stack_devices == [["FakeCudaTensor", "FakeCudaTensor"], ["Tensor", "Tensor"]]
+    assert "retrying on CPU" in caplog.text
+    assert buffers == {}
 
 
 def test_stream_weights_megatron_to_hf_finalizes_exported_tensors_before_cpu(monkeypatch):

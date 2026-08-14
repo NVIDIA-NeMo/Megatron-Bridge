@@ -1067,6 +1067,7 @@ class ParallelLinearAdapter(nn.Module):
             self.half()
 
         if self._uses_grouped_expert_sharding():
+            self._synchronize_shared_expert_parameters()
             self._register_shared_expert_grad_sync_hooks()
 
         # revert config change in case it is read elsewhere
@@ -1280,6 +1281,37 @@ class ParallelLinearAdapter(nn.Module):
         # EP x expert-DP data-parallel world, not just expert-DP.
         torch.distributed.all_reduce(grad, group=self.ep_group)
         return grad
+
+    def _synchronize_shared_expert_parameters(self) -> None:
+        """Broadcast shared expert adapter parameters from EP group rank zero."""
+
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return
+        if self.ep_group is None or _process_group_size(self.ep_group) <= 1:
+            return
+
+        weights = [
+            weight
+            for module in (self.linear_in, self.linear_out)
+            if isinstance(weight := getattr(module, "weight", None), torch.Tensor)
+        ]
+        if not weights:
+            return
+
+        src_rank = torch.distributed.get_global_rank(self.ep_group, 0)
+        with torch.no_grad():
+            for weight in weights:
+                if weight.is_meta:
+                    raise RuntimeError(
+                        "Shared expert adapter parameters must be materialized before EP synchronization"
+                    )
+                if weight.is_cuda or torch.distributed.get_backend(self.ep_group) != "nccl":
+                    torch.distributed.broadcast(weight, src=src_rank, group=self.ep_group)
+                    continue
+
+                staged_weight = weight.to(torch.device("cuda", torch.cuda.current_device()))
+                torch.distributed.broadcast(staged_weight, src=src_rank, group=self.ep_group)
+                weight.copy_(staged_weight.cpu())
 
     def _register_shared_expert_grad_sync_hooks(self) -> None:
         """Keep shared grouped-expert adapters synchronized across EP ranks."""
@@ -1621,18 +1653,6 @@ def _apply_grouped_expert_swiglu_sharded_factory(
         ]
 
     def sh_ten_merge_fn(sub_state_dict):
-        if not singleton_local_shards and len(sub_state_dict) > 1:
-            # Dist checkpoint load reconstructs one local fused shard per expert-TP
-            # rank, so the incoming tensors look like [gate_0|up_0, gate_1|up_1, ...].
-            # Restore the fused [gate_0, gate_1, ..., up_0, up_1, ...] layout before
-            # concatenating back along the SwiGLU axis.
-            gate_parts = []
-            up_parts = []
-            for tensor in sub_state_dict:
-                gate_part, up_part = torch.chunk(tensor, 2, dim=swiglu_shard_axis)
-                gate_parts.append(gate_part)
-                up_parts.append(up_part)
-            sub_state_dict = [*gate_parts, *up_parts]
         try:
             return torch.cat(sub_state_dict, dim=swiglu_shard_axis)
         except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
@@ -1792,8 +1812,9 @@ class GroupedExpertLinearAdapter(nn.Module):
         self.pg_collection = _get_pg_collection(
             pg_collection,
             model_parallel_config,
-            required_pgs=["ep", "expt_tp", "expt_dp"],
+            required_pgs=["tp", "ep", "expt_tp", "expt_dp"],
         )
+        tensor_parallel_group = _get_tensor_parallel_group(self.pg_collection)
         self.expert_tp_group = _get_tensor_parallel_group(self.pg_collection, is_expert=True)
         self.ep_group = _get_process_group(self.pg_collection, "ep")
         self.expert_dp_group = _get_process_group(self.pg_collection, "expt_dp")
@@ -1803,6 +1824,10 @@ class GroupedExpertLinearAdapter(nn.Module):
         expert_tp_size = _process_group_size(
             self.expert_tp_group,
             model_parallel_config.expert_tensor_parallel_size or 1,
+        )
+        tensor_parallel_size = _process_group_size(
+            tensor_parallel_group,
+            getattr(model_parallel_config, "tensor_model_parallel_size", 1) or 1,
         )
         linear_in_tp_axis = 2 if input_is_parallel else 1
         linear_out_tp_axis = 1
@@ -1841,12 +1866,13 @@ class GroupedExpertLinearAdapter(nn.Module):
         ParallelLinearAdapter._get_init_fn(self, column_init_method)(linear_in_weight)
         ParallelLinearAdapter._get_init_fn(self, row_init_method)(linear_out_weight)
 
-        expert_parallel = (
+        use_expert_process_groups = (
             _process_group_size(
                 self.ep_group,
                 model_parallel_config.expert_model_parallel_size or 1,
             )
             > 1
+            or expert_tp_size != tensor_parallel_size
         )
         self._linear_in_tp_axis = linear_in_tp_axis
         self._linear_out_tp_axis = linear_out_tp_axis
@@ -1856,7 +1882,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             (self.linear_in.weight, linear_in_tp_axis),
             (self.linear_out.weight, linear_out_tp_axis),
         ):
-            setattr(weight, "allreduce", not expert_parallel)
+            setattr(weight, "allreduce", not use_expert_process_groups)
             if tp_axis is not None:
                 set_tensor_model_parallel_attributes(weight, True, tp_axis, 1)
 
