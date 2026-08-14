@@ -159,9 +159,9 @@ def _get_modelopt_tp_process_group(module: object) -> object | None:
     if isinstance(process_group, int) and process_group == -1:
         return None
 
-    world_size = getattr(tp_group, "world_size", None)
-    world_size = world_size() if callable(world_size) else torch.distributed.get_world_size(group=process_group)
-    return process_group if world_size > 1 else None
+    # Preserve an explicit TP-size-1 group: ModelOpt treats ``group=None`` as
+    # the world group, which would mix calibration state across PP/EP ranks.
+    return process_group
 
 
 def collect_modelopt_config_weights(
