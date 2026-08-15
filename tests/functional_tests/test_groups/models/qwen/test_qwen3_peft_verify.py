@@ -22,7 +22,6 @@ Tests the full adapter verification pipeline:
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -37,15 +36,6 @@ from megatron.bridge.training.model_load_save import temporary_distributed_conte
 
 
 peft = pytest.importorskip("peft", reason="peft library not installed")
-
-
-def _find_free_port() -> int:
-    """Return a port that is currently free on localhost."""
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.parent
@@ -177,8 +167,7 @@ class TestVerifyAdapter:
             "--cpu",
         ]
 
-        env = {**os.environ, "MASTER_PORT": str(_find_free_port())}
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
         print(result.stdout)
         if result.returncode != 0:
             print(result.stderr)
@@ -201,8 +190,7 @@ class TestVerifyAdapter:
             "--cpu",
         ]
 
-        env = {**os.environ, "MASTER_PORT": str(_find_free_port())}
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
         print(result.stdout)
         if result.returncode != 0:
             print(result.stderr)
@@ -225,6 +213,7 @@ class TestVerifyAdapter:
             sys.executable,
             "-m",
             "torch.distributed.run",
+            "--standalone",
             "--nproc_per_node=2",
             "--nnodes=1",
             "examples/conversion/adapter/verify_adapter.py",
@@ -240,8 +229,7 @@ class TestVerifyAdapter:
             str(pp),
         ]
 
-        env = {**os.environ, "MASTER_PORT": str(_find_free_port())}
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
         print(result.stdout)
         if result.returncode != 0:
             print(result.stderr)
