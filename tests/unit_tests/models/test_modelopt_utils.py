@@ -31,6 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 
 
 def _task(mapping, module, *, global_name="decoder.layers.0.projection.weight"):
@@ -76,6 +77,30 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
     assert exported[hf_name].dtype == torch.float8_e4m3fn
     assert plan.quantization_config["quant_algo"] == "FP8"
     assert plan.quantization_config["config_groups"]["group_0"]["targets"] == ["Linear"]
+
+
+def test_build_plan_excludes_fake_quant_amax_mappings():
+    module = _fp8_linear()
+    hf_name = "model.layers.0.self_attn.o_proj.weight"
+    weight_task = _task(ColumnParallelMapping("projection.weight", hf_name), module)
+    amax_task = WeightConversionTask(
+        param_name="weight_quantizer._amax",
+        global_param_name="decoder.layers.0.projection.weight_quantizer._amax",
+        mapping=AmaxMapping(
+            "projection.weight_quantizer._amax",
+            "model.layers.0.self_attn.o_proj.weight_quantizer._amax",
+        ),
+        megatron_module=module.weight_quantizer,
+        param_weight=module.weight_quantizer._amax,
+    )
+
+    plan = modelopt_utils.build_modelopt_export_plan(
+        [weight_task, amax_task], model=[module]
+    )
+
+    assert [task.global_param_name for task in plan.conversion_tasks] == [
+        weight_task.global_param_name
+    ]
 
 
 def test_gated_state_is_split_before_tp_merge(monkeypatch):

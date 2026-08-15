@@ -33,6 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
     split_qkv_weights,
 )
+from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 
 
 HFExportHook = Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]
@@ -388,7 +389,14 @@ def build_modelopt_export_plan(
     model: list[torch.nn.Module],
 ) -> ModelOptExportPlan:
     """Prepare canonical ModelOpt export state without encoding a quantization format."""
-    concrete_tasks = [task for task in conversion_tasks if task is not None]
+    # ModelOpt converts quantizer state into deployment scales from the owning
+    # weight task. Amax mappings are only part of the fake-quant refit path.
+    concrete_tasks = [
+        task
+        for task in conversion_tasks
+        if task is not None
+        and not isinstance(getattr(task, "mapping", None), AmaxMapping)
+    ]
     local_states = {}
     capture_error = None
     try:
