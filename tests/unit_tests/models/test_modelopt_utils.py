@@ -94,13 +94,9 @@ def test_build_plan_excludes_fake_quant_amax_mappings():
         param_weight=module.weight_quantizer._amax,
     )
 
-    plan = modelopt_utils.build_modelopt_export_plan(
-        [weight_task, amax_task], model=[module]
-    )
+    plan = modelopt_utils.build_modelopt_export_plan([weight_task, amax_task], model=[module])
 
-    assert [task.global_param_name for task in plan.conversion_tasks] == [
-        weight_task.global_param_name
-    ]
+    assert [task.global_param_name for task in plan.conversion_tasks] == [weight_task.global_param_name]
 
 
 def test_gated_state_is_split_before_tp_merge(monkeypatch):
@@ -254,13 +250,9 @@ def _distributed_topology_worker(rank, world_size, init_file):
         original_capture = modelopt_utils._capture_source_state
         original_get_pp_group = modelopt_utils.model_bridge_utils._get_pp_group
         modelopt_utils._capture_source_state = (
-            lambda _task: (_ for _ in ()).throw(ValueError("rank-local failure"))
-            if rank == 0
-            else None
+            lambda _task: (_ for _ in ()).throw(ValueError("rank-local failure")) if rank == 0 else None
         )
-        modelopt_utils.model_bridge_utils._get_pp_group = (
-            lambda _model: torch.distributed.group.WORLD
-        )
+        modelopt_utils.model_bridge_utils._get_pp_group = lambda _model: torch.distributed.group.WORLD
         try:
             modelopt_utils.build_modelopt_export_plan(
                 [SimpleNamespace(global_param_name="weight")],
@@ -278,17 +270,10 @@ def _distributed_topology_worker(rank, world_size, init_file):
         mapping._tp_group = torch.distributed.group.WORLD
         task = SimpleNamespace(mapping=mapping, global_param_name="projection.weight")
         source = _source(f"rank{rank}", (2, 2), "column")
-        gathered_sources = modelopt_utils._all_gather_objects(
-            source, torch.distributed.group.WORLD
-        )
-        assert all(
-            isinstance(item, modelopt_utils._SourceState)
-            for item in gathered_sources
-        ), repr(gathered_sources)
+        gathered_sources = modelopt_utils._all_gather_objects(source, torch.distributed.group.WORLD)
+        assert all(isinstance(item, modelopt_utils._SourceState) for item in gathered_sources), repr(gathered_sources)
         original_merge = quant_utils.merge_quantized_weight_export_states
-        quant_utils.merge_quantized_weight_export_states = (
-            lambda states, dim: (tuple(states), dim)
-        )
+        quant_utils.merge_quantized_weight_export_states = lambda states, dim: (tuple(states), dim)
         try:
             transformed = modelopt_utils._transform_source_state(task, source)
             assert transformed["model.projection.weight"] == (

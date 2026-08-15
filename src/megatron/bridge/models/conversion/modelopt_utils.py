@@ -77,9 +77,7 @@ def _direct_weight_name(module: torch.nn.Module, weight: torch.Tensor) -> str | 
 
 def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
     if getattr(mapping, "is_grouped_export", False):
-        raise NotImplementedError(
-            "ModelOpt real-quant export does not yet support grouped HF expert weights"
-        )
+        raise NotImplementedError("ModelOpt real-quant export does not yet support grouped HF expert weights")
     if isinstance(mapping, GatedMLPMapping):
         return "gated"
     if isinstance(mapping, QKVMapping):
@@ -394,8 +392,7 @@ def build_modelopt_export_plan(
     concrete_tasks = [
         task
         for task in conversion_tasks
-        if task is not None
-        and not isinstance(getattr(task, "mapping", None), AmaxMapping)
+        if task is not None and not isinstance(getattr(task, "mapping", None), AmaxMapping)
     ]
     local_states = {}
     capture_error = None
@@ -459,24 +456,16 @@ def build_modelopt_export_plan(
             )
             errors = [error for _, error in gathered if error is not None]
             if errors:
-                raise RuntimeError(
-                    "ModelOpt expert state transform failed: "
-                    + "; ".join(dict.fromkeys(errors))
-                )
+                raise RuntimeError("ModelOpt expert state transform failed: " + "; ".join(dict.fromkeys(errors)))
             for rank_states, _ in gathered:
                 assert rank_states is not None
                 overlap = expert_states.keys() & rank_states.keys()
                 if overlap:
-                    raise RuntimeError(
-                        f"Duplicate ModelOpt expert states: {sorted(overlap)}"
-                    )
+                    raise RuntimeError(f"Duplicate ModelOpt expert states: {sorted(overlap)}")
                 expert_states.update(rank_states)
             transformed = expert_states
         elif transform_error is not None:
-            raise RuntimeError(
-                f"ModelOpt state transform failed for {task.global_param_name}: "
-                f"{transform_error}"
-            )
+            raise RuntimeError(f"ModelOpt state transform failed for {task.global_param_name}: {transform_error}")
 
         assert transformed is not None
         for name, state in transformed.items():
