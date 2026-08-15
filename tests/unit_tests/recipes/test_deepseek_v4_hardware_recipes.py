@@ -18,8 +18,12 @@ from collections.abc import Callable
 
 import pytest
 import torch
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 import megatron.bridge.recipes as recipes
+from megatron.bridge.recipes.deepseek.b200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config as flash_b200_library_config,
+)
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config as flash_bf16_base_config,
 )
@@ -188,6 +192,48 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
 
 
+def test_flash_b200_nvl8_recipe_preserves_real_training_contract() -> None:
+    cfg = flash_b200_library_config()
+
+    assert cfg.train.train_iters == 1_000_000
+    assert cfg.train.global_batch_size == 256
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.virtual_pipeline_model_parallel_size == 2
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.pipeline_model_parallel_layout == (
+        "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
+    )
+    parsed_layout = PipelineParallelLayerLayout(
+        cfg.model.pipeline_model_parallel_layout,
+        pipeline_model_parallel_size=cfg.model.pipeline_model_parallel_size,
+    )
+    parsed_layout.validate_layer_layout(num_layers=43, mtp_num_layers=1)
+    assert parsed_layout.virtual_pipeline_model_parallel_size == 2
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
+    assert cfg.mixed_precision.fp8_param_gather is True
+    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
+    assert getattr(cfg.model, "moe_expert_rank_capacity_factor", None) is None
+    assert getattr(cfg.model, "moe_paged_stash", False) is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_modules == []
+    assert cfg.model.cuda_graph_scope is None
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+
+
 def test_pro_high_scale_recipe_preserves_real_training_contract() -> None:
     cfg = pro_library_config()
 
@@ -224,6 +270,7 @@ def test_pro_high_scale_recipe_preserves_real_training_contract() -> None:
 
 
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:
+    assert recipes.deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config is flash_b200_library_config
     assert recipes.deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config is flash_library_config
     assert recipes.deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config is flash_packed_sft_config
     assert recipes.deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config is pro_library_config
