@@ -76,7 +76,9 @@ def _direct_weight_name(module: torch.nn.Module, weight: torch.Tensor) -> str | 
 
 def _mapping_parallelism(mapping: Any, module: torch.nn.Module) -> str:
     if getattr(mapping, "is_grouped_export", False):
-        raise NotImplementedError("ModelOpt real-quant export does not support grouped HF weights")
+        raise NotImplementedError(
+            "ModelOpt real-quant export does not yet support grouped HF expert weights"
+        )
     if isinstance(mapping, GatedMLPMapping):
         return "gated"
     if isinstance(mapping, QKVMapping):
@@ -140,6 +142,12 @@ def _all_gather_objects(value: Any, group: Any) -> list[Any]:
     gathered = [None] * world_size
     torch.distributed.all_gather_object(gathered, value, group=group)
     return gathered
+
+
+def _raise_distributed_errors(error: str | None, group: Any, context: str) -> None:
+    errors = [item for item in _all_gather_objects(error, group) if item is not None]
+    if errors:
+        raise RuntimeError(f"{context}: {'; '.join(dict.fromkeys(errors))}")
 
 
 def _sync_source_states(
@@ -263,16 +271,7 @@ def _transform_source_state(
                 )
             transformed = {next(iter(names.values())): transformed_state}
 
-    if not task.mapping.is_expert:
-        return transformed
-
-    expert_states: dict[str, object | None] = {}
-    for rank_states in _all_gather_objects(transformed, task.mapping.ep_group):
-        overlap = expert_states.keys() & rank_states.keys()
-        if overlap:
-            raise RuntimeError(f"Duplicate ModelOpt expert states: {sorted(overlap)}")
-        expert_states.update(rank_states)
-    return expert_states
+    return transformed
 
 
 class _LocalExpertMappingMixin:
@@ -384,20 +383,84 @@ def build_modelopt_export_plan(
 ) -> ModelOptExportPlan:
     """Prepare canonical ModelOpt export state without encoding a quantization format."""
     concrete_tasks = [task for task in conversion_tasks if task is not None]
-    local_states = {
-        task.global_param_name: source
-        for task in concrete_tasks
-        if (source := _capture_source_state(task)) is not None
-    }
+    local_states = {}
+    capture_error = None
+    try:
+        local_states = {
+            task.global_param_name: source
+            for task in concrete_tasks
+            if (source := _capture_source_state(task)) is not None
+        }
+    except Exception as error:
+        capture_error = f"{type(error).__name__}: {error}"
+    _raise_distributed_errors(capture_error, None, "ModelOpt state capture failed")
+
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
     source_states = _sync_source_states(local_states, pp_group)
+
+    pg_collection = model_bridge_utils._get_pg_collection_from_model(model)
+    local_expert_mappings = {}
+    expert_mapping_error = None
+    try:
+        for task in concrete_tasks:
+            source = source_states.get(task.global_param_name)
+            if source is None or source.state is None or not task.mapping.is_expert:
+                continue
+            local_mapping = _local_expert_mapping(task.mapping, pg_collection)
+            if local_mapping is None:
+                raise NotImplementedError(
+                    "ModelOpt real-quant export cannot pack expert mapping "
+                    f"{type(task.mapping).__name__} before its EP gather"
+                )
+            local_expert_mappings[task.global_param_name] = local_mapping
+    except Exception as error:
+        expert_mapping_error = f"{type(error).__name__}: {error}"
+    _raise_distributed_errors(
+        expert_mapping_error,
+        None,
+        "ModelOpt expert mapping validation failed",
+    )
 
     named_states: dict[str, object | None] = {}
     for task in concrete_tasks:
         source = source_states.get(task.global_param_name)
         if source is None:
             continue
-        transformed = _transform_source_state(task, source)
+        transformed = None
+        transform_error = None
+        try:
+            transformed = _transform_source_state(task, source)
+        except Exception as error:
+            transform_error = f"{type(error).__name__}: {error}"
+
+        if task.mapping.is_expert:
+            expert_states: dict[str, object | None] = {}
+            gathered = _all_gather_objects(
+                (transformed, transform_error),
+                task.mapping.ep_group,
+            )
+            errors = [error for _, error in gathered if error is not None]
+            if errors:
+                raise RuntimeError(
+                    "ModelOpt expert state transform failed: "
+                    + "; ".join(dict.fromkeys(errors))
+                )
+            for rank_states, _ in gathered:
+                assert rank_states is not None
+                overlap = expert_states.keys() & rank_states.keys()
+                if overlap:
+                    raise RuntimeError(
+                        f"Duplicate ModelOpt expert states: {sorted(overlap)}"
+                    )
+                expert_states.update(rank_states)
+            transformed = expert_states
+        elif transform_error is not None:
+            raise RuntimeError(
+                f"ModelOpt state transform failed for {task.global_param_name}: "
+                f"{transform_error}"
+            )
+
+        assert transformed is not None
         for name, state in transformed.items():
             previous = named_states.setdefault(name, state)
             if previous is not state and previous is not None and state is not None:
@@ -429,7 +492,6 @@ def build_modelopt_export_plan(
             exported_name = hf_name if relative_name == "weight" else f"{prefix}.{relative_name}"
             yield HFWeightTuple(exported_name, exported_tensor)
 
-    pg_collection = model_bridge_utils._get_pg_collection_from_model(model)
     export_tasks = []
     for task in concrete_tasks:
         source = source_states.get(task.global_param_name)
@@ -445,7 +507,7 @@ def build_modelopt_export_plan(
         else:
             eligibility = [False]
         if all(eligibility):
-            local_mapping = _local_expert_mapping(task.mapping, pg_collection)
+            local_mapping = local_expert_mappings.get(task.global_param_name)
             if local_mapping is not None:
                 mapping = local_mapping
 
