@@ -691,7 +691,7 @@ items:
         final_loss: 0.01120061
         last_10_steps_step_time_ms_avg: 9926.350
         last_10_steps_model_tflops_per_gpu_avg: 559.390
-        last_10_steps_tokens_per_second_per_gpu_avg: 3301.113
+        last_10_steps_tokens_per_second_per_gpu_avg: 6602.225
       expected_result: >
         On exactly 64 GB200s, the canonical BF16 performance recipe completes
         50 mock-data steps at TP2/PP1/CP1/EP64, GBS/MBS 512/1, HybridEP flex
