@@ -121,9 +121,6 @@ class ModelConfig(_MegatronModelConfig):
         return builder_cls
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ModelConfig":
+    def from_dict(cls, data: dict[str, Any]) -> _MegatronModelConfig:
         """Deserialize config from dictionary with Bridge target validation."""
-        result = deserialize_model_config(data)
-        if not isinstance(result, cls):
-            raise ValueError(f"Cannot deserialize: expected {cls.__name__}, got {type(result).__name__}")
-        return result
+        return deserialize_model_config(data)

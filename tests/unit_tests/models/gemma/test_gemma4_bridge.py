@@ -219,6 +219,8 @@ class TestGemma4BridgeProviderBridgeMoE:
         pretrained.config = hf_config
 
         provider = bridge.provider_bridge(pretrained)
+        assert provider.kv_channels == 256
+        assert provider.global_head_dim == 512
         runtime_layer_types = [
             "sliding_attention"
             if _is_local_attn_layer(layer_number, provider.interleaved_attn_pattern)

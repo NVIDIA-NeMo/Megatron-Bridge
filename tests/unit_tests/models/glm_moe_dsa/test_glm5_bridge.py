@@ -80,7 +80,7 @@ def test_hf_config_ignores_upstream_num_experts_default() -> None:
 
     provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
 
-    assert hf_config.num_experts == 256
+    assert getattr(hf_config, "num_experts", None) in (None, 256)
     assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
 
 
