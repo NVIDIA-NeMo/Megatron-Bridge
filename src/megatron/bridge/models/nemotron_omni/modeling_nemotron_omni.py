@@ -686,7 +686,15 @@ class NemotronOmniModel(MegatronModule):
             # Match LLaVAModel's execution order. Besides keeping the two
             # implementations directly comparable, this ensures that RADIO's
             # first distributed forward sees the same runtime/collective state.
-            input_ids_text = input_ids.masked_fill(input_ids == self.image_token_index, 0)
+            image_anchor_mask = input_ids == self.image_token_index
+            if media_token_validity_mask is not None:
+                if media_token_validity_mask.shape != input_ids.shape:
+                    raise ValueError(
+                        "The media token-validity mask must have the same shape as input_ids: "
+                        f"got mask={tuple(media_token_validity_mask.shape)}, input_ids={tuple(input_ids.shape)}."
+                    )
+                image_anchor_mask = image_anchor_mask & media_token_validity_mask.bool()
+            input_ids_text = input_ids.masked_fill(image_anchor_mask, 0)
             combined_embeddings = self.language_model.embedding(input_ids=input_ids_text, position_ids=position_ids)
 
             if image_embeddings is None:
