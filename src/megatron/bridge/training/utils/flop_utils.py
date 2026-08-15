@@ -676,16 +676,20 @@ def num_floating_point_operations(
         return cfg.model._get_num_floating_point_operations(batch_size)
 
     def calculate_layer_counts():
-        """Calculate the number of attention, Mamba, MLP, MoE, and GDN layers."""
+        """Calculate standard attention, MLA, Mamba, MLP, MoE, GDN, and KDA counts."""
         hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
         if hybrid_pattern:
             layer_counts = get_hybrid_layer_counts(hybrid_pattern)
+            kda_symbol = getattr(Symbols, "KDA", "K")
+            mla_symbol = getattr(Symbols, "MLA", "+")
             return (
                 layer_counts[Symbols.ATTENTION],
+                layer_counts.get(mla_symbol, 0),
                 layer_counts[Symbols.MAMBA],
                 layer_counts[Symbols.MLP],
                 layer_counts[Symbols.MOE],
                 layer_counts[Symbols.GDN],
+                layer_counts.get(kda_symbol, 0),
             )
 
         num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
@@ -693,7 +697,17 @@ def num_floating_point_operations(
         num_mamba_layers = cfg.model.num_layers - num_attn_layers - num_mlp_layers
         num_moe_layers = 0
         num_gdn_layers = 0
-        return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
+        num_kda_layers = 0
+        num_mla_layers = 0
+        return (
+            num_attn_layers,
+            num_mla_layers,
+            num_mamba_layers,
+            num_mlp_layers,
+            num_moe_layers,
+            num_gdn_layers,
+            num_kda_layers,
+        )
 
     def mlp_layer_flops(batch_size, seq_len, hidden_size, expansion=4.0, swiglu=False):
         """Calculate FLOPs for an MLP layer."""
@@ -841,15 +855,86 @@ def num_floating_point_operations(
             )
         )
 
+    def mla_layer_flops(
+        batch_size,
+        seq_len,
+        hidden_size,
+        num_heads,
+        qk_head_dim=128,
+        qk_pos_emb_head_dim=64,
+        kv_lora_rank=512,
+        v_head_dim=128,
+        q_lora_rank=None,
+        attention_output_gate=False,
+        core_attn_seq_factor=None,
+    ):
+        """Calculate FLOPs for MLA projections, output gating, and dense attention."""
+        q_head_dim = qk_head_dim + qk_pos_emb_head_dim
+        if q_lora_rank is None:
+            q_proj = hidden_size * num_heads * q_head_dim
+        else:
+            q_proj = q_lora_rank * hidden_size + q_lora_rank * num_heads * q_head_dim
+
+        kv_proj = hidden_size * (kv_lora_rank + qk_pos_emb_head_dim)
+        kv_proj += kv_lora_rank * num_heads * (qk_head_dim + v_head_dim)
+        out_proj = num_heads * v_head_dim * hidden_size
+        gate_proj = hidden_size * num_heads if attention_output_gate else 0
+
+        total_tokens = batch_size * seq_len
+        token_linear_flops = 2 * total_tokens * (q_proj + kv_proj + out_proj + gate_proj)
+        core_seq_factor = seq_len if core_attn_seq_factor is None else core_attn_seq_factor
+        core_flops = total_tokens * core_seq_factor * num_heads * (q_head_dim + v_head_dim)
+        return token_linear_flops + core_flops
+
+    def kda_layer_flops(
+        batch_size,
+        seq_len,
+        hidden_size,
+        qk_head_dim=128,
+        v_head_dim=128,
+        num_qk_heads=16,
+        num_v_heads=16,
+        conv_kernel_dim=4,
+    ):
+        """Calculate FLOPs for direct-projection Kimi Delta Attention.
+
+        The estimate follows the current MCore KDA decomposition: one fused
+        ``[q, k, v, g, gate]`` projection, the per-head ``beta`` projection,
+        three short convolutions, the delta-rule state update, and the output
+        projection. Elementwise normalization/sigmoid work is omitted, matching
+        the existing GDN estimate.
+        """
+        if num_qk_heads != num_v_heads or qk_head_dim != v_head_dim:
+            raise ValueError("KDA FLOPs require equal K/V head counts and head dimensions.")
+
+        qk_dim = qk_head_dim * num_qk_heads
+        v_dim = v_head_dim * num_v_heads
+        total_tokens = batch_size * seq_len
+        in_proj_dim = 3 * qk_dim + 2 * v_dim
+        non_core_flops = (
+            2
+            * total_tokens
+            * (
+                hidden_size * (in_proj_dim + num_qk_heads)
+                + conv_kernel_dim * (2 * qk_dim + v_dim)
+                + hidden_size * v_dim
+            )
+        )
+        state_update_flops = num_v_heads * (qk_head_dim**2 + 3 * qk_head_dim * v_head_dim)
+        core_flops = 2 * total_tokens * state_update_flops
+        return non_core_flops + core_flops
+
     def hybrid_flops(
         batch_size,
         seq_len,
         hidden_size,
         num_attn_layers,
+        num_mla_layers,
         num_mamba_layers,
         num_mlp_layers,
         num_moe_layers,
         num_gdn_layers=0,
+        num_kda_layers=0,
         mamba_state_dim=128,
         mamba_head_dim=64,
         mamba_num_groups=8,
@@ -868,6 +953,17 @@ def num_floating_point_operations(
         gdn_num_qk_heads=16,
         gdn_num_v_heads=32,
         gdn_conv_kernel_dim=4,
+        kda_qk_head_dim=128,
+        kda_v_head_dim=128,
+        kda_num_qk_heads=16,
+        kda_num_v_heads=16,
+        kda_conv_kernel_dim=4,
+        mla_qk_head_dim=128,
+        mla_qk_pos_emb_head_dim=64,
+        mla_kv_lora_rank=512,
+        mla_v_head_dim=128,
+        mla_q_lora_rank=None,
+        mla_attention_output_gate=False,
         vocab_size=256000,
         mtp_num_layers=0,
         num_swa_attn_layers=0,
@@ -899,9 +995,37 @@ def num_floating_point_operations(
                 core_attn_seq_factor=2 * swa_context,
             )
 
+        mla_flops = num_mla_layers * mla_layer_flops(
+            batch_size,
+            seq_len,
+            hidden_size,
+            num_attn_heads,
+            mla_qk_head_dim,
+            mla_qk_pos_emb_head_dim,
+            mla_kv_lora_rank,
+            mla_v_head_dim,
+            mla_q_lora_rank,
+            mla_attention_output_gate,
+            core_attn_seq_factor=core_attn_seq_factor,
+        )
+
+        kda_flops = 0
+        if num_kda_layers:
+            kda_flops = num_kda_layers * kda_layer_flops(
+                batch_size,
+                seq_len,
+                hidden_size,
+                kda_qk_head_dim,
+                kda_v_head_dim,
+                kda_num_qk_heads,
+                kda_num_v_heads,
+                kda_conv_kernel_dim,
+            )
+
         flops_fwd = (
             full_attn_flops
             + swa_attn_flops
+            + mla_flops
             + num_mlp_layers * mlp_layer_flops(batch_size, seq_len, hidden_size, mlp_expansion, swiglu)
             + num_mamba_layers
             * mamba_layer_flops(
@@ -935,6 +1059,7 @@ def num_floating_point_operations(
                 gdn_num_v_heads,
                 gdn_conv_kernel_dim,
             )
+            + kda_flops
             + (2 * batch_size * seq_len * hidden_size * vocab_size * (1 + mtp_num_layers))  # logits computation
         )
         return flops_fwd * 3
@@ -1576,7 +1701,15 @@ def num_floating_point_operations(
     # a physical hybrid pattern is sufficient to select hybrid accounting.
     if getattr(cfg.model, "is_hybrid_model", False) or getattr(cfg.model, "hybrid_layer_pattern", None):
         # Calculate the number of each type of layer.
-        num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers = calculate_layer_counts()
+        (
+            num_attn_layers,
+            num_mla_layers,
+            num_mamba_layers,
+            num_mlp_layers,
+            num_moe_layers,
+            num_gdn_layers,
+            num_kda_layers,
+        ) = calculate_layer_counts()
         mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
         if mtp_num_layers is None:
             # When using unified hybrid patterns, infer MTP depth count from the pattern.
@@ -1604,10 +1737,12 @@ def num_floating_point_operations(
             seq_len=effective_seq_length,
             hidden_size=cfg.model.hidden_size,
             num_attn_layers=num_attn_layers,
+            num_mla_layers=num_mla_layers,
             num_mamba_layers=num_mamba_layers,
             num_mlp_layers=num_mlp_layers,
             num_moe_layers=num_moe_layers,
             num_gdn_layers=num_gdn_layers,
+            num_kda_layers=num_kda_layers,
             mamba_state_dim=getattr(cfg.model, "mamba_state_dim", 128),
             mamba_head_dim=getattr(cfg.model, "mamba_head_dim", 64),
             mamba_num_groups=getattr(cfg.model, "mamba_num_groups", 8),
@@ -1634,6 +1769,17 @@ def num_floating_point_operations(
             gdn_num_qk_heads=getattr(cfg.model, "linear_num_key_heads", None) or 16,
             gdn_num_v_heads=getattr(cfg.model, "linear_num_value_heads", None) or 32,
             gdn_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
+            kda_qk_head_dim=getattr(cfg.model, "linear_key_head_dim", None) or 128,
+            kda_v_head_dim=getattr(cfg.model, "linear_value_head_dim", None) or 128,
+            kda_num_qk_heads=getattr(cfg.model, "linear_num_key_heads", None) or 16,
+            kda_num_v_heads=getattr(cfg.model, "linear_num_value_heads", None) or 16,
+            kda_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
+            mla_qk_head_dim=getattr(cfg.model, "qk_head_dim", None) or 128,
+            mla_qk_pos_emb_head_dim=getattr(cfg.model, "qk_pos_emb_head_dim", None) or 64,
+            mla_kv_lora_rank=getattr(cfg.model, "kv_lora_rank", None) or 512,
+            mla_v_head_dim=getattr(cfg.model, "v_head_dim", None) or 128,
+            mla_q_lora_rank=getattr(cfg.model, "q_lora_rank", None),
+            mla_attention_output_gate=getattr(cfg.model, "attention_output_gate", False),
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
             num_swa_attn_layers=num_swa_attn_layers,

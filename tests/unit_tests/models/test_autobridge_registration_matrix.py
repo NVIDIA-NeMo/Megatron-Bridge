@@ -32,6 +32,7 @@ REGISTRATION_CHECK_SCRIPT = Path(__file__).with_name("autobridge_registration_ch
 
 EXPECTED_REGISTRATIONS = {
     "BailingMoeV2ForCausalLM": "megatron.bridge.models.bailing.bailing_moe2_bridge.BailingMoeV2Bridge",
+    "BailingMoeV3ForCausalLM": "megatron.bridge.models.bailing.bailing_moe3_bridge.BailingMoeV3Bridge",
     "DeepseekV3ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v3_bridge.DeepSeekV3Bridge",
     "DeepseekV4ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v4_bridge.DeepSeekV4Bridge",
     "Ernie4_5_MoeForCausalLM": "megatron.bridge.models.ernie.ernie_45_bridge.Ernie45Bridge",
@@ -97,6 +98,7 @@ EXPECTED_REGISTRATIONS = {
 
 STRING_REGISTRATIONS = {
     "BailingMoeV2ForCausalLM",
+    "BailingMoeV3ForCausalLM",
     "DeepseekV3ForCausalLM",
     "DeepseekV4ForCausalLM",
     "Ernie4_5_MoeForCausalLM",

@@ -1351,6 +1351,177 @@ class TestHybridGDNFlops:
 
 
 @pytest.mark.unit
+class TestHybridKDAFlops:
+    """Tests for KDA ('K') layer support in the hybrid FLOPs path."""
+
+    def _require_kda_symbol(self):
+        from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+
+        if not hasattr(Symbols, "KDA"):
+            pytest.skip("The active Megatron Core pin does not expose the KDA hybrid symbol")
+
+    def test_kda_hybrid_pattern_differs_from_gdn(self):
+        """KDA layers must not be silently counted as GDN or standard attention."""
+        self._require_kda_symbol()
+        base = dict(
+            is_hybrid_model=True,
+            num_layers=2,
+            hidden_size=1024,
+            seq_length=512,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=32000,
+            gated_linear_unit=False,
+            linear_key_head_dim=64,
+            linear_value_head_dim=64,
+            linear_num_key_heads=8,
+            linear_num_value_heads=8,
+            linear_conv_kernel_dim=4,
+        )
+        kda_flops = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**base, hybrid_layer_pattern="KK")), batch_size=1
+        )
+        gdn_flops = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**base, hybrid_layer_pattern="GG")), batch_size=1
+        )
+        attn_flops = num_floating_point_operations(
+            MockConfigContainer(model=MockModelConfig(**base, hybrid_layer_pattern="**")), batch_size=1
+        )
+        assert kda_flops > 0
+        assert kda_flops != gdn_flops
+        assert kda_flops != attn_flops
+
+    def test_kda_hybrid_exact_flops(self):
+        """Verify the direct-projection KDA decomposition used by the estimator."""
+        self._require_kda_symbol()
+        batch_size = 1
+        seq_len = 512
+        hidden_size = 1024
+        vocab_size = 32000
+        qk_head_dim = 64
+        v_head_dim = 64
+        num_qk_heads = 8
+        num_v_heads = 8
+        conv_kernel_dim = 4
+
+        model_cfg = MockModelConfig(
+            is_hybrid_model=True,
+            hybrid_layer_pattern="KK",
+            num_layers=2,
+            hidden_size=hidden_size,
+            seq_length=seq_len,
+            ffn_hidden_size=4096,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=vocab_size,
+            gated_linear_unit=False,
+            linear_key_head_dim=qk_head_dim,
+            linear_value_head_dim=v_head_dim,
+            linear_num_key_heads=num_qk_heads,
+            linear_num_value_heads=num_v_heads,
+            linear_conv_kernel_dim=conv_kernel_dim,
+        )
+        flops = num_floating_point_operations(MockConfigContainer(model=model_cfg), batch_size=batch_size)
+
+        qk_dim = qk_head_dim * num_qk_heads
+        v_dim = v_head_dim * num_v_heads
+        kda_per_layer = (
+            2
+            * batch_size
+            * seq_len
+            * (
+                hidden_size * (3 * qk_dim + 2 * v_dim + num_qk_heads)
+                + conv_kernel_dim * (2 * qk_dim + v_dim)
+                + num_v_heads * (v_head_dim**2) * 4
+                + hidden_size * v_dim
+            )
+        )
+        logit = 2 * batch_size * seq_len * hidden_size * vocab_size
+        expected = (2 * kda_per_layer + logit) * 3
+        assert flops == expected
+
+
+@pytest.mark.unit
+class TestHybridMLAFlops:
+    """Tests for MLA layers in the unified HybridModel FLOPs path."""
+
+    @staticmethod
+    def _config(**overrides):
+        defaults = dict(
+            is_hybrid_model=True,
+            hybrid_layer_pattern="+",
+            num_layers=1,
+            hidden_size=256,
+            seq_length=128,
+            ffn_hidden_size=512,
+            num_attention_heads=4,
+            num_query_groups=4,
+            kv_channels=64,
+            vocab_size=32000,
+            gated_linear_unit=False,
+            multi_latent_attention=True,
+            q_lora_rank=None,
+            kv_lora_rank=32,
+            qk_head_dim=16,
+            qk_pos_emb_head_dim=8,
+            v_head_dim=16,
+            attention_output_gate=True,
+        )
+        defaults.update(overrides)
+        return MockConfigContainer(model=MockModelConfig(**defaults))
+
+    @pytest.mark.parametrize("q_lora_rank", [None, 64])
+    def test_mla_formula_for_direct_and_low_rank_q(self, q_lora_rank):
+        batch_size = 2
+        cfg = self._config(q_lora_rank=q_lora_rank)
+        model = cfg.model
+        total_tokens = batch_size * model.seq_length
+        q_head_dim = model.qk_head_dim + model.qk_pos_emb_head_dim
+        if model.q_lora_rank is None:
+            q_proj = model.hidden_size * model.num_attention_heads * q_head_dim
+        else:
+            q_proj = model.q_lora_rank * model.hidden_size + model.q_lora_rank * model.num_attention_heads * q_head_dim
+        kv_proj = model.hidden_size * (model.kv_lora_rank + model.qk_pos_emb_head_dim)
+        kv_proj += model.kv_lora_rank * model.num_attention_heads * (model.qk_head_dim + model.v_head_dim)
+        out_proj = model.num_attention_heads * model.v_head_dim * model.hidden_size
+        gate_proj = model.hidden_size * model.num_attention_heads
+        mla_forward = 2 * total_tokens * (q_proj + kv_proj + out_proj + gate_proj)
+        mla_forward += total_tokens * model.seq_length * model.num_attention_heads * (q_head_dim + model.v_head_dim)
+        logits_forward = 2 * total_tokens * model.hidden_size * model.vocab_size
+
+        assert num_floating_point_operations(cfg, batch_size=batch_size) == 3 * (mla_forward + logits_forward)
+
+    def test_ragged_attention_uses_squared_sequence_sum(self):
+        batch_size = 2
+        cfg = self._config()
+        total_tokens = batch_size * cfg.model.seq_length
+        squared_sum = total_tokens * cfg.model.seq_length**2
+        full = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=total_tokens,
+            seqlen_squared_sum=squared_sum,
+        )
+        half = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=total_tokens,
+            seqlen_squared_sum=squared_sum // 2,
+        )
+        expected_delta = (
+            3
+            * (squared_sum // 2)
+            * cfg.model.num_attention_heads
+            * (cfg.model.qk_head_dim + cfg.model.qk_pos_emb_head_dim + cfg.model.v_head_dim)
+        )
+
+        assert full - half == expected_delta
+
+
+@pytest.mark.unit
 class TestAttentionOutputGateFlops:
     """Tests for attention_output_gate FLOPs in transformer_flops path."""
 
