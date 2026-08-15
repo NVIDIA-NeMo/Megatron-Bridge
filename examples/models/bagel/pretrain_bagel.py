@@ -30,6 +30,7 @@ from megatron.bridge.recipes.bagel.h100.bagel import (
 )
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.utils.checkpoint_utils import is_checkpoint_iteration_directory
 
 
 def parse_args() -> argparse.Namespace:
@@ -134,10 +135,13 @@ def main() -> None:
         cfg.model.native_world_size = world_size
         cfg.model.validate_native_checkpoint_metadata = not args.official_ema
     else:
-        cfg.checkpoint.load = str(args.mcore_checkpoint.resolve())
+        checkpoint = args.mcore_checkpoint.resolve()
+        cfg.checkpoint.load = str(checkpoint)
         cfg.checkpoint.load_optim = True
         cfg.checkpoint.load_rng = True
-        cfg.dataset.dataloader_load = cfg.checkpoint.load
+        cfg.dataset.dataloader_load = str(
+            checkpoint.parent if is_checkpoint_iteration_directory(str(checkpoint)) else checkpoint
+        )
     cfg.model.reference_training_seed = args.seed * world_size
     cfg.model.reference_training_world_size = world_size
     cfg.model.reset_reference_training_rng = True

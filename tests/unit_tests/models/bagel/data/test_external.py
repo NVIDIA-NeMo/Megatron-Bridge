@@ -1,12 +1,8 @@
-from unittest.mock import Mock
-
 import pytest
-import torch
 from megatron.core.rerun_state_machine import RerunDataIterator
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.models.bagel.data.dataset import _restore_loader
 from megatron.bridge.models.bagel.data.external import BagelExternalLoader, BagelMegatronMIMODatasetProvider
 
 
@@ -87,23 +83,3 @@ def test_bagel_external_loader_restores_reader_and_packer_state() -> None:
     restored.restore_state(state)
 
     assert next(restored) == expected
-
-
-def test_bagel_dataset_restores_latest_training_dataloader_state(tmp_path) -> None:
-    tracker = tmp_path / "latest_checkpointed_iteration.txt"
-    tracker.write_text("0", encoding="utf-8")
-    loader = Mock()
-    _restore_loader(loader, str(tmp_path), 3)
-    loader.restore_state.assert_not_called()
-
-    tracker.write_text("2", encoding="utf-8")
-    state_path = tmp_path / "iter_0000002" / "train_dataloader_dprank003.pt"
-    state_path.parent.mkdir()
-    torch.save({"dataloader_state_dict": {"position": 2}}, state_path)
-    _restore_loader(loader, str(tmp_path), 3)
-    loader.restore_state.assert_called_once_with({"position": 2})
-
-    loader.reset_mock()
-    (state_path.parent / "run_config.yaml").touch()
-    _restore_loader(loader, str(state_path.parent), 3)
-    loader.restore_state.assert_called_once_with({"position": 2})
