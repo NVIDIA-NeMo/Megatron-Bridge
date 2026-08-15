@@ -230,6 +230,9 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         config.finalize()
     """
 
+    # Redeclared so the reverse-MRO dataclass field walk cannot revert MCore's MLA default to False.
+    multi_latent_attention: bool = True
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
