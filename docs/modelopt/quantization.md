@@ -174,8 +174,9 @@ for name, weight in bridge.export_hf_weights_modelopt(
     refit_engine.replace_weight(name, weight)
 ```
 
-Plan construction performs WORLD and model-parallel metadata collectives, so every distributed rank must call it in
-the same order. The current streaming API supports canonical per-expert Hugging Face MoE layouts; canonical grouped-
+Plan construction and export-stream iteration perform WORLD and model-parallel collectives. Every distributed rank
+must therefore build the plan and fully consume each export stream in the same task order, without rank-local early
+termination. The current streaming API supports canonical per-expert Hugging Face MoE layouts; canonical grouped-
 expert Hugging Face tensors are rejected until ModelOpt provides a state-stacking operation.
 
 ### Supported Models For PTQ
