@@ -13,10 +13,14 @@ Key components:
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional
 
+import torch
 import torch.distributed as dist
+from megatron.core.models.mimo.optimizer import MimoOptimizer
+from megatron.core.optimizer.grad_scaler import DynamicGradScaler
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
@@ -33,7 +37,6 @@ from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, i
 
 if TYPE_CHECKING:
     from megatron.core.models.mimo import MimoModel
-    from megatron.core.models.mimo.optimizer import MimoOptimizer
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 
@@ -41,6 +44,42 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+class _WorldSyncedMimoOptimizer(MimoOptimizer):
+    """Keep loss-scaler state identical across disjoint module optimizers."""
+
+    def _grad_scalers(self) -> list[DynamicGradScaler]:
+        grad_scalers: dict[int, DynamicGradScaler] = {}
+        for optimizer in self._active_optimizers:
+            inner_optimizers = getattr(optimizer, "chained_optimizers", [optimizer])
+            for inner_optimizer in inner_optimizers:
+                grad_scaler = getattr(inner_optimizer, "grad_scaler", None)
+                if isinstance(grad_scaler, DynamicGradScaler):
+                    grad_scalers[id(grad_scaler)] = grad_scaler
+        return list(grad_scalers.values())
+
+    @torch.no_grad()
+    def prepare_grads(self) -> bool:
+        """Prepare gradients using one world-consistent loss-scaler update."""
+        grad_scalers = self._grad_scalers()
+        if not grad_scalers:
+            return super().prepare_grads()
+
+        scaler_states = [(grad_scaler, deepcopy(grad_scaler.state_dict())) for grad_scaler in grad_scalers]
+        found_inf = super().prepare_grads()
+
+        found_inf_tensor = torch.tensor([found_inf], dtype=torch.float32, device="cuda")
+        dist.all_reduce(found_inf_tensor, op=dist.ReduceOp.MAX)
+        found_inf = found_inf_tensor.item() > 0
+
+        # Inner optimizers update their scalers before MimoOptimizer reaches its
+        # world found-inf consensus. Replay that update with the global result.
+        for grad_scaler, state_dict in scaler_states:
+            grad_scaler.load_state_dict(state_dict)
+            grad_scaler.update(found_inf)
+
+        return found_inf
 
 
 @dataclass
@@ -223,7 +262,8 @@ def setup_megatron_mimo(
     from megatron.core.models.mimo.optimizer import get_mimo_optimizer
 
     # cfg.optimizer already finalized by megatron_mimo_runtime_config_update().
-    optimizer = get_mimo_optimizer(unwrapped_model, cfg.optimizer)
+    mcore_optimizer = get_mimo_optimizer(unwrapped_model, cfg.optimizer)
+    optimizer = _WorldSyncedMimoOptimizer(mcore_optimizer.module_infos, mcore_optimizer.config)
 
     # Auto-create per-module LR schedulers
     cfg._calculate_scheduler_steps()

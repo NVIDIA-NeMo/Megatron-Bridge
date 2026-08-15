@@ -16,6 +16,8 @@ from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+import torch
+from megatron.core.optimizer.grad_scaler import DynamicGradScaler
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +333,33 @@ class TestPretrainMegatronMIMOSetup:
         mock_get_mimo_optimizer.assert_called_once_with(unwrapped, cfg.optimizer)
         global_state.initialize_async_checkpoint_worker.assert_called_once()
         assert result.checkpoint_manager is mock_mgr_instance
+
+        grad_scaler = MagicMock(spec=DynamicGradScaler)
+        grad_scaler.scale = 8.0
+        grad_scaler.state_dict.side_effect = lambda: {"scale": grad_scaler.scale}
+        grad_scaler.load_state_dict.side_effect = lambda state: setattr(grad_scaler, "scale", state["scale"])
+        grad_scaler.update.side_effect = lambda found_inf: setattr(
+            grad_scaler, "scale", grad_scaler.scale * 0.5 if found_inf else grad_scaler.scale
+        )
+
+        inner_optimizer = MagicMock()
+        inner_optimizer.chained_optimizers = [inner_optimizer]
+        inner_optimizer.grad_scaler = grad_scaler
+        inner_optimizer.prepare_grads.return_value = False
+        result.optimizer._active_optimizers = [inner_optimizer]
+        mock_optimizer.prepare_grads.return_value = False
+        mock_dist.all_reduce.side_effect = lambda tensor, **_: tensor.fill_(1.0)
+
+        real_tensor = torch.tensor
+
+        def make_cpu_tensor(data, **kwargs):
+            kwargs.pop("device", None)
+            return real_tensor(data, **kwargs)
+
+        with patch("torch.tensor", side_effect=make_cpu_tensor):
+            result.optimizer.prepare_grads()
+
+        assert grad_scaler.scale == 4.0
 
     def test_pretrain_megatron_mimo_calls_runtime_config_update(self):
         """pretrain_megatron_mimo should call megatron_mimo_runtime_config_update before setup."""
