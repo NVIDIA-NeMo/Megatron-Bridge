@@ -128,7 +128,6 @@ class BagelExternalLoader:
         if not self._stateful_loaders or not hasattr(self._batches, "state_dict"):
             raise RuntimeError("BAGEL checkpointing requires stateful group loaders and packer")
         return {
-            "length": self._length,
             "position": self._position,
             "packer": self._batches.state_dict(),
             "loaders": [loader.save_state_rank() for loader in self._stateful_loaders],
@@ -136,8 +135,6 @@ class BagelExternalLoader:
 
     def restore_state(self, state: Mapping[str, object]) -> None:
         """Restore the Energon readers, packer, and external-loader position."""
-        if state["length"] != self._length:
-            raise ValueError("BAGEL external-loader checkpoint length differs")
         loader_states = state["loaders"]
         if len(loader_states) != len(self._stateful_loaders):
             raise ValueError("BAGEL checkpoint group count differs")

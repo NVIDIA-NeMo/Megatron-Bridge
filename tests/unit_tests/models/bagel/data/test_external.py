@@ -81,7 +81,7 @@ def test_bagel_external_loader_restores_reader_and_packer_state() -> None:
     restored_rows = _StatefulRows()
     restored = BagelExternalLoader(
         _StatefulBatches(restored_rows),
-        length=3,
+        length=2,
         stateful_loaders=[restored_rows],
     )
     restored.restore_state(state)
