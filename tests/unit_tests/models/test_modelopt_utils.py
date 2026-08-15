@@ -73,7 +73,8 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
         "model.layers.0.self_attn.o_proj.input_scale",
     }
     assert exported[hf_name].dtype == torch.float8_e4m3fn
-    assert plan.quantization_config["quantized_layers"]["model.layers.0.self_attn.o_proj"]["quant_algo"] == "FP8"
+    assert plan.quantization_config["quant_algo"] == "FP8"
+    assert plan.quantization_config["config_groups"]["group_0"]["targets"] == ["Linear"]
 
 
 def test_gated_state_is_split_before_tp_merge(monkeypatch):
