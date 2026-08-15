@@ -180,11 +180,12 @@ than adding conditionals to shared code.
 
 #### Prefer Transformer Engine normalization
 
-Before implementing a model-specific normalization with raw PyTorch operations, inspect the
-Transformer Engine version pinned by Megatron-Core. Use the backend-provided `TENorm` (or the
-corresponding TE module) for affine LayerNorm and RMSNorm whenever TE implements the required
-semantics. Preserve `eps`, parameter dtype/device initialization, sequence-parallel metadata, and
-`zero_centered_gamma`; standard-gamma and zero-centered-gamma norms are not interchangeable.
+Before implementing a model-specific normalization with raw PyTorch operations, inspect the exact
+Transformer Engine revision in `pyproject.toml`/`uv.lock`, its upstream module API, and Megatron-Core's
+`TENorm` adapter. Use `TENorm` (or the corresponding TE module) for affine LayerNorm and RMSNorm
+whenever that pinned TE implementation provides the required semantics. Preserve `eps`, parameter
+dtype/device initialization, sequence-parallel metadata, and `zero_centered_gamma`; standard-gamma
+and zero-centered-gamma norms are not interchangeable.
 The attention/linear backend and normalization choice need not be coupled: a local attention spec
 may still use `TENorm`. Retain a semantics-equivalent local fallback when model construction must
 work in an environment where Transformer Engine itself is unavailable.
