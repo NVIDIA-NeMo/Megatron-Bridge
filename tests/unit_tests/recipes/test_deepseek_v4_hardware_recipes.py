@@ -141,7 +141,9 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     cfg = flash_packed_sft_config()
 
     assert cfg.model.cp_partition_mode == "contiguous"
-    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 2
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
+    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
+    assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.model.apply_dsa_kernel_fusion is True
     assert cfg.model.dsa_indexer_loss_coeff == 0.01
     assert cfg.model.dsa_indexer_use_sparse_loss is True
@@ -154,6 +156,15 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     assert cfg.model.moe_router_fusion is True
     assert cfg.model.moe_grouped_gemm is False
     assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
 
 
 def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:

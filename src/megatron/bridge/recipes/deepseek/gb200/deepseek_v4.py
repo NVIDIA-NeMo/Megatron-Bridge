@@ -293,8 +293,9 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
     """Return the GB200-optimized offline-packed OpenMath SFT config.
 
     This variant adds HybridEP dispatch, safe uneven-input padding, DSA indexer
-    training, and MoE fusions to the hardware-agnostic packed SFT recipe. It
-    preserves non-grouped expert GEMMs for checkpoint export compatibility.
+    training, static packed-sequence shapes, and MoE fusions to the
+    hardware-agnostic packed SFT recipe. It preserves non-grouped expert GEMMs
+    for checkpoint export compatibility.
     """
     from megatron.bridge.recipes.deepseek.deepseek_v4 import (
         deepseek_v4_flash_sft_openmath_thinking_packed_config,
@@ -315,6 +316,26 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_router_fusion = True
 
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe", "mhc", "mla_up_proj", "layernorm"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
+    cfg.dataset.dataset_kwargs = {
+        **(cfg.dataset.dataset_kwargs or {}),
+        "pad_to_max_length": True,
+    }
+
     # MCore warns of TE CE stability issues, and matched GB200 testing found no throughput or memory benefit.
     cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+    }
     return cfg
