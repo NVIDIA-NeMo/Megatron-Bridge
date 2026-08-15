@@ -102,3 +102,8 @@ def test_bagel_dataset_restores_latest_training_dataloader_state(tmp_path) -> No
     torch.save({"dataloader_state_dict": {"position": 2}}, state_path)
     _restore_loader(loader, str(tmp_path), 3)
     loader.restore_state.assert_called_once_with({"position": 2})
+
+    loader.reset_mock()
+    (state_path.parent / "run_config.yaml").touch()
+    _restore_loader(loader, str(state_path.parent), 3)
+    loader.restore_state.assert_called_once_with({"position": 2})

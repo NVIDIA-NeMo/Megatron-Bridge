@@ -34,7 +34,7 @@ from megatron.bridge.models.bagel.data.energon import (
 from megatron.bridge.models.bagel.data.external import BagelExternalLoader, BagelRNGIterator
 from megatron.bridge.models.bagel.data.order import BagelPlannedLoader, plan_manifest_indices
 from megatron.bridge.models.bagel.data.packing import BagelPacker
-from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
+from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name, is_checkpoint_iteration_directory
 
 
 logger = logging.getLogger(__name__)
@@ -42,11 +42,15 @@ logger = logging.getLogger(__name__)
 
 def _restore_loader(loader: BagelExternalLoader, checkpoint_root: str, dp_rank: int) -> None:
     """Restore one DP rank's BAGEL dataloader from the latest training checkpoint."""
-    tracker = Path(checkpoint_root) / "latest_checkpointed_iteration.txt"
-    iteration = int(tracker.read_text(encoding="utf-8"))
-    if iteration == 0:
-        return
-    state_path = Path(get_checkpoint_name(checkpoint_root, iteration)) / f"train_dataloader_dprank{dp_rank:03d}.pt"
+    if is_checkpoint_iteration_directory(checkpoint_root):
+        iteration_path = Path(checkpoint_root)
+    else:
+        tracker = Path(checkpoint_root) / "latest_checkpointed_iteration.txt"
+        iteration = int(tracker.read_text(encoding="utf-8"))
+        if iteration == 0:
+            return
+        iteration_path = Path(get_checkpoint_name(checkpoint_root, iteration))
+    state_path = iteration_path / f"train_dataloader_dprank{dp_rank:03d}.pt"
     payload = torch.load(state_path, map_location="cpu", weights_only=False)
     loader.restore_state(payload["dataloader_state_dict"])
     logger.info("Restored BAGEL dataloader state from %s", state_path)
