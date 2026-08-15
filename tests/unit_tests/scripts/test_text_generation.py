@@ -186,8 +186,28 @@ def test_build_inference_config_rounds_max_requests_up_to_tp(text_generation):
     assert config.kwargs["materialize_only_last_token_logits"] is True
 
 
-def test_build_inference_config_auto_sizes_max_requests_when_unset(text_generation):
-    """Server path: max_batch_size and num_prompts both None -> max_requests left as None."""
+def test_build_inference_config_caps_auto_sized_server_requests_at_token_budget(text_generation):
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=None,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=128,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
+    assert config.kwargs["max_requests"] is not None
+    assert config.kwargs["max_requests"] <= 128
+    assert config.kwargs["max_requests"] % 2 == 0
+
+
+def test_build_inference_config_preserves_kv_auto_sizing_without_token_limit(text_generation):
     model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
 
     config = text_generation.build_inference_config(
