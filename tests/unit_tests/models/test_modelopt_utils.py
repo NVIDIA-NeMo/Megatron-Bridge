@@ -253,6 +253,13 @@ def _distributed_topology_worker(rank, world_size, init_file):
         mapping._tp_group = torch.distributed.group.WORLD
         task = SimpleNamespace(mapping=mapping, global_param_name="projection.weight")
         source = _source(f"rank{rank}", (2, 2), "column")
+        gathered_sources = modelopt_utils._all_gather_objects(
+            source, torch.distributed.group.WORLD
+        )
+        assert all(
+            isinstance(item, modelopt_utils._SourceState)
+            for item in gathered_sources
+        ), repr(gathered_sources)
         original_merge = quant_utils.merge_quantized_weight_export_states
         quant_utils.merge_quantized_weight_export_states = (
             lambda states, dim: (tuple(states), dim)

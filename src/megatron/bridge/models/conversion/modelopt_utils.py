@@ -150,6 +150,12 @@ def _raise_distributed_errors(error: str | None, group: Any, context: str) -> No
         raise RuntimeError(f"{context}: {'; '.join(dict.fromkeys(errors))}")
 
 
+def _world_group() -> Any:
+    if not torch.distributed.is_initialized():
+        return None
+    return torch.distributed.group.WORLD
+
+
 def _sync_source_states(
     local_states: dict[str, _SourceState],
     group: Any,
@@ -393,7 +399,11 @@ def build_modelopt_export_plan(
         }
     except Exception as error:
         capture_error = f"{type(error).__name__}: {error}"
-    _raise_distributed_errors(capture_error, None, "ModelOpt state capture failed")
+    _raise_distributed_errors(
+        capture_error,
+        _world_group(),
+        "ModelOpt state capture failed",
+    )
 
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
     source_states = _sync_source_states(local_states, pp_group)
@@ -417,7 +427,7 @@ def build_modelopt_export_plan(
         expert_mapping_error = f"{type(error).__name__}: {error}"
     _raise_distributed_errors(
         expert_mapping_error,
-        None,
+        _world_group(),
         "ModelOpt expert mapping validation failed",
     )
 
