@@ -31,6 +31,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 if TYPE_CHECKING:
+    from megatron.bridge.models.conversion.modelopt_utils import ModelOptExportPlan
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -768,39 +769,17 @@ class AutoBridge(Generic[MegatronModelT]):
             weight_dtype=weight_dtype,
         )
 
-    def export_hf_weights_modelopt(
+    def build_hf_modelopt_export_plan(
         self,
         model: MegatronModelT | list[MegatronModelT],
-        quant_mode: str = "nvfp4",
-        cpu: bool = False,
-        show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
-        ignore_patterns: Optional[List[str]] = None,
-        merge_adapter_weights: bool = True,
-    ) -> Iterable["HFWeightTuple"]:
-        """Export Megatron weights to HuggingFace ModelOpt deployment format.
+    ) -> "ModelOptExportPlan":
+        """Prepare canonical real-quant tensors and configuration for streaming export.
 
         Args:
             model: Megatron model instance or list of instances.
-            quant_mode: ModelOpt quantization mode to export. Currently supports
-                ``"nvfp4"`` and ``"w4a16_nvfp4"``.
-            cpu: Whether to move exported tensors to CPU before yielding.
-            show_progress: Display progress bar during base Hugging Face weight export.
             conversion_tasks: Pre-built conversion tasks. If not provided, tasks will be built
                 automatically from the models.
-            ignore_patterns: Hugging Face parameter name patterns that should remain unquantized.
-                Scale tensor suffixes and the optional ``model.`` prefix are ignored when matching.
-            merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
-                tensors during export.
-
-        Yields:
-            HFWeightTuple: Named tuples containing Hugging Face parameter names and tensors. Quantized
-            weights yield the packed weight under the original ``*.weight`` name followed by the
-            corresponding ``*.weight_scale`` and ``*.weight_scale_2`` tensors.
-
-        Raises:
-            RuntimeError: If a matched quantized Megatron parameter uses a qformat unsupported by
-                ``quant_mode``.
         """
         from megatron.bridge.models.conversion.modelopt_utils import build_modelopt_export_plan
 
@@ -808,18 +787,29 @@ class AutoBridge(Generic[MegatronModelT]):
             model = [model]
         if conversion_tasks is None:
             conversion_tasks = self._model_bridge.build_conversion_tasks(self.hf_pretrained, model)
-        export_tasks = build_modelopt_export_plan(
+        return build_modelopt_export_plan(
             conversion_tasks,
             model=model,
-            bridge=self._model_bridge,
-            quant_mode=quant_mode,
-            ignore_patterns=ignore_patterns or [],
         )
+
+    def export_hf_weights_modelopt(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        cpu: bool = False,
+        show_progress: bool = True,
+        export_plan: Optional["ModelOptExportPlan"] = None,
+        merge_adapter_weights: bool = True,
+    ) -> Iterable["HFWeightTuple"]:
+        """Export canonical ModelOpt deployment tensors from a prepared plan."""
+        if not isinstance(model, list):
+            model = [model]
+        if export_plan is None:
+            export_plan = self.build_hf_modelopt_export_plan(model)
         hf_weights = self.export_hf_weights(
             model,
             cpu=cpu,
             show_progress=show_progress,
-            conversion_tasks=export_tasks,
+            conversion_tasks=export_plan.conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
         )
         yield from hf_weights
