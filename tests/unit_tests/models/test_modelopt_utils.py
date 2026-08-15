@@ -27,6 +27,7 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
+    FusedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
 )
@@ -184,6 +185,110 @@ def test_quantized_expert_is_packed_before_ep_gather():
         "model.layers.0.mlp.experts.0.up_proj.weight",
         "model.layers.0.mlp.experts.0.up_proj.weight_scale",
     }.issubset(exported)
+
+
+def test_grouped_hf_expert_mapping_is_rejected_before_export():
+    module = _fp8_linear()
+    mapping = FusedExpertMapping(
+        "decoder.layers.0.mlp.experts.local_experts.0.linear_fc2.weight",
+        "model.layers.0.mlp.experts.down_proj",
+    )
+
+    with pytest.raises(RuntimeError, match="grouped HF expert weights"):
+        modelopt_utils.build_modelopt_export_plan(
+            [_task(mapping, module, global_name=mapping.megatron_param)],
+            model=[module],
+        )
+
+
+def test_custom_quantized_expert_mapping_is_rejected_before_ep_gather():
+    class CustomExpertMapping(ColumnParallelMapping):
+        pass
+
+    module = _fp8_linear()
+    mapping = CustomExpertMapping(
+        "decoder.layers.0.mlp.experts.local_experts.0.linear_fc2.weight",
+        "model.layers.0.mlp.experts.0.down_proj.weight",
+    )
+
+    with pytest.raises(RuntimeError, match="cannot pack expert mapping"):
+        modelopt_utils.build_modelopt_export_plan(
+            [_task(mapping, module, global_name=mapping.megatron_param)],
+            model=[module],
+        )
+
+
+def _distributed_topology_worker(rank, world_size, init_file):
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+    )
+    try:
+        original_capture = modelopt_utils._capture_source_state
+        original_get_pp_group = modelopt_utils.model_bridge_utils._get_pp_group
+        modelopt_utils._capture_source_state = (
+            lambda _task: (_ for _ in ()).throw(ValueError("rank-local failure"))
+            if rank == 0
+            else None
+        )
+        modelopt_utils.model_bridge_utils._get_pp_group = (
+            lambda _model: torch.distributed.group.WORLD
+        )
+        try:
+            modelopt_utils.build_modelopt_export_plan(
+                [SimpleNamespace(global_param_name="weight")],
+                model=[torch.nn.Linear(1, 1)],
+            )
+        except RuntimeError as error:
+            assert "rank-local failure" in str(error)
+        else:
+            raise AssertionError("Every rank must observe the capture failure")
+        finally:
+            modelopt_utils._capture_source_state = original_capture
+            modelopt_utils.model_bridge_utils._get_pp_group = original_get_pp_group
+
+        mapping = ColumnParallelMapping("projection.weight", "model.projection.weight")
+        mapping._tp_group = torch.distributed.group.WORLD
+        task = SimpleNamespace(mapping=mapping, global_param_name="projection.weight")
+        source = _source(f"rank{rank}", (2, 2), "column")
+        original_merge = quant_utils.merge_quantized_weight_export_states
+        quant_utils.merge_quantized_weight_export_states = (
+            lambda states, dim: (tuple(states), dim)
+        )
+        try:
+            transformed = modelopt_utils._transform_source_state(task, source)
+            assert transformed["model.projection.weight"] == (
+                ("rank0", "rank1"),
+                0,
+            )
+        finally:
+            quant_utils.merge_quantized_weight_export_states = original_merge
+
+        gathered = list(
+            modelopt_utils._gather_expert_output(
+                f"expert.{rank}.weight",
+                torch.tensor([rank], dtype=torch.int64),
+                torch.distributed.group.WORLD,
+            )
+        )
+        assert [name for name, _ in gathered] == [
+            "expert.0.weight",
+            "expert.1.weight",
+        ]
+        assert [tensor.item() for _, tensor in gathered] == [0, 1]
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_two_rank_planning_and_expert_collectives(tmp_path):
+    torch.multiprocessing.spawn(
+        _distributed_topology_worker,
+        args=(2, str(tmp_path / "modelopt-dist-init")),
+        nprocs=2,
+        join=True,
+    )
 
 
 def test_auto_bridge_can_reuse_a_prepared_plan():
