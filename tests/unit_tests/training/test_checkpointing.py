@@ -374,6 +374,45 @@ class TestRNGState:
         assert rng_state["np_rng_state"] == "np_state"
         assert rng_state["rng_tracker_states"] == "tracker_states"
 
+    def test_get_rng_state_gathers_requested_dp_streams(self):
+        """Checkpoint every DP RNG stream when the caller requests per-rank state."""
+        pg_collection = Mock()
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.dp_cp.rank.return_value = 0
+        pg_collection.dp_cp.size.return_value = 2
+        pg_collection.ep.size.return_value = 1
+        tracker = Mock()
+        tracker.get_states.return_value = {"model-parallel-rng": torch.tensor([1], dtype=torch.uint8)}
+
+        def gather(states, local_state, group):
+            assert group is pg_collection.dp_cp
+            states[:] = [local_state, {"rank": 1}]
+
+        with (
+            patch("random.getstate", return_value="random_state"),
+            patch("numpy.random.get_state", return_value="numpy_state"),
+            patch("torch.get_rng_state", return_value=torch.tensor([1], dtype=torch.uint8)),
+            patch("torch.cuda.get_rng_state", return_value=torch.tensor([2], dtype=torch.uint8)),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.all_gather_object", side_effect=gather) as all_gather,
+            patch(
+                "megatron.bridge.training.checkpointing.tensor_parallel.get_cuda_rng_tracker",
+                return_value=tracker,
+            ),
+        ):
+            result = get_rng_state(
+                data_parallel_random_init=True,
+                ckpt_format="torch_dist",
+                pg_collection=pg_collection,
+            )
+
+        all_gather.assert_called_once()
+        assert len(result.data) == 2
+        assert result.data[1] == {"rank": 1}
+
     @patch("megatron.bridge.training.checkpointing.get_pg_size")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
     @patch("torch.distributed.is_initialized")

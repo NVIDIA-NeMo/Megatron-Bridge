@@ -57,6 +57,7 @@ def bagel_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.logger.log_interval = 10
     cfg.checkpoint.save_interval = 2000
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    cfg.checkpoint.save_rng_state_per_dp_rank = True
     cfg.rng.seed = 42
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -71,6 +72,7 @@ def bagel_7b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 32
     cfg.dataset.t2i_num_used_data = 40
     cfg.dataset.editing_num_used_data = 40
+    cfg.ddp.fsdp_double_buffer = False
     return cfg
 
 

@@ -209,6 +209,7 @@ def test_recipe_uses_official_adam_epsilon():
     assert config.model.max_latent_size == config.dataset.max_latent_size == 64
     assert config.model.recompute_granularity == "full"
     assert config.model.recompute_vit
+    assert config.checkpoint.save_rng_state_per_dp_rank
 
 
 def test_32gpu_recipe_uses_pure_dp_fsdp_topology():
@@ -224,6 +225,7 @@ def test_32gpu_recipe_uses_pure_dp_fsdp_topology():
     assert config.ddp.use_megatron_fsdp
     assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert not config.ddp.average_in_collective
+    assert not config.ddp.fsdp_double_buffer
     assert config.checkpoint.ckpt_format == "fsdp_dtensor"
 
 
