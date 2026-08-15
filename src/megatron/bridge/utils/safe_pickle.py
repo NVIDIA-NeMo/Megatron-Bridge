@@ -57,6 +57,7 @@ _ENERGON_SAFE_STATE_GLOBALS = MappingProxyType(
             }
         ),
         "megatron.energon.flavors.webdataset.sample_loader": frozenset({"SliceState"}),
+        "megatron.bridge.models.bagel.data.energon": frozenset({"BagelSample"}),
     }
 )
 _TRAVERSAL_IN_PROGRESS = object()
