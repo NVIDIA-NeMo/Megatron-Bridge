@@ -8,11 +8,88 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 VALIDATOR_PATH = REPO_ROOT / "skills" / "create-model-verification-card" / "scripts" / "validate_card.py"
 pytestmark = pytest.mark.unit
+
+# Audited from recipe-owned GBS, the resolved card sequence or pack length, and
+# the public command topology: (sequence_or_pack_length, global_batch_size, GPUs).
+TRAINING_THROUGHPUT_INPUTS = {
+    ("gemma-4-26b-a4b-it", "sft", "H100"): (4096, 32, 8),
+    ("gemma-4-26b-a4b-it", "peft", "H100"): (4096, 32, 4),
+    ("glm5-2", "pretrain", "H100"): (2048, 1024, 352),
+    ("glm5-2", "pretrain", "GB200"): (4096, 1024, 192),
+    ("glm5-2", "sft", "H100"): (2048, 32, 416),
+    ("glm5-2", "sft", "GB200"): (8192, 8, 192),
+    ("glm5-2", "sft_long_context", "H100"): (200000, 13, 608),
+    ("glm5-2", "sft_long_context", "GB200"): (131072, 56, 192),
+    ("glm5-2", "peft", "H100"): (2048, 32, 208),
+    ("glm5-2", "peft", "GB200"): (2048, 32, 192),
+    ("glm5-2", "checkpoint_resume", "H100"): (2048, 1024, 352),
+    ("glm5-2", "checkpoint_resume", "GB200"): (4096, 1024, 192),
+    ("gpt-oss-20b", "pretrain", "H100"): (4096, 512, 16),
+    ("gpt-oss-20b", "sft", "H100"): (2048, 128, 8),
+    ("gpt-oss-20b", "sft_long_context", "H100"): (32768, 32, 8),
+    ("gpt-oss-20b", "peft", "H100"): (2048, 128, 1),
+    ("gpt-oss-20b", "checkpoint_resume", "H100"): (4096, 512, 16),
+    ("moonlight-16b-a3b", "pretrain", "H100"): (4096, 1024, 16),
+    ("moonlight-16b-a3b", "sft", "H100"): (8192, 8, 8),
+    ("moonlight-16b-a3b", "sft_long_context", "H100"): (8192, 128, 8),
+    ("moonlight-16b-a3b", "peft", "H100"): (2048, 32, 4),
+    ("moonlight-16b-a3b", "checkpoint_resume", "H100"): (4096, 1024, 16),
+    ("nemotron-3-nano-4b", "pretrain", "H100"): (4096, 1024, 8),
+    ("nemotron-3-nano-4b", "sft", "H100"): (2048, 32, 8),
+    ("nemotron-3-nano-4b", "sft_long_context", "H100"): (32768, 8, 8),
+    ("nemotron-3-nano-4b", "peft", "H100"): (2048, 32, 8),
+    ("nemotron-3-nano-4b", "checkpoint_resume", "H100"): (4096, 1024, 8),
+    ("nemotron-3-nano-omni-30b-a3b-reasoning", "sft", "H100"): (4096, 64, 16),
+    ("nemotron-3-nano-omni-30b-a3b-reasoning", "peft", "H100"): (4096, 64, 8),
+    ("nemotron-3-super-120b-a12b", "pretrain", "H100"): (4096, 1280, 64),
+    ("nemotron-3-super-120b-a12b", "sft_long_context", "H100"): (32768, 2, 16),
+    ("nemotron-3-super-120b-a12b", "peft", "GB200"): (8192, 16, 16),
+    ("nemotron-3-super-120b-a12b", "pretrain_performance", "H100"): (4096, 1280, 64),
+    ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB200"): (4096, 512, 64),
+    ("nemotron-3.5-lightning", "pretrain", "H100"): (8192, 512, 16),
+    ("nemotron-3.5-lightning", "pretrain", "GB200"): (8192, 512, 8),
+    ("nemotron-3.5-lightning", "pretrain_fsdp", "GB200", "bf16"): (8192, 512, 8),
+    ("nemotron-3.5-lightning", "pretrain_fsdp", "GB200", "fp8_mx"): (8192, 384, 8),
+    ("nemotron-3.5-lightning", "sft", "H100"): (4096, 128, 16),
+    ("nemotron-3.5-lightning", "sft", "GB200"): (4096, 128, 8),
+    ("nemotron-3.5-lightning", "sft_long_context", "H100"): (32768, 128, 16),
+    ("nemotron-3.5-lightning", "sft_long_context", "GB200"): (32768, 128, 8),
+    ("nemotron-3.5-lightning", "peft", "H100"): (4096, 128, 8),
+    ("nemotron-3.5-lightning", "peft", "GB200"): (4096, 128, 8),
+    ("nemotron-3.5-lightning", "checkpoint_resume", "H100"): (8192, 512, 16),
+    ("nemotron-3.5-lightning", "checkpoint_resume", "GB200"): (8192, 512, 8),
+    ("nemotron-3.5-lightning", "pretrain_performance", "H100"): (8192, 512, 16),
+    ("nemotron-3.5-lightning", "pretrain_performance", "GB200"): (8192, 512, 8),
+    ("qwen3-30b-a3b", "pretrain", "H100"): (4096, 1024, 16),
+    ("qwen3-30b-a3b", "pretrain", "GB200"): (4096, 512, 8),
+    ("qwen3-30b-a3b", "sft", "H100"): (2048, 32, 16),
+    ("qwen3-30b-a3b", "sft_long_context", "H100"): (32768, 32, 16),
+    ("qwen3-30b-a3b", "peft", "H100"): (2048, 32, 4),
+    ("qwen3-30b-a3b", "checkpoint_resume", "H100"): (4096, 1024, 16),
+    ("qwen3-30b-a3b", "checkpoint_resume", "GB200"): (4096, 512, 8),
+    ("qwen3-30b-a3b", "pretrain_performance", "H100"): (4096, 1024, 16),
+    ("qwen3-30b-a3b", "pretrain_performance", "GB200"): (4096, 512, 8),
+    ("qwen3-8b", "pretrain", "H100"): (4096, 1024, 16),
+    ("qwen3-8b", "sft", "H100"): (2048, 32, 4),
+    ("qwen3-8b", "sft_long_context", "H100"): (32768, 8, 8),
+    ("qwen3-8b", "peft", "H100"): (2048, 32, 1),
+    ("qwen3-8b", "checkpoint_resume", "H100"): (4096, 1024, 16),
+    ("qwen3.6-35b-a3b", "pretrain", "H100"): (4096, 512, 8),
+    ("qwen3.6-35b-a3b", "sft", "H100"): (4096, 32, 16),
+    ("qwen3.6-35b-a3b", "sft", "GB200"): (4096, 32, 8),
+    ("qwen3.6-35b-a3b", "sft_long_context", "H100"): (8192, 512, 32),
+    ("qwen3.6-35b-a3b", "peft", "H100"): (4096, 32, 16),
+    ("qwen3.6-35b-a3b", "peft", "GB200"): (4096, 32, 8),
+    ("qwen3.6-35b-a3b", "checkpoint_resume", "H100"): (4096, 512, 8),
+    ("qwen3.6-35b-a3b", "pretrain_performance", "H100"): (4096, 512, 16),
+    ("qwen3.6-35b-a3b", "pretrain_performance", "GB200"): (4096, 480, 8),
+}
 
 
 def _load_validator():
@@ -21,6 +98,39 @@ def _load_validator():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_shipped_training_tps_matches_audited_token_slot_inputs():
+    validator = _load_validator()
+    verified_leaves = {}
+
+    for card_path in sorted((REPO_ROOT / "examples" / "model_verification_cards").glob("*/card.yaml")):
+        card = yaml.safe_load(card_path.read_text())
+        slug = card_path.parent.name
+        for item_name in validator.TRAINING_ITEMS:
+            for hardware, leaf in card["items"].get(item_name, {}).items():
+                if not isinstance(leaf, dict):
+                    continue
+                if "metrics" in leaf:
+                    if leaf.get("status") == "verified":
+                        verified_leaves[(slug, item_name, hardware)] = leaf
+                    else:
+                        assert leaf["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] is None
+                for variant_name, variant in leaf.get("variants", {}).items():
+                    if variant.get("status") == "verified":
+                        verified_leaves[(slug, item_name, hardware, variant_name)] = variant
+                    else:
+                        assert variant["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] is None
+
+    assert verified_leaves.keys() == TRAINING_THROUGHPUT_INPUTS.keys()
+    for leaf_key, (sequence_or_pack_length, global_batch_size, total_gpus) in TRAINING_THROUGHPUT_INPUTS.items():
+        metrics = verified_leaves[leaf_key]["metrics"]
+        token_slots_per_step = sequence_or_pack_length * global_batch_size
+        expected_tps_per_gpu = token_slots_per_step / (metrics["last_10_steps_step_time_ms_avg"] / 1000) / total_gpus
+
+        assert metrics["last_10_steps_tokens_per_second_per_gpu_avg"] == pytest.approx(
+            expected_tps_per_gpu, abs=0.0005
+        )
 
 
 def test_shipped_greedy_inference_cards_validate():

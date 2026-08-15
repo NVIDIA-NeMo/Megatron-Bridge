@@ -1,7 +1,9 @@
 ## Description: <br>
-Validate and use selective and full activation recompute in Megatron Bridge to reduce GPU memory usage at the cost of extra compute. <br>
+Validate and use architecture-aware selective and full activation recompute in Megatron Bridge to reduce GPU memory usage at the cost of extra compute. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
+
+The skill guidance and evaluation dataset changed materially on 2026-08-12. The evaluation results below are historical results for the previous version and do not validate the current version; a fresh NVSkills-Eval run is pending. <br>
 
 ## Owner
 NVIDIA <br>
@@ -19,7 +21,7 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron Bridge Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge Performance Tuning Guide](../../docs/performance-guide.md) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
@@ -36,7 +38,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 internal skill-activation task in the NVSkills-Eval external profile. <br>
+The current package defines 3 internal skill-activation tasks. The historical results below used 1 previous-version task in the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -57,7 +59,7 @@ Underlying evaluation signals used in this run: <br>
 
 
 
-## Evaluation Results: <br>
+## Historical Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
@@ -67,7 +69,7 @@ Underlying evaluation signals used in this run: <br>
 | Efficiency | 1 | 94% (+67%) | 96% (-0%) |
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1622-g853062e4 (source: git describe) <br>
+Historical evaluated version: v0.2.0rc6-1622-g853062e4 (source: git describe). Current version: evaluation pending. <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

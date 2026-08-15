@@ -170,6 +170,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Megatron Bridge does not publish a pretraining recipe for this
         multimodal conditional-generation model; the supported package provides
@@ -202,6 +203,7 @@ items:
         final_loss: 0.4893276
         last_10_steps_step_time_ms_avg: 24454.11
         last_10_steps_model_tflops_per_gpu_avg: 60.73
+        last_10_steps_tokens_per_second_per_gpu_avg: 669.990
       expected_result: >
         The immutable-revision CORD v2 run completes exactly 10 full-SFT
         optimizer steps on 16 H100 GPUs at TP2/PP2/CP1/EP4/ETP1, GBS/MBS
@@ -270,6 +272,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The 8K TP4/PP1/CP2/EP1/ETP4, MBS2 in-batch-packing run uses
         precision-aware Adam with FP16 main parameters and stored FP32
@@ -303,6 +306,7 @@ items:
         final_loss: 0.3166811
         last_10_steps_step_time_ms_avg: 41897.41
         last_10_steps_model_tflops_per_gpu_avg: 22.22
+        last_10_steps_tokens_per_second_per_gpu_avg: 782.101
       expected_result: >
         The ten-step TP4/PP1/CP1/EP1 LoRA run exits successfully and saves a
         complete eight-shard iter_0000010 adapter checkpoint. LM loss is finite
@@ -322,6 +326,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison: null
       expected_result: >
         There is no supported pretraining reference workflow for this model, so

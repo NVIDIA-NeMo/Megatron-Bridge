@@ -44,6 +44,10 @@ class _MambaInferenceStateConfig:
         return cls()
 
 
+class _DynamicInferenceContext:
+    DEFAULT_MAX_TOKENS = 16_384
+
+
 class _SamplingParams:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -72,6 +76,10 @@ def _install_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
             "megatron.core.inference.config",
             InferenceConfig=_PassthroughInit,
             MambaInferenceStateConfig=_MambaInferenceStateConfig,
+        ),
+        "megatron.core.inference.contexts.dynamic_context": _module(
+            "megatron.core.inference.contexts.dynamic_context",
+            DynamicInferenceContext=_DynamicInferenceContext,
         ),
         "megatron.core.transformer.enums": _module(
             "megatron.core.transformer.enums",
@@ -196,6 +204,49 @@ def test_build_inference_config_auto_sizes_max_requests_when_unset(text_generati
     )
 
     assert config.kwargs["max_requests"] is None
+
+
+@pytest.mark.parametrize(
+    ("num_prompts", "tp", "max_tokens", "expected_max_requests"),
+    ((16_385, 1, None, 16_384), (10, 2, 3, 2)),
+)
+def test_build_inference_config_caps_default_requests_at_token_budget(
+    text_generation, num_prompts, tp, max_tokens, expected_max_requests
+):
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=num_prompts,
+        tp=tp,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=max_tokens,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
+    assert config.kwargs["max_requests"] == expected_max_requests
+
+
+def test_build_inference_config_rejects_explicit_batch_above_token_budget(text_generation):
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+
+    with pytest.raises(ValueError, match=r"--max_batch_size \(4\) cannot exceed --max_tokens \(3\)"):
+        text_generation.build_inference_config(
+            model=model,
+            max_sequence_length=4096,
+            max_batch_size=4,
+            num_prompts=10,
+            tp=2,
+            block_size_tokens=256,
+            kv_cache_buffer_size_gb=20.0,
+            max_tokens=3,
+            return_log_probs=False,
+            enable_chunked_prefill=False,
+        )
 
 
 def test_build_inference_config_clamps_learned_absolute_sequence_length(text_generation):
