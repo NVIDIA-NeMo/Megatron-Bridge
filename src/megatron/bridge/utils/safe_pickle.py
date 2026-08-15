@@ -57,7 +57,14 @@ _ENERGON_SAFE_STATE_GLOBALS = MappingProxyType(
             }
         ),
         "megatron.energon.flavors.webdataset.sample_loader": frozenset({"SliceState"}),
+        "megatron.energon.source_info": frozenset({"SourceInfo"}),
         "megatron.bridge.models.bagel.data.energon": frozenset({"BagelSample"}),
+    }
+)
+_ENERGON_SAFE_VALUE_GLOBALS = MappingProxyType(
+    {
+        "megatron.energon.epathlib.epath": frozenset({"EPath"}),
+        "pathlib": frozenset({"PurePosixPath"}),
     }
 )
 _TRAVERSAL_IN_PROGRESS = object()
@@ -300,6 +307,7 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
             # raise an UnpicklingError that names the missing ``module.name``; file a bug
             # against Megatron Bridge so the allowlist can be extended.
             **_ENERGON_SAFE_STATE_GLOBALS,
+            **_ENERGON_SAFE_VALUE_GLOBALS,
         }
     )
 

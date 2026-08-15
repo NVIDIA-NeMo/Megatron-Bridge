@@ -1,6 +1,8 @@
 import pytest
 import torch
 from megatron.core.rerun_state_machine import RerunDataIterator
+from megatron.energon.epathlib.epath import EPath
+from megatron.energon.source_info import SourceInfo
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.samplers import build_pretraining_data_loader
@@ -89,9 +91,10 @@ def test_bagel_external_loader_restores_reader_and_packer_state() -> None:
 
 
 def test_bagel_sample_is_allowed_in_energon_checkpoint(tmp_path) -> None:
+    source = SourceInfo(dataset_path=EPath("/dataset"), index=0, shard_name="t2i.tar", file_names=("0.image",))
     sample = BagelSample(
         __key__="t2i-0",
-        __restore_key__=("t2i", 0),
+        __restore_key__=(source,),
         __subflavors__={},
         image_tensor_list=[torch.ones(1)],
         text_ids_list=[[1]],
