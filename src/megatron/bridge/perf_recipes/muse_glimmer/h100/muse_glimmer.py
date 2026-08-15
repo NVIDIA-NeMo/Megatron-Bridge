@@ -53,6 +53,13 @@ def _muse_glimmer_30b_pretrain_32gpu_h100_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_bootstrap_backend="nccl", tp_comm_overlap=True)
 
     _benchmark_common(cfg, cross_entropy_impl="native")
+    return cfg
+
+
+def muse_glimmer_30b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
+    """Muse Glimmer dense decoder pretrain: 32× H100, BF16, TP=4 PP=4 CP=2."""
+    cfg = _muse_glimmer_30b_pretrain_32gpu_h100_config()
+    cfg.mixed_precision = _perf_precision("bf16")
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # Transformer Engine requires this stream ordering for TP overlap on H100.
@@ -63,14 +70,10 @@ def _muse_glimmer_30b_pretrain_32gpu_h100_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # This recipe does not use NCCL user buffers.
         "NCCL_NVLS_ENABLE": 0,
+        # Keep TE norm launch margins explicit for this measured workload.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
     }
-    return cfg
-
-
-def muse_glimmer_30b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
-    """Muse Glimmer dense decoder pretrain: 32× H100, BF16, TP=4 PP=4 CP=2."""
-    cfg = _muse_glimmer_30b_pretrain_32gpu_h100_config()
-    cfg.mixed_precision = _perf_precision("bf16")
     return cfg
 
 
@@ -80,6 +83,20 @@ def muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.train.global_batch_size = 192
     cfg.train.micro_batch_size = 6
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # Transformer Engine requires this stream ordering for TP overlap on H100.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA allocator and graph-registration settings for the measured workload.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # This recipe does not use NCCL user buffers.
+        "NCCL_NVLS_ENABLE": 0,
+        # Keep TE norm launch margins explicit for this measured workload.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+    }
     return cfg
 
 

@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 def _rms_norm(hidden_states: Tensor, eps: float) -> Tensor:
     """Apply the parameter-free RMS expression used by the HF reference.
 
-    Transformer Engine 2.17 RMSNorm always owns an affine weight, so Muse's
+    The pinned Transformer Engine RMSNorm always owns an affine weight, so Muse's
     scaleless Q/K, embedding, and perception norms cannot use it without
     changing the architecture and checkpoint schema.
     """
