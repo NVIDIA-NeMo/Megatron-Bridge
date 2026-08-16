@@ -42,3 +42,7 @@ __all__ = [
     "__download_url__",
     "AutoBridge",
 ]
+
+# TEMPORARY — DO NOT MERGE. Forces pre-flight docs_only=false so the release
+# workflow's build-docs job runs and can validate the docs link fix in this PR.
+# Revert this hunk before merging.
