@@ -5372,6 +5372,32 @@ class TestMaybeSaveDataloaderState:
             "dataloader_state_dict": {"dummy_energon_state": "xyz"}
         }
 
+    def test_reused_iteration_rejects_stale_dp_rank_state(self, tmp_path):
+        """Reusing an iteration at smaller DP must not retain rank files from its previous owner."""
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        torch.save(
+            {"dataloader_state_dict": {"generation": "old"}},
+            iter_dir / "train_dataloader_dprank001.pt",
+        )
+
+        with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
+            maybe_save_dataloader_state(
+                Mock(),
+                self._iterator(),
+                10,
+                str(tmp_path),
+                pg_collection=self._pg(dp=0),
+            )
+
+        with pytest.raises(RuntimeError, match="data-parallel size"):
+            maybe_load_dataloader_state(
+                Mock(),
+                10,
+                str(tmp_path),
+                pg_collection=self._pg(dp=1),
+            )
+
     @patch("megatron.bridge.training.checkpointing.torch.save")
     @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
