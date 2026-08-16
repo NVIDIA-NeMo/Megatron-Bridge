@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Serializable provider fields needed by the temporary Ling MCore path."""
+"""Serializable provider fields needed by the current Ling MCore draft path."""
 
 from dataclasses import dataclass
 
@@ -23,12 +23,11 @@ from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 class BailingMoe3HybridProvider(HybridModelProvider):
     """Hybrid provider shared by the public Ling 3.0 model variants.
 
-    The temporary MCore checkout used for Ling 3.0 exposes these attributes only
-    dynamically on ``TransformerConfig``.  Declaring them here makes the provider
-    self-contained and ensures that Bridge's ``run_config.yaml`` can reconstruct
-    the exact model for DCP reload.  Variant selection remains config-driven in
-    the bridge; there is deliberately no Tiny-specific or Flash-specific provider
-    class.
+    The current Ling-capable MCore draft exposes these attributes only dynamically
+    on ``TransformerConfig``. Declaring them here makes the provider self-contained
+    and ensures that Bridge's ``run_config.yaml`` can reconstruct the exact model
+    for DCP reload. Variant selection remains config-driven in the bridge; there is
+    deliberately no Tiny-specific or Flash-specific provider class.
     """
 
     q_lora_rank: int | None = None

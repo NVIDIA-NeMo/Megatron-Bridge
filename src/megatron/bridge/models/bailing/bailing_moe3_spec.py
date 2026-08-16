@@ -27,10 +27,10 @@ from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 class BailingMoe3DirectQMLASelfAttention(MLASelfAttention):
     """MLA adapter for Flash's direct-Q plus KV-only RMSNorm contract.
 
-    The temporary MCore resolver treats ``qk_layernorm=True`` as a request to
+    The current MCore resolver treats ``qk_layernorm=True`` as a request to
     fuse a Q norm when ``q_lora_rank`` is ``None``.  Ling 3.0 Flash instead has
     a plain ``q_proj`` and a standalone ``kv_a_layernorm``.  Keep this small
-    compatibility adapter in Bridge so the temporary MCore checkout remains
+    compatibility adapter in Bridge so the MCore implementation remains
     untouched; it only changes module selection, while the inherited forward,
     backward, and sharding implementation remains MCore's.
     """

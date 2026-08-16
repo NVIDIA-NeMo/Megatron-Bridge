@@ -45,7 +45,7 @@ can be exported with the shared conversion launcher:
 ```
 
 For the architecture contract, mapping semantics, topology validation, and known
-temporary-MCore limitations, see
+current MCore draft limitations, see
 [`docs/models/bailing/ling-3-tiny-design.md`](../../../docs/models/bailing/ling-3-tiny-design.md).
 
 ## Ling 3.0 Flash
@@ -64,8 +64,9 @@ python examples/models/bailing/convert_ling3_tiny.py \
 The full public Flash checkpoint has been converted to native DCP and strictly
 reloaded in the AIStudio runtime. The remaining Flash gates are HF round-trip
 weight parity, direct-Q/MTP logit parity, and one GPU forward/backward/save/reload
-smoke. Validation uses the Ling-capable MCore revision `2be7d33f`; the Bridge
-submodule gitlink remains unchanged in this temporary workflow.
+smoke. Validation uses the official Ling-capable MCore draft revision
+`f62b8bf20ee5a03c2fd77a28362e568a0451257e`; the Bridge submodule development pin
+matches this commit while `.main.commit` remains on the production MCore pin.
 
 ## Workspace Configuration
 

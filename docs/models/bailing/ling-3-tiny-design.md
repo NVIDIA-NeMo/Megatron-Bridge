@@ -1,8 +1,8 @@
 # Ling 3.0 Tiny/Flash Bridge Design
 
-Status: Bridge implementation complete for the temporary Ling 3.0 Tiny and Flash HF-to-DCP workflows
+Status: Bridge implementation complete for Ling 3.0 Tiny and Flash HF-to-DCP workflows
 
-Last updated: August 15, 2026
+Last updated: August 16, 2026
 
 ## Decision
 
@@ -123,11 +123,11 @@ The Bridge Megatron Core checkout must include the official Ling Tiny prerequisi
 - Direct-Q MLA and generic MTP support used by Flash.
 - The Tiny/Flash HybridModel layer specification.
 
-The current validation uses a Ling-capable temporary MCore commit
-(`2be7d33f72f154780e5d688370c4d6785baf8070`), which includes the KDA/MLA training
-FLOPs accounting fix. The Bridge submodule gitlink is intentionally unchanged in
-this temporary phase; a future official MCore commit will replace this validation
-dependency.
+The Bridge submodule is pinned to the official Megatron-LM draft PR commit
+(`f62b8bf20ee5a03c2fd77a28362e568a0451257e`) through `.dev.commit`. This commit
+includes the Ling-V3 Tiny HybridModel support, KDA/MLA training and FLOPs
+accounting, and the Tiny functional regression. `.main.commit` remains on the
+production MCore pin until the draft PR is merged.
 
 The conversion and tests must run in the Bridge container/locked environment. A
 separate Ling runtime with an older Transformers version is not a supported Bridge
@@ -150,12 +150,12 @@ src/megatron/bridge/models/bailing/
 
 Tiny uses the standard low-rank MLA path. Flash selects the Bridge-local
 `BailingMoe3DirectQMLASelfAttention` adapter: it retains MCore's inherited MLA
-forward/backward/sharding implementation, but bypasses the temporary MCore Q/KV
+forward/backward/sharding implementation, but bypasses the current MCore Q/KV
 norm resolver so Flash gets a plain `q_proj` plus standalone KV RMSNorm. No file
 under `3rdparty/Megatron-LM/` is modified.
 
-Ling 3.0 Tiny and Flash use the stock `HybridModel` implementation. The temporary
-MCore checkout exposes several MLA fields only as dynamic attributes, so the Bridge
+Ling 3.0 Tiny and Flash use the stock `HybridModel` implementation. The current
+MCore draft exposes several MLA fields only as dynamic attributes, so the Bridge
 adds a small serializable `BailingMoe3HybridProvider` shim that declares those
 fields; this is required for `run_config.yaml`-based DCP reload and does not alter
 MCore.
@@ -188,7 +188,7 @@ rank.
 `provider_bridge()` should call the base conversion path, then configure the returned
 `BailingMoe3HybridProvider` with the Tiny-specific HybridModel, KDA, MLA, MoE,
 router, shared expert, precision, and layer-pattern fields. The provider shim declares
-the MLA fields that the temporary MCore exposes only dynamically, so the generated
+the MLA fields that the current MCore draft exposes only dynamically, so the generated
 `run_config.yaml` is self-contained for DCP reload.
 
 It must validate at least:
@@ -365,7 +365,7 @@ it is not a convergence or performance claim.
 
 ## Acceptance Criteria
 
-Temporary Ling 3.0 Tiny Bridge support is complete when the following temporary-phase
+Ling 3.0 Tiny Bridge support is complete for the current MCore draft when the following
 criteria hold:
 
 - Focused unit tests and real full-checkpoint distributed conversion pass.
@@ -384,8 +384,8 @@ commit. Do not run the full test suite.
 
 ## Implementation Status (2026-08-13)
 
-The temporary Bridge implementation has been exercised against the remote HF artifact
-and current remote MCore checkout:
+The Bridge implementation has been exercised against the remote HF artifact and the
+official MCore draft pin:
 
 - The pinned source audit found all 32/32 shards, 9,283 indexed keys, and the recorded
   config/index hashes. The actual shard-byte sum is 15,787,992,416 bytes. The source
@@ -396,7 +396,7 @@ and current remote MCore checkout:
   dense, routed-expert, and shared-expert shapes.
 - The full real conversion wrote a native DCP through the target model's sharded
   state dict. Its `run_config.yaml` records the pinned HF revision, and strict TP1
-  reload succeeded without changing the MCore checkout.
+  reload succeeded without modifying MCore source.
 - The 12 focused Ling Tiny unit tests pass in the isolated remote Bridge runtime;
   the two TP sentinel tests verify independent KDA section sharding/gathering. The
   remote container's normal full Bridge import is currently blocked by unrelated
@@ -413,7 +413,7 @@ and current remote MCore checkout:
 - Common chunk-KDA numerical parity at sequence length 128 gave cosine `0.9978705`,
   maximum absolute difference `2.125`, mean absolute difference `0.1506272`, and the
   same greedy next token (`220`). The pinned HF implementation uses fused recurrent
-  KDA for sequence lengths up to 64, while this temporary MCore has chunk-KDA only;
+  KDA for sequence lengths up to 64, while this MCore draft has chunk-KDA only;
   short-sequence recurrent parity is therefore a MCore capability boundary, not a
   Bridge mapping claim.
 - A one-step forward/backward/update/save/reload smoke completed with finite loss
@@ -423,16 +423,17 @@ and current remote MCore checkout:
   KDA and MLA physical layers are both included in Tiny/Flash throughput accounting,
   including ragged dense-attention sequence statistics and head-wise MLA gating.
 
-The implementation is ready for the temporary Tiny and Flash conversion workflows.
+The implementation is ready for the Tiny and Flash conversion workflows against the
+official MCore draft pin.
 Production support still needs the normal Bridge environment's missing Transformers
 symbols resolved. Flash still needs HF round-trip weight parity, logit parity, and a
-GPU forward/backward/save/reload smoke with MTP enabled. The temporary Bridge workflow
-uses the remote MCore revision recorded above without changing the submodule gitlink.
+GPU forward/backward/save/reload smoke with MTP enabled. The Bridge workflow uses the
+official MCore draft revision recorded above as its development submodule pin.
 
 ## Pull Request Structure
 
-1. Keep the Bridge submodule gitlink unchanged for this phase; validate against the
-   recorded Ling-capable remote MCore checkout.
+1. Pin the Bridge submodule to the official MCore draft revision through `.dev.commit`;
+   keep `.main.commit` unchanged until the MCore draft PR is merged.
 2. Submit the Ling 3.0 Tiny Bridge implementation, mappings, provider shim, focused tests, example,
    model documentation, and recorded real-checkpoint validation.
 
@@ -450,5 +451,4 @@ work is operational parity validation in the AIStudio environment:
 - run direct-Q/MTP logit parity;
 - run one forward/backward/save/reload smoke with MTP enabled.
 
-These gates use the recorded remote MCore checkout and do not require changing the
-Bridge submodule gitlink.
+These gates use the recorded official MCore draft pin.

@@ -389,7 +389,7 @@ class BailingMoeV3Bridge(MegatronModelBridge):
         provider.attention_dropout = 0.0
 
         # HybridModelProvider intentionally does not declare all MLA-only fields
-        # in the temporary MCore pin.  BailingMoe3HybridProvider declares them so
+        # in the current MCore draft pin. BailingMoe3HybridProvider declares them so
         # the provider remains serializable for DCP run_config reconstruction.
         provider.multi_latent_attention = True
         # qk_layernorm enables the KV norm as well.  The variant-aware module
