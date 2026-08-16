@@ -100,7 +100,7 @@ a convergence claim.
 
 # Additional Information
 
-- Related to: `<issue number to be added>`
+- Related issue: [NVIDIA-NeMo/Megatron-Bridge#5602](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/5602)
 - Suggested labels: `feature`, `area:model`, `area:ckpt`, `high-complexity`,
   `needs-more-tests`
 - This PR should remain a draft until the MCore draft PR is merged or its final
