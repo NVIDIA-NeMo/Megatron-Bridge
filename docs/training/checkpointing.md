@@ -312,8 +312,8 @@ The load default follows the actual source because the checkpoint restored on re
 
 ### Restore Behavior and Failure Modes
 
-- If the dataloader state directory is **absent** (e.g. a checkpoint saved before this feature existed), the dataloader starts from the beginning and a message is logged.
-- If the directory **exists** but the current rank's per-DP-rank file is **missing**, restore **raises**. This almost always means the data-parallel size changed since the checkpoint was saved; resuming would silently change the data order, so it fails loudly instead.
+- If the dataloader state root or the selected `iter_N` directory is **absent** (e.g. the selected checkpoint was saved before this feature existed), the dataloader starts from the beginning and a message is logged. Other state generations under the same root do not change this behavior.
+- If the selected `iter_N` directory **exists** but the current rank's per-DP-rank file is **missing**, restore **raises**. This almost always means the data-parallel size changed since the checkpoint was saved; resuming would silently change the data order, so it fails loudly instead.
 
 ### Determinism Requirement
 

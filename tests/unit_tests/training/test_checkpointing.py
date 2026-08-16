@@ -5052,10 +5052,20 @@ class TestMaybeLoadDataloaderState:
         maybe_load_dataloader_state(train_iterator, 10, str(missing), pg_collection=self._pg())
         train_iterator.iterable.restore_state.assert_not_called()
 
+    def test_missing_selected_iteration_warns_and_skips(self, tmp_path):
+        """An unrelated state generation does not prevent an older checkpoint from resuming."""
+        train_iterator = Mock()
+        os.makedirs(get_checkpoint_name(str(tmp_path), 20))
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        train_iterator.iterable.restore_state.assert_not_called()
+
     def test_existing_dir_missing_file_raises(self, tmp_path):
         """If the state dir exists but this rank's file does not, fail loudly (likely a DP-size change)."""
         train_iterator = Mock()
-        # tmp_path exists (the energon root) but contains no per-rank file for this iteration.
+        os.makedirs(get_checkpoint_name(str(tmp_path), 10))
+        # The selected iteration exists but contains no state file for this data-parallel rank.
         with pytest.raises(RuntimeError, match="data-parallel size"):
             maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
