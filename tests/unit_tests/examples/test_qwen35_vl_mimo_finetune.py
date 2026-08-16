@@ -158,6 +158,8 @@ def test_dataset_config_enables_only_requested_or_known_validation_splits(
                 dataloader_type="single",
                 trust_remote_code=False,
                 do_validation=do_validation,
+                pack_sequences_in_batch=False,
+                scalable_dp=False,
             )
         )
         config.validate()

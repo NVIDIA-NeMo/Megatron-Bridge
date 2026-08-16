@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 from torch.utils.data import DataLoader
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.megatron_mimo.canonical_sampler import build_canonical_mimo_data_loader
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -28,11 +29,13 @@ def build_megatron_mimo_data_loaders(
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build MegatronMIMO data loaders with globally consistent sampling.
 
-    All data-loading ranks receive identical global micro-batches (the sampler
-    uses dp_size=1).  Per-module DP sub-sharding is deferred to
+    By default all data-loading ranks receive identical global micro-batches (the
+    sampler uses dp_size=1) and per-module DP sub-sharding is deferred to
     ``slice_batch_for_megatron_mimo`` in the forward step, ensuring consistency with
     the BridgeCommunicator's fan-in/fan-out routing for asymmetric DP configs.
-    Only ranks that need data (first/last PP stage) will get non-None loaders.
+    With ``dataset.megatron_mimo_scalable_dp`` each rank instead reads only its
+    canonical-grid shard (see ``canonical_sampler``) and the forward step does not
+    slice. Only ranks that need data (first/last PP stage) will get non-None loaders.
 
     Args:
         cfg: Configuration container with MegatronMIMOProvider as cfg.model.
@@ -95,8 +98,9 @@ def build_megatron_mimo_data_loaders(
     # Use cached grids from build_model()
     grids = cfg.model._grids
 
+    scalable_dp = bool(getattr(getattr(cfg, "dataset", None), "megatron_mimo_scalable_dp", False))
     sampler_dp_rank, sampler_dp_size, needs_data = get_megatron_mimo_sampling_info(
-        cfg.model.megatron_mimo_parallelism_config, grids
+        cfg.model.megatron_mimo_parallelism_config, grids, scalable_dp=scalable_dp
     )
 
     if not needs_data:
@@ -117,15 +121,37 @@ def build_megatron_mimo_data_loaders(
         f"test={len(test_ds) if test_ds else 0}"
     )
 
-    # Build data loaders via the shared standard-path helper so MegatronMIMO picks up
-    # the same sampler selection logic (driven by ``dataloader_type``) and automatic
-    # consumed_samples handling on checkpoint resume. sampler_dp_size=1 means all
+    # Default mode builds via the shared standard-path helper (sampler_dp_size=1: all
     # data-loading ranks see the same global batches; per-module DP sub-sharding is
-    # deferred to slice_batch_for_megatron_mimo in the forward step.
+    # deferred to slice_batch_for_megatron_mimo in the forward step). Scalable mode
+    # shards reads on the canonical grid instead and skips the forward-step slice.
     collate_fn = megatron_mimo_provider.get_collate_fn()
     micro_batch_size = cfg.train.micro_batch_size
 
     def _make_loader(dataset, consumed_samples: int) -> Optional[DataLoader]:
+        if dataset is None:
+            return None
+        if scalable_dp:
+            # Shard reads on the canonical grid (LCM of the module DP sizes) so every
+            # module materializes the same ordered global micro-batch under any sampler.
+            module_dps = [
+                p.data_parallel_size for p in cfg.model.megatron_mimo_parallelism_config.module_parallelisms.values()
+            ]
+            return build_canonical_mimo_data_loader(
+                dataset,
+                consumed_samples=consumed_samples,
+                dataloader_type=megatron_mimo_provider.dataloader_type,
+                micro_batch_size=micro_batch_size,
+                module_dp_sizes=module_dps,
+                dp_rank=sampler_dp_rank,
+                dp_size=sampler_dp_size,
+                data_sharding=megatron_mimo_provider.data_sharding,
+                drop_last=megatron_mimo_provider.drop_last,
+                num_workers=megatron_mimo_provider.num_workers,
+                pin_memory=megatron_mimo_provider.pin_memory,
+                collate_fn=collate_fn,
+                persistent_workers=megatron_mimo_provider.persistent_workers,
+            )
         return build_pretraining_data_loader(
             dataset=dataset,
             consumed_samples=consumed_samples,
