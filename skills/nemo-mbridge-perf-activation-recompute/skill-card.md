@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers diagnosing activation memory OOMs or tuning recompute boundaries (recompute_granularity, recompute_modules, recompute_method) in Megatron Bridge training recipes. <br>
+Developers and engineers diagnosing activation-memory OOMs and configuring selective or full activation recompute boundaries in Megatron Bridge training recipes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,8 +25,9 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron Core Activation Recomputation API Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html) <br>
-- [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
+- [Activation Recomputation (Megatron Bridge docs)](docs/training/activation-recomputation.md) <br>
+- [Megatron Core API Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html) <br>
+- [Performance Tuning Guide](docs/performance-guide.md) <br>
 
 
 ## Skill Output: <br>
@@ -42,14 +43,14 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 internal skill evaluation tasks (3 positive). <br>
+Evaluated against 3 positive evaluation tasks covering architecture-aware memory diagnosis, matched Moonlight 16B evidence interpretation, and matched Nemotron 3 Nano capacity evidence interpretation. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill is safe to use (unsafe operations, secret leakage, unauthorized access). <br>
-- Correctness: Whether the skill produces correct answers against reference answers. <br>
+- Security: Whether the skill is safe to use (no unsafe operations, secret leakage, or unauthorized access). <br>
+- Correctness: Whether the skill produces correct answers against reference ground truth. <br>
 - Discoverability: Whether the right skill is loaded and activated when needed. <br>
-- Effectiveness: Whether the skill helps complete the user's goal and expected workflow. <br>
+- Effectiveness: Whether the skill helps the agent complete the user's goal and expected workflow. <br>
 - Efficiency: Whether the skill avoids wasted tool or skill usage. <br>
 
 Underlying evaluation signals used in this run: <br>
@@ -63,14 +64,14 @@ Underlying evaluation signals used in this run: <br>
 
 
 ## Evaluation Results: <br>
-| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
+| Measure | Claude Code (Baseline → Skill) | Codex (Baseline → Skill) |
 |---|---:|---:|
-| Overall | 70% → 99% (+29 points) | 53% → 97% (+44 points) |
-| Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 33% → 100% (+67 points) | 67% → 100% (+33 points) |
-| Discoverability | 100% → 100% (±0 points) | 40% → 90% (+50 points) |
-| Effectiveness | 19% → 94% (+74 points) | 30% → 95% (+65 points) |
-| Efficiency | 96% → 100% (+4 points) | 27% → 100% (+73 points) |
+| Overall | 65% → 98% (+34 pts) | 58% → 98% (+39 pts) |
+| Security | 100% → 100% (±0) | 100% → 100% (±0) |
+| Correctness | 13% → 100% (+87 pts) | 73% → 100% (+27 pts) |
+| Discoverability | 100% → 100% (±0) | 42% → 94% (+52 pts) |
+| Effectiveness | 13% → 91% (+78 pts) | 45% → 95% (+50 pts) |
+| Efficiency | 97% → 100% (+3 pts) | 32% → 100% (+68 pts) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>
