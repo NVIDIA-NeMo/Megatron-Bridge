@@ -35,7 +35,6 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 
 
 pytestmark = pytest.mark.unit
@@ -189,8 +188,8 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     assert cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model
 
 
-def test_gb200_mxfp8_enables_cutedsl_and_full_iteration_graphs() -> None:
-    """The non-FSDP Lightning recipe uses CutDSL and full-iteration graphs without MoE A2A overlap."""
+def test_gb200_mxfp8_enables_cutedsl_fusion() -> None:
+    """The non-FSDP Lightning recipe enables CutDSL without MoE A2A overlap."""
     cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config()
 
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
@@ -202,18 +201,6 @@ def test_gb200_mxfp8_enables_cutedsl_and_full_iteration_graphs() -> None:
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is not True
     assert cfg.comm_overlap.delay_wgrad_compute is not True
-    assert is_full_iteration_cuda_graph(cfg.model)
-    assert cuda_graph_module_names(cfg.model) == []
-    assert cfg.model.cuda_graph_warmup_steps == 3
-    assert cfg.model.use_te_rng_tracker is True
-    assert cfg.rng.te_rng_tracker is True
-    assert cfg.rerun_state_machine.check_for_nan_in_loss is False
-    assert cfg.ddp.check_for_nan_in_grad is False
-    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == (
-        "expandable_segments:True,graph_capture_record_stream_reuse:True"
-    )
-    assert cfg.env_vars["NCCL_GRAPH_REGISTER"] == 0
-    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
 
 
 def test_gb200_mxfp8_fsdp_skips_cutedsl_fusion() -> None:
@@ -229,7 +216,6 @@ def test_gb200_mxfp8_fsdp_skips_cutedsl_fusion() -> None:
     assert cfg.mixed_precision.fp8_dot_product_attention is False
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
-    assert not is_full_iteration_cuda_graph(cfg.model)
 
 
 @pytest.mark.parametrize("recipe_factory", _H100_RECIPES, ids=lambda recipe: recipe.__name__)

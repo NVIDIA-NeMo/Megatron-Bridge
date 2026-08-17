@@ -23,7 +23,6 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _enable_cutedsl_fused_grouped_mlp,
-    _enable_full_iteration_cuda_graph,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     _with_global_batch_size,
@@ -146,7 +145,6 @@ def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
 def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
-    _enable_full_iteration_cuda_graph(cfg)
     _enable_cutedsl_fused_grouped_mlp(cfg)
     cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -156,8 +154,8 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
@@ -401,7 +399,6 @@ def _build_nemotron_3_nano_gb300_mxfp8() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, MXFP8."""
     cfg = _build_nemotron_3_nano_gb300_mxfp8()
-    _enable_full_iteration_cuda_graph(cfg)
     _enable_cutedsl_fused_grouped_mlp(cfg)
     cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -411,8 +408,8 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
