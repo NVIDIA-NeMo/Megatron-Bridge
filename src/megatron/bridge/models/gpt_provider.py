@@ -36,8 +36,8 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
-from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
@@ -135,6 +135,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # Model configuration
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = True
     make_vocab_size_divisible_by: int = 128
@@ -296,6 +297,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 vocab_size=padded_vocab_size,
                 max_sequence_length=self.seq_length,
                 fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(MCoreGPTModel, self.logit_dtype),
                 parallel_output=self.parallel_output,
                 share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
                 position_embedding_type=self.position_embedding_type,

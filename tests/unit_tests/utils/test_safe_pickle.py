@@ -296,6 +296,23 @@ def test_energon_group_bucket_enum_key_round_trip(tmp_path):
     assert bucket_key is _BucketKey.IMAGE
 
 
+def test_energon_group_bucket_frozenset_key_round_trip(tmp_path):
+    """Energon can reuse a restored partial bucket keyed by any supported Hashable."""
+    bucket_key = frozenset({"image"})
+    state = SavableDataLoaderState(
+        worker_states=[FlexState(buckets={bucket_key: {"batch_size": 2}})],
+        next_worker_id=0,
+        micro_batch_size=2,
+    )
+    path = tmp_path / "dataloader-state.pt"
+    torch.save({"dataloader_state_dict": state}, path)
+
+    restored = energon_torch_load(str(path))["dataloader_state_dict"]
+
+    restored_buckets = restored.worker_states[0]["buckets"]
+    assert restored_buckets[bucket_key] == {"batch_size": 2}
+
+
 def test_energon_group_bucket_enum_does_not_use_application_value_map(tmp_path):
     """Enum reconstruction does not execute a mutable application lookup mapping."""
     state = SavableDataLoaderState(

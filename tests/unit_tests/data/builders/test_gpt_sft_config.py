@@ -214,7 +214,6 @@ def test_build_gpt_sft_split_routes_chat_options(monkeypatch, tmp_path):
         packed_sequence_size=-1,
         dataset_kwargs={
             "chat": True,
-            "use_hf_tokenizer_chat_template": True,
             "tool_schemas": {"type": "function"},
         },
     )
