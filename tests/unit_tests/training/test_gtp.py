@@ -131,6 +131,7 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
     events = []
     model = [MagicMock(), MagicMock()]
     model_config = SimpleNamespace()
+    model_config.finalize = MagicMock(side_effect=lambda: events.append("finalize"))
     model_config.provide_distributed_model = MagicMock(side_effect=lambda **_kwargs: events.append("build") or model)
     mock_configure.side_effect = lambda _config: events.append("configure")
     mock_classify.side_effect = lambda _model, _config: events.append("classify")
@@ -145,4 +146,4 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
     result = _build_distributed_model(cfg, MagicMock())
 
     assert result is model
-    assert events == ["configure", "build", "classify"]
+    assert events == ["finalize", "configure", "build", "classify"]

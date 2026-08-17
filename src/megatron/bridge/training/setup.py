@@ -589,6 +589,8 @@ def _register_setup_pre_wrap_hook(
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build distributed model from either ModelConfig or ModelProviderMixin."""
     model_config = cfg.model
+    if not isinstance(model_config, ModelConfig):
+        model_config.finalize()
     configure_gtp_remat(model_config)
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
