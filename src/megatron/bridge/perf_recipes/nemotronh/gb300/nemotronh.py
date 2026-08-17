@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
+    _enable_hybridep_mxfp8_cutedsl_fusion,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     _with_global_batch_size,
@@ -115,8 +116,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
+def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
@@ -139,6 +139,13 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
+
+
+def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
+    cfg = _build_nemotron_3_super_gb300_mxfp8()
+    _enable_hybridep_mxfp8_cutedsl_fusion(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -156,7 +163,9 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
@@ -359,8 +368,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× GB300, MXFP8."""
+def _build_nemotron_3_nano_gb300_mxfp8() -> ConfigContainer:
     cfg = nemotron_3_nano_pretrain_config()
     _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("fp8_mx")
@@ -384,6 +392,13 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_hybridep_num_sms = 16
+    return cfg
+
+
+def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Nano pretrain: 8× GB300, MXFP8."""
+    cfg = _build_nemotron_3_nano_gb300_mxfp8()
+    _enable_hybridep_mxfp8_cutedsl_fusion(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -401,7 +416,9 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,

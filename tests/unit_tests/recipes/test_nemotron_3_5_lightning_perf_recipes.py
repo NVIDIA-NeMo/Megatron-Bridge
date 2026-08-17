@@ -181,7 +181,21 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
-    if recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
+    if recipe_factory is nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config:
+        base_env_vars = {
+            name: value
+            for name, value in base_cfg.env_vars.items()
+            if name not in {"CUDNNFE_CLUSTER_OVERLAP_MARGIN", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"}
+        }
+        assert cfg.env_vars == base_env_vars
+        assert getattr(cfg.model, "use_transformer_engine_op_fuser", False) is False
+        assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
+        assert getattr(cfg.model, "high_priority_a2a_comm_stream", False) is False
+        assert getattr(cfg.model, "moe_hybridep_num_sms_preprocessing", None) != 32
+        assert cfg.mixed_precision.fp8_dot_product_attention is False
+        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+        assert cfg.comm_overlap.delay_wgrad_compute is False
+    elif recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
         assert cfg.env_vars == base_cfg.env_vars
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
     assert cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
