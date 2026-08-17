@@ -28,8 +28,8 @@ Each block position ``k`` is weighted by ``exp(-k / loss_decay_gamma)``.
 Acceptance is measured analytically as ``accept_rate = 1 - 0.5 * L1`` and the
 expected accepted prefix length of a block as ``tau = sum_k cumprod(accept_rate)_k + 1``.
 
-Return contract
----------------
+**Return contract**
+
 :func:`dspark_loss` returns the Megatron-Core 3-tuple ``(loss, num_tokens,
 report)``, matching :func:`megatron.bridge.training.losses.masked_next_token_loss`:
 
