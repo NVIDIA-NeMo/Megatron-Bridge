@@ -1769,6 +1769,14 @@ def maybe_save_dataloader_state(
     torch.distributed.barrier(group=pg_collection.dp)
 
     if get_pg_rank(pg_collection.dp) == 0:
+        # A retained Energon generation may outlive its model checkpoint. Replace the generation
+        # before reusing an iteration so rank files from a previous, larger DP world cannot survive.
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            if msc.os.path.isdir(iter_dir):
+                msc.delete(iter_dir, recursive=True)
+        elif os.path.isdir(iter_dir):
+            shutil.rmtree(iter_dir)
         ensure_directory_exists(data_state_save_path)
 
     torch.distributed.barrier(group=pg_collection.dp)

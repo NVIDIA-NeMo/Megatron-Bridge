@@ -264,4 +264,4 @@ Limitations of this evidence:
 - `skills/nemo-mbridge-perf-memory-tuning/SKILL.md`
 - `skills/nemo-mbridge-perf-cuda-graphs/SKILL.md`
 - `skills/nemo-mbridge-perf-cpu-offloading/SKILL.md`
-- Megatron Core activation recomputation guide: <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/transformer.html#activation-recomputation>
+- Megatron Core activation recomputation guide: <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html>
