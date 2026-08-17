@@ -1339,6 +1339,46 @@ def test_shared_chat_preprocessing_normalizes_sharegpt_roles_before_templating()
     assert tokenized.assistant_mask.any()
 
 
+def test_normalize_chat_conversation_parses_openai_tool_call_arguments_without_mutating_input():
+    row = {
+        "messages": [
+            {"role": "user", "content": "Weather?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": '{"city":"Seattle"}'},
+                    }
+                ],
+            },
+        ]
+    }
+
+    normalized = normalize_chat_conversation(row)
+
+    assert normalized[1]["tool_calls"][0]["function"]["arguments"] == {"city": "Seattle"}
+    assert row["messages"][1]["tool_calls"][0]["function"]["arguments"] == '{"city":"Seattle"}'
+
+
+@pytest.mark.parametrize("arguments", ["not JSON", "[]", '"Seattle"'])
+def test_normalize_chat_conversation_rejects_invalid_openai_tool_call_arguments(arguments):
+    row = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"type": "function", "function": {"name": "lookup", "arguments": arguments}}],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match=r"function\.arguments must be (valid JSON|a JSON object)"):
+        normalize_chat_conversation(row)
+
+
 def test_ultrachat_style_row_has_matching_gpt_sft_and_direct_hf_collation():
     tokenizer = _LlamaPreprocessingTokenizer()
     row = {

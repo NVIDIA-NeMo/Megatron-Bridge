@@ -103,6 +103,31 @@ class TestTokenizerConfigFromArgs:
 
         assert fn_cfg == default_cfg
 
+    def test_maps_mlm_sft_prompt_format(self):
+        """Test the MLM SFT field is mapped to Bridge's canonical tokenizer field."""
+        cfg = _tokenizer_config_from_args(
+            argparse.Namespace(
+                tokenizer_type="SFTTokenizer",
+                tokenizer_model="tokenizer.model",
+                sft_tokenizer_prompt_format="nemotron-h-aligned",
+            )
+        )
+
+        assert cfg.tokenizer_prompt_format == "nemotron-h-aligned"
+        assert cfg.sft_tokenizer_prompt_format == "nemotron-h-aligned"
+
+    def test_sft_default_does_not_override_multimodal_prompt_format(self):
+        """Test the globally present MLM SFT default only applies to SFT tokenizers."""
+        cfg = _tokenizer_config_from_args(
+            argparse.Namespace(
+                tokenizer_type="MultimodalTokenizer",
+                tokenizer_prompt_format="nemotron-vl",
+                sft_tokenizer_prompt_format="nemotron-h-aligned",
+            )
+        )
+
+        assert cfg.tokenizer_prompt_format == "nemotron-vl"
+
 
 class TestTransformerConfigFromArgs:
     """Test extracting TransformerConfig from argparse args."""

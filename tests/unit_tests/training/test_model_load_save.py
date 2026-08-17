@@ -851,15 +851,52 @@ class TestLoadMegatronModel:
 class TestSaveMegatronModel:
     """Test save_megatron_model function.
 
-    Note: These tests use low_memory_save=False because the low_memory_save=True path
-    requires parallel state to be initialized (get_rng_state calls mpu.get_pipeline_model_parallel_rank()).
-    Testing the low_memory_save=True path would require either:
-    1. Full distributed initialization, or
-    2. Extensive mocking of checkpointing internals (get_rng_state, generate_state_dict, etc.)
-
-    The low_memory_save=False path tests the core save_checkpoint integration without
-    those dependencies, which is sufficient for unit testing the function's API and behavior.
+    Most tests use low_memory_save=False to exercise save_checkpoint integration
+    without mocking the incremental state-dict processing machinery.
     """
+
+    def test_low_memory_save_omits_rng_collection(self):
+        """Low-memory conversion saves must not initialize CUDA for disabled RNG state."""
+
+        class MockModelConfig(ModelProviderMixin, Mock):
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                return Mock()
+
+            def finalize(self) -> None:
+                pass
+
+        mock_model = Mock()
+        mock_model.named_parameters.return_value = []
+        mock_model.parameters.return_value = []
+        mock_pg_collection = Mock()
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch(
+                "megatron.bridge.training.model_load_save.get_model_config",
+                return_value=MockModelConfig(),
+            ),
+            patch(
+                "megatron.bridge.training.utils.pg_utils.get_pg_collection",
+                return_value=mock_pg_collection,
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.get_rng_state",
+            ) as mock_get_rng_state,
+            patch(
+                "megatron.bridge.training.checkpointing._build_sharded_state_dict_metadata",
+                return_value={},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={},
+            ) as mock_generate_state_dict,
+            patch("megatron.bridge.training.model_load_save.save_checkpoint"),
+        ):
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=True)
+
+        mock_get_rng_state.assert_not_called()
+        assert mock_generate_state_dict.call_args.kwargs["rng_state"] is None
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")

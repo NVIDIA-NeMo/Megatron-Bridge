@@ -157,12 +157,13 @@ items:
         final_loss: 6.190218
         last_10_steps_step_time_ms_avg: 25070.320
         last_10_steps_model_tflops_per_gpu_avg: 512.700
+        last_10_steps_tokens_per_second_per_gpu_avg: 10456.348
       expected_result: >
         The uninterrupted 16-GPU bounded RP2 run completes exactly 100 steps at
         TP1/PP1/CP1, DP16, GBS/MBS 1024/1, and 64-way gradient accumulation. It
         reaches peak learning rate at step 40 and completes cosine decay at step
         100. LM loss is finite from 12.73617 to 6.190218 with no skipped or NaN
-        iterations, all four metrics are recorded, the post-setup configuration
+        iterations, all five metrics are recorded, the post-setup configuration
         persists, and complete 16-shard iter_0000050 and iter_0000100 checkpoints
         are saved.
 
@@ -197,6 +198,7 @@ items:
         final_loss: 0.9733383
         last_10_steps_step_time_ms_avg: 7424.240
         last_10_steps_model_tflops_per_gpu_avg: 101.630
+        last_10_steps_tokens_per_second_per_gpu_avg: 2206.825
       expected_result: >
         Immutable Tulu3 pad-1 offline packing is 99.30% efficient. Full SFT uses
         DP=1 with 32 gradient-accumulation steps and reaches step 100 with the four
@@ -268,6 +270,7 @@ items:
         final_loss: 1.490618
         last_10_steps_step_time_ms_avg: 71668.780
         last_10_steps_model_tflops_per_gpu_avg: 34.080
+        last_10_steps_tokens_per_second_per_gpu_avg: 457.214
       expected_result: >
         The immutable-revision 8-GPU run completes exactly 20 Tulu3 SFT steps at
         sequence length 32768 with recipe-owned TP4/PP1/CP2/SP-on, GBS/MBS 8/1,
@@ -307,10 +310,11 @@ items:
         final_loss: 1.170038
         last_10_steps_step_time_ms_avg: 7774.790
         last_10_steps_model_tflops_per_gpu_avg: 387.430
+        last_10_steps_tokens_per_second_per_gpu_avg: 8429.295
       expected_result: >
         Immutable Tulu3 pad-4 offline packing is 99.39% efficient. The 100 LoRA
         steps use DP=1 with 32 gradient-accumulation steps and complete with the
-        four recorded metrics, finite loss, and no skipped or NaN iterations.
+        five recorded metrics, finite loss, and no skipped or NaN iterations.
         Across 6,553,600 token slots, the sampled assistant-only loss masks
         contain 4,332,480 supervised tokens. The complete single-shard
         iter_0000100 adapter checkpoint is saved.
@@ -346,6 +350,7 @@ items:
         final_loss: 6.190785
         last_10_steps_step_time_ms_avg: 24995.610
         last_10_steps_model_tflops_per_gpu_avg: 514.240
+        last_10_steps_tokens_per_second_per_gpu_avg: 10487.602
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -357,7 +362,7 @@ items:
         data-order, and RNG state from iter_0000050, begins at step 51, and
         finishes exactly at step 100 in a distinct output root at TP1/PP1/CP1,
         DP16, GBS/MBS 1024/1, and 64-way gradient accumulation. All 50 losses
-        are finite with no skipped or NaN iterations, all four metrics are
+        are finite with no skipped or NaN iterations, all five metrics are
         recorded, the post-setup configuration persists, and a complete
         16-shard iter_0000100 checkpoint is saved. Step-51 resumed/reference
         loss is 7.015641/7.015641. Step-100 resumed/reference loss is

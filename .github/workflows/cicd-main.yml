@@ -693,7 +693,7 @@ jobs:
             local gpu_count
             gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
             if [ -n "$gpu_count" ]; then
-              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-${gpu_count}/"
+              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-x${gpu_count}/"
             else
               echo "${RUNNER_PREFIX}"
             fi
