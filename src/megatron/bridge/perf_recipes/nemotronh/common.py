@@ -26,7 +26,6 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
 
@@ -71,21 +70,10 @@ def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     return cfg
 
 
-def _enable_hybridep_mxfp8_cutedsl_fusion(cfg: ConfigContainer) -> None:
-    """Enable the CuteDSL fused grouped MLP path for HybridEP MXFP8 benchmarks."""
+def _enable_cutedsl_fused_grouped_mlp(cfg: ConfigContainer) -> None:
+    """Enable the CuTeDSL fused grouped MLP independently of MoE A2A overlap."""
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
-    cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.moe_hybridep_num_sms_preprocessing = 32
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.mixed_precision.fp8_dot_product_attention = True
-
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=cfg.model.tensor_model_parallel_size > 1,
-        )
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
-    cfg.comm_overlap.delay_wgrad_compute = True
 
 
 def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:

@@ -22,7 +22,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
-    _enable_hybridep_mxfp8_cutedsl_fusion,
+    _enable_cutedsl_fused_grouped_mlp,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     _with_global_batch_size,
@@ -145,7 +145,8 @@ def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
 def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
-    _enable_hybridep_mxfp8_cutedsl_fusion(cfg)
+    _enable_cutedsl_fused_grouped_mlp(cfg)
+    cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -398,7 +399,8 @@ def _build_nemotron_3_nano_gb300_mxfp8() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, MXFP8."""
     cfg = _build_nemotron_3_nano_gb300_mxfp8()
-    _enable_hybridep_mxfp8_cutedsl_fusion(cfg)
+    _enable_cutedsl_fused_grouped_mlp(cfg)
+    cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
