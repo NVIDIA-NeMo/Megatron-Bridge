@@ -39,6 +39,17 @@ class _Tokenizer:
         return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 1]}
 
 
+class _DeepSeekV4Tokenizer(_Tokenizer):
+    name_or_path = "deepseek-ai/DeepSeek-V4-Flash"
+
+    def __len__(self):
+        return 129280
+
+    def convert_tokens_to_ids(self, token):
+        assert token == "<｜Assistant｜>"
+        return 128804
+
+
 def test_legacy_hf_sft_builder_api_is_removed():
     from megatron.bridge.data import builders
 
@@ -146,6 +157,55 @@ def test_builder_keeps_text_shaped_nemotron_omni_data_on_model_collator(monkeypa
     build_direct_hf_sft_split(config, config.source, 1, processor_type())
 
     assert captured["collate_impl"] is None
+
+
+@pytest.mark.parametrize("loss_mode", ["last_turn", "full"])
+def test_builder_forwards_chat_loss_mode_to_model_collator(monkeypatch, loss_mode):
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor = _DeepSeekV4Tokenizer()
+    captured = {}
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
+
+    class _Dataset:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(builder_module, "DirectSFTDataset", _Dataset)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        preprocessing=ChatSFTPreprocessingConfig(loss_mode=loss_mode),
+        do_validation=False,
+        do_test=False,
+    )
+
+    build_direct_hf_sft_split(config, config.source, 1, processor)
+
+    assert captured["collate_impl"].keywords["loss_mode"] == loss_mode
+
+
+def test_builder_ignores_deepseek_v4_name_without_tokenizer_fingerprint(monkeypatch):
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor = _Tokenizer()
+    processor.name_or_path = "deepseek-ai/DeepSeek-V4-Flash"
+    captured = {}
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
+
+    class _Dataset:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(builder_module, "DirectSFTDataset", _Dataset)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    build_direct_hf_sft_split(config, config.source, 1, processor)
+
+    assert captured["collate_impl"].func is builder_module.text_chat_collate_fn
 
 
 def test_builder_keeps_other_registered_processors_on_generic_text_collator(monkeypatch):
@@ -362,6 +422,44 @@ def test_processor_loading_disables_untrusted_remote_code(monkeypatch):
 
     assert isinstance(processor, _Tokenizer)
     assert seen["call"] == ("org/processor", False)
+
+
+def test_processor_loading_forwards_declarative_kwargs(monkeypatch):
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, **kwargs):
+            seen["call"] = (path, kwargs)
+            return _Tokenizer()
+
+    monkeypatch.setattr(builder_module, "AutoProcessor", _AutoProcessor)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        hf_processor_path="org/processor",
+        hf_processor_kwargs={"revision": "0123456789abcdef"},
+    )
+
+    processor = load_direct_hf_sft_processor(config, tokenizer=None)
+
+    assert isinstance(processor, _Tokenizer)
+    assert seen["call"] == (
+        "org/processor",
+        {"trust_remote_code": False, "revision": "0123456789abcdef"},
+    )
+
+
+def test_processor_kwargs_cannot_override_trust_policy():
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        hf_processor_path="org/processor",
+        hf_processor_kwargs={"trust_remote_code": True},
+    )
+
+    with pytest.raises(ValueError, match="must not override trust_remote_code"):
+        config.validate()
 
 
 def test_processor_loading_falls_back_to_tokenizer(monkeypatch):

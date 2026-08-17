@@ -99,6 +99,11 @@ class Step35DecoderLayer(TransformerLayer):
         else:
             layer_idx = layer_number - 1
 
+        # Each layer carries forward-time settings selected by its global index.
+        # Keep those mutations local instead of rewriting other layers that were
+        # constructed from the provider's shared TransformerConfig instance.
+        config = copy.deepcopy(config)
+
         rotary_percents = getattr(config, "rotary_percents", None) or []
         if 0 <= layer_idx < len(rotary_percents):
             config.rotary_percent = rotary_percents[layer_idx]
@@ -113,7 +118,6 @@ class Step35DecoderLayer(TransformerLayer):
         )
         if is_sliding:
             if getattr(config, "sliding_attention_setting", None):
-                config = copy.deepcopy(config)
                 config.window_size = config.sliding_attention_setting["window_size"]
                 config.num_attention_heads = config.sliding_attention_setting["num_attention_heads"]
                 config.num_query_groups = config.sliding_attention_setting["num_query_groups"]

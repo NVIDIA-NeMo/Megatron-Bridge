@@ -62,6 +62,36 @@ def test_prepare_sequence_batch_pads_to_model_length_when_required():
     assert batch["attention_mask"].tolist() == [[1, 1, 1, 0, 0, 0]]
 
 
+def test_prepare_sequence_batch_rejects_truncation_that_removes_all_supervision():
+    batch = {
+        "input_ids": torch.arange(8).unsqueeze(0),
+        "labels": torch.arange(8).unsqueeze(0),
+        "loss_mask": torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0]]),
+        "position_ids": torch.arange(8).unsqueeze(0),
+        "attention_mask": torch.ones((1, 8), dtype=torch.long),
+    }
+
+    with pytest.raises(ValueError, match=r"removed every supervised token from rows \[0\]"):
+        prepare_sequence_batch(batch, sequence_length=6, pad_to_multiple_of=1)
+
+    assert batch["input_ids"].shape == (1, 8)
+
+
+def test_prepare_sequence_batch_allows_truncation_that_preserves_supervision():
+    batch = {
+        "input_ids": torch.arange(8).unsqueeze(0),
+        "labels": torch.arange(8).unsqueeze(0),
+        "loss_mask": torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]),
+        "position_ids": torch.arange(8).unsqueeze(0),
+        "attention_mask": torch.ones((1, 8), dtype=torch.long),
+    }
+
+    prepare_sequence_batch(batch, sequence_length=6, pad_to_multiple_of=1)
+
+    assert batch["input_ids"].shape == (1, 6)
+    assert batch["loss_mask"].sum().item() == 1.0
+
+
 def test_prepare_sequence_batch_handles_rectangular_4d_attention_mask():
     batch = {
         "input_ids": torch.tensor([[1, 2, 3]]),
@@ -196,7 +226,7 @@ def test_prepare_sequence_batch_omits_padded_metadata_when_alignment_is_not_requ
     assert "cu_seqlens_unpadded_argmin" not in batch
 
 
-def test_prepare_sequence_batch_emits_padded_metadata_for_aligned_cp_multiple():
+def test_prepare_sequence_batch_omits_padded_metadata_when_cp_rows_are_aligned():
     batch = {
         "input_ids": torch.tensor([[1, 2, 3, 4, 0, 0, 0, 0], [5, 6, 7, 8, 9, 10, 11, 12]]),
         "position_ids": torch.arange(8).unsqueeze(0).expand(2, -1).clone(),
@@ -211,8 +241,8 @@ def test_prepare_sequence_batch_emits_padded_metadata_for_aligned_cp_multiple():
     )
 
     assert batch["cu_seqlens_q"].tolist() == [0, 4, 12]
-    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
-    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
+    assert "cu_seqlens_q_padded" not in batch
+    assert "cu_seqlens_kv_padded" not in batch
 
 
 def test_prepare_sequence_batch_rejects_overlength_packed_row():
