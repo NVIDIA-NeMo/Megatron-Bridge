@@ -28,6 +28,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
+from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -74,6 +75,16 @@ def _enable_cutedsl_fused_grouped_mlp(cfg: ConfigContainer) -> None:
     """Enable the CuTeDSL fused grouped MLP independently of MoE A2A overlap."""
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
+
+
+def _enable_full_iteration_cuda_graph(cfg: ConfigContainer) -> None:
+    """Enable full-iteration CUDA graphs and their required safety settings."""
+    set_full_iteration_cuda_graph(cfg.model)
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+    cfg.ddp.check_for_nan_in_grad = False
 
 
 def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:

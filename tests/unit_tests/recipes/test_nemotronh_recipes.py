@@ -27,6 +27,7 @@ import pytest
 import torch
 
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -184,11 +185,11 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     ],
     ids=lambda recipe: recipe.rsplit(".", 1)[-1],
 )
-def test_nemotron_3_gb_mxfp8_perf_recipes_enable_cutedsl_fusion(
+def test_nemotron_3_gb_mxfp8_perf_recipes_enable_cutedsl_and_full_iteration_graphs(
     module_name: str,
     factory_name: str,
 ) -> None:
-    """GB200 and GB300 MXFP8 recipes enable CutDSL without MoE A2A overlap."""
+    """GB200 and GB300 MXFP8 recipes use CutDSL and full-iteration graphs without MoE A2A overlap."""
     module = importlib.import_module(module_name)
     cfg = getattr(module, factory_name)()
 
@@ -201,6 +202,18 @@ def test_nemotron_3_gb_mxfp8_perf_recipes_enable_cutedsl_fusion(
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is not True
     assert cfg.comm_overlap.delay_wgrad_compute is not True
+    assert is_full_iteration_cuda_graph(cfg.model)
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.cuda_graph_warmup_steps == 3
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is False
+    assert cfg.ddp.check_for_nan_in_grad is False
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == (
+        "expandable_segments:True,graph_capture_record_stream_reuse:True"
+    )
+    assert cfg.env_vars["NCCL_GRAPH_REGISTER"] == 0
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
 
 
 def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration():
