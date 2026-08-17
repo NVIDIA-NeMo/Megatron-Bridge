@@ -165,6 +165,7 @@ def get_gpt_sft(
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
@@ -230,6 +231,25 @@ class TestDataGPTSFTDataset:
 
         assert context_ids == [101, 102, 103, 104, 201, 202, 203]
         assert label_ids == [301, 302]
+
+    def test_repeated_truncation_field_placeholder_handles_overflow(self, tmp_path):
+        dataset_path = tmp_path / "repeated_prompt.jsonl"
+        dataset_path.write_text(json.dumps({"input": "one two three four five", "output": "answer"}) + "\n")
+        dataset = GPTSFTDataset(
+            file_path=str(dataset_path),
+            tokenizer=create_mock_tokenizer(),
+            max_seq_length=8,
+            max_num_samples=None,
+            label_key="output",
+            prompt_template="{input} Again: {input} {output}",
+            truncation_field="input",
+            memmap_workers=1,
+        )
+
+        processed = dataset[0]
+
+        assert len(processed["input_ids"]) <= dataset.max_seq_length
+        assert processed["answer_ids"]
 
     def test_utils_func(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path)
@@ -742,6 +762,7 @@ class TestDataGPTSFTChatDataset:
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",

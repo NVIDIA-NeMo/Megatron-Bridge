@@ -24,7 +24,7 @@ import megatron.bridge.models.ministral3.data.collate_fn as ministral3_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
-from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples, resolve_model_collate
+from megatron.bridge.data.collators.registry import always_use_model_collate, resolve_model_collate
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -50,10 +50,11 @@ def test_model_collate_registry_rejects_unknown_processor():
         resolve_model_collate("UnknownProcessor")
 
 
-def test_only_nemotron_omni_requires_model_collate_for_all_examples():
-    assert model_collate_required_for_all_examples("NemotronH_Nano_Omni_Reasoning_V3Processor")
-    assert not model_collate_required_for_all_examples("Qwen3VLProcessor")
-    assert not model_collate_required_for_all_examples("UnknownProcessor")
+def test_always_use_model_collate_selection():
+    assert always_use_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor")
+    assert always_use_model_collate("deepseek-v4")
+    assert not always_use_model_collate("Qwen3VLProcessor")
+    assert not always_use_model_collate("UnknownProcessor")
 
 
 def test_nemotron_omni_registry_selects_canonical_expanded_contract():
@@ -1361,7 +1362,7 @@ def test_kimi_k25_vl_collate_fn_forwards_tools_to_chat_template():
     assert proc.template_kwargs[0]["tools"] == tools
 
 
-def test_kimi_k25_vl_collate_fn_preserves_thinking_and_passes_empty_medias():
+def test_kimi_k25_vl_collate_fn_keeps_history_thinking_and_passes_empty_medias():
     proc = _KimiDummyProcessor(include_image=False)
     examples = [
         {
@@ -1374,7 +1375,7 @@ def test_kimi_k25_vl_collate_fn_preserves_thinking_and_passes_empty_medias():
 
     collate.kimi_k25_vl_collate_fn(examples, proc)
 
-    assert proc.template_kwargs[0]["preserve_thinking"] is True
+    assert proc.template_kwargs[0]["truncate_history_thinking"] is False
     assert proc.processor_kwargs[0]["medias"] == []
 
 

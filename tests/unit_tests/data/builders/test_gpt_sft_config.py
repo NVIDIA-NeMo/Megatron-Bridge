@@ -288,7 +288,6 @@ def test_build_gpt_sft_split_routes_chat_options(monkeypatch, tmp_path):
         in_batch_packing_pad_to_multiple_of=8,
         dataset_kwargs={
             "chat": True,
-            "use_hf_tokenizer_chat_template": True,
             "tool_schemas": {"type": "function"},
         },
     )
