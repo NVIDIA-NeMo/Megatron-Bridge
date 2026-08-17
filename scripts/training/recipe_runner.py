@@ -389,6 +389,35 @@ def sync_model_pipeline_layout(
     model = getattr(config, "model", None)
     layout_builder = getattr(model, "_pipeline_model_parallel_layout_builder", None)
     if layout_builder is None:
+        stage_fields = (
+            "num_layers_in_first_pipeline_stage",
+            "num_layers_in_last_pipeline_stage",
+        )
+        first_stage_layers, last_stage_layers = (getattr(model, field_name, None) for field_name in stage_fields)
+        if first_stage_layers is None and last_stage_layers is None:
+            return config
+        if all(f"model.{field_name}" in override_fields for field_name in stage_fields):
+            return config
+        middle_stage_count = model.pipeline_model_parallel_size - sum(
+            stage_layers is not None for stage_layers in (first_stage_layers, last_stage_layers)
+        )
+        middle_layer_count = model.num_layers - sum(
+            stage_layers or 0 for stage_layers in (first_stage_layers, last_stage_layers)
+        )
+        stages_are_compatible = (
+            middle_stage_count >= 0
+            and middle_layer_count >= 0
+            and bool(middle_stage_count) == bool(middle_layer_count)
+            and (middle_stage_count == 0 or middle_layer_count % middle_stage_count == 0)
+        )
+        if (
+            "model.pipeline_model_parallel_size" in override_fields
+            and getattr(model, "pipeline_model_parallel_layout", None) is None
+            and not stages_are_compatible
+        ):
+            for field_name in stage_fields:
+                if hasattr(model, field_name) and f"model.{field_name}" not in override_fields:
+                    setattr(model, field_name, None)
         return config
 
     model.pipeline_model_parallel_layout = layout_builder(
