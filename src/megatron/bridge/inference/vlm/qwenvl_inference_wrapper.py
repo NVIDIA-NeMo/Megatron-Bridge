@@ -37,6 +37,11 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         model (Qwen2VLModel): The Qwen2VL model
     """
 
+    supports_text = True
+    supports_image = True
+    supports_video = False
+    supports_audio = False
+
     def __init__(self, model, inference_context=None):
         super().__init__(model, inference_context=inference_context)
 
