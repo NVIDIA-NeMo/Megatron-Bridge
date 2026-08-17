@@ -501,8 +501,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8."""
+def _build_nemotron_3_5_lightning_gb200_mxfp8() -> ConfigContainer:
     cfg = _build_nemotron_3_nano_gb200_mxfp8()
     cfg.model.moe_hybridep_num_sms = 16
     cfg.model.mtp_num_layers = 2
@@ -514,6 +513,13 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer
     cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8."""
+    cfg = _build_nemotron_3_5_lightning_gb200_mxfp8()
+    _enable_hybridep_mxfp8_cutedsl_fusion(cfg)
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -525,7 +531,9 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
@@ -535,7 +543,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer
 
 def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8, Megatron FSDP."""
-    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config()
+    cfg = _build_nemotron_3_5_lightning_gb200_mxfp8()
 
     # FSDP reduces the model-state footprint enough to use the larger measured
     # microbatch. Megatron FSDP registers module hooks that Transformer Engine

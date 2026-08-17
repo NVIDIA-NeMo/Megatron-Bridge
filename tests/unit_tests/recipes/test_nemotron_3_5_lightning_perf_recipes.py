@@ -181,25 +181,41 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
-    if recipe_factory is nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config:
-        base_env_vars = {
-            name: value
-            for name, value in base_cfg.env_vars.items()
-            if name not in {"CUDNNFE_CLUSTER_OVERLAP_MARGIN", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"}
-        }
-        assert cfg.env_vars == base_env_vars
-        assert getattr(cfg.model, "use_transformer_engine_op_fuser", False) is False
-        assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
-        assert getattr(cfg.model, "high_priority_a2a_comm_stream", False) is False
-        assert getattr(cfg.model, "moe_hybridep_num_sms_preprocessing", None) != 32
-        assert cfg.mixed_precision.fp8_dot_product_attention is False
-        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
-        assert cfg.comm_overlap.delay_wgrad_compute is False
-    elif recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
+    if recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
         assert cfg.env_vars == base_cfg.env_vars
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
     assert cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
     assert cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model
+
+
+def test_gb200_mxfp8_enables_cutedsl_fusion() -> None:
+    """The non-FSDP Lightning MXFP8 recipe enables the complete CutDSL contract."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config()
+
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+
+
+def test_gb200_mxfp8_fsdp_skips_cutedsl_fusion() -> None:
+    """The Lightning MXFP8 FSDP variant remains outside the CutDSL tuning scope."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config()
+
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
+    assert "CUDNNFE_CLUSTER_OVERLAP_MARGIN" not in cfg.env_vars
+    assert getattr(cfg.model, "use_transformer_engine_op_fuser", False) is False
+    assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
+    assert getattr(cfg.model, "high_priority_a2a_comm_stream", False) is False
+    assert getattr(cfg.model, "moe_hybridep_num_sms_preprocessing", None) != 32
+    assert cfg.mixed_precision.fp8_dot_product_attention is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
 
 
 @pytest.mark.parametrize("recipe_factory", _H100_RECIPES, ids=lambda recipe: recipe.__name__)
