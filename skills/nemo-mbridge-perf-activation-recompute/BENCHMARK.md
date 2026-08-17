@@ -1,85 +1,101 @@
-# Evaluation Report
+# Skill Benchmark: nemo-mbridge-perf-activation-recompute
 
-Evaluation of the `nemo-mbridge-perf-activation-recompute` skill before publication through NVSkills-Eval.
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
-> **Refresh required:** the skill guidance and evaluation task changed on 2026-08-12. The results below are retained as historical evidence for the previous version and do not validate the current version.
+## Publication Recommendation
 
-This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
+Recommended for publication based on the completed evaluation evidence in this report.
 
-## Evaluation Summary
+## Evaluation Metadata
 
 - Skill: `nemo-mbridge-perf-activation-recompute`
-- Evaluation date: 2026-06-15
-- NVSkills-Eval profile: `external`
-- Environment: `astra-sandbox`
-- Dataset: 1 evaluation tasks
+- Evaluation date: 2026-08-16
+- Evaluator version: `1.2.7`
+- Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
+- Tasks: 3 evaluation tasks (3 positive)
+- Dataset digest: `sha256:b55bb3c51b83cb2245c0d7a8969bbac7066177e342bd9b9c316ac7cf26212ef6` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
-- Pass threshold: 50%
-- Historical verdict: PASS
-- Current-version verdict: pending a fresh NVSkills-Eval run
+- Environment: `local`
+- Tier 3 evidence: required for publication
 
-## Agents Used
+Tasks ran on the trusted local host; local mode is not sandboxed.
 
-- `claude-code`
-- `codex`
+## What This Report Answers
 
-## Metrics Used
+The three-tier evaluation checks whether the skill:
 
-Reported benchmark dimensions:
+- is safe to use;
+- produces correct answers;
+- is discovered and activated when needed;
+- helps the agent complete the user's goal and expected workflow; and
+- avoids wasted skill and tool usage.
 
-- Security: checks whether skill-assisted execution avoids unsafe behavior such as secret leakage, destructive commands, or unauthorized access.
-- Correctness: checks whether the agent follows the expected workflow and produces the correct final output.
-- Discoverability: checks whether the agent loads the skill when relevant and avoids using it when irrelevant.
-- Effectiveness: checks whether the agent performs measurably better with the skill than without it.
-- Efficiency: checks whether the agent uses fewer tokens and avoids redundant work.
+## Results at a Glance
 
-Underlying evaluation signals used in this run:
+| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
+|---|---:|---:|
+| Overall | 65% → 98% (+34 points) | 58% → 98% (+39 points) |
+| Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
+| Correctness | 13% → 100% (+87 points) | 73% → 100% (+27 points) |
+| Discoverability | 100% → 100% (±0 points) | 42% → 94% (+52 points) |
+| Effectiveness | 13% → 91% (+78 points) | 45% → 95% (+50 points) |
+| Efficiency | 97% → 100% (+3 points) | 32% → 100% (+68 points) |
 
-- `security` (Security): checks for unsafe operations, secret leakage, and unauthorized access.
-- `skill_execution` (Skill Execution): verifies that the agent loaded the expected skill and workflow.
-- `skill_efficiency` (Efficiency): checks routing quality, decoy avoidance, and redundant tool usage.
-- `accuracy` (Accuracy): grades final-answer correctness against the reference answer.
-- `goal_accuracy` (Goal Accuracy): checks whether the overall user task completed successfully.
-- `behavior_check` (Behavior Check): verifies expected behavior steps, including safety expectations.
-- `token_efficiency` (Token Efficiency): compares token usage with and without the skill.
+**How to read this table:** baseline is the same task attempted without the target skill. Uplift is `skill score - baseline score`, shown in percentage points.
 
-## Test Tasks
+Example: `47% → 92% (+45 points)` means the skill-assisted run scored 92%, 45 percentage points above its 47% no-skill baseline.
 
-The benchmark dataset contained 1 evaluation tasks:
+## Tier Status
 
-- Positive tasks: 1 tasks where the skill was expected to activate.
-- Negative tasks: 0 tasks where no skill was expected.
-- Unlabeled tasks: 0 tasks where positive/negative intent could not be inferred.
+| Tier | Purpose | Status | Evidence |
+|---|---|---|---|
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 1 validator(s); 4 finding(s) |
+| Tier 2 | Semantic deduplication | **NOT RUN** | No result was recorded |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 3 task(s) |
 
-Task composition is derived from the evaluation dataset when possible. Entries with `expected_skill` set are treated as positive skill-activation cases, while entries with `expected_skill: null` are treated as negative activation cases.
+## Findings and Observations
 
-## Results
+<details>
+<summary>Show detailed findings and successful checks</summary>
 
-| Dimension | Num | `claude-code` | `codex` |
-|---|---:|---:|---:|
-| Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 87% (+40%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+0%) |
-| Effectiveness | 1 | 96% (+80%) | 80% (+54%) |
-| Efficiency | 1 | 94% (+67%) | 96% (-0%) |
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/nemo-mbridge-perf-activation-recompute/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/nemo-mbridge-perf-activation-recompute/SKILL.md`)
+- **MEDIUM** SCHEMA/author_missing: Author not specified in metadata (`skills/nemo-mbridge-perf-activation-recompute/SKILL.md`)
+- **LOW** SCHEMA/unexpected_file: Unexpected 'card.yaml' in skill root (`skills/nemo-mbridge-perf-activation-recompute/card.yaml`)
 
-Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
+</details>
 
-## Tier 1: Static Validation Summary
+## Scoring Methodology
 
-Tier 1 validation passed with observations. NVSkills-Eval ran 1 checks and found 4 total findings.
+<details>
+<summary>Show dimension definitions, source signals, and thresholds</summary>
 
-Top findings:
+| Dimension | Question | Scored signals |
+|---|---|---|
+| Security | Is it safe to use? | `security` (100%) |
+| Correctness | Is the answer correct? | `accuracy` (100%) |
+| Discoverability | Was the right skill loaded when needed? | `skill_execution` (100%) |
+| Effectiveness | Did the skill help complete the task? | `goal_accuracy` (50%) + `behavior_check` (50%) |
+| Efficiency | Did it avoid wasted tool or skill usage? | `skill_efficiency` (100%) |
 
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/nemo-mbridge-perf-activation-recompute/SKILL.md`)
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/nemo-mbridge-perf-activation-recompute/SKILL.md`)
-- MEDIUM SCHEMA/author_missing: Author not specified in metadata (`skills/nemo-mbridge-perf-activation-recompute/SKILL.md`)
-- LOW SCHEMA/unexpected_file: Unexpected 'card.yaml' in skill root (`skills/nemo-mbridge-perf-activation-recompute/card.yaml`)
+- Dimension bands: PASS at 50% or above; NEUTRAL from 40% to below 50%; FAIL below 40%.
+- Overall Tier 3 lift: PASS at +5 points or more; FAIL at -10 points or less; values between those bands are NEUTRAL.
+- Overall verdict: PASS only when every configured dimension passes for at least one supported agent. Lift is reported as diagnostic evidence and does not override this gate.
+- The 50% attempt pass threshold is a separate per-task gate; it is not the dimension pass threshold.
+- Effectiveness is the equal-weight mean of goal completion (`goal_accuracy`) and expected workflow adherence (`behavior_check`).
+- Token efficiency is a separate report-only signal. It does not change a dimension score or the overall verdict.
 
-## Tier 2: Deduplication Summary
+Signals present in this run:
 
-This tier was not run or did not produce findings in this report.
+- `security` (Security): unsafe operations, secret leakage, and unauthorized access.
+- `skill_execution` (Skill Execution): whether the expected skill was found and executed.
+- `skill_efficiency` (Efficiency): routing quality, workspace-aware skill reads, and productive tool use.
+- `accuracy` (Accuracy): final-answer correctness against the reference answer.
+- `goal_accuracy` (Goal Accuracy): whether the user's goal was achieved.
+- `behavior_check` (Behavior Check): whether the expected workflow behavior was followed.
 
-## Historical Publication Recommendation
+</details>
 
-The previous skill version was suitable to proceed toward publication based on this benchmark. Because the evaluation dataset and skill behavior have now changed materially, rerun NVSkills-Eval before treating the current version as benchmark-validated.
+## Freshness
+
+Regenerate this benchmark when the skill, evaluation dataset, target agent/model, evaluator version, environment, or scoring policy changes.

@@ -408,7 +408,7 @@ class GPTSFTDataset(Dataset):
 
         if total_ids > self.max_seq_length:
             truncation_length_total = total_ids - self.max_seq_length
-            num_fields = len(self.truncation_fields)
+            num_fields = sum(key in self.truncation_fields for key in template_ids_keys)
             if num_fields > 0:
                 # sorted equal divide length to each field
                 # examples:

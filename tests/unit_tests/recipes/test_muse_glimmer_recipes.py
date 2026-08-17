@@ -149,6 +149,8 @@ def test_muse_glimmer_performance_recipe_is_dense_decoder_only() -> None:
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "TORCH_NCCL_HIGH_PRIORITY": 1,
