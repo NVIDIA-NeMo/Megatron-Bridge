@@ -18,8 +18,11 @@ import builtins
 import dataclasses
 import importlib
 import inspect
+from unittest.mock import Mock
 
 import pytest
+import torch
+from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelConfig
 
@@ -153,6 +156,54 @@ def test_fallback_builder_omits_layerwise_kwargs_for_mcore_018(monkeypatch):
     assert calls == [
         (builder.build_model, transformer, pg_collection, mcore_gpt_fallback.ModelType.encoder_or_decoder)
     ]
+
+
+def test_fallback_builder_forwards_supported_logit_dtype(monkeypatch):
+    calls = []
+
+    class GPTModelWithLogitDtype:
+        def __init__(self, *, logit_dtype=None, **kwargs):
+            calls.append((logit_dtype, kwargs))
+
+    monkeypatch.setattr(mcore_gpt_fallback, "GPTModel", GPTModelWithLogitDtype)
+    transformer = TransformerConfig(num_layers=1, hidden_size=16, num_attention_heads=1)
+    config = mcore_gpt_fallback.GPTModelConfig(
+        transformer=transformer,
+        transformer_layer_spec=ModuleSpec(module=object),
+        vocab_size=32,
+        logit_dtype=torch.float32,
+    )
+
+    model = mcore_gpt_fallback.GPTModelBuilder(config).build_model(
+        Mock(),
+        pre_process=True,
+        post_process=True,
+    )
+
+    assert isinstance(model, GPTModelWithLogitDtype)
+    assert calls[0][0] is torch.float32
+
+
+def test_fallback_builder_rejects_logit_dtype_on_old_mcore(monkeypatch):
+    class GPTModelWithoutLogitDtype:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(mcore_gpt_fallback, "GPTModel", GPTModelWithoutLogitDtype)
+    transformer = TransformerConfig(num_layers=1, hidden_size=16, num_attention_heads=1)
+    config = mcore_gpt_fallback.GPTModelConfig(
+        transformer=transformer,
+        transformer_layer_spec=ModuleSpec(module=object),
+        vocab_size=32,
+        logit_dtype=torch.float32,
+    )
+
+    with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
+        mcore_gpt_fallback.GPTModelBuilder(config).build_model(
+            Mock(),
+            pre_process=True,
+            post_process=True,
+        )
 
 
 @pytest.mark.skipif(upstream is None, reason="Upstream GPT module is unavailable on Megatron-Core 0.18.x")

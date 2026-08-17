@@ -83,7 +83,7 @@ dependencies = [
     "tensorboard>=2.19.0",
     "typing-extensions",
     "rich",
-    "wandb>=0.25.0",
+    "wandb==0.27.2",
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
@@ -173,7 +173,7 @@ tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
 ]
 te = [
-    "transformer-engine[pytorch,core_cu13]",
+    "megatron-core[te]",
 ]
 ssm = [
     "mamba-ssm",
@@ -201,6 +201,7 @@ test = [
     "pytest-timeout>=2.4.0",
     "pytest-mock>=3.14.0",
     "pytest-runner>=6.0.1",
+    "pytest-shard>=0.1.2",
     "pygithub",
     "click",
 ]

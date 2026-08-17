@@ -17,8 +17,8 @@
 from dataclasses import dataclass
 from typing import Any
 
-from megatron.bridge.compat.mcore_gpt import GPTModelConfig
 from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
 from megatron.bridge.utils.instantiate_utils import _resolve_target
 

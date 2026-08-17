@@ -42,6 +42,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 
 
@@ -188,6 +189,7 @@ class NemotronOmniModel(MegatronModule):
                 vocab_size=language_vocab_size,
                 max_sequence_length=language_max_sequence_length,
                 parallel_output=parallel_output,
+                **logit_dtype_kwarg(HybridModel, language_transformer_config.logit_dtype),
                 position_embedding_type=language_position_embedding_type,
                 pre_process=pre_process,
                 hybrid_layer_pattern=hybrid_layer_pattern,
@@ -642,6 +644,7 @@ class NemotronOmniModel(MegatronModule):
         sound_clips: Optional[torch.Tensor] = None,
         sound_length: Optional[torch.Tensor] = None,
         *,
+        media_token_validity_mask: torch.Tensor | None = None,
         inference_params=None,
         **kwargs,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
@@ -689,16 +692,24 @@ class NemotronOmniModel(MegatronModule):
             if image_embeddings is None:
                 image_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
 
-            # MBridge collators use a 2-D attention mask as a token-validity
-            # mask, while NeMo RL's dense Megatron path supplies MCore's 4-D
-            # causal mask (where True means blocked).  Only the former can
-            # filter media placeholders.  Padding masks are unambiguous and
-            # take precedence for collator-owned packed inputs.
-            media_token_validity_mask = None
-            if padding_mask is not None:
-                media_token_validity_mask = ~padding_mask
-            elif attention_mask is not None and attention_mask.dim() == input_ids.dim():
-                media_token_validity_mask = attention_mask
+            # An explicit mask from the caller wins: padding and attention masks
+            # answer "is this a real token", which is a different question from
+            # "is this a media anchor".  They coincide only while every media
+            # token in a valid position anchors an image.  A caller whose text
+            # legitimately contains the placeholder -- it is an ordinary token in
+            # that vocabulary -- marks those positions here so they keep their
+            # embedding instead of demanding a projected feature.
+            #
+            # Otherwise: MBridge collators use a 2-D attention mask as a
+            # token-validity mask, while NeMo RL's dense Megatron path supplies
+            # MCore's 4-D causal mask (where True means blocked).  Only the
+            # former can filter media placeholders.  Padding masks are
+            # unambiguous and take precedence for collator-owned packed inputs.
+            if media_token_validity_mask is None:
+                if padding_mask is not None:
+                    media_token_validity_mask = ~padding_mask
+                elif attention_mask is not None and attention_mask.dim() == input_ids.dim():
+                    media_token_validity_mask = attention_mask
 
             combined_embeddings = self._merge_projected_media(
                 combined_embeddings,

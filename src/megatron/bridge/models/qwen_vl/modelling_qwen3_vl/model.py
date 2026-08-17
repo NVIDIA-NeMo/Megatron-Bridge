@@ -393,6 +393,7 @@ class Qwen3VLModel(MegatronModule):
                 post_process=self.post_process,
                 rotary_base=language_transformer_config.rotary_base,
                 fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
+                logit_dtype=language_transformer_config.logit_dtype,
                 share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
                 scatter_embedding_sequence_parallel=False,
                 mtp_block_spec=mtp_block_spec,

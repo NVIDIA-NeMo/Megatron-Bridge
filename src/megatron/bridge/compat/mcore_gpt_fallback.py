@@ -16,23 +16,24 @@
 
 ``megatron.training.models.gpt`` (``GPTModelConfig``, ``GPTModelBuilder`` and
 ``mtp_block_spec``) was added to Megatron-Core *after* the 0.18.x release line was cut.
-Megatron Bridge supports the publicly installable 0.18.x line through the current
-pin, so on 0.18.x this vendored copy is used instead. ``megatron.bridge.compat.mcore_gpt``
-is the stable facade that prefers the upstream module and falls back to this
-implementation only when necessary.
+Megatron Bridge's current rolling compatibility window includes 0.18.x, so that
+release line uses this vendored copy. ``megatron.bridge.compat.mcore_gpt`` is the
+stable facade that prefers the upstream module and falls back to this implementation
+only when necessary.
 
-Derived from NVIDIA/Megatron-LM commit ``24bad8e677`` (``megatron-core`` 0.20.0),
+Derived from NVIDIA/Megatron-LM commit ``2a75ac12c5`` (``megatron-core`` 0.20.0),
 file ``megatron/training/models/gpt.py``. The builder target and the call into
-``unimodal_build_distributed_models`` are normalized for cross-version use. Every
-Megatron-Core symbol it imports is present in the released 0.18.x wheels.
-``tests/unit_tests/compat/test_mcore_gpt.py`` fails if the upstream API drifts away
-from this fallback.
+``unimodal_build_distributed_models`` and optional logit dtype are normalized for
+cross-version use. Every Megatron-Core symbol it imports is present in the released
+0.18.x wheels. ``tests/unit_tests/compat/test_mcore_gpt.py`` fails if the upstream
+API drifts away from this fallback.
 """
 
 import inspect
 import logging
 from typing import Any, Callable, ClassVar, Literal, override
 
+import torch
 from megatron.core.distributed.distributed_data_parallel_config import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
@@ -58,6 +59,8 @@ from megatron.training.models.base import ModelBuilder, ModelConfig, compose_hoo
 from megatron.training.models.dist_utils import unimodal_build_distributed_models
 from megatron.training.vocab_utils import calculate_padded_vocab_size
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,8 @@ def default_layer_spec(config: "GPTModelConfig", vp_stage: int) -> ModuleSpec:
     transformer_cfg = config.transformer
     use_te = transformer_cfg.transformer_impl == "transformer_engine"
     if transformer_cfg.transformer_impl == "inference_optimized" and transformer_cfg.num_moe_experts is None:
+        # MoE models fall through to the shared num_moe_experts branch below;
+        # get_gpt_decoder_block_spec already handles the inference_optimized impl.
         return get_gpt_layer_with_inference_spec(
             transformer_cfg.qk_layernorm,
             transformer_cfg.multi_latent_attention,
@@ -192,6 +197,7 @@ class GPTModelConfig(ModelConfig):
     ### GPT Model initialization ###
     seq_length: int = 1024
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = False
     position_embedding_type: Literal["learned_absolute", "rope", "mrope", "yarn", "none"] = "learned_absolute"
@@ -352,6 +358,7 @@ class GPTModelBuilder(ModelBuilder[GPTModel, GPTModelConfig]):
             post_process=post_process,
             pg_collection=pg_collection,
             vp_stage=vp_stage,
+            **logit_dtype_kwarg(GPTModel, self._model_config.logit_dtype),
         )
 
         return model
