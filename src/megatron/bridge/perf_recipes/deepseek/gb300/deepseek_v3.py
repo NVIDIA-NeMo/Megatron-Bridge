@@ -137,8 +137,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
