@@ -878,6 +878,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
+
+        Note:
+            With ``expand_shared_outer``, the per-expert copies of the shared factor alias one
+            storage rather than being cloned. ``safetensors.torch.save_file`` rejects tensors
+            that share memory, so callers serializing these tensors directly must clone them
+            first — :meth:`save_hf_adapter` already does.
         """
         bridge = self._model_bridge
         return bridge.stream_adapter_weights_megatron_to_hf(
@@ -1569,6 +1575,7 @@ class AutoBridge(Generic[MegatronModelT]):
         output_path: str | Path,
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
+        expand_shared_outer: bool = False,
     ) -> None:
         """Export LoRA adapter weights from a Megatron PEFT checkpoint to HuggingFace PEFT format.
 
@@ -1590,6 +1597,10 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress: Display progress bar during export.
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
+            expand_shared_outer: Replicate the shared factor across experts under per-expert
+                names (vLLM 2D ``pack_moe``). Default ``False`` keeps the PEFT shared ``[1, ...]``
+                layout. Enabling it multiplies the shared factor's on-disk size by the expert
+                count; no effect for non-shared-outer adapters.
 
         Example:
             >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
@@ -1697,6 +1708,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 base_model_name_or_path=base_model_name,
                 show_progress=show_progress,
                 exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+                expand_shared_outer=expand_shared_outer,
             )
 
         model_context = (
