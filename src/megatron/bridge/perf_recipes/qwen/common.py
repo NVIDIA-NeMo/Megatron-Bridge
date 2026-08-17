@@ -70,7 +70,11 @@ def _enable_ncclep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
     cfg.model.offload_modules = []
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    # The static receive buffer is sized at capacity_factor x the ideal token count, and every MoE
+    # activation saved for backward inherits that padding. These recipes force-balance the router,
+    # so the measured worst case is only ~1.005x ideal; 1.5 padded all of it by 50%.
+    # PagedStashRunner replays the step dropless and grows the budget if a routing exceeds this.
+    cfg.model.moe_expert_rank_capacity_factor = 1.05
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 

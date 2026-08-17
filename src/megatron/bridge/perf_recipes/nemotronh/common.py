@@ -87,8 +87,13 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
     cfg.comm_overlap.delay_wgrad_compute = False
 
     cfg.model.offload_modules = []
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    # The static receive buffer is sized at capacity_factor x the ideal token count, and every MoE
+    # activation saved for backward inherits that padding. These recipes force-balance the router,
+    # so the measured worst case is only 1.008x ideal; 1.5 padded all of it by 50%. PagedStashRunner
+    # replays the step dropless and grows the budget if a routing ever exceeds this.
+    cfg.model.moe_expert_rank_capacity_factor = 1.05
+    # Paged stashing only captures TE's quantized grouped tensors, so it is a no-op outside MXFP8.
+    cfg.model.moe_paged_stash = mxfp8
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 

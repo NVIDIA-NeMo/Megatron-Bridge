@@ -226,8 +226,7 @@ def test_ncclep_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContaine
     assert cfg.model.moe_mlp_glu_interleave_size == 32
 
     assert cfg.model.offload_modules == []
-    assert cfg.model.moe_paged_stash is True
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.05
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
 
@@ -248,8 +247,11 @@ def test_ncclep_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContaine
 
     if "fp8mx" in recipe_factory.__name__:
         assert cfg.model.moe_router_padding_for_quantization is True
+        assert cfg.model.moe_paged_stash is True
     else:
         assert cfg.model.moe_router_padding_for_quantization is False
+        # Paged stashing only captures TE's quantized grouped tensors, so it is a no-op in BF16.
+        assert cfg.model.moe_paged_stash is False
 
 
 @pytest.mark.parametrize(

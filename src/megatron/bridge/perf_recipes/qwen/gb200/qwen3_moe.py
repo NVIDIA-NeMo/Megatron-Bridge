@@ -281,7 +281,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
 
     _benchmark_common(cfg, cross_entropy_impl="native")
 
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    # The static receive buffer is sized at capacity_factor x the ideal token count, and every MoE
+    # activation saved for backward inherits that padding. This recipe force-balances the router, so
+    # the measured worst case is only ~1.005x ideal; 1.5 padded all of it by 50%. PagedStashRunner
+    # replays the step dropless and grows the budget if a routing ever exceeds this.
+    cfg.model.moe_expert_rank_capacity_factor = 1.05
     cfg.model.moe_grouped_gemm = True
     cfg.model.use_transformer_engine_op_fuser = True
 
