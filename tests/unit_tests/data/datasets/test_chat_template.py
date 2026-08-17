@@ -1027,7 +1027,7 @@ class TestEOSIndexFixInPackedDataset:
             {
                 "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
                 "seq_boundaries": [0, 5],
-                "loss_mask": np.ones(5, dtype=np.int64),
+                "loss_mask": np.array([1, 0, 0, 0, 0], dtype=np.int64),
             }
         ]
 
@@ -1056,7 +1056,7 @@ class TestEOSIndexFixInPackedDataset:
             {
                 "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
                 "seq_boundaries": [0, 5],
-                "loss_mask": np.ones(5, dtype=np.int64),
+                "loss_mask": np.array([1, 0, 0, 0, 0], dtype=np.int64),
             }
         ]
 
@@ -1067,6 +1067,23 @@ class TestEOSIndexFixInPackedDataset:
         assert processed["cu_seqlens_kv"][0].tolist() == [0, 1, 1, 1, 1]
         assert processed["cu_seqlens_q_padded"][0].tolist() == [0, 4, 8, 8, 8]
         assert processed["cu_seqlens_kv_padded"][0].tolist() == [0, 4, 8, 8, 8]
+
+    def test_supervised_terminal_eos_precedes_zero_loss_padding(self):
+        """A supervised EOS remains logical while later zero-loss EOS tokens are padding."""
+        dataset = _create_minimal_packed_dataset()
+        batch = [
+            {
+                "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.array([1, 1, 0, 0, 0], dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"][0].tolist() == [0, 2]
+        assert processed["cu_seqlens_q_padded"][0].tolist() == [0, 4]
+        assert processed["padding_mask"].tolist() == [[False, False, True, True]]
 
     def test_without_alignment_padding_omits_physical_variants(self):
         """Identical logical and physical layouts use only the faster logical TE fields."""
@@ -1261,14 +1278,14 @@ class TestLogicalCuSeqlensCalculation:
                     dtype=np.int64,
                 ),
                 "seq_boundaries": [0, 5, 10],
-                "loss_mask": np.ones(10, dtype=np.int64),
+                "loss_mask": np.array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0], dtype=np.int64),
             }
         ]
 
         processed = dataset.collate_fn(batch)
         cu_logical = processed["cu_seqlens_q"][0].tolist()
 
-        # Each non-EOS token contributes exactly once despite EOS padding.
+        # Each non-EOS token contributes exactly once despite zero-loss EOS padding.
         assert cu_logical == [0, 1, 2]
 
 
