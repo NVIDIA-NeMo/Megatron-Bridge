@@ -157,7 +157,7 @@ def _messages(*, tools: bool, thinking: bool) -> list[dict[str, Any]]:
             {
                 "role": "assistant",
                 "reasoning_content": "reason one" if thinking else None,
-                "content": "",
+                "content": None,
                 "tool_calls": [{"function": {"name": "weather", "arguments": '{"city":"Seattle"}'}}],
             },
             {"role": "tool", "content": "12 C"},

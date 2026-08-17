@@ -578,7 +578,8 @@ def normalize_chat_conversation(
     """Normalize supported text-chat schemas to OpenAI-style messages.
 
     Rows may use ``messages``, singular ``conversation``, or legacy plural
-    ``conversations`` with ``from``/``value`` keys.
+    ``conversations`` with ``from``/``value`` keys. Null OpenAI message content
+    is converted to an empty string before chat-template rendering.
     """
     if isinstance(example_or_conversation, Mapping):
         source = example_or_conversation
@@ -603,6 +604,8 @@ def normalize_chat_conversation(
             raise ValueError("Chat conversation turns must be dictionaries.")
         turn = dict(raw_turn)
         if "role" in turn and "content" in turn:
+            if turn["content"] is None:
+                turn["content"] = ""
             _normalize_assistant_tool_call_arguments(turn)
             normalized.append(turn)
             continue
