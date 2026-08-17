@@ -70,12 +70,6 @@ def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     return cfg
 
 
-def _enable_cutedsl_fused_grouped_mlp(cfg: ConfigContainer) -> None:
-    """Enable the CuTeDSL fused grouped MLP independently of MoE A2A overlap."""
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
-
-
 def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     """Apply shared Nemotron 3 Super perf defaults after recipe-specific overrides."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
