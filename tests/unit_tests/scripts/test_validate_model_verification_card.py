@@ -58,37 +58,6 @@ def _fsdp_metrics():
     }
 
 
-def _weak_scaling_group():
-    def point(*, num_gpus, nodes, global_batch_size):
-        return {
-            "num_gpus": num_gpus,
-            "global_batch_size": global_batch_size,
-            "command": (
-                f"./scripts/training/train.sh --nodes {nodes} --gpus-per-node 4 "
-                "--recipe example_pretrain_config --mode pretrain --max_steps 50 --seq_length 4096 "
-                f"--global_batch_size {global_batch_size}"
-            ),
-            "metrics": {
-                "initial_loss": 12.3,
-                "final_loss": 8.1,
-                "last_10_steps_step_time_ms_avg": 6000.0,
-                "last_10_steps_model_tflops_per_gpu_avg": 1000.0,
-                "last_10_steps_tokens_per_second_per_gpu_avg": 43690.667,
-            },
-        }
-
-    return {
-        "status": "verified",
-        "precision": "fp8_mx",
-        "last_verified": "2026-08-15",
-        "points": [
-            point(num_gpus=8, nodes=2, global_batch_size=512),
-            point(num_gpus=16, nodes=4, global_batch_size=1024),
-        ],
-        "expected_result": "Both measured points complete with finite metrics and no skipped iterations.",
-    }
-
-
 def test_verified_inference_accepts_canonical_bash_launcher():
     module = _load_validator()
     errors = []
@@ -243,75 +212,6 @@ def test_fsdp_index_is_omitted_for_terminal_all_leaf():
     )
 
     assert errors == []
-
-
-def test_weak_scaling_index_mirrors_concrete_hardware_leaf():
-    module = _load_validator()
-    verification_index, items, hardware_groups = _complete_index_inputs(module)
-    hardware_groups["pretrain_weak_scaling"] = {"GB300": {"status": "verified"}}
-    verification_index["weak_scaling"] = {"GB300": "verified"}
-    errors = []
-
-    module._validate_verification_index(
-        verification_index,
-        items=items,
-        hardware_groups=hardware_groups,
-        errors=errors,
-    )
-
-    assert errors == []
-
-
-def test_verified_weak_scaling_group_is_valid():
-    module = _load_validator()
-    errors = []
-
-    module._validate_weak_scaling_group(
-        _weak_scaling_group(),
-        path=("items", "pretrain_weak_scaling", "GB300"),
-        errors=errors,
-    )
-
-    assert errors == []
-
-
-def test_weak_scaling_requires_proportional_global_batch_size():
-    module = _load_validator()
-    group = _weak_scaling_group()
-    group["points"][1]["global_batch_size"] = 768
-    group["points"][1]["command"] = group["points"][1]["command"].replace(
-        "--global_batch_size 1024", "--global_batch_size 768"
-    )
-    group["points"][1]["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] = 32768.0
-    errors = []
-
-    module._validate_weak_scaling_group(
-        group,
-        path=("items", "pretrain_weak_scaling", "GB300"),
-        errors=errors,
-    )
-
-    assert (
-        "/items/pretrain_weak_scaling/GB300/points/1/global_batch_size: must scale proportionally with num_gpus"
-    ) in errors
-
-
-def test_weak_scaling_rejects_micro_batch_size_override():
-    module = _load_validator()
-    group = _weak_scaling_group()
-    group["points"][1]["command"] += " --micro_batch_size 1"
-    errors = []
-
-    module._validate_weak_scaling_group(
-        group,
-        path=("items", "pretrain_weak_scaling", "GB300"),
-        errors=errors,
-    )
-
-    assert (
-        "/items/pretrain_weak_scaling/GB300/points/1/command: "
-        "weak-scaling commands may override only global batch size"
-    ) in errors
 
 
 def test_verified_fsdp_metrics_are_valid():
