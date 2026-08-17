@@ -750,6 +750,7 @@ def _infer_terminal_assistant_content_start(
 
     empty_conversation = [dict(turn) for turn in conversation]
     empty_conversation[-1]["content"] = ""
+    empty_conversation[-1].pop("tool_calls", None)
     empty_chat = _apply_tokenized_chat_template(template_owner, empty_conversation, untruncated_kwargs)
     empty_ids = _chat_template_input_ids(empty_chat)
     untruncated_content_start = _common_token_prefix_length(empty_ids, full_ids)
@@ -1058,7 +1059,7 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                 "user": "<|im_user|>user<|im_middle|>",
             },
         ),
-        (("<|turn>model", "<turn|>"), "<|turn>model\n", "<turn|>", (), {}),
+        (("<|turn>model", "<turn|>"), "<|turn>model\n", "<turn|>", ("<|tool_response>",), {}),
         (("<start_of_turn>model", "<end_of_turn>"), "<start_of_turn>model\n", "<end_of_turn>", (), {}),
         (
             ("<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"),
@@ -1348,7 +1349,15 @@ def _assistant_mask_from_conversation_turns(
             return None
 
         role_start, content_start = find_token_span(rendered_ids, start_tokens, turn_search_start)
-        if role_start < 0 or content_start > turn_limit:
+        matched_start_length = len(start_tokens)
+        if role_start < 0:
+            if turn_index == 0 or conversation[turn_index - 1].get("role") != "tool":
+                return None
+            # Some tool templates continue the same model turn after an inline tool response,
+            # so the next assistant payload begins at the prefix boundary without another role header.
+            role_start = content_start = turn_search_start
+            matched_start_length = 0
+        if content_start > turn_limit:
             return None
 
         candidate_ends: list[tuple[int, int, int, list[int]]] = []
@@ -1381,7 +1390,7 @@ def _assistant_mask_from_conversation_turns(
         if include_content:
             rendered_mask[loss_start:content_end] = 1.0
         if role in include_start_roles:
-            rendered_mask[role_start : role_start + len(start_tokens)] = 1.0
+            rendered_mask[role_start : role_start + matched_start_length] = 1.0
         if role in include_end_roles:
             rendered_mask[content_end:after_end] = 1.0
 
