@@ -78,6 +78,10 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3-30b-a3b", "checkpoint_resume", "GB200"): (4096, 512, 8),
     ("qwen3-30b-a3b", "pretrain_performance", "H100"): (4096, 1024, 16),
     ("qwen3-30b-a3b", "pretrain_performance", "GB200"): (4096, 512, 8),
+    ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 8): (4096, 512, 8),
+    ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 32): (4096, 2048, 32),
+    ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 128): (4096, 8192, 128),
+    ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 256): (4096, 16384, 256),
     ("qwen3-8b", "pretrain", "H100"): (4096, 1024, 16),
     ("qwen3-8b", "sft", "H100"): (2048, 32, 4),
     ("qwen3-8b", "sft_long_context", "H100"): (32768, 8, 8),
@@ -124,6 +128,9 @@ def test_shipped_training_tps_matches_audited_token_slot_inputs():
                         verified_leaves[(slug, item_name, hardware, variant_name)] = variant
                     else:
                         assert variant["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] is None
+                if leaf.get("status") == "verified":
+                    for point in leaf.get("points", []):
+                        verified_leaves[(slug, item_name, hardware, point["num_gpus"])] = point
 
     assert verified_leaves.keys() == TRAINING_THROUGHPUT_INPUTS.keys()
     for leaf_key, (sequence_or_pack_length, global_batch_size, total_gpus) in TRAINING_THROUGHPUT_INPUTS.items():
