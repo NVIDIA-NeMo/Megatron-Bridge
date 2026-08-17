@@ -617,6 +617,7 @@ def save_checkpoint_fixtures():
 class TestSaveCheckpoint:
     """Test checkpoint saving functionality."""
 
+    @pytest.mark.parametrize("save_rng", [True, False])
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("builtins.open", new_callable=mock_open)
@@ -664,6 +665,7 @@ class TestSaveCheckpoint:
         mock_is_last_rank,
         mock_wandb,
         save_checkpoint_fixtures,
+        save_rng,
     ):
         """Test saving a global checkpoint."""
         # Setup mocks
@@ -695,6 +697,7 @@ class TestSaveCheckpoint:
         # Add wandb logger to state
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.save_rng = save_rng
 
         # Call save_checkpoint
         save_checkpoint(
@@ -711,6 +714,10 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        if save_rng:
+            mock_get_rng.assert_called_once()
+        else:
+            mock_get_rng.assert_not_called()
 
         # Verify that the tracker file was written with the correct iteration
         tracker_calls = [
@@ -5045,10 +5052,20 @@ class TestMaybeLoadDataloaderState:
         maybe_load_dataloader_state(train_iterator, 10, str(missing), pg_collection=self._pg())
         train_iterator.iterable.restore_state.assert_not_called()
 
+    def test_missing_selected_iteration_warns_and_skips(self, tmp_path):
+        """An unrelated state generation does not prevent an older checkpoint from resuming."""
+        train_iterator = Mock()
+        os.makedirs(get_checkpoint_name(str(tmp_path), 20))
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        train_iterator.iterable.restore_state.assert_not_called()
+
     def test_existing_dir_missing_file_raises(self, tmp_path):
         """If the state dir exists but this rank's file does not, fail loudly (likely a DP-size change)."""
         train_iterator = Mock()
-        # tmp_path exists (the energon root) but contains no per-rank file for this iteration.
+        os.makedirs(get_checkpoint_name(str(tmp_path), 10))
+        # The selected iteration exists but contains no state file for this data-parallel rank.
         with pytest.raises(RuntimeError, match="data-parallel size"):
             maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
 
@@ -5354,6 +5371,32 @@ class TestMaybeSaveDataloaderState:
         assert msc.torch.load(state_path, weights_only=True) == {
             "dataloader_state_dict": {"dummy_energon_state": "xyz"}
         }
+
+    def test_reused_iteration_rejects_stale_dp_rank_state(self, tmp_path):
+        """Reusing an iteration at smaller DP must not retain rank files from its previous owner."""
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        torch.save(
+            {"dataloader_state_dict": {"generation": "old"}},
+            iter_dir / "train_dataloader_dprank001.pt",
+        )
+
+        with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
+            maybe_save_dataloader_state(
+                Mock(),
+                self._iterator(),
+                10,
+                str(tmp_path),
+                pg_collection=self._pg(dp=0),
+            )
+
+        with pytest.raises(RuntimeError, match="data-parallel size"):
+            maybe_load_dataloader_state(
+                Mock(),
+                10,
+                str(tmp_path),
+                pg_collection=self._pg(dp=1),
+            )
 
     @patch("megatron.bridge.training.checkpointing.torch.save")
     @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
