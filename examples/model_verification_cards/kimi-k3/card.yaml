@@ -145,11 +145,12 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Training was intentionally excluded from this model-only verification
         pass. A future public Kimi K3 language-backbone recipe must complete a
         bounded 100-step pretrain run with finite loss, no skipped or NaN
-        iterations, all four metrics, and a reloadable final checkpoint.
+        iterations, all five metrics, and a reloadable final checkpoint.
 
   sft:
     GB300:
@@ -163,11 +164,12 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Training was intentionally excluded from this model-only verification
         pass. A future public Kimi K3 language-backbone recipe must complete a
         pinned-data 100-step full-SFT run with finite loss, no skipped or NaN
-        iterations, all four metrics, and a reloadable final checkpoint.
+        iterations, all five metrics, and a reloadable final checkpoint.
 
   sft_export_inference:
     GB300:
@@ -194,11 +196,12 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Training was intentionally excluded from this model-only verification
         pass. A future public long-context SFT recipe must define supported
         sequence packing and context parallelism, complete 100 steps with finite
-        loss and no skipped or NaN iterations, and record all four metrics.
+        loss and no skipped or NaN iterations, and record all five metrics.
 
   peft:
     GB300:
@@ -212,11 +215,12 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Training was intentionally excluded from this model-only verification
         pass. A future Kimi K3 PEFT recipe with an audited adapter target set
         must complete 100 steps with finite loss, no skipped or NaN iterations,
-        all four metrics, and a reloadable adapter checkpoint.
+        all five metrics, and a reloadable adapter checkpoint.
 
   checkpoint_resume:
     GB300:
@@ -230,6 +234,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]

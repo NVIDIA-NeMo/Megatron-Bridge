@@ -370,7 +370,7 @@ class TestHybridModelProvider:
         """Create mock args namespace with required attributes for Hybrid model."""
         args = common_mock_args()
 
-        args.spec = "megatron.core.models.hybrid.hybrid_layer_specs.hybrid_stack_spec"
+        args.spec = ["megatron.core.models.hybrid.hybrid_layer_specs", "hybrid_stack_spec"]
 
         # Hybrid model parameters
         args.hybrid_layer_pattern = None
@@ -478,12 +478,40 @@ class TestHybridModelProvider:
         mock_args,
         mock_transformer_config,
     ):
-        """Test that legacy checkpoint args cannot import untrusted Hybrid specs."""
+        """Test that MLM checkpoint args cannot import untrusted Hybrid specs."""
         mock_config_func.return_value = mock_transformer_config
-        mock_args.spec = "attacker_pkg.hybrid_spec.payload_spec"
+        mock_args.spec = ["attacker_pkg.hybrid_spec", "payload_spec"]
 
         with pytest.raises(InstantiationException, match="not in the allowlist"):
             _mamba_provider(mock_args)
+
+        mock_import.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            "megatron.core.models.hybrid.hybrid_layer_specs.hybrid_stack_spec",
+            ["megatron.core.models.hybrid.hybrid_layer_specs"],
+            ["megatron.core.models.hybrid.hybrid_layer_specs", "hybrid_stack_spec", "extra"],
+            ["megatron.core.models.hybrid.hybrid_layer_specs", 1],
+        ],
+    )
+    @patch("megatron.bridge.training.mlm_compat.model.import_module")
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    def test_hybrid_provider_rejects_malformed_stack_spec(
+        self,
+        mock_config_func,
+        mock_import,
+        mock_args,
+        mock_transformer_config,
+        spec,
+    ):
+        """Test that malformed checkpoint spec values fail before import."""
+        mock_config_func.return_value = mock_transformer_config
+        mock_args.spec = spec
+
+        with pytest.raises(ValueError, match="two-element"):
+            _hybrid_provider(mock_args)
 
         mock_import.assert_not_called()
 
