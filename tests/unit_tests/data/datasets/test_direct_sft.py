@@ -3,10 +3,8 @@
 import pytest
 import torch
 
-from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 from megatron.bridge.data.collators.sft import text_chat_collate_fn
 from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
-from megatron.bridge.data.samplers import build_pretraining_data_loader
 
 
 pytestmark = pytest.mark.unit
@@ -97,83 +95,6 @@ def test_direct_sft_dataset_forwards_supported_packing_options():
         "enable_in_batch_packing": True,
         "in_batch_packing_pad_to_multiple_of": 8,
     }
-    assert dataset.enable_in_batch_packing is True
-
-
-def test_direct_sft_batch_dataloader_packs_each_logical_microbatch():
-    collate_sizes = []
-
-    def _packed_collate(examples, processor, *, enable_in_batch_packing=False, **kwargs):
-        del processor, kwargs
-        collate_sizes.append(len(examples))
-        assert enable_in_batch_packing is True
-        return {"tokens": torch.arange(len(examples)).unsqueeze(0)}
-
-    dataset = DirectSFTDataset(
-        base_examples=[_example()],
-        target_length=4,
-        processor=_Processor(),
-        collate_impl=_packed_collate,
-        enable_in_batch_packing=True,
-    )
-    dataloader = build_pretraining_data_loader(
-        dataset,
-        consumed_samples=0,
-        dataloader_type="batch",
-        micro_batch_size=2,
-        global_batch_size=4,
-        num_workers=0,
-        data_sharding=False,
-        collate_fn=dataset.collate_fn,
-        pin_memory=False,
-        data_parallel_rank=0,
-        data_parallel_size=1,
-    )
-
-    microbatch_iter, _ = prepare_finetuning_batch(iter(dataloader), 2, 16)
-    microbatches = list(microbatch_iter)
-
-    assert collate_sizes == [2, 2]
-    assert [microbatch["tokens"].shape for microbatch in microbatches] == [(1, 2), (1, 2)]
-
-
-def test_direct_sft_batch_dataloader_does_not_precollate_step_owned_packing():
-    collate_sizes = []
-
-    def _deferred_collate(examples, processor, *, enable_in_batch_packing=False, **kwargs):
-        del processor, kwargs
-        collate_sizes.append(len(examples))
-        assert enable_in_batch_packing is False
-        return {"tokens": torch.arange(len(examples) * 2).reshape(len(examples), 2)}
-
-    dataset = DirectSFTDataset(
-        base_examples=[_example()],
-        target_length=4,
-        processor=_Processor(),
-        collate_impl=_deferred_collate,
-        enable_in_batch_packing=True,
-        defer_in_batch_packing_to_step=True,
-    )
-    assert dataset.enable_in_batch_packing is False
-    dataloader = build_pretraining_data_loader(
-        dataset,
-        consumed_samples=0,
-        dataloader_type="batch",
-        micro_batch_size=2,
-        global_batch_size=4,
-        num_workers=0,
-        data_sharding=False,
-        collate_fn=dataset.collate_fn,
-        pin_memory=False,
-        data_parallel_rank=0,
-        data_parallel_size=1,
-    )
-
-    microbatch_iter, _ = prepare_finetuning_batch(iter(dataloader), 2, 16)
-    microbatches = list(microbatch_iter)
-
-    assert collate_sizes == [4]
-    assert [microbatch["tokens"].shape for microbatch in microbatches] == [(2, 2), (2, 2)]
 
 
 def test_direct_sft_dataset_rejects_collate_without_packing_support():

@@ -73,10 +73,6 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         self._base_examples = base_examples
         self._length = int(max(0, target_length))
         self._processor = processor
-        # The global-batch sampler uses this runtime capability to collate each
-        # logical microbatch independently before THD packing. Step-owned packing
-        # must continue through the ordinary dense global-batch path.
-        self.enable_in_batch_packing = enable_in_batch_packing and not defer_in_batch_packing_to_step
         # Choose collate implementation by processor type name when not provided
         collate_key = type(processor).__name__ if processor is not None else "default"
         explicit_collate_impl = collate_impl is not None
@@ -92,7 +88,7 @@ class DirectSFTDataset(torch.utils.data.Dataset):
             "pad_to_multiple_of": pad_to_multiple_of,
             # Active deferral user: Qwen3-VL. Other VLM/HF collates should pack
             # here when enable_in_batch_packing is set.
-            "enable_in_batch_packing": self.enable_in_batch_packing,
+            "enable_in_batch_packing": enable_in_batch_packing and not defer_in_batch_packing_to_step,
             "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
         }
         if explicit_collate_impl:

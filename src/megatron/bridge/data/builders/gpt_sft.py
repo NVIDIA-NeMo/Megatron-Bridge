@@ -197,6 +197,10 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+        if self.enable_in_batch_packing and self.dataloader_type == "batch":
+            raise ValueError(
+                "GPT-SFT in-batch packing does not support dataloader_type='batch'; use 'single' or 'cyclic'."
+            )
         if self.enable_offline_packing and self.offline_packing_specs is None:
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
         if self.offline_packing_specs is not None and not self.enable_offline_packing:

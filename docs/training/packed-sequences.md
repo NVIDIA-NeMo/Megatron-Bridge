@@ -46,8 +46,8 @@ schemas: prompt/completion (`GPTSFTDataset`) and chat
 read, parse, and tokenize only the rows selected for the current logical
 microbatch. Collation then concatenates those rows into one physical THD batch
 row; it does not materialize an offline dataset or load the full source into
-RAM. With GPT-SFT's default global-batch sampler, Bridge first divides the
-global batch into logical microbatches and packs each one independently.
+RAM. Use a microbatch-yielding `single` or `cyclic` dataloader; GPT-SFT
+in-batch packing does not support the global-batch `batch` dataloader.
 
 ## When to Use It
 
@@ -120,6 +120,7 @@ config and use a logical micro-batch larger than one:
 
 ```text
 dataset.enable_in_batch_packing=true
+dataset.dataloader_type=single
 train.micro_batch_size=4
 ```
 
@@ -127,7 +128,8 @@ The collator preserves each sample's prompt/completion or chat loss mask and
 emits current MCore packed metadata (`cu_seqlens_q`, `cu_seqlens_kv`, and the
 corresponding padded boundaries when CP/SP alignment is required). The model
 sees one physical THD row. `enable_in_batch_packing` and
-`enable_offline_packing` are mutually exclusive.
+`enable_offline_packing` are mutually exclusive. The `batch` dataloader is not
+supported for GPT-SFT in-batch packing; use `single` or `cyclic`.
 
 ## Stable Constraints
 
@@ -136,6 +138,8 @@ The durable constraints for packed sequences in Bridge are:
 - offline packed SFT requires configured `micro_batch_size == 1`
 - GPT-SFT/Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
   collation flattens those input rows into one physical THD batch row
+- GPT-SFT in-batch packing requires `dataloader_type="single"` or `"cyclic"`;
+  the global-batch `"batch"` dataloader is not supported
 - Energon online packing currently supports the eager Qwen-VL collator path,
   requires physical `micro_batch_size == 1`, the generic `vlm_step`, per-token loss, and
   `ddp.average_in_collective=False`

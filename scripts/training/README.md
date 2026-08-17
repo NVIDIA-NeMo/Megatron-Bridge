@@ -208,12 +208,15 @@ host memory. For example:
 --dataset local-jsonl \
 dataset.dataset_root=/data/sft \
 dataset.enable_in_batch_packing=true \
+dataset.dataloader_type=single \
 train.micro_batch_size=4
 ```
 
 The logical micro-batch must be larger than one. Collation emits one physical
 THD row and derives per-sequence CP/SP alignment from the resolved topology.
-Do not combine `dataset.enable_in_batch_packing=true` with offline packing.
+Use the `single` or `cyclic` dataloader; the global-batch `batch` dataloader is
+not supported. Do not combine `dataset.enable_in_batch_packing=true` with
+offline packing.
 
 ### VLM data
 

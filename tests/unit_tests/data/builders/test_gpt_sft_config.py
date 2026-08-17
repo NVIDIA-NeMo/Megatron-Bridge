@@ -83,6 +83,7 @@ def test_in_batch_config_round_trip_is_declarative_and_serializable(tmp_path):
         preprocessing=PromptCompletionSFTPreprocessingConfig(),
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=8,
+        dataloader_type="single",
     )
 
     serialized = ConfigContainer._convert_value_to_dict(config)
@@ -99,9 +100,22 @@ def test_config_rejects_nonpositive_in_batch_packing_multiple(tmp_path):
         dataset_root=tmp_path,
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=0,
+        dataloader_type="single",
     )
 
     with pytest.raises(ValueError, match="in_batch_packing_pad_to_multiple_of must be greater than 0"):
+        config.validate()
+
+
+def test_config_rejects_batch_dataloader_with_in_batch_packing(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        enable_in_batch_packing=True,
+        dataloader_type="batch",
+    )
+
+    with pytest.raises(ValueError, match="does not support dataloader_type='batch'"):
         config.validate()
 
 
@@ -128,6 +142,7 @@ def test_config_rejects_dense_attention_mask_with_in_batch_packing(tmp_path):
         seq_length=128,
         dataset_root=tmp_path,
         enable_in_batch_packing=True,
+        dataloader_type="single",
         dataset_kwargs={"get_attention_mask_from_fusion": False},
     )
 
@@ -140,6 +155,7 @@ def test_config_rejects_offline_and_in_batch_packing(tmp_path):
         seq_length=128,
         dataset_root=tmp_path,
         enable_in_batch_packing=True,
+        dataloader_type="single",
         enable_offline_packing=True,
         offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=128),
     )
@@ -663,6 +679,7 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
     config = _hf_config(tmp_path)
     config.enable_in_batch_packing = True
     config.in_batch_packing_pad_to_multiple_of = 8
+    config.dataloader_type = "single"
     materialize_mock = []
     dataset_calls = []
 
