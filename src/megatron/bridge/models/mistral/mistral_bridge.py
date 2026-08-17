@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
+from typing import Any
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -47,18 +47,33 @@ class MistralBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MistralModelProvider:
         hf_config = hf_pretrained.config
 
-        if getattr(hf_config, "rope_scaling", None) is not None and hf_config.rope_scaling.get("rope_type") == "yarn":
-            # Apply Mistral customize rope scaling
-            cls = partial(MistralModelProvider, scale_factor=rope_scaling_factor_from_hf(hf_config, default=8.0))
-        else:
-            cls = MistralModelProvider
+        # Mirrors the generic yarn handling in
+        # MegatronModelBridge._hf_config_to_megatron_kwargs; YARN_ROPE_SCALING_MAPPING
+        # is the source of truth for the hf-key -> provider-field pairs.
+        yarn_kwargs: dict[str, Any] = {}
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        rope_type = None
+        if isinstance(rope_scaling, dict) and rope_scaling:
+            rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
+        if rope_type == "yarn":
+            yarn_kwargs["position_embedding_type"] = "yarn"
+            yarn_kwargs["yarn_rotary_scaling_factor"] = rope_scaling_factor_from_hf(hf_config, default=8.0)
+            for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
+                if hf_key == "factor":
+                    continue
+                value = rope_scaling.get(hf_key)
+                if value is not None:
+                    yarn_kwargs[megatron_key] = value
+            if "truncate" in rope_scaling:
+                yarn_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
 
         window_size, cp_comm_type = (None, None)
         if getattr(hf_config, "sliding_window", None) is not None:
             window_size = [hf_config.sliding_window - 1, 0]
             cp_comm_type = "a2a"
 
-        provider = cls(
+        provider = MistralModelProvider(
+            **yarn_kwargs,
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
             ffn_hidden_size=hf_config.intermediate_size,
