@@ -142,6 +142,13 @@ class _HFDatasetPreset:
 
 
 _HF_DATASET_PRESETS: dict[str, _HFDatasetPreset] = {
+    "coderforge": _HFDatasetPreset(
+        path_or_dataset="togethercomputer/CoderForge-Preview",
+        subset="trajectories",
+        split="SWE_Rebench",
+        schema_adapter="coderforge",
+        supported_splits=("SWE_Rebench",),
+    ),
     "cord_v2": _HFDatasetPreset(
         path_or_dataset="naver-clova-ix/cord-v2",
         schema_adapter="cord_v2",
