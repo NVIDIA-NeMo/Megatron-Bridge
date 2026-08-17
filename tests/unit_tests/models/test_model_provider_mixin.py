@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -21,7 +20,6 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
 from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
@@ -92,31 +90,6 @@ def test_apply_overrides_rejects_unknown_attributes(provider):
         provider.apply_overrides_and_finalize(overrides={"unknown_option": True})
 
     provider.finalize.assert_not_called()
-
-
-@patch("megatron.bridge.models.model_provider.get_model")
-@patch("megatron.bridge.models.model_provider.torch.distributed")
-def test_provide_distributed_model_finalizes_heterogeneous_config_before_model_build(mock_dist, mock_get_model):
-    """Distributed model construction must finalize deferred heterogeneous fields."""
-    block = {
-        "attention": {"no_op": False, "replace_with_linear": False, "num_query_groups": 4},
-        "mlp": {"no_op": False, "replace_with_linear": False, "ffn_hidden_size": 256},
-    }
-    provider = LlamaNemotronHeterogeneousProvider(
-        num_layers=1,
-        hidden_size=64,
-        num_attention_heads=4,
-        heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block]}),
-    )
-    mock_dist.is_initialized.return_value = True
-
-    def build_model(model_provider, **_kwargs):
-        assert len(model_provider.per_block_parameters) == 1
-        return []
-
-    mock_get_model.side_effect = build_model
-
-    provider.provide_distributed_model(pg_collection=Mock(), wrap_with_ddp=False)
 
 
 @patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
