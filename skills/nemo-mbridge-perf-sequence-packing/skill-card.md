@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers configuring and validating sequence packing strategies for LLM and VLM finetuning workloads in Megatron-Bridge. <br>
+Developers and ML engineers configuring sequence packing and long-context training for LLM and VLM fine-tuning workflows in Megatron-Bridge. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -27,13 +27,12 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Packed Sequences Documentation](docs/training/packed-sequences.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Multi-Token Prediction](docs/training/multi-token-prediction.md) <br>
 - [Hierarchical Context Parallel](docs/training/hierarchical-context-parallel.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Type(s):** [Configuration instructions, Code] <br>
+**Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -44,18 +43,18 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive) run in isolated sandbox pods against skill-evaluator-dataset-snapshot/1. <br>
+Evaluated against 1 task (1 positive) using evaluator version 1.2.7 in local environment with Tier 3 live agent evaluation. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Whether the skill produces a correct answer against the reference. <br>
-- Discoverability: Whether the right skill is loaded and executed when needed. <br>
-- Effectiveness: Whether the skill helps complete the user's goal and expected workflow. <br>
-- Efficiency: Whether the skill avoids wasted tool or skill usage. <br>
+- Security: Whether the skill is safe to use (unsafe operations, secret leakage, unauthorized access). <br>
+- Correctness: Whether the answer produced is correct against the reference answer. <br>
+- Discoverability: Whether the right skill was loaded and executed when needed. <br>
+- Effectiveness: Whether the skill helped complete the user's goal and expected workflow (goal accuracy + behavior check). <br>
+- Efficiency: Whether the skill avoided wasted tool or skill usage (routing quality and productive tool use). <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
 - `skill_execution`: Whether the expected skill was found and executed. <br>
 - `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
@@ -67,17 +66,12 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 36% → 94% (+58 points) | 64% → 81% (+17 points) |
+| Overall | 60% → 98% (+38 points) | 56% → 96% (+40 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 0% → 100% (+100 points) | 100% → 80% (-20 points) |
-| Discoverability | 50% → 100% (+50 points) | 50% → 88% (+38 points) |
-| Effectiveness | 0% → 79% (+79 points) | 66% → 70% (+4 points) |
-| Efficiency | 28% → 89% (+61 points) | 5% → 67% (+62 points) |
-
-## Testing Completed: <br>
-**[x] Agent Red-Teaming** <br>
-**[ ] Network Security** <br>
-**[ ] Product Security** <br>
+| Correctness | 0% → 100% (+100 points) | 40% → 100% (+60 points) |
+| Discoverability | 100% → 100% (±0 points) | 50% → 88% (+38 points) |
+| Effectiveness | 0% → 88% (+88 points) | 40% → 94% (+54 points) |
+| Efficiency | 100% → 100% (±0 points) | 50% → 100% (+50 points) |
 
 ## Skill Version(s): <br>
 1.0.0+b7643bd (source: pyproject.toml) <br>
