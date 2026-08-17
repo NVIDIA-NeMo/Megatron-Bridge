@@ -20,8 +20,10 @@ from megatron.bridge.perf_recipes.nemotronh.b300.nemotronh import (
 )
 from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_ncclep_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_ncclep_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
@@ -34,7 +36,9 @@ from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
 )
 from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
     nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_bf16_ncclep_config,
     nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config,
     nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
     nemotron_3_super_pretrain_64gpu_gb300_bf16_config,
     nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
