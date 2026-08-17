@@ -173,11 +173,12 @@ items:
         final_loss: 5.725391
         last_10_steps_step_time_ms_avg: 22400.880
         last_10_steps_model_tflops_per_gpu_avg: 117.010
+        last_10_steps_tokens_per_second_per_gpu_avg: 5851.199
       expected_result: >
         On 16x H100, the command completes exactly 100 bounded pretraining
         optimizer steps. All 100 optimizer-step rows are present exactly once
         with finite loss, zero skipped iterations, and zero NaN iterations.
-        Loss decreases from 10.90364 to 5.725391, all four metrics are
+        Loss decreases from 10.90364 to 5.725391, all five metrics are
         recorded, the post-setup run_config.yaml persists, and complete
         16-shard iter_0000050 and iter_0000100 checkpoints are saved with
         metadata, train state, tokenizer artifacts, and latest-checkpoint
@@ -215,13 +216,14 @@ items:
         final_loss: 0.758708
         last_10_steps_step_time_ms_avg: 6618.850
         last_10_steps_model_tflops_per_gpu_avg: 109.050
+        last_10_steps_tokens_per_second_per_gpu_avg: 4950.709
       expected_result: >
         On 8x H100, the command completes exactly 100 full-SFT optimizer steps
         from the imported GPT-OSS 20B checkpoint with immutable Tulu3 data
         selection, assistant-token loss masking, and offline packing. All 100
         optimizer-step rows are present exactly once with finite loss, zero
         skipped iterations, and zero NaN iterations. Loss decreases from
-        2.130852 to 0.758708, all four metrics are recorded, packing is 98.56%
+        2.130852 to 0.758708, all five metrics are recorded, packing is 98.56%
         efficient, and a complete 8-shard iter_0000100 full-model checkpoint is
         saved with metadata, train state, tokenizer artifacts, and
         latest-checkpoint markers.
@@ -298,6 +300,7 @@ items:
         final_loss: 1.175326
         last_10_steps_step_time_ms_avg: 306108.170
         last_10_steps_model_tflops_per_gpu_avg: 13.430
+        last_10_steps_tokens_per_second_per_gpu_avg: 428.189
       expected_result: >
         Completed 20 optimizer steps using the 32K SFT recipe, immutable Tulu3
         data selection, offline packing, TP4, CP2, sequence parallelism,
@@ -339,6 +342,7 @@ items:
         final_loss: 1.075515
         last_10_steps_step_time_ms_avg: 50689.940
         last_10_steps_model_tflops_per_gpu_avg: 113.240
+        last_10_steps_tokens_per_second_per_gpu_avg: 5171.519
       expected_result: >
         On 1x H100, the command completes exactly 100 LoRA PEFT optimizer steps
         from the imported GPT-OSS 20B checkpoint with the base model frozen,
@@ -347,7 +351,7 @@ items:
         assistant-token loss masking, and offline packing. All 100
         optimizer-step rows are present exactly once with finite loss, zero
         skipped iterations, and zero NaN iterations. Loss decreases from
-        2.129699 to 1.075515, all four metrics are recorded, packing is 98.56%
+        2.129699 to 1.075515, all five metrics are recorded, packing is 98.56%
         efficient, and a complete single-shard iter_0000100 adapter checkpoint
         is saved with metadata, train state, run_config.yaml, and
         latest-checkpoint markers.
@@ -381,6 +385,7 @@ items:
         final_loss: 5.725306
         last_10_steps_step_time_ms_avg: 22130.160
         last_10_steps_model_tflops_per_gpu_avg: 118.420
+        last_10_steps_tokens_per_second_per_gpu_avg: 5922.777
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]

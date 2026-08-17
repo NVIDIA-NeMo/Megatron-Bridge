@@ -3,6 +3,7 @@ set -euo pipefail
 
 dockerfile="${1:-docker/Dockerfile.ci}"
 workflow="${2:-.github/workflows/cicd-main.yml}"
+fw_final_dockerfile="${3:-docker/Dockerfile.fw_final}"
 
 baseline_arg_line=$(grep -n '^ARG BASELINE_MCORE_REF$' "$dockerfile" | cut -d: -f1)
 baseline_clone_line=$(grep -n 'git clone --filter=blob:none --no-checkout' "$dockerfile" | cut -d: -f1)
@@ -23,6 +24,15 @@ trap 'rm -rf "$temporary_dir"' EXIT
 ((baseline_clone_line < baseline_line))
 ((baseline_line < dispatched_copy_line))
 ((dispatched_copy_line < delta_line))
+
+fw_final_from_line=$(grep -n '^FROM ${NEMO_FW_FINAL_BASE_IMAGE} AS nemo_fw_final$' "$fw_final_dockerfile" | cut -d: -f1)
+fw_final_root_line=$(grep -n '^USER root$' "$fw_final_dockerfile" | cut -d: -f1)
+fw_final_clone_line=$(grep -n '^RUN git clone --depth 1 https://github.com/NVIDIA-NeMo/NeMo.git' "$fw_final_dockerfile" | cut -d: -f1)
+[[ -n "$fw_final_from_line" ]]
+[[ -n "$fw_final_root_line" ]]
+[[ -n "$fw_final_clone_line" ]]
+((fw_final_from_line < fw_final_root_line))
+((fw_final_root_line < fw_final_clone_line))
 
 grep -q -- '--mount=type=cache,target=/root/.cache/uv' "$dockerfile"
 if grep -q -- '--mount=type=secret,id=GH_TOKEN' "$dockerfile"; then
@@ -236,7 +246,12 @@ if ! grep -A1 '^te = \[$' pyproject.toml | grep -Fxq '    "megatron-core[te]",';
   echo "Bridge's TE extra must enable the selected MCore ref's TE extra" >&2
   exit 1
 fi
-grep -Fq '{ name = "megatron-core", extra = ["te"] }' uv.lock
+if ! grep -Fq \
+  '{ name = "megatron-core", extras = ["te"], marker = "extra == '\''te'\''", editable = "3rdparty/Megatron-LM" }' \
+  uv.lock; then
+  echo "Bridge's lock metadata must preserve the MCore TE extra" >&2
+  exit 1
+fi
 if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
   grep -q '^name = "transformer-engine"$' pyproject.toml; then
   echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2

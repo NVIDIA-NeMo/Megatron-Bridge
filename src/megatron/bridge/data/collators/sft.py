@@ -188,8 +188,9 @@ def text_chat_collate_fn(
 
     Args:
         examples: HF-style chat rows containing ``messages``, ``conversation``,
-            or legacy ``conversations``. Optional top-level ``tools`` are
-            forwarded to the chat template for rendering and assistant masks.
+            or legacy ``conversations``. Optional ``chat_template_kwargs`` and
+            top-level ``tools`` are forwarded to the chat template for rendering
+            and assistant masks.
         processor: A HF tokenizer or processor. It must expose
             ``apply_chat_template`` directly or through ``processor.tokenizer``.
         max_length: Optional tokenizer truncation length.

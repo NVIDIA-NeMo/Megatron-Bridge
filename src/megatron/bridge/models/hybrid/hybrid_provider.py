@@ -34,6 +34,7 @@ from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
@@ -114,6 +115,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
     # Model configuration
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = False
     params_dtype: torch.dtype = torch.bfloat16
@@ -309,6 +311,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
             max_sequence_length=self.seq_length,
             hybrid_layer_pattern=self.hybrid_layer_pattern,
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+            **logit_dtype_kwarg(MCoreHybridModel, self.logit_dtype),
             parallel_output=self.parallel_output,
             share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
             position_embedding_type=self.position_embedding_type,
