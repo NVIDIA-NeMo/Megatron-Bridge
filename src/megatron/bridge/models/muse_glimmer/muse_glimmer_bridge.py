@@ -31,6 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     MegatronParamMapping,
     ReplicatedMapping,
+    RMSNorm2ZeroCenteredRMSNormMapping,
     merge_qkv_weights,
     split_qkv_weights,
 )
@@ -352,7 +353,7 @@ class MuseGlimmerBridge(MegatronModelBridge):
                 megatron_param="output_layer.weight",
                 hf_param="lm_head.weight",
             ),
-            ReplicatedMapping(
+            RMSNorm2ZeroCenteredRMSNormMapping(
                 megatron_param="decoder.final_norm.weight",
                 hf_param=f"{text_prefix}.norm.weight",
             ),

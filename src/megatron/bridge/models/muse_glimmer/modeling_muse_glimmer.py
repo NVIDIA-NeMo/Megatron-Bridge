@@ -17,14 +17,12 @@
 from __future__ import annotations
 
 import functools
-from copy import copy
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from megatron.core import parallel_state
-from megatron.core.extensions.transformer_engine import HAVE_TE, TENorm
+from megatron.core.extensions.transformer_engine import TENorm
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.backends import get_backend
 from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
@@ -37,10 +35,11 @@ from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
-from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
+from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group
 from megatron.core.utils import get_pg_rank
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
+from transformer_engine.pytorch import LayerNorm as TELayerNorm
 
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.muse_glimmer.muse_glimmer_config import (
@@ -58,124 +57,22 @@ if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
 
 
-def _rms_norm(hidden_states: Tensor, eps: float) -> Tensor:
-    """Apply the parameter-free RMS expression used by the HF reference.
-
-    The pinned Transformer Engine RMSNorm always owns an affine weight, so Muse's
-    scaleless Q/K, embedding, and perception norms cannot use it without
-    changing the architecture and checkpoint schema.
-    """
-    normalized = hidden_states.float() * torch.pow(
-        hidden_states.float().pow(2).mean(dim=-1, keepdim=True) + eps,
-        -0.5,
-    )
-    return normalized.to(hidden_states.dtype)
-
-
-def _centered_rms_norm(hidden_states: Tensor, eps: float) -> Tensor:
-    """Apply the rsqrt-based expression used by Muse's centered layer norms."""
-    normalized = hidden_states.float() * torch.rsqrt(hidden_states.float().pow(2).mean(dim=-1, keepdim=True) + eps)
-    return normalized.to(hidden_states.dtype)
-
-
-class MuseGlimmerCenteredRMSNorm(nn.Module):
-    """Gemma2-style RMSNorm whose checkpoint weight is centered around zero."""
-
-    def __init__(self, config: TransformerConfig, hidden_size: int, eps: float = 1e-5) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.zeros(hidden_size, dtype=config.params_dtype))
-        setattr(self.weight, "sequence_parallel", bool(config.sequence_parallel))
-        self.eps = eps
-
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        return _centered_rms_norm(hidden_states, self.eps) * (1.0 + self.weight.float()).to(hidden_states.dtype)
-
-    def sharded_state_dict(
-        self,
-        prefix: str = "",
-        sharded_offsets: tuple[tuple[int, int, int], ...] = (),
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Represent the replicated weight with a distinct writer on each TP rank."""
-        metadata = ensure_metadata_has_dp_cp_group(metadata)
-        return make_sharded_tensors_for_checkpoint(
-            self.state_dict(keep_vars=True),
-            prefix,
-            sharded_offsets=sharded_offsets,
-            tp_group=parallel_state.get_tensor_model_parallel_group(),
-            dp_cp_group=metadata["dp_cp_group"],
-        )
-
-
-class MuseGlimmerRMSNorm(nn.Module):
-    """Learnable RMSNorm used after the final Muse decoder layer."""
-
-    def __init__(self, config: TransformerConfig, hidden_size: int, eps: float = 1e-5) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size, dtype=config.params_dtype))
-        setattr(self.weight, "sequence_parallel", bool(config.sequence_parallel))
-        self.eps = eps
-
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        return _rms_norm(hidden_states, self.eps) * self.weight.float().to(hidden_states.dtype)
-
-
-class MuseGlimmerWeightlessRMSNorm(nn.Module):
-    """Scaleless RMSNorm used for Muse Q/K, embeddings, and perception features."""
-
-    def __init__(self, config: TransformerConfig, hidden_size: int, eps: float = 1e-5) -> None:
-        super().__init__()
-        del hidden_size
-        self.eps = eps
-
-    def forward(self, hidden_states: Tensor) -> Tensor:
-        return _rms_norm(hidden_states, self.eps)
-
-
-def _centered_rms_norm_cls(config: TransformerConfig) -> type[nn.Module]:
-    """Use TE for affine normalization whenever it is available."""
-    return TENorm if HAVE_TE else MuseGlimmerCenteredRMSNorm
-
-
-def _standard_rms_norm(config: TransformerConfig, hidden_size: int, eps: float) -> nn.Module:
-    """Build a standard-gamma RMSNorm with TE when it is available."""
-    if not HAVE_TE:
-        return MuseGlimmerRMSNorm(config, hidden_size, eps=eps)
-
-    norm_config = copy(config)
-    norm_config.layernorm_zero_centered_gamma = False
-    return TENorm(
-        norm_config,
-        hidden_size,
-        eps=eps,
-    )
-
-
-def _vision_layer_norm(
-    config: MuseGlimmerVisionModelConfig,
-    transformer_config: TransformerConfig,
-) -> nn.Module:
-    """Build the vision LayerNorm with TE when it is available."""
-    if not HAVE_TE:
-        return nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
-
-    norm_config = copy(transformer_config)
-    norm_config.normalization = "LayerNorm"
-    norm_config.layernorm_zero_centered_gamma = False
-    norm_config.sequence_parallel = False
-    return TENorm(
-        norm_config,
-        config.hidden_size,
-        eps=config.layer_norm_epsilon,
-    )
-
-
 class MuseGlimmerSelfAttention(SelfAttention):
     """MCore self-attention with Muse's residual-branch post norm."""
 
     def __init__(self, config: TransformerConfig, *args: Any, **kwargs: Any) -> None:
         super().__init__(config, *args, **kwargs)
-        self.post_layernorm = _centered_rms_norm_cls(config)(
+        self.q_layernorm = nn.RMSNorm(
+            self.hidden_size_per_attention_head,
+            eps=config.layernorm_epsilon,
+            elementwise_affine=False,
+        )
+        self.k_layernorm = nn.RMSNorm(
+            self.hidden_size_per_attention_head,
+            eps=config.layernorm_epsilon,
+            elementwise_affine=False,
+        )
+        self.post_layernorm = TENorm(
             config,
             config.hidden_size,
             eps=float(getattr(config, "post_norm_epsilon", 1e-8)),
@@ -203,7 +100,7 @@ class MuseGlimmerMLP(MLP):
             ffn_hidden_size=ffn_hidden_size,
             **kwargs,
         )
-        self.post_layernorm = _centered_rms_norm_cls(config)(
+        self.post_layernorm = TENorm(
             config,
             config.hidden_size,
             eps=float(getattr(config, "post_norm_epsilon", 1e-8)),
@@ -217,14 +114,13 @@ class MuseGlimmerMLP(MLP):
 def get_muse_glimmer_hybrid_stack_spec(config: TransformerConfig) -> ModuleSpec:
     """Build the native Hybrid stack spec used by the Muse decoder."""
     backend = get_backend(config.transformer_impl)
-    centered_rms_norm = _centered_rms_norm_cls(config)
     return ModuleSpec(
         module=HybridStack,
         submodules=HybridStackSubmodules(
             attention_layer=ModuleSpec(
                 module=TransformerLayer,
                 submodules=TransformerLayerSubmodules(
-                    input_layernorm=centered_rms_norm,
+                    input_layernorm=TENorm,
                     self_attention=ModuleSpec(
                         module=MuseGlimmerSelfAttention,
                         params={"attn_mask_type": AttnMaskType.causal},
@@ -232,12 +128,10 @@ def get_muse_glimmer_hybrid_stack_spec(config: TransformerConfig) -> ModuleSpec:
                             linear_qkv=backend.column_parallel_linear(),
                             core_attention=backend.core_attention(),
                             linear_proj=backend.row_parallel_linear(),
-                            q_layernorm=MuseGlimmerWeightlessRMSNorm,
-                            k_layernorm=MuseGlimmerWeightlessRMSNorm,
                         ),
                     ),
                     self_attn_bda=get_bias_dropout_add,
-                    pre_mlp_layernorm=centered_rms_norm,
+                    pre_mlp_layernorm=TENorm,
                     mlp=functools.partial(
                         MuseGlimmerMLP.as_mlp_submodule,
                         submodules=MLPSubmodules(
@@ -252,14 +146,6 @@ def get_muse_glimmer_hybrid_stack_spec(config: TransformerConfig) -> ModuleSpec:
     )
 
 
-class MuseGlimmerEmbeddingNormMixin(nn.Module):
-    """Apply the weightless Muse RMSNorm after word embedding lookup."""
-
-    def forward(self, *args: Any, **kwargs: Any) -> Tensor:
-        embeddings = super().forward(*args, **kwargs)
-        return _rms_norm(embeddings, self.config.layernorm_epsilon)
-
-
 class MuseGlimmerOutputLayerMixin(nn.Module):
     """Apply the Muse logit multiplier followed by tanh soft-capping."""
 
@@ -270,20 +156,6 @@ class MuseGlimmerOutputLayerMixin(nn.Module):
         if softcap:
             output = softcap * torch.tanh(output / softcap)
         return output, bias
-
-
-def customize_muse_glimmer_language_model(model: HybridModel) -> None:
-    """Install Muse embedding, final-norm, and logit behavior on a Hybrid model."""
-    if hasattr(model, "embedding"):
-        extend_instance(model.embedding, MuseGlimmerEmbeddingNormMixin)
-    if hasattr(model, "decoder") and getattr(model.decoder, "final_norm", None) is not None:
-        model.decoder.final_norm = _standard_rms_norm(
-            model.config,
-            model.config.hidden_size,
-            model.config.layernorm_epsilon,
-        )
-    if hasattr(model, "output_layer"):
-        extend_instance(model.output_layer, MuseGlimmerOutputLayerMixin)
 
 
 def _vision_cu_seqlens(grid_thw: Tensor) -> Tensor:
@@ -508,9 +380,24 @@ class MuseGlimmerVisionEncoderLayer(nn.Module):
 
     def __init__(self, config: MuseGlimmerVisionModelConfig, transformer_config: TransformerConfig) -> None:
         super().__init__()
-        self.norm1 = _vision_layer_norm(config, transformer_config)
+        norm_device = (
+            "cpu"
+            if transformer_config.use_cpu_initialization
+            else "meta"
+            if transformer_config.init_model_with_meta_device
+            else torch.cuda.current_device()
+        )
+        norm_kwargs = {
+            "normalized_shape": config.hidden_size,
+            "eps": config.layer_norm_epsilon,
+            "sequence_parallel": False,
+            "zero_centered_gamma": False,
+            "device": norm_device,
+            "dtype": transformer_config.params_dtype,
+        }
+        self.norm1 = TELayerNorm(**norm_kwargs)
         self.attn = MuseGlimmerVisionAttention(config)
-        self.norm2 = _vision_layer_norm(config, transformer_config)
+        self.norm2 = TELayerNorm(**norm_kwargs)
         self.mlp = MuseGlimmerVisionMLP(config)
 
     def forward(
@@ -538,11 +425,26 @@ class MuseGlimmerVisionModel(nn.Module):
         self.recompute_layers = recompute_layers
         self.patch_embedder = MuseGlimmerVisionPatchEmbedder(config)
         self.rotary_emb = MuseGlimmerVisionRotaryEmbedding(config)
-        self.ln_pre = _vision_layer_norm(config, transformer_config)
+        norm_device = (
+            "cpu"
+            if transformer_config.use_cpu_initialization
+            else "meta"
+            if transformer_config.init_model_with_meta_device
+            else torch.cuda.current_device()
+        )
+        norm_kwargs = {
+            "normalized_shape": config.hidden_size,
+            "eps": config.layer_norm_epsilon,
+            "sequence_parallel": False,
+            "zero_centered_gamma": False,
+            "device": norm_device,
+            "dtype": transformer_config.params_dtype,
+        }
+        self.ln_pre = TELayerNorm(**norm_kwargs)
         self.layers = nn.ModuleList(
             [MuseGlimmerVisionEncoderLayer(config, transformer_config) for _ in range(config.num_hidden_layers)]
         )
-        self.ln_post = _vision_layer_norm(config, transformer_config)
+        self.ln_post = TELayerNorm(**norm_kwargs)
 
     def _pixel_shuffle(self, hidden_states: Tensor, grid_thw: Tensor) -> Tensor:
         outputs = []
@@ -661,7 +563,8 @@ class MuseGlimmerModel(HybridModel):
             vp_stage=vp_stage,
         )
         self.model_config = config
-        customize_muse_glimmer_language_model(self)
+        if hasattr(self, "output_layer"):
+            extend_instance(self.output_layer, MuseGlimmerOutputLayerMixin)
         if pre_process:
             self.vision_tower = MuseGlimmerVisionModel(
                 config.vision,
@@ -743,7 +646,11 @@ class MuseGlimmerModel(HybridModel):
     def _vision_features(self, pixel_values: Tensor, grid_thw: Tensor) -> Tensor:
         features = self.vision_tower(pixel_values, grid_thw)
         features = self.vision_projection(self.vision_adapter(features))
-        return _rms_norm(features, self.config.layernorm_epsilon)
+        return F.rms_norm(
+            features,
+            (features.shape[-1],),
+            eps=self.config.layernorm_epsilon,
+        )
 
     @staticmethod
     def _scatter_features(inputs_embeds: Tensor, input_ids: Tensor, features: Tensor, token_id: int) -> Tensor:
@@ -783,6 +690,11 @@ class MuseGlimmerModel(HybridModel):
                 )
                 llm_input_ids = input_ids.masked_fill(multimodal_mask, 0)
                 inputs_embeds = self.embedding(input_ids=llm_input_ids, position_ids=None)
+                inputs_embeds = F.rms_norm(
+                    inputs_embeds,
+                    (inputs_embeds.shape[-1],),
+                    eps=self.config.layernorm_epsilon,
+                )
                 inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
             if pixel_values is not None:
                 if image_grid_thw is None or input_ids is None:
@@ -835,11 +747,7 @@ class MuseGlimmerModel(HybridModel):
 
 
 __all__ = [
-    "MuseGlimmerCenteredRMSNorm",
     "MuseGlimmerModel",
-    "MuseGlimmerRMSNorm",
     "MuseGlimmerVisionModel",
-    "MuseGlimmerWeightlessRMSNorm",
-    "customize_muse_glimmer_language_model",
     "get_muse_glimmer_hybrid_stack_spec",
 ]
