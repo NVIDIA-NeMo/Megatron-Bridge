@@ -247,6 +247,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         if wrap_with_ddp and not ddp_config:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
+        self.finalize()
+
         if not torch.distributed.is_initialized():
             os.environ["RANK"] = os.environ.get("RANK", "0")
             os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
