@@ -98,7 +98,14 @@ def _infer_attn_pattern(layer_types: list[str]) -> tuple[int, int] | list[str]:
     return (len(layer_types), 0)
 
 
-def _attention_config_value(hf_config: Any, layer_type: str, field_name: str, default: Any) -> Any:
+def _attention_config_value(
+    hf_config: Any,
+    layer_type: str,
+    field_name: str,
+    default: Any,
+    *,
+    legacy_field_name: str | None = None,
+) -> Any:
     """Read an attention field from a concrete HF layer config when available."""
     layer_types = getattr(hf_config, "layer_types", None)
     per_layer_config = getattr(hf_config, "per_layer_config", None)
@@ -110,9 +117,10 @@ def _attention_config_value(hf_config: Any, layer_type: str, field_name: str, de
         else:
             return getattr(per_layer_config[layer_index], field_name, default)
 
-    # Transformers 5.15 rejects direct reads of fields that vary by layer. The
-    # global value is still the correct fallback for the local-attention config.
-    return getattr(hf_config, "__dict__", {}).get(field_name, default)
+    # Transformers 5.15 rejects direct reads of fields that vary by layer.
+    # Older configs instead serialize separate flat local/global field names.
+    fallback_name = legacy_field_name or field_name
+    return getattr(hf_config, "__dict__", {}).get(fallback_name, default)
 
 
 def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> list[str]:
@@ -245,7 +253,8 @@ class Gemma4Bridge(MegatronModelBridge):
             hf_config,
             "full_attention",
             "num_key_value_heads",
-            getattr(hf_config, "num_global_key_value_heads", num_query_groups),
+            num_query_groups,
+            legacy_field_name="num_global_key_value_heads",
         )
 
         self._dense_num_attention_heads = num_attention_heads
@@ -265,7 +274,13 @@ class Gemma4Bridge(MegatronModelBridge):
             num_attention_heads=num_attention_heads,
             num_query_groups=num_query_groups,
             kv_channels=_attention_config_value(hf_config, "sliding_attention", "head_dim", 256),
-            global_kv_channels=_attention_config_value(hf_config, "full_attention", "head_dim", 512),
+            global_kv_channels=_attention_config_value(
+                hf_config,
+                "full_attention",
+                "head_dim",
+                512,
+                legacy_field_name="global_head_dim",
+            ),
             num_global_query_groups=num_global_query_groups,
             seq_length=hf_config.max_position_embeddings,
             vocab_size=hf_config.vocab_size,
@@ -307,12 +322,19 @@ class Gemma4Bridge(MegatronModelBridge):
         provider.kv_channels = head_dim
         provider.qk_layernorm = True
 
-        provider.global_head_dim = _attention_config_value(hf_config, "full_attention", "head_dim", 512)
+        provider.global_head_dim = _attention_config_value(
+            hf_config,
+            "full_attention",
+            "head_dim",
+            512,
+            legacy_field_name="global_head_dim",
+        )
         provider.num_global_key_value_heads = _attention_config_value(
             hf_config,
             "full_attention",
             "num_key_value_heads",
-            getattr(hf_config, "num_global_key_value_heads", 2),
+            2,
+            legacy_field_name="num_global_key_value_heads",
         )
         provider.attention_k_eq_v = getattr(hf_config, "attention_k_eq_v", False)
 
@@ -447,16 +469,23 @@ class Gemma4Bridge(MegatronModelBridge):
                     text_config, "num_attention_heads", getattr(self, "_dense_num_attention_heads", 8)
                 )
                 kv_head_dim = q_weight.shape[0] // num_q_heads
-                num_kv_heads = getattr(text_config, "num_key_value_heads", getattr(self, "_dense_num_query_groups", 2))
+                num_kv_heads = _attention_config_value(
+                    text_config,
+                    "sliding_attention",
+                    "num_key_value_heads",
+                    getattr(self, "_dense_num_query_groups", 2),
+                )
                 layer_match = re.search(r"layers\.(\d+)\.", q_name)
                 layer_types = getattr(text_config, "layer_types", None)
                 if layer_match and layer_types:
                     layer_idx = int(layer_match.group(1))
                     if layer_idx < len(layer_types) and layer_types[layer_idx] == "full_attention":
-                        num_global_kv_heads = getattr(
+                        num_global_kv_heads = _attention_config_value(
                             text_config,
-                            "num_global_key_value_heads",
+                            "full_attention",
+                            "num_key_value_heads",
                             getattr(self, "_dense_num_global_query_groups", None),
+                            legacy_field_name="num_global_key_value_heads",
                         )
                         if num_global_kv_heads is not None:
                             num_kv_heads = num_global_kv_heads
