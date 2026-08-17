@@ -28,7 +28,11 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
+from megatron.bridge.training.utils.flop_utils import (
+    accumulate_flops_metadata,
+    get_model_chunk_vp_stage,
+    vision_patch_stats_from_grid_thw,
+)
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -247,18 +251,24 @@ def forward_step(
     # follow-up (the linear term also needs a *cp_size correction there, since
     # gpt_step CP-shards tokens). train.py resets these before each step and reads
     # accumulated values afterwards.
-    # Vision-patch count is model-specific (Qwen-VL reports it as grid_thw =
-    # t*h*w per image/video), so compute it here and hand a plain scalar to the
-    # model-agnostic FLOPS helper. Kept as a device tensor to avoid a host sync.
-    num_vision_patches = None
+    # Qwen vision attention isolates temporal frames. Preserve additive patch
+    # statistics for every media/frame boundary instead of treating the physical
+    # text pack as one giant image. Device scalars avoid a host sync here.
+    vision_config = getattr(getattr(state.cfg, "model", config), "vision_config", None)
+    # Every DP rank using this VLM step must enter the same reduction, including
+    # a rank whose current sample happens to contain no media.
+    vision_patch_stats = (0, 0, 0)
+    spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
     if visual_inputs is not None:
         for grid in (
             getattr(visual_inputs, "image_grid_thw", None),
             getattr(visual_inputs, "video_grid_thw", None),
         ):
             if grid is not None and grid.numel() > 0:
-                patches = grid.prod(dim=-1).sum()
-                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+                grid_stats = vision_patch_stats_from_grid_thw(grid, spatial_merge_size=spatial_merge_size)
+                vision_patch_stats = tuple(
+                    total + delta for total, delta in zip(vision_patch_stats, grid_stats, strict=True)
+                )
     cu_seqlens = None
     cu_seqlens_unpadded = None
     if packed_seq_params is not None:
@@ -272,7 +282,7 @@ def forward_step(
         vp_stage=get_model_chunk_vp_stage(model),
         cu_seqlens=cu_seqlens,
         cu_seqlens_unpadded=cu_seqlens_unpadded,
-        num_vision_patches=num_vision_patches,
+        vision_patch_stats=vision_patch_stats,
     )
 
     forward_args = {

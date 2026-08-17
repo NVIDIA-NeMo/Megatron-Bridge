@@ -90,7 +90,8 @@ export NCCL_PXN_DISABLE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-# Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
+# Before submitting, follow README.md's MCore Checkout instructions. In a NeMo
+# Framework container, use its two-stage inexact sync; do not run plain `uv sync`.
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export HF_TOKEN="hf_your_token_here"

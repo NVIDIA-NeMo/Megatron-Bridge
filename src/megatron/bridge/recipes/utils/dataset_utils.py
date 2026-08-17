@@ -21,8 +21,10 @@ from typing import Any, Callable, List, Literal, Optional, Tuple, TypeAlias
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
     DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
+    HFEnergonTaskEncoderConfig,
     PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
 )
@@ -336,7 +338,9 @@ def get_blend_fields_from_data_paths(
     return blend, blend_per_split, split
 
 
-PublicDatasetConfig: TypeAlias = GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig
+PublicDatasetConfig: TypeAlias = (
+    GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | EnergonDatasetConfig
+)
 DatasetPreset: TypeAlias = Callable[[ConfigContainer], PublicDatasetConfig]
 
 
@@ -378,6 +382,63 @@ def _megatron_indexed_dataset_config(config: ConfigContainer) -> GPTDatasetConfi
         data_sharding=True,
         dataloader_type="single",
         skip_getting_attention_mask_from_dataset=True,
+    )
+
+
+def _energon_dataset_config(config: ConfigContainer) -> EnergonDatasetConfig:
+    """Build an override-ready Energon config from a compatible recipe."""
+    source_dataset = getattr(config, "dataset", None)
+    hf_processor_path = getattr(source_dataset, "hf_processor_path", None)
+    if not isinstance(source_dataset, EnergonDatasetConfig) and (
+        not isinstance(hf_processor_path, str) or not hf_processor_path.strip()
+    ):
+        raise ValueError("energon requires a recipe using EnergonDatasetConfig or exposing dataset.hf_processor_path.")
+
+    train_config = getattr(config, "train", None)
+    micro_batch_size = getattr(train_config, "micro_batch_size", None)
+    if not isinstance(micro_batch_size, int) or micro_batch_size <= 0:
+        raise ValueError("energon requires a positive recipe train.micro_batch_size.")
+
+    num_workers = getattr(source_dataset, "num_workers", None)
+    if not isinstance(num_workers, int) or num_workers < 0:
+        raise ValueError("energon requires a non-negative recipe dataset.num_workers.")
+
+    if isinstance(source_dataset, EnergonDatasetConfig):
+        return replace(
+            source_dataset,
+            path=None,
+            seq_length=_resolve_seq_length(config),
+            micro_batch_size=micro_batch_size,
+            do_test=False,
+        )
+
+    return EnergonDatasetConfig(
+        path=None,
+        seq_length=_resolve_seq_length(config),
+        micro_batch_size=micro_batch_size,
+        num_workers=num_workers,
+        data_sharding=getattr(source_dataset, "data_sharding", True),
+        pin_memory=getattr(source_dataset, "pin_memory", True),
+        drop_last=getattr(source_dataset, "drop_last", True),
+        persistent_workers=getattr(source_dataset, "persistent_workers", True),
+        trust_remote_code=getattr(source_dataset, "trust_remote_code", None),
+        dataloader_save=getattr(source_dataset, "dataloader_save", None),
+        dataloader_load=getattr(source_dataset, "dataloader_load", None),
+        task_encoder=HFEnergonTaskEncoderConfig(
+            hf_processor_path=hf_processor_path,
+            trust_remote_code=getattr(source_dataset, "trust_remote_code", None),
+        ),
+        do_validation=getattr(source_dataset, "do_validation", True),
+        do_test=False,
+        enable_in_batch_packing=getattr(source_dataset, "enable_in_batch_packing", False),
+        defer_in_batch_packing_to_step=getattr(source_dataset, "defer_in_batch_packing_to_step", False),
+        pad_to_max_length=getattr(source_dataset, "pad_to_max_length", False),
+        pad_to_multiple_of=getattr(source_dataset, "pad_to_multiple_of", 128),
+        in_batch_packing_pad_to_multiple_of=getattr(
+            source_dataset,
+            "in_batch_packing_pad_to_multiple_of",
+            1,
+        ),
     )
 
 
@@ -480,6 +541,7 @@ def _hf_vlm_dataset_config(
 DATASET_PRESETS: dict[str, DatasetPreset] = {
     "mock": _mock_dataset_config,
     "megatron-indexed": _megatron_indexed_dataset_config,
+    "energon": _energon_dataset_config,
     "squad": _squad_dataset_config,
     "tulu3": _tulu3_dataset_config,
     "openmathinstruct2": _openmathinstruct2_dataset_config,
@@ -538,6 +600,8 @@ def build_dataset_config(config: ConfigContainer, dataset_name: str) -> PublicDa
     return preset(config)
 
 
-def dataset_train_mode(dataset_config: PublicDatasetConfig) -> Literal["pretrain", "finetune"]:
-    """Return the training loop required by a built dataset config."""
+def dataset_train_mode(dataset_config: PublicDatasetConfig) -> Literal["pretrain", "finetune"] | None:
+    """Return the required training loop, or ``None`` for mode-agnostic data."""
+    if isinstance(dataset_config, EnergonDatasetConfig):
+        return None
     return "pretrain" if isinstance(dataset_config, GPTDatasetConfig) else "finetune"

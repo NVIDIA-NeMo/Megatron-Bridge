@@ -12,9 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from unittest.mock import Mock, patch
 
+import pytest
+import torch
+
+from megatron.bridge.models import gpt_provider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.instantiate_utils import instantiate
 
 
 class TestGPTModelProvider:
@@ -43,6 +50,56 @@ class TestGPTModelProvider:
         assert provider.rotary_percent == 1.0
         assert provider.seq_length == 1024
         assert provider.mtp_enabled is False
+        assert provider.logit_dtype is None
+
+    @pytest.mark.skipif(
+        "logit_dtype" not in inspect.signature(gpt_provider.MCoreGPTModel).parameters,
+        reason="Installed MCore predates logit_dtype",
+    )
+    def test_provide_propagates_requested_logit_dtype(self):
+        """Test the requested output-logit dtype reaches MCore."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            vocab_size=1000,
+            logit_dtype=torch.float32,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+
+        with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel", autospec=True) as mock_model:
+            provider.provide(pre_process=True, post_process=True)
+
+        assert mock_model.call_args.kwargs["logit_dtype"] is torch.float32
+
+    @pytest.mark.skipif(
+        "logit_dtype" in inspect.signature(gpt_provider.MCoreGPTModel).parameters,
+        reason="Installed MCore supports logit_dtype",
+    )
+    def test_requested_logit_dtype_fails_clearly_on_old_mcore(self):
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            vocab_size=1000,
+            logit_dtype=torch.float32,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+
+        with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
+            provider.provide(pre_process=True, post_process=True)
+
+    def test_logit_dtype_survives_provider_serialization(self):
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            logit_dtype=torch.float32,
+        )
+
+        restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+
+        assert restored.logit_dtype is torch.float32
 
     def test_gpt_model_provider_with_rope(self):
         """Test GPTModelProvider with RoPE embeddings."""
@@ -83,6 +140,7 @@ class TestGPTModelProvider:
 
                 assert result == mock_instance
                 mock_model.assert_called_once()
+                assert "logit_dtype" not in mock_model.call_args.kwargs
 
     def test_provide_method_with_vocab_padding(self):
         """Test provide method calculates padded vocab size when padding is enabled."""

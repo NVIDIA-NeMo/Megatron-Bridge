@@ -210,6 +210,15 @@ class TestParseRawArgs:
         assert args["num-layers"] == 32
         assert args["swiglu"] is True
 
+    def test_hybrid_spec_and_repeated_mtp(self):
+        """Hybrid spec pairs and repeated-MTP flags retain their MLM CLI shape."""
+        args, _ = parse_raw_args(
+            "--spec megatron.core.models.mamba.mamba_layer_specs mamba_stack_spec --mtp-use-repeated-layer"
+        )
+
+        assert args["spec"] == ["megatron.core.models.mamba.mamba_layer_specs", "mamba_stack_spec"]
+        assert args["mtp-use-repeated-layer"] is True
+
     def test_float_value(self):
         """Float value parsed correctly."""
         args, _ = parse_raw_args("--lr 3e-4")
@@ -557,6 +566,135 @@ class TestTranslateSequenceParallelNote:
         assert len(sp_notes) == 0
 
 
+class TestTranslateHybrid:
+    """Tests for MLM Hybrid/Mamba and repeated-MTP configuration."""
+
+    def test_maps_hybrid_mamba_and_repeated_mtp_fields(self):
+        """Weight-bearing Hybrid fields translate without becoming unknown args."""
+        args = {
+            "hybrid-override-pattern": "M*M*",
+            "mamba-state-dim": 128,
+            "mamba-head-dim": 64,
+            "mamba-num-groups": 8,
+            "mamba-num-heads": 64,
+            "mtp-num-layers": 2,
+            "mtp-hybrid-override-pattern": "*E",
+            "mtp-use-repeated-layer": True,
+            "spec": ["megatron.core.models.mamba.mamba_layer_specs", "mamba_stack_spec"],
+            "tokenizer-type": "SFTTokenizer",
+            "sft-tokenizer-prompt-format": "nemotron-h-aligned",
+        }
+
+        result = translate(args)
+
+        assert result.uses_hybrid is True
+        assert result.overrides["model.hybrid_layer_pattern"] == "M*M*"
+        assert result.overrides["model.mamba_state_dim"] == 128
+        assert result.overrides["model.mamba_head_dim"] == 64
+        assert result.overrides["model.mamba_num_groups"] == 8
+        assert result.overrides["model.mamba_num_heads"] == 64
+        assert result.overrides["model.mtp_num_layers"] == 2
+        assert result.overrides["model.mtp_hybrid_override_pattern"] == "*E"
+        assert result.overrides["model.mtp_use_repeated_layer"] is True
+        assert result.overrides["tokenizer.tokenizer_prompt_format"] == "nemotron-h-aligned"
+        assert not result.unknown
+        assert ("spec", args["spec"]) in result.skipped
+
+    def test_recipe_uses_hybrid_provider_and_preserves_tokenizer_prompt_format(self):
+        """Standalone recipe output selects the Hybrid provider and keeps tokenizer config."""
+        result = translate(
+            {
+                "hybrid-layer-pattern": "M*M*/*E",
+                "mtp-num-layers": 1,
+                "tokenizer-type": "SFTTokenizer",
+                "sft-tokenizer-prompt-format": "nemotron-h-aligned",
+            }
+        )
+
+        output = emit_recipe(result, recipe_name="hybrid_model")
+
+        compile(output, "<generated-hybrid-recipe>", "exec")
+        assert "from megatron.bridge.models.hybrid import HybridModelProvider" in output
+        assert "def model_config(" in output
+        assert ") -> HybridModelProvider:" in output
+        assert "hybrid_layer_pattern='M*M*/*E'" in output
+        assert "tokenizer_prompt_format='nemotron-h-aligned'" in output
+
+    def test_unified_hybrid_pattern_takes_precedence_over_legacy_mtp_pattern(self):
+        """A unified pattern keeps MLM precedence over the deprecated MTP field."""
+        result = translate(
+            {
+                "hybrid-layer-pattern": "M*M*/EE/EE",
+                "mtp-num-layers": 2,
+                "mtp-hybrid-override-pattern": "*E",
+            }
+        )
+
+        output = emit_recipe(result, recipe_name="hybrid_model")
+
+        assert result.overrides["model.hybrid_layer_pattern"] == "M*M*/EE/EE"
+        assert "model.mtp_hybrid_override_pattern" not in result.overrides
+        assert ("mtp-hybrid-override-pattern", "*E") in result.skipped
+        assert any("already contains unified MTP sections" in note for note in result.notes)
+        assert "hybrid_layer_pattern='M*M*/EE/EE'" in output
+        assert "mtp_hybrid_override_pattern" not in output
+
+    def test_sft_default_does_not_override_multimodal_prompt_format(self):
+        """The globally present MLM SFT default is ignored for non-SFT tokenizers."""
+        result = translate(
+            {
+                "tokenizer-type": "MultimodalTokenizer",
+                "sft-tokenizer-prompt-format": "nemotron-h-aligned",
+            }
+        )
+
+        assert "tokenizer.tokenizer_prompt_format" not in result.overrides
+        assert ("sft-tokenizer-prompt-format", "nemotron-h-aligned") in result.skipped
+
+    def test_rejects_ambiguous_hybrid_recipe_inputs(self):
+        """Hybrid recipes fail when their architecture cannot be reconstructed safely."""
+        with pytest.raises(ValueError, match="cannot both be specified"):
+            translate(
+                {
+                    "hybrid-layer-pattern": "M*M*/EE",
+                    "hybrid-override-pattern": "MMMM",
+                }
+            )
+
+        result = translate(
+            {
+                "num-layers": 4,
+                "spec": ["megatron.core.models.mamba.mamba_layer_specs", "mamba_stack_spec"],
+            }
+        )
+
+        with pytest.raises(ValueError, match="Cannot emit a standalone Hybrid recipe"):
+            emit_recipe(result, recipe_name="hybrid_model")
+
+    def test_recipe_preserves_expert_tensor_parallelism_and_seed(self):
+        """Standalone recipes retain translated ETP and RNG settings."""
+        result = translate(
+            {
+                "num-experts": 8,
+                "expert-model-parallel-size": 2,
+                "expert-tensor-parallel-size": 4,
+                "seed": 5678,
+            }
+        )
+
+        output = emit_recipe(result, recipe_name="moe_model")
+
+        compile(output, "<generated-moe-recipe>", "exec")
+        assert "expert_tensor_parallelism: int = 4" in output
+        assert "expert_tensor_parallel_size=expert_tensor_parallelism" in output
+        assert "random_seed=5678" in output
+        assert "rng=RNGConfig(seed=5678)" in output
+        spec = ["megatron.core.models.mamba.mamba_layer_specs", "mamba_stack_spec"]
+        overrides = emit_overrides(translate({"spec": spec}))
+
+        assert f"#   --spec {spec}" in overrides
+
+
 # ===========================================================================
 #  Group 5 — _format_value_for_override
 # ===========================================================================
@@ -853,6 +991,35 @@ class TestTranslateBridgeToMlmBridgeOnlyKeys:
         r = translate_bridge_to_mlm({"model._target_": "some.class"})
         skipped_keys = [k for k, _ in r.skipped]
         assert "model._target_" in skipped_keys
+
+
+class TestTranslateBridgeToMlmTokenizerPromptFormat:
+    """Tests for the tokenizer-type-aware SFT prompt-format reverse mapping."""
+
+    def test_sft_prompt_format_maps_to_sft_flag(self):
+        """SFT tokenizers use MLM's dedicated SFT prompt flag."""
+        result = translate_bridge_to_mlm(
+            {
+                "tokenizer.tokenizer_type": "SFTTokenizer",
+                "tokenizer.tokenizer_prompt_format": "nemotron-h-aligned",
+            }
+        )
+
+        assert result.mlm_args["tokenizer-type"] == "SFTTokenizer"
+        assert result.mlm_args["sft-tokenizer-prompt-format"] == "nemotron-h-aligned"
+
+    def test_multimodal_prompt_format_does_not_map_to_sft_flag(self):
+        """The shared Bridge field does not become an SFT flag for multimodal tokenizers."""
+        result = translate_bridge_to_mlm(
+            {
+                "tokenizer.tokenizer_type": "MultimodalTokenizer",
+                "tokenizer.tokenizer_prompt_format": "nemotron-vl",
+            }
+        )
+
+        assert result.mlm_args["tokenizer-type"] == "MultimodalTokenizer"
+        assert "sft-tokenizer-prompt-format" not in result.mlm_args
+        assert ("tokenizer.tokenizer_prompt_format", "nemotron-vl") in result.skipped
 
 
 # ===========================================================================

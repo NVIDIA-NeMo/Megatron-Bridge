@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Qwen2.5-VL models
+# Qwen3.5/Qwen3.6-VL GB200 models
+from .gb200.qwen35_vl import (
+    qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config,
+    qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config,
+)
+
 # Qwen3-VL models
 from .qwen3_vl import (
     qwen3_vl_8b_peft_config,
@@ -26,6 +31,8 @@ from .qwen3_vl import (
     qwen3_vl_235b_a22b_pretrain_mock_config,
     qwen3_vl_235b_a22b_sft_config,
 )
+
+# Qwen2.5-VL models
 from .qwen25_vl import (
     qwen25_vl_3b_peft_config,
     qwen25_vl_3b_sft_config,
@@ -77,6 +84,7 @@ __all__ = [
     "qwen35_vl_27b_sft_config",
     # Qwen3.5-VL SFT configs — MoE
     "qwen35_vl_35b_a3b_sft_config",
+    "qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config",
     "qwen35_vl_35b_a3b_fsdp_sft_config",
     "qwen35_vl_122b_a10b_sft_config",
     "qwen35_vl_397b_a17b_sft_config",
@@ -88,6 +96,7 @@ __all__ = [
     "qwen35_vl_27b_peft_config",
     # Qwen3.5-VL PEFT configs — MoE
     "qwen35_vl_35b_a3b_peft_config",
+    "qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config",
     "qwen35_vl_122b_a10b_peft_config",
     "qwen35_vl_397b_a17b_peft_config",
     # Qwen2.5-VL SFT configs

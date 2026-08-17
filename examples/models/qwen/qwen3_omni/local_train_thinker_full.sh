@@ -255,6 +255,12 @@ PY
 
 mkdir -p "${THINKER_ONLY_MIRROR_DIR}"
 EFFECTIVE_HF_MODEL_PATH=$(prepare_thinker_only_hf_path "${HF_MODEL_PATH}" "${THINKER_ONLY_MIRROR_DIR}" "${PYTHON_BIN}")
+# Recipe construction calls AutoBridge before CLI overrides are applied.  Point
+# it at the local thinker-only mirror so all ranks avoid Hub access and its
+# shared config lock.
+export QWEN3_OMNI_HF_PATH="${EFFECTIVE_HF_MODEL_PATH}"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 
 CMD=(
     "${PYTHON_BIN}" -m torch.distributed.run

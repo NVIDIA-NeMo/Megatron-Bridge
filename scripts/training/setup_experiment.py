@@ -199,9 +199,11 @@ def _validate_args(
     if benchmark_metadata is not None:
         requested_gpus = args.nodes * args.gpus_per_node
         if requested_gpus != benchmark_metadata.num_gpus:
-            raise ValueError(
-                f"Benchmark recipe requires exactly {benchmark_metadata.num_gpus} GPUs, but --nodes and "
-                f"--gpus-per-node request {requested_gpus}."
+            logger.info(
+                "Weak scaling benchmark recipe '%s' from %d to %d GPUs.",
+                benchmark_metadata.recipe_name,
+                benchmark_metadata.num_gpus,
+                requested_gpus,
             )
 
 
@@ -270,8 +272,6 @@ def _build_executor(
         partition=args.partition,
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
-        mem="0",
-        exclusive=True,
         time=args.time,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),

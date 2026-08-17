@@ -162,6 +162,24 @@ def test_save_generator_recomputes_index_total_size(tmp_path, monkeypatch, distr
     assert index_data["metadata"] == {"format": "pt", "total_size": expected_total_size}
 
 
+@pytest.mark.parametrize("distributed_save", [False, True])
+def test_save_generator_materializes_noncontiguous_tensors(tmp_path, monkeypatch, distributed_save: bool) -> None:
+    shard = "model-00001-of-00001.safetensors"
+    _write_safetensors_index(tmp_path, {"model.weight": shard})
+    source = SafeTensorsStateSource(tmp_path)
+    output_path = tmp_path / "output"
+    weight = torch.arange(12, dtype=torch.float32).reshape(3, 4).transpose(0, 1)
+    assert not weight.is_contiguous()
+
+    if distributed_save:
+        _mock_single_rank_distributed(monkeypatch)
+
+    source.save_generator(iter([("model.weight", weight)]), output_path, distributed_save=distributed_save)
+
+    with safe_open(output_path / shard, framework="pt", device="cpu") as saved:
+        torch.testing.assert_close(saved.get_tensor("model.weight"), weight)
+
+
 def test_save_generator_writes_shard_as_soon_as_its_remaining_keys_arrive(tmp_path, monkeypatch) -> None:
     class _SubsetForbiddenSet(set[str]):
         def issubset(self, _other: Iterable[object]) -> bool:

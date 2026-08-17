@@ -9,6 +9,17 @@ dynamic-resolution RADIO vision tower and a Parakeet sound encoder.
 |---|---|---|
 | Nemotron-3-Nano-Omni-30B-A3B-Reasoning | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16` | MoE hybrid LM (Mamba+attn) + RADIO vision + Parakeet audio |
 
+AutoBridge, all shipped recipes, Direct-HF collation, Energon collation, and
+the inference examples use the canonical processor-expanded
+`NemotronOmniModel` path. The collator owns dense padding and complete MCore
+THD packing; the model only inserts media embeddings and applies CP/SP
+sharding.
+
+The historical `NemotronOmniLlavaModel`, `NemotronOmniLlavaModelProvider`,
+`NemotronOmniLlavaBridge`, and `nemotron_omni_llava_collate_fn` collapse/expand
+path remains available only for compatible legacy checkpoints and is
+deprecated. Selecting it emits a `FutureWarning`.
+
 > **Verified hardware:** all conversion, inference, and training flows in
 > this directory have been verified on **NVIDIA H100 80GB** nodes with 8
 > GPUs per node. Other GPU SKUs may work but have not been tested.
@@ -192,10 +203,19 @@ All training scripts use the Nemotron-3-Nano-Omni-30B-A3B-Reasoning
 pretrained checkpoint and enable in-batch sequence packing via
 `dataset.enable_in_batch_packing=True`. Default GPU layout per script:
 
-For the canonical expanded-sequence image path, the collator owns THD packing.
-The model receives the final packed tensors and global boundaries, inserts
-image embeddings without changing sequence length, and then selects its
-rank-local context-parallel shard.
+The canonical expanded-sequence collator owns THD packing for text, image,
+video, and audio rows. The model receives the final packed tensors and global
+boundaries, inserts media without changing sequence length, and applies only
+the rank-local CP/SP shard. Alignment gaps are carried as a padding mask for
+media validation and consistent CP/SP localization, but the mask is not
+forwarded into MCore until
+[Megatron-LM #6111](https://github.com/NVIDIA/Megatron-LM/issues/6111) is fixed.
+The gaps remain loss-masked but currently count toward MoE routing statistics.
+
+Compact variable-length packs do not yet restore the original per-row batch
+dimension for `seq_aux_loss`; that requires follow-up boundary-aware
+unflattening in Megatron-Core. Attention and Mamba sequence boundaries remain
+per row in the current implementation.
 
 - **Full SFT** — 2 nodes / 16 GPUs (full optimizer state for ~33 B params)
 - **LoRA PEFT** — 1 node / 8 GPUs

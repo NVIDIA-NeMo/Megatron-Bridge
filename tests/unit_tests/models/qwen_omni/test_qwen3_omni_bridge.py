@@ -41,7 +41,12 @@ def mock_text_config():
     text_config.max_position_embeddings = 32768
     text_config.rope_theta = 1000000.0
     text_config.attention_bias = False
-    text_config.rope_scaling = {"mrope_section": [24, 20, 20]}
+    text_config.rope_scaling = {
+        "rope_type": "default",
+        "interleaved": True,
+        "mrope_interleaved": True,
+        "mrope_section": [24, 20, 20],
+    }
     return text_config
 
 
@@ -104,6 +109,7 @@ class TestQwen3OmniBridge:
         assert provider.moe_router_topk == 8
         assert provider.share_embeddings_and_output_weights is False
         assert provider.mrope_section == [24, 20, 20]
+        assert provider.rotary_interleaved is False
         assert provider.language_max_sequence_length == 32768
         assert provider.patch_size == 32
         assert provider.temporal_patch_size == 4
@@ -144,6 +150,56 @@ class TestQwen3OmniBridge:
             for name in mapping_names
         )
         assert any("thinker.language_model.decoder.layers.*.mlp.router.weight" in name for name in mapping_names)
+
+    def test_mapping_registry_resolves_parallel_parameter_names(self):
+        bridge = Qwen3OmniBridge()
+        registry = bridge.mapping_registry()
+
+        expected = {
+            "thinker.language_model.decoder.layers.0.self_attention.linear_qkv.weight": {
+                "q": "thinker.model.layers.0.self_attn.q_proj.weight",
+                "k": "thinker.model.layers.0.self_attn.k_proj.weight",
+                "v": "thinker.model.layers.0.self_attn.v_proj.weight",
+            },
+            "thinker.language_model.decoder.layers.0.self_attention.linear_qkv.layer_norm_weight": (
+                "thinker.model.layers.0.input_layernorm.weight"
+            ),
+            "thinker.language_model.decoder.layers.0.input_layernorm.weight": (
+                "thinker.model.layers.0.input_layernorm.weight"
+            ),
+            "thinker.language_model.decoder.layers.0.pre_mlp_layernorm.weight": (
+                "thinker.model.layers.0.post_attention_layernorm.weight"
+            ),
+            "thinker.language_model.decoder.layers.0.self_attention.q_layernorm.weight": (
+                "thinker.model.layers.0.self_attn.q_norm.weight"
+            ),
+            "thinker.language_model.decoder.layers.0.self_attention.k_layernorm.weight": (
+                "thinker.model.layers.0.self_attn.k_norm.weight"
+            ),
+            "thinker.language_model.decoder.layers.0.self_attention.linear_proj.weight": (
+                "thinker.model.layers.0.self_attn.o_proj.weight"
+            ),
+            "thinker.language_model.decoder.layers.0.mlp.router.weight": "thinker.model.layers.0.mlp.gate.weight",
+            "thinker.language_model.decoder.layers.0.mlp.experts.linear_fc1.weight7": {
+                "gate": "thinker.model.layers.0.mlp.experts.7.gate_proj.weight",
+                "up": "thinker.model.layers.0.mlp.experts.7.up_proj.weight",
+            },
+            "thinker.language_model.decoder.layers.0.mlp.experts.linear_fc2.weight7": (
+                "thinker.model.layers.0.mlp.experts.7.down_proj.weight"
+            ),
+            "thinker.language_model.decoder.layers.0.mlp.experts.local_experts.7.linear_fc1.weight": {
+                "gate": "thinker.model.layers.0.mlp.experts.7.gate_proj.weight",
+                "up": "thinker.model.layers.0.mlp.experts.7.up_proj.weight",
+            },
+            "thinker.language_model.decoder.layers.0.mlp.experts.local_experts.7.linear_fc2.weight": (
+                "thinker.model.layers.0.mlp.experts.7.down_proj.weight"
+            ),
+        }
+
+        for megatron_param, hf_param in expected.items():
+            mapping = registry.megatron_to_hf_lookup(megatron_param)
+            assert mapping is not None, megatron_param
+            assert mapping.hf_param == hf_param
 
     def test_provider_bridge_warns_for_audio_output_stack(self, mock_hf_pretrained, caplog):
         mock_hf_pretrained.config.enable_audio_output = True

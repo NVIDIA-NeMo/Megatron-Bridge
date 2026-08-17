@@ -20,11 +20,36 @@ from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
 from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo
+from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
 from megatron.bridge.training.megatron_mimo_parallel_utils import unwrap_megatron_mimo_model
 from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_step_packing(dataset_cfg: object) -> bool:
+    """Resolve MegatronMIMO in-batch sequence packing from the dataset config.
+
+    MegatronMIMO packs in the step, after the module-DP slice, so collate-time packing
+    must be deferred (inverse of the ``vlm_step`` guard).
+
+    Args:
+        dataset_cfg: The ``ConfigContainer.dataset`` entry.
+
+    Returns:
+        Whether step-time packing is enabled.
+
+    Raises:
+        ValueError: If packing is enabled without step deferral.
+    """
+    if not bool(getattr(dataset_cfg, "enable_in_batch_packing", False)):
+        return False
+    if not bool(getattr(dataset_cfg, "defer_in_batch_packing_to_step", False)):
+        raise ValueError(
+            "megatron_mimo_step requires step-time in-batch packing; set defer_in_batch_packing_to_step=True"
+        )
+    return True
 
 
 def _get_module_dp_info(
@@ -171,6 +196,9 @@ def forward_step(
             modality_modules = megatron_mimo_model.role.modality_module_names
             needs_data = any(megatron_mimo_model.role.is_first_stage(mod) for mod in modality_modules)
 
+    # MegatronMIMO in-batch sequence packing, read from the dataset config (absent -> off).
+    pack_sequences_enabled = resolve_step_packing(state.cfg.dataset)
+
     if needs_data:
         data_batch = get_batch(data_iterator)
         if data_batch is None:
@@ -194,13 +222,56 @@ def forward_step(
             data_batch["modality_inputs"] = None
         dp_rank, dp_size = _get_module_dp_info(megatron_mimo_model)
         data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
+        pack_lengths = None
         if megatron_mimo_model.role is not None and megatron_mimo_model.role.has_language_module:
+            # Lengths come from the batch's attention_mask; it must cover modality placeholder tokens.
+            if pack_sequences_enabled:
+                mask = data_batch.get("attention_mask")
+                if not isinstance(mask, torch.Tensor) or mask.dim() != 2:
+                    raise ValueError(
+                        "MegatronMIMO in-batch packing requires the batch to carry a [batch, seq] "
+                        "attention_mask on every language stage"
+                    )
+                ref = next(
+                    (
+                        t
+                        for t in (
+                            data_batch.get("input_ids"),
+                            data_batch.get("labels"),
+                            data_batch.get("loss_mask"),
+                            data_batch.get("position_ids"),
+                        )
+                        if isinstance(t, torch.Tensor)
+                    ),
+                    None,
+                )
+                if ref is not None and mask.size(-1) != ref.size(-1):
+                    raise ValueError(
+                        f"attention_mask width ({mask.size(-1)}) does not match the batch width "
+                        f"({ref.size(-1)}); lengths derived from it would corrupt the pack"
+                    )
+                pack_lengths = mask.to(torch.bool).sum(dim=1).to(torch.long)
             if not is_language_first_stage:
                 data_batch["input_ids"] = None
                 data_batch["modality_inputs"] = None
             if not is_language_last_stage:
                 data_batch["labels"] = None
                 data_batch["loss_mask"] = None
+        # Sequence packing: pack this language shard's real tokens into a single [1, T]
+        # packed sequence (THD layout) so the LM skips padding compute and attention is
+        # block-diagonal via cu_seqlens. The MIMO modality splice fills image-placeholder tokens
+        # in order, so vision embeddings (via bridge) still align. Fires on ALL language stages:
+        # the first stage packs input_ids, intermediate/last stages pack labels/loss_mask to the
+        # SAME [1, T] using the caller-supplied lengths (from the batch's attention_mask), so
+        # packed-logits and label shapes match under PP>1.
+        if (
+            pack_sequences_enabled
+            and megatron_mimo_model.role is not None
+            and megatron_mimo_model.role.has_language_module
+        ):
+            data_batch, packing_kwargs = pack_language_shard(data_batch, lengths=pack_lengths)
+            if packing_kwargs is not None:
+                data_batch["packing_kwargs"] = packing_kwargs
     else:
         # Non-data stages consume hidden states from pipeline input tensors.
         data_batch = {

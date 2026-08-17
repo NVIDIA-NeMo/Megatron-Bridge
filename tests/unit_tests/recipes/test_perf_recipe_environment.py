@@ -72,6 +72,15 @@ def _function(path: Path, function_name: str) -> ast.FunctionDef:
 def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
     """Read the literal env mapping written in a flat recipe builder."""
     function = _function(path, function_name)
+    local_constants = {
+        node.targets[0].id: node.value.value
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, (str, int, float, bool))
+    }
     assignments = [
         node
         for node in function.body
@@ -93,7 +102,12 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
             assert isinstance(value, ast.Name) and value.id == "COMMON_PERF_ENV_VARS"
             common_expansions += 1
             continue
-        result[ast.literal_eval(key)] = ast.literal_eval(value)
+        if isinstance(value, ast.Name):
+            assert value.id in local_constants
+            env_value = local_constants[value.id]
+        else:
+            env_value = ast.literal_eval(value)
+        result[ast.literal_eval(key)] = env_value
     assert common_expansions == 1
     return result
 

@@ -167,6 +167,7 @@ def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.pipeline_model_parallel_layout = "Et*2|(t*2|)*34,t*3|(t*2|)*3,tL"
     cfg.model.sequence_parallel = True
     cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1

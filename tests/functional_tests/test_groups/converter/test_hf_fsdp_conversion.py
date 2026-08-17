@@ -101,9 +101,8 @@ class TestHFFSDPConversion:
     @pytest.mark.parametrize(
         "tp,ep,nproc,test_name",
         [
-            # CI only covers TP=1 cases. TP>1 cases depend on Megatron-LM commit
-            # 8cbc45b6e (PR#3191, merged 2026-04-07).
             (1, 1, 1, "FSDP_base"),
+            (2, 1, 2, "FSDP_TP2"),
         ],
     )
     def test_hf_fsdp_roundtrip(self, qwen3_moe_toy_model_path, tmp_path, tp, ep, nproc, test_name):

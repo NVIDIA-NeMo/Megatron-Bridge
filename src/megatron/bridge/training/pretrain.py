@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
@@ -196,9 +197,19 @@ def _pretrain(
             )
 
         _finish_train(state, checkpoint_manager)
-    except BaseException:
+    except BaseException as error:
         if inprocess_call_wrapper is None:
-            _cleanup_after_pretrain_failure(state, should_destroy_process_group)
+            logger.exception(
+                "Pretrain failed on rank=%s with %s: %s. Bridge is aborting framework-owned distributed resources "
+                "because peer ranks may be blocked in collectives.",
+                _safe_distributed_rank(),
+                type(error).__name__,
+                error,
+            )
+            try:
+                _cleanup_after_pretrain_failure(state, should_destroy_process_group)
+            except BaseException:
+                logger.exception("Unexpected failure while cleaning up after pretrain failure")
         raise
 
     _maybe_destroy_process_group(should_destroy_process_group)
@@ -222,6 +233,16 @@ def _abort_async_checkpoint_worker(state: GlobalState) -> None:
                 filesystem_async._results_queue = None
 
 
+def _safe_distributed_rank() -> str:
+    """Return a rank identifier without obscuring an active training failure."""
+    try:
+        if dist.is_initialized():
+            return str(dist.get_rank())
+    except Exception:
+        pass
+    return os.environ.get("RANK", "unknown")
+
+
 def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_group: bool) -> None:
     """Clean up framework-owned state after ordinary pretrain execution fails."""
     try:
@@ -235,19 +256,31 @@ def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_g
         logger.exception("Failed to destroy Megatron global state after pretrain failure")
 
     try:
-        _maybe_destroy_process_group(should_destroy_process_group, synchronize=False)
+        _maybe_destroy_process_group(should_destroy_process_group, synchronize=False, abort=True)
     except Exception:
-        logger.exception("Failed to destroy the process group after pretrain failure")
+        logger.exception("Failed to abort process groups after pretrain failure")
 
 
-def _maybe_destroy_process_group(should_destroy: bool, *, synchronize: bool = True) -> None:
-    """Destroy the process group if it was created by this training session.
+def _maybe_destroy_process_group(
+    should_destroy: bool,
+    *,
+    synchronize: bool = True,
+    abort: bool = False,
+) -> None:
+    """Destroy or abort process groups created by this training session.
 
     Args:
         should_destroy: Whether the process group should be destroyed
         synchronize: Whether to synchronize ranks before destruction
+        abort: Whether to abort all process groups instead of waiting for their
+            outstanding work to finish
     """
     if should_destroy and dist.is_initialized():
+        if abort:
+            # Orderly shutdown waits for outstanding collectives, but failure
+            # cleanup may run while peer ranks are still blocked in those calls.
+            dist.distributed_c10d._abort_process_group()
+            return
         if synchronize:
             dist.barrier()
         dist.destroy_process_group()

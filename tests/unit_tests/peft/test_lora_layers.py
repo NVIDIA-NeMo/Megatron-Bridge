@@ -19,7 +19,6 @@ Tests LoRA adapters and linear adapter functionality for Parameter-Efficient Fin
 """
 
 import os
-from copy import deepcopy
 from types import SimpleNamespace
 
 import megatron.core.parallel_state as parallel_state
@@ -203,7 +202,7 @@ class TestLoRALinear:
 
 
 class TestLinearAdapter:
-    """Test the LinearAdapter class."""
+    """Test the LinearAdapter class (delta-only LoRA adapter)."""
 
     @pytest.fixture
     def original_linear(self):
@@ -222,12 +221,12 @@ class TestLinearAdapter:
         return linear
 
     def test_linear_adapter_init_with_bias(self, original_linear):
-        """Test LinearAdapter initialization with bias."""
+        """Test LinearAdapter initialization derives shape from the original linear."""
         adapter = LinearAdapter(original_linear, dim=8, alpha=16)
 
-        # Check that original weights are copied
-        assert torch.equal(adapter.weight, original_linear.weight)
-        assert torch.equal(adapter.bias, original_linear.bias)
+        # LinearAdapter is now delta-only: it must NOT copy the base weight/bias.
+        assert not hasattr(adapter, "weight")
+        assert not hasattr(adapter, "bias")
 
         # Check LoRA components exist
         assert hasattr(adapter, "linear_in")
@@ -245,11 +244,11 @@ class TestLinearAdapter:
         assert adapter.scale == 16 / 8  # alpha / dim
 
     def test_linear_adapter_init_no_bias(self, original_linear_no_bias):
-        """Test LinearAdapter initialization without bias."""
+        """Test LinearAdapter initialization without bias derives out_features correctly."""
         adapter = LinearAdapter(original_linear_no_bias, dim=4, alpha=8)
 
-        assert torch.equal(adapter.weight, original_linear_no_bias.weight)
-        assert adapter.bias is None
+        assert adapter.linear_in.in_features == 10
+        assert adapter.linear_out.out_features == 5
 
     def test_linear_adapter_linear_out_initialized_to_zero(self, original_linear):
         """Test that LoRA B matrix is initialized to zero."""
@@ -264,14 +263,6 @@ class TestLinearAdapter:
 
         # Should not be all zeros
         assert not torch.allclose(adapter.linear_in.weight, torch.zeros_like(adapter.linear_in.weight))
-
-    def test_linear_adapter_freezes_original_weights(self, original_linear):
-        """Test that original weights are frozen."""
-        adapter = LinearAdapter(original_linear)
-
-        assert not adapter.weight.requires_grad
-        if adapter.bias is not None:
-            assert not adapter.bias.requires_grad
 
     def test_linear_adapter_lora_weights_trainable(self, original_linear):
         """Test that LoRA weights are trainable."""
@@ -288,8 +279,8 @@ class TestLinearAdapter:
         assert adapter.dropout_position == dropout_position
         assert isinstance(adapter.dropout, nn.Dropout)
 
-    def test_linear_adapter_forward_basic(self, original_linear):
-        """Test LinearAdapter forward pass."""
+    def test_linear_adapter_forward_is_delta_only(self, original_linear):
+        """Test that LinearAdapter.forward returns only the scaled LoRA delta."""
         adapter = LinearAdapter(original_linear, dim=4)
         x = torch.randn(3, 10)
 
@@ -297,6 +288,12 @@ class TestLinearAdapter:
 
         assert output.shape == (3, 5)
         assert isinstance(output, torch.Tensor)
+
+        # The delta must equal scale * linear_out(linear_in(x)) with zero dropout in eval mode.
+        adapter.eval()
+        with torch.no_grad():
+            expected = adapter.scale * adapter.linear_out(adapter.linear_in(x))
+        assert torch.allclose(output, expected, atol=1e-6)
 
     def test_linear_adapter_forward_with_dropout(self, original_linear):
         """Test LinearAdapter forward with dropout."""
@@ -313,40 +310,107 @@ class TestLinearAdapter:
 
         assert output_train.shape == output_eval.shape == (3, 5)
 
-    def test_linear_adapter_state_dict_preservation(self, original_linear):
-        """Test that state dict keys are preserved as in NeMo tests."""
-        state_init = deepcopy(original_linear.state_dict())
+    def test_linear_adapter_state_dict_keys(self, original_linear):
+        """Test that LinearAdapter state dict only contains LoRA delta keys."""
         adapter = LinearAdapter(original_linear)
 
-        # Check if the original state-dict keys are preserved
-        for key, val in state_init.items():
-            assert key in adapter.state_dict(), f"Key {key} not found in LinearAdapter"
-            assert torch.equal(val, adapter.state_dict()[key]), f"Key {key} diff. val in LinearAdapter"
+        keys = set(adapter.state_dict().keys())
+        assert keys == {"linear_in.weight", "linear_out.weight"}
 
-        # Make sure the additional keys are in the allow list
-        for key, val in adapter.state_dict().items():
-            if key in state_init:
-                continue
-            assert key in ["linear_in.weight", "linear_out.weight"]
-
-    def test_linear_adapter_zero_output_initially(self, original_linear):
-        """Test that adapter produces zero output initially (LoRA B is zero)."""
-        # Create adapter with specific initialization
+    def test_linear_adapter_zero_delta_initially(self, original_linear):
+        """Test that the adapter delta is zero initially (LoRA B is zero)."""
         adapter = LinearAdapter(original_linear, dim=4)
         x = torch.randn(3, 10)
 
-        # Get original output
-        with torch.no_grad():
-            original_output = torch.nn.functional.linear(x, original_linear.weight, original_linear.bias)
-
-        # Get adapter output
         with torch.no_grad():
             adapter_output = adapter(x)
 
-        # Initially, LoRA should add approximately zero
-        # (not exactly zero due to random initialization of linear_in, but very small)
-        lora_contribution = adapter_output - original_output
-        assert torch.allclose(lora_contribution, torch.zeros_like(lora_contribution), atol=1e-2)
+        # Initially, LoRA B is zero, so the delta is exactly zero.
+        assert torch.allclose(adapter_output, torch.zeros_like(adapter_output), atol=1e-6)
+
+
+class TestLoRALinearWithPlainLinear:
+    """Test LoRALinear wrapping a plain nn.Linear (to_wrap/adapter pattern)."""
+
+    @pytest.fixture
+    def original_linear(self):
+        """Create an original linear layer."""
+        linear = nn.Linear(10, 5, bias=True)
+        nn.init.constant_(linear.weight, 1.0)
+        nn.init.constant_(linear.bias, 0.1)
+        return linear
+
+    def test_wrap_returns_tensor(self, original_linear):
+        """Wrapping a plain nn.Linear must return a bare tensor (drop-in for nn.Linear)."""
+        adapter = LinearAdapter(original_linear, dim=4, alpha=8)
+        wrapped = LoRALinear(original_linear, adapter)
+
+        x = torch.randn(3, 10)
+        out = wrapped(x)
+
+        assert isinstance(out, torch.Tensor)
+        assert out.shape == (3, 5)
+
+    def test_wrap_to_wrap_and_adapter(self, original_linear):
+        """LoRALinear exposes to_wrap and adapter submodules."""
+        adapter = LinearAdapter(original_linear, dim=4, alpha=8)
+        wrapped = LoRALinear(original_linear, adapter)
+
+        assert wrapped.to_wrap is original_linear
+        assert wrapped.adapter is adapter
+
+    def test_wrap_state_dict_uses_adapter_prefix(self, original_linear):
+        """State dict keeps base weight/bias flat and LoRA delta under adapter. prefix."""
+        adapter = LinearAdapter(original_linear, dim=4, alpha=8)
+        wrapped = LoRALinear(original_linear, adapter)
+
+        keys = set(wrapped.state_dict().keys())
+        assert "weight" in keys
+        assert "bias" in keys
+        assert "adapter.linear_in.weight" in keys
+        assert "adapter.linear_out.weight" in keys
+
+    def test_wrap_matches_base_at_init(self, original_linear):
+        """At init (LoRA B zero), wrapped output equals the base linear output."""
+        adapter = LinearAdapter(original_linear, dim=4, alpha=8)
+        wrapped = LoRALinear(original_linear, adapter)
+
+        x = torch.randn(3, 10)
+        with torch.no_grad():
+            base_output = torch.nn.functional.linear(x, original_linear.weight, original_linear.bias)
+            wrapped_output = wrapped(x)
+
+        assert torch.allclose(wrapped_output, base_output, atol=1e-6)
+
+    def test_wrap_adds_delta_when_enabled(self, original_linear):
+        """When adapter is enabled and B is nonzero, wrapped output = base + delta."""
+        adapter = LinearAdapter(original_linear, dim=4, alpha=8)
+        with torch.no_grad():
+            adapter.linear_out.weight.fill_(0.5)
+        wrapped = LoRALinear(original_linear, adapter)
+
+        x = torch.randn(3, 10)
+        with torch.no_grad():
+            base_output = torch.nn.functional.linear(x, original_linear.weight, original_linear.bias)
+            delta = adapter(x)
+            wrapped_output = wrapped(x)
+
+        assert torch.allclose(wrapped_output, base_output + delta, atol=1e-6)
+
+    def test_wrap_disable_returns_base(self, original_linear):
+        """Disabling the adapter makes the wrapper return only the base output."""
+        adapter = LinearAdapter(original_linear, dim=4, alpha=8)
+        with torch.no_grad():
+            adapter.linear_out.weight.fill_(0.5)
+        wrapped = LoRALinear(original_linear, adapter)
+        wrapped.disable_adapter_layers()
+
+        x = torch.randn(3, 10)
+        with torch.no_grad():
+            base_output = torch.nn.functional.linear(x, original_linear.weight, original_linear.bias)
+            wrapped_output = wrapped(x)
+
+        assert torch.allclose(wrapped_output, base_output, atol=1e-6)
 
 
 class TestTEFusedLoRALinear:
@@ -598,7 +662,7 @@ class TestLoRAUtilities:
         assert output1.shape == output2.shape == (3, 5)
 
     def test_linear_adapter_math_correctness(self):
-        """Test that LinearAdapter math is correct."""
+        """Test that LinearAdapter (delta-only) and its LoRALinear wrapper are correct."""
         linear = nn.Linear(10, 5, bias=False)
         nn.init.constant_(linear.weight, 1.0)
 
@@ -611,16 +675,21 @@ class TestLoRAUtilities:
 
         x = torch.ones(1, 10)
 
-        # Expected: original + lora_scale * linear_out(linear_in(x))
-        # original = x @ linear.weight.T = 1*10 @ 1_{5,10}.T = 10 * ones(1,5)
+        # Delta math (LinearAdapter.forward returns the scaled delta only):
         # linear_in(x) = x @ linear_in.weight.T = 1*10 @ 0.1_{2,10}.T = 1.0 * ones(1,2)
         # linear_out(linear_in(x)) = 1.0 @ 0.1_{5,2}.T = 0.2 * ones(1,5)
         # lora_scale = alpha/dim = 4/2 = 2
-        # final = 10 + 2 * 0.2 = 10.4
+        # delta = 2 * 0.2 = 0.4
+        delta = adapter(x)
+        expected_delta = torch.full((1, 5), 0.4)
+        assert torch.allclose(delta, expected_delta, atol=1e-6)
 
-        output = adapter(x)
+        # Combined via LoRALinear = base + delta
+        # original = x @ linear.weight.T = 1*10 @ 1_{5,10}.T = 10 * ones(1,5)
+        # final = 10 + 0.4 = 10.4
+        wrapped = LoRALinear(linear, adapter)
+        output = wrapped(x)
         expected = torch.full((1, 5), 10.4)
-
         assert torch.allclose(output, expected, atol=1e-6)
 
 

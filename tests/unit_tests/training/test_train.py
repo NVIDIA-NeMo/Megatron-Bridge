@@ -19,11 +19,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
+from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training.train import (
+    _delete_cuda_graphs,
     _dummy_train_step,
+    _finish_train,
     _handle_mxfp8_param_buffer_copy,
     _maybe_register_fsdp_buffers,
     _should_skip_and_handle_iteration,
@@ -35,11 +37,144 @@ from megatron.bridge.training.train import (
     maybe_synchronize_training_step,
     save_checkpoint_and_time,
     should_disable_forward_pre_hook,
+    train_step,
 )
 from megatron.bridge.training.utils.train_utils import maybe_inject_state
 
 
 pytestmark = pytest.mark.unit
+
+
+class TestTrainStepAttentionLogitMonitoring:
+    """Unit tests for max-attention-logit collection in a training step."""
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=1)
+    @patch("megatron.bridge.training.train.get_model_config")
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.clip_qk", return_value=12.5)
+    def test_log_max_attention_logit_without_qk_clipping(
+        self,
+        mock_clip_qk,
+        mock_get_rerun_state_machine,
+        mock_get_model_config,
+        _mock_get_num_microbatches,
+    ):
+        """The independent monitoring flag collects logits without modifying weights."""
+        model_config = SimpleNamespace(seq_length=8)
+        mock_get_model_config.return_value = model_config
+
+        rerun_state_machine = Mock()
+        rerun_state_machine.should_run_forward_backward.side_effect = [True, False]
+        rerun_state_machine.should_checkpoint_and_exit.return_value = (False, False, 0)
+        mock_get_rerun_state_machine.return_value = rerun_state_machine
+
+        global_state = SimpleNamespace(
+            cfg=SimpleNamespace(
+                data_parallel_size=1,
+                model=SimpleNamespace(
+                    seq_length=8,
+                    qk_clip=False,
+                    log_max_attention_logit=True,
+                ),
+                dataset=SimpleNamespace(dataloader_type="single"),
+                dist=SimpleNamespace(use_decentralized_pg=True),
+                ddp=SimpleNamespace(overlap_param_gather=False),
+                optimizer=SimpleNamespace(
+                    barrier_with_L1_time=False,
+                    log_num_zeros_in_grad=False,
+                    reuse_grad_buf_for_mxfp8_param_ag=False,
+                ),
+                train=SimpleNamespace(
+                    check_optimizer_step_success=False,
+                    empty_unused_memory_level=0,
+                    micro_batch_size=1,
+                    skip_sync_grad_norm_across_mp=True,
+                ),
+            ),
+            timers=Mock(),
+        )
+        model = [Mock()]
+        optimizer = Mock()
+        optimizer.step.return_value = (True, 1.0, 0)
+        scheduler = Mock()
+        forward_backward_func = Mock(return_value=[])
+        p2p_communicator = SimpleNamespace(is_pp_last_stage=False)
+        pg_collection = SimpleNamespace(mp=Mock())
+
+        result = train_step(
+            forward_step_func=Mock(),
+            data_iterator=None,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            global_state=global_state,
+            pg_collection=pg_collection,
+            forward_backward_func=forward_backward_func,
+            p2p_communicator=p2p_communicator,
+        )
+
+        mock_clip_qk.assert_called_once_with(model, log_max_only=True)
+        assert result[-1] == 12.5
+
+
+class TestCudaGraphCleanup:
+    """Unit tests for CUDA graph state cleanup."""
+
+    def test_finish_train_deletes_recaptured_validation_graph_before_global_teardown(self):
+        """Final cleanup must delete CUDA graphs captured by post-training validation."""
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+
+        validation_graph = Mock()
+        state = Mock()
+        state.wandb_logger = None
+        state._comet_logger = None
+        checkpoint_manager = Mock()
+
+        def assert_graph_deleted():
+            assert FullCudaGraphWrapper.cuda_graph["validation"] is None
+            assert FullCudaGraphWrapper.result["validation"] is None
+            assert FullCudaGraphWrapper.curr_iteration["validation"] == 0
+
+        with (
+            patch.object(FullCudaGraphWrapper, "cuda_graph", {"training": None, "validation": validation_graph}),
+            patch.object(FullCudaGraphWrapper, "result", {"training": None, "validation": object()}),
+            patch.object(FullCudaGraphWrapper, "curr_iteration", {"training": 0, "validation": 1}),
+            patch("megatron.bridge.training.train.safe_shutdown_nvrx_straggler_manager"),
+            patch("megatron.bridge.training.train.fault_tolerance"),
+            patch("megatron.bridge.training.train.destroy_global_state", side_effect=assert_graph_deleted),
+            patch("megatron.bridge.training.train.gc.collect"),
+        ):
+            _finish_train(state, checkpoint_manager)
+
+    @patch("megatron.bridge.training.train.gc.collect")
+    def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect):
+        """Cleanup must leave reusable full-graph mappings for the next training run."""
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+        from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
+
+        graph = Mock()
+        FullCudaGraphWrapper.cuda_graph = {"training": graph, "validation": Mock()}
+        FullCudaGraphWrapper.result = {"training": object(), "validation": object()}
+        FullCudaGraphWrapper.curr_iteration = {"training": 3, "validation": 2}
+        OptimizerCudaGraphWrapper.cuda_graph = Mock()
+        OptimizerCudaGraphWrapper.result = object()
+        OptimizerCudaGraphWrapper.curr_iteration = 3
+        helper = Mock()
+        helper.graphs_created.return_value = False
+
+        _delete_cuda_graphs(helper)
+
+        assert FullCudaGraphWrapper.cuda_graph["training"] is None
+        assert FullCudaGraphWrapper.result["training"] is None
+        assert FullCudaGraphWrapper.curr_iteration["training"] == 0
+        assert FullCudaGraphWrapper.cuda_graph["validation"] is None
+        assert FullCudaGraphWrapper.result["validation"] is None
+        assert FullCudaGraphWrapper.curr_iteration["validation"] == 0
+        assert OptimizerCudaGraphWrapper.cuda_graph is None
+        assert OptimizerCudaGraphWrapper.result is None
+        assert OptimizerCudaGraphWrapper.curr_iteration == 0
+        helper.delete_cuda_graphs.assert_not_called()
+        mock_collect.assert_called_once()
 
 
 class TestFSDPRegistration:
@@ -53,7 +188,7 @@ class TestFSDPRegistration:
         config.ddp.fsdp_manual_registration = True
 
         # Mock model chunk
-        model_chunk = Mock(spec=megatron_FSDP)
+        model_chunk = Mock(spec=MEGATRON_FSDP_TYPES[0])
         # Mock ddp_config on the chunk
         model_chunk.ddp_config = Mock()
         model_chunk.ddp_config.fsdp_manual_registration = True

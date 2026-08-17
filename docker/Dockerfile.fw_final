@@ -15,6 +15,9 @@
 ARG NEMO_FW_FINAL_BASE_IMAGE
 FROM ${NEMO_FW_FINAL_BASE_IMAGE} AS nemo_fw_final
 
+# The CI base image runs as UID 1000, while framework assembly writes to root-owned system paths.
+USER root
+
 WORKDIR /opt
 
 ##############################################################################

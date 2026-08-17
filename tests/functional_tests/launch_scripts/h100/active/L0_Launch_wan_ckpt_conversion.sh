@@ -15,14 +15,16 @@
 
 set -xeuo pipefail
 
+REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
+
 export CUDA_VISIBLE_DEVICES="0"
 
 TEST_FILE="tests/functional_tests/test_groups/diffusion/wan/test_wan_conversion.py"
 # Run all conversion tests in a single invocation so the class-scoped fixtures
 # (toy model creation, HF->Megatron import) are shared across tests.
 uv run coverage run \
-  --data-file=/opt/Megatron-Bridge/.coverage \
-  --source=/opt/Megatron-Bridge/ \
+  --data-file="${REPO_ROOT}/.coverage" \
+  --source="${REPO_ROOT}" \
   --parallel-mode \
   -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \

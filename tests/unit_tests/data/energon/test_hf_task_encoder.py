@@ -321,6 +321,30 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
         self.assertEqual(seen_kwargs["min_pixels"], 16)
         self.assertEqual(seen_kwargs["max_pixels"], 128)
 
+    def test_collate_fn_preserves_model_pixel_defaults_when_unset(self):
+        seen_kwargs = {}
+
+        def _collate(
+            examples,
+            processor,
+            *,
+            min_pixels=16,
+            max_pixels=128,
+            **kwargs,
+        ):
+            seen_kwargs.update(min_pixels=min_pixels, max_pixels=max_pixels)
+            return _make_collate_fn()(examples, processor, **kwargs)
+
+        encoder = HFTaskEncoder(
+            processor=self.processor,
+            seq_length=128,
+            collate_fn=_collate,
+        )
+
+        encoder.collate_fn([{"conversation": [{"role": "user", "content": "manual"}]}])
+
+        self.assertEqual(seen_kwargs, {"min_pixels": 16, "max_pixels": 128})
+
     def test_collate_fallback_rejects_oversized_batches(self):
         processor = _make_processor()
         encoder = HFTaskEncoder(

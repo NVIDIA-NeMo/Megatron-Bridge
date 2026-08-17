@@ -245,18 +245,22 @@ class TestKimiK25VLSftConfig:
         assert cfg.optimizer.optimizer == "dist_muon"
 
     def test_sft_config_moe_settings(self):
-        """MoE wiring: alltoall dispatcher, deepep flex backend, grouped GEMM on."""
+        """MoE wiring: HybridEP dispatcher with grouped GEMM enabled."""
         cfg = kimi_k25_vl_sft_config()
 
-        assert cfg.model.moe_token_dispatcher_type == "alltoall"
-        assert cfg.model.moe_flex_dispatcher_backend == "deepep"
-        assert cfg.model.moe_hybridep_num_sms == 16
+        assert cfg.model.moe_token_dispatcher_type == "flex"
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.model.moe_flex_dispatcher_num_sms == 16
+        assert cfg.model.moe_permute_fusion_into_hybridep is False
         assert cfg.model.moe_router_fusion is False
         assert cfg.model.moe_permute_fusion is True
         assert cfg.model.moe_grouped_gemm is True
         assert cfg.model.moe_router_padding_for_fp8 is False
         assert cfg.model.moe_shared_expert_overlap is True
         assert cfg.model.moe_router_force_load_balancing is False
+        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+        assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+        assert cfg.env_vars["USE_MNNVL"] == 0
 
     def test_sft_config_transformer_engine_and_cuda_graph(self):
         """TE backend with CUDA graphs disabled by default (warmup steps still set)."""

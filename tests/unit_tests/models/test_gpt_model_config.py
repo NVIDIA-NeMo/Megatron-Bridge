@@ -12,11 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
+from unittest.mock import Mock, patch
+
 import pytest
+import torch
 import torch.nn.functional as F
+from megatron.core.models.gpt import GPTModel
+from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
+from megatron.bridge.models.gpt.gpt_builder import GPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -108,3 +115,31 @@ def test_bridge_can_explicitly_disable_model_config() -> None:
 
     with pytest.raises(ModelConfigNotSupportedError, match="sets MODEL_CONFIG_CLASS to None"):
         UnsupportedBridge().hf_config_to_model_config(object())
+
+
+@pytest.mark.skipif(
+    "logit_dtype" not in inspect.signature(GPTModel).parameters,
+    reason="Installed MCore predates logit_dtype",
+)
+@patch("megatron.training.models.gpt.GPTModel")
+def test_requested_logit_dtype_reaches_new_mcore_builder(mock_model) -> None:
+    config = _make_model_config()
+    config.logit_dtype = torch.float32
+    config.transformer_layer_spec = ModuleSpec(module=object)
+    pg_collection = Mock()
+
+    GPTModelBuilder(config).build_model(pg_collection, pre_process=True, post_process=True)
+
+    assert mock_model.call_args.kwargs["logit_dtype"] is torch.float32
+
+
+@pytest.mark.skipif(
+    "logit_dtype" in inspect.signature(GPTModel).parameters,
+    reason="Installed MCore supports logit_dtype",
+)
+def test_requested_logit_dtype_fails_before_old_mcore_builder() -> None:
+    config = _make_model_config()
+    config.logit_dtype = torch.float32
+
+    with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
+        GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)

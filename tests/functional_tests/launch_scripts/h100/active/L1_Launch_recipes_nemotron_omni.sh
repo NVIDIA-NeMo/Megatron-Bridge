@@ -16,12 +16,14 @@
 
 set -xeuo pipefail
 
+REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
+
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export NEMOTRON_OMNI_PROCESSOR_MODEL="${NEMOTRON_OMNI_PROCESSOR_MODEL:-nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16}"
 
 uv run python -m torch.distributed.run --nproc_per_node=1 --nnodes=1 \
-  -m coverage run --data-file=/opt/Megatron-Bridge/.coverage \
-  --source=/opt/Megatron-Bridge/ --parallel-mode \
+  -m coverage run --data-file="${REPO_ROOT}/.coverage" \
+  --source="${REPO_ROOT}" --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x \
   -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/recipes/test_nemotron_omni_recipes_finetune.py -k "test_nemotron_omni_finetune_recipe"

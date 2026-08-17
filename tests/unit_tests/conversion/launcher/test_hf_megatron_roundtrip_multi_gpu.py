@@ -16,8 +16,10 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import torch
 
 
 pytestmark = pytest.mark.unit
@@ -95,3 +97,99 @@ def test_standalone_roundtrip_strict_export_is_opt_in(monkeypatch: pytest.Monkey
 
     with pytest.raises(SystemExit):
         module._build_parser().parse_args(["--strict", "--not-strict"])
+
+
+def test_standalone_roundtrip_defaults_to_distributed_export(monkeypatch: pytest.MonkeyPatch):
+    module = _load_roundtrip_module(monkeypatch)
+
+    default_args = module._build_parser().parse_args([])
+    serial_args = module._build_parser().parse_args(["--no-distributed-save"])
+
+    assert default_args.distributed_save is True
+    assert serial_args.distributed_save is False
+
+
+def test_weight_verification_broadcasts_rank_zero_mismatch(monkeypatch: pytest.MonkeyPatch):
+    module = _load_roundtrip_module(monkeypatch)
+    mismatch = SimpleNamespace(value=0, item=lambda: mismatch.value)
+    tensor_calls = []
+
+    def fake_tensor(value, *, dtype, device):
+        tensor_calls.append((value, dtype, device))
+        return mismatch
+
+    def fake_broadcast(value, *, src):
+        assert value is mismatch
+        assert src == 0
+        mismatch.value = 1
+
+    monkeypatch.setattr(module.torch, "tensor", fake_tensor)
+    monkeypatch.setattr(module.torch.cuda, "current_device", lambda: 3)
+    monkeypatch.setattr(module.torch.distributed, "broadcast", fake_broadcast)
+
+    assert module._synchronize_weight_verification(all_match=True) is True
+    assert tensor_calls == [(False, torch.int32, 3)]
+
+
+def test_roundtrip_synchronizes_result_and_saves_before_reporting_summary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Ranks must synchronize and save before rank 0 reports verification."""
+    module = _load_roundtrip_module(monkeypatch)
+    events = []
+
+    class FakeProvider:
+        tensor_model_parallel_size = 1
+        pipeline_model_parallel_size = 1
+        expert_model_parallel_size = 1
+        expert_tensor_parallel_size = 1
+
+        def finalize(self):
+            return None
+
+        def initialize_model_parallel(self, seed):
+            return None
+
+        def provide_distributed_model(self, wrap_with_ddp):
+            return [object()]
+
+    class FakeBridge:
+        hf_pretrained = SimpleNamespace(state={"weight": torch.ones(1)})
+
+        def to_megatron_provider(self, load_weights):
+            return FakeProvider()
+
+        def export_hf_weights(self, model, show_progress):
+            yield "weight", torch.ones(1)
+
+        def save_hf_pretrained(self, model, path, **kwargs):
+            events.append(("save", kwargs))
+
+    fake_bridge = FakeBridge()
+    monkeypatch.setattr(
+        module,
+        "AutoBridge",
+        SimpleNamespace(from_hf_pretrained=lambda *args, **kwargs: fake_bridge),
+    )
+    monkeypatch.setattr(module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(
+        module,
+        "_synchronize_weight_verification",
+        lambda all_match: events.append(("synchronize", all_match)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "_print_verification_results",
+        lambda *args, **kwargs: events.append(("report", args)),
+    )
+    monkeypatch.setenv("WORLD_SIZE", "2")
+
+    module.main(hf_model_id="example/model", distributed_save=True)
+
+    event_names = [event[0] for event in events]
+    assert "synchronize" in event_names
+    assert event_names.index("synchronize") < event_names.index("save")
+    assert event_names.index("save") < event_names.index("report")
+    save_kwargs = next(event[1] for event in events if event[0] == "save")
+    assert save_kwargs["distributed_save"] is True

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run greedy, exact-length inference from an exported HF checkpoint."""
+"""Run one deterministic greedy inference from an exported HF checkpoint."""
 
 from __future__ import annotations
 
@@ -21,16 +21,22 @@ import argparse
 import json
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 
 LOG = logging.getLogger(__name__)
+_LOADING_ISSUE_KEYS = ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hf-model", required=True, help="Exported HF model directory.")
     parser.add_argument("--prompt", required=True, help="Prompt to generate from.")
-    parser.add_argument("--max-new-tokens", required=True, type=int, help="Exact number of tokens to generate.")
+    parser.add_argument(
+        "--image",
+        help="Optional local image path or URL. Uses the model processor and a multimodal chat template.",
+    )
+    parser.add_argument("--max-new-tokens", required=True, type=int, help="Maximum number of tokens to generate.")
     parser.add_argument("--chat-template", action="store_true", help="Format the prompt as a user chat turn.")
     parser.add_argument(
         "--trust-remote-code",
@@ -54,6 +60,8 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--max-new-tokens must be positive")
     if args.disable_thinking and not args.chat_template:
         parser.error("--disable-thinking requires --chat-template")
+    if args.image and not args.chat_template:
+        parser.error("--image requires --chat-template")
     return args
 
 
@@ -69,31 +77,83 @@ def _format_prompt(tokenizer: Any, prompt: str, *, chat_template: bool, disable_
     )
 
 
-def main() -> int:
-    """Run one exact-length greedy generation and print its completion."""
-    args = _parse_args()
+def _image_content(image: str) -> dict[str, str]:
+    """Return one processor-native image content block."""
+    location_key = "url" if urlparse(image).scheme in {"http", "https"} else "path"
+    return {"type": "image", location_key: image}
 
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    dtype = getattr(torch, args.dtype)
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-    model = (
-        AutoModelForCausalLM.from_pretrained(
-            args.hf_model,
-            dtype=dtype,
-            trust_remote_code=args.trust_remote_code,
+def _prepare_inputs(processor: Any, args: argparse.Namespace) -> Any:
+    """Prepare text-only or processor-native multimodal model inputs."""
+    if args.image:
+        template_options = {"enable_thinking": False} if args.disable_thinking else {}
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    _image_content(args.image),
+                    {"type": "text", "text": args.prompt},
+                ],
+            }
+        ]
+        return processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+            **template_options,
         )
-        .to(args.device)
-        .eval()
-    )
+
     formatted_prompt = _format_prompt(
-        tokenizer,
+        processor,
         args.prompt,
         chat_template=args.chat_template,
         disable_thinking=args.disable_thinking,
     )
-    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+    return processor(formatted_prompt, return_tensors="pt")
+
+
+def _validate_loading_info(loading_info: dict[str, Any]) -> None:
+    """Require the exported checkpoint to reload without weight issues."""
+    issue_counts = {key: len(loading_info.get(key, ())) for key in _LOADING_ISSUE_KEYS if loading_info.get(key)}
+    if issue_counts:
+        details = ", ".join(f"{key}={count}" for key, count in issue_counts.items())
+        raise RuntimeError(f"Exported Hugging Face checkpoint did not reload strictly: {details}")
+
+
+def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
+    """Load torch, the selected HF auto-model, and its tokenizer or processor."""
+    import torch
+
+    dtype = getattr(torch, args.dtype)
+    if args.image:
+        from transformers import AutoModelForMultimodalLM, AutoProcessor
+
+        processor = AutoProcessor.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
+        model_cls = AutoModelForMultimodalLM
+    else:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        processor = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
+        model_cls = AutoModelForCausalLM
+    model, loading_info = model_cls.from_pretrained(
+        args.hf_model,
+        dtype=dtype,
+        trust_remote_code=args.trust_remote_code,
+        output_loading_info=True,
+    )
+    _validate_loading_info(loading_info)
+    model = model.to(args.device).eval()
+    return torch, model, processor
+
+
+def main() -> int:
+    """Run one bounded greedy generation and print its completion."""
+    args = _parse_args()
+    torch, model, processor = _load_runtime(args)
+    tokenizer = getattr(processor, "tokenizer", processor)
+    inputs = _prepare_inputs(processor, args).to(model.device)
     prompt_length = inputs["input_ids"].shape[1]
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
@@ -101,19 +161,18 @@ def main() -> int:
         output = model.generate(
             **inputs,
             do_sample=False,
-            min_new_tokens=args.max_new_tokens,
             max_new_tokens=args.max_new_tokens,
             pad_token_id=pad_token_id,
         )
 
-    expected_length = prompt_length + args.max_new_tokens
-    if output.shape != (1, expected_length):
-        observed_length = output.shape[1] - prompt_length
-        raise RuntimeError(f"Expected exactly {args.max_new_tokens} generated tokens; observed {observed_length}")
-
     completion_ids = output[0, prompt_length:].tolist()
-    completion = tokenizer.decode(completion_ids, skip_special_tokens=True)
-    LOG.info("HF completion (%d tokens): %s", args.max_new_tokens, json.dumps(completion, ensure_ascii=False))
+    completion = processor.decode(completion_ids, skip_special_tokens=True)
+    LOG.info(
+        "HF completion (%d generated tokens; maximum %d): %s",
+        len(completion_ids),
+        args.max_new_tokens,
+        json.dumps(completion, ensure_ascii=False),
+    )
     return 0
 
 

@@ -42,6 +42,18 @@ with mock.patch.dict(sys.modules, {"megatron.bridge.utils.safe_url": _safe_url_m
 
 
 @pytest.mark.unit
+def test_decode_generated_tokens_excludes_prompt_and_uses_integer_ids():
+    tokenizer = mock.MagicMock()
+    tokenizer.decode.return_value = "completion"
+    generated_ids = torch.tensor([[10, 11, 12, 20, 21]])
+
+    output = vlm_generate_utils.decode_generated_tokens(tokenizer, generated_ids, prompt_length=3)
+
+    assert output == "completion"
+    tokenizer.decode.assert_called_once_with([20, 21])
+
+
+@pytest.mark.unit
 class TestProcessMultiImageInputs:
     """Tests for ``process_multi_image_inputs``."""
 

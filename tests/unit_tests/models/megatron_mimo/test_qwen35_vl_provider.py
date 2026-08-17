@@ -2,6 +2,7 @@
 """Unit tests for Qwen3.5-VL standard-provider MegatronMIMO hooks."""
 
 import pytest
+import torch
 import yaml
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -66,6 +67,7 @@ class TestQwen35VLProviderMIMOAPI:
         assert params["transformer_layer_spec"] is sentinel_block_spec
         assert params["vocab_size"] == provider.vocab_size
         assert params["max_sequence_length"] == provider.language_max_sequence_length
+        assert params["logit_dtype"] is None
         assert params["position_embedding_type"] == "mrope"
         assert params["rotary_percent"] == provider.rotary_percent
         assert params["rotary_base"] == provider.rotary_base
@@ -75,6 +77,16 @@ class TestQwen35VLProviderMIMOAPI:
         assert "pg_collection" not in params
         assert "pre_process" not in params
         assert "post_process" not in params
+
+    def test_language_model_spec_propagates_logit_dtype(self, monkeypatch):
+        provider = _make_language_provider(logit_dtype=torch.float32)
+        monkeypatch.setattr(
+            provider, "build_language_spec", lambda vp_stage=None, pp_rank=None: ModuleSpec(module=object)
+        )
+
+        spec = provider.build_language_model_spec()
+
+        assert spec.params["logit_dtype"] is torch.float32
 
 
 class TestMegatronMIMOProviderFactory:

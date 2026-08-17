@@ -44,7 +44,13 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
-from utils.utils import WorkloadBaseConfig, get_workload_base_config
+from utils.utils import (
+    WorkloadBaseConfig,
+    _validated_data_parallel_size,
+    _weak_scaled_global_batch_size,
+    get_workload_base_config,
+    topology_from_config,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -665,7 +671,14 @@ def set_post_overrides(
     cp = recipe.model.context_parallel_size
     vp = recipe.model.virtual_pipeline_model_parallel_size or 1
 
-    dp = int(num_gpus / (tp * pp * cp))
+    base_dp = _validated_data_parallel_size(
+        num_gpus=workload_base_config.num_gpus,
+        topology=topology_from_config(workload_base_config),
+    )
+    dp = _validated_data_parallel_size(
+        num_gpus=num_gpus,
+        topology=topology_from_config(recipe.model),
+    )
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     # NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
@@ -675,16 +688,20 @@ def set_post_overrides(
             if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
                 recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
-    default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
         # Only auto-rescale if the recipe's current GBS still equals the
         # workload default — i.e., no one (Hydra or earlier step) has already
         # expressed an intent. Otherwise Hydra-set GBS gets silently stomped.
-        if recipe.train.global_batch_size == workload_base_config.global_batch_size and num_gpus != default_num_gpus:
-            new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
+        if recipe.train.global_batch_size == workload_base_config.global_batch_size and dp != base_dp:
+            new_gbs = _weak_scaled_global_batch_size(
+                base_gbs=workload_base_config.global_batch_size,
+                base_data_parallel=base_dp,
+                data_parallel=dp,
+            )
             recipe.train.global_batch_size = new_gbs
             logger.info(
-                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
+                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} "
+                f"based on DP {base_dp} -> {dp}."
             )
 
     return recipe

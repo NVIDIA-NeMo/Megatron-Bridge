@@ -16,7 +16,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, GPTSFTDatasetConfig
+from megatron.bridge.data.builders import (
+    DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
+    GPTSFTDatasetConfig,
+    HFEnergonTaskEncoderConfig,
+    MockVLMSFTDatasetConfig,
+    QwenVLEnergonTaskEncoderConfig,
+)
 from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 from megatron.bridge.recipes.utils.dataset_utils import (
@@ -105,7 +112,11 @@ def _make_vlm_config(*, do_validation=True, do_test=True):
         persistent_workers=False,
         enable_in_batch_packing=True,
     )
-    return _make_config(dataset)
+    config = _make_config(dataset)
+    config.model.temporal_patch_size = 2
+    config.model.spatial_merge_size = 2
+    config.model.patch_size = 16
+    return config
 
 
 class TestDatasetPresets:
@@ -113,6 +124,7 @@ class TestDatasetPresets:
         assert set(DATASET_PRESETS) == {
             "mock",
             "megatron-indexed",
+            "energon",
             "squad",
             "tulu3",
             "openmathinstruct2",
@@ -151,6 +163,93 @@ class TestDatasetPresets:
         assert "sequence_length" not in serialized
         dataset.finalize()
         assert dataset.sequence_length == 4096
+
+    def test_energon_preset_uses_recipe_processor_and_batch_size(self):
+        config = _make_vlm_config()
+        config.train.micro_batch_size = 2
+        dataset = build_dataset_config(config, "energon")
+
+        assert isinstance(dataset, EnergonDatasetConfig)
+        assert dataset.path is None
+        assert dataset.seq_length == 4096
+        assert dataset.micro_batch_size == 2
+        assert dataset.num_workers == 3
+        assert isinstance(dataset.task_encoder, HFEnergonTaskEncoderConfig)
+        assert dataset.task_encoder.hf_processor_path == "Qwen/Qwen3-VL-8B-Instruct"
+        assert dataset.enable_in_batch_packing is True
+        assert dataset.defer_in_batch_packing_to_step is False
+        assert dataset_train_mode(dataset) is None
+
+        process_config_with_overrides(
+            dataset,
+            cli_overrides=[
+                "path=/data/datacomp-energon",
+                "task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B",
+                "task_encoder.hf_processor_revision=0123456789abcdef",
+            ],
+        )
+
+        assert dataset.task_encoder.hf_processor_revision == "0123456789abcdef"
+        dataset.validate()
+
+    def test_energon_preset_preserves_recipe_owned_task_encoder(self):
+        original = EnergonDatasetConfig(
+            path="/data/original",
+            seq_length=2048,
+            micro_batch_size=4,
+            num_workers=1,
+            task_encoder=QwenVLEnergonTaskEncoderConfig(
+                hf_processor_path="Qwen/model",
+                patch_size=16,
+            ),
+            shuffle_buffer_size=321,
+            defer_in_batch_packing_to_step=True,
+        )
+        config = _make_config(original, model_seq_length=4096)
+        config.train.micro_batch_size = 2
+
+        dataset = build_dataset_config(config, "energon")
+
+        assert dataset is not original
+        assert dataset.path is None
+        assert dataset.seq_length == 4096
+        assert dataset.micro_batch_size == 2
+        assert dataset.num_workers == 1
+        assert dataset.shuffle_buffer_size == 321
+        assert dataset.defer_in_batch_packing_to_step is True
+        assert isinstance(dataset.task_encoder, QwenVLEnergonTaskEncoderConfig)
+        assert dataset.task_encoder.patch_size == 16
+        assert dataset_train_mode(dataset) is None
+
+    def test_energon_preset_accepts_mock_vlm_pretraining_recipe(self):
+        source = MockVLMSFTDatasetConfig(
+            seq_length=4096,
+            hf_processor_path="Qwen/Qwen3.5-35B-A3B",
+            num_workers=1,
+            persistent_workers=False,
+            pad_to_max_length=True,
+        )
+        config = _make_config(source)
+        config.train.micro_batch_size = 1
+
+        dataset = build_dataset_config(config, "energon")
+
+        assert dataset.do_validation is True
+        assert dataset.persistent_workers is False
+        assert dataset.pad_to_max_length is True
+        assert dataset.task_encoder.hf_processor_path == "Qwen/Qwen3.5-35B-A3B"
+
+    def test_energon_preset_rejects_incompatible_recipe(self):
+        with pytest.raises(ValueError, match="EnergonDatasetConfig or exposing dataset.hf_processor_path"):
+            build_dataset_config(_make_config(), "energon")
+
+    def test_energon_preset_rejects_invalid_workers(self):
+        config = _make_vlm_config()
+        config.train.micro_batch_size = 1
+        config.dataset.num_workers = -1
+
+        with pytest.raises(ValueError, match="non-negative"):
+            build_dataset_config(config, "energon")
 
     @pytest.mark.parametrize(
         ("dataset_name", "source_name"),

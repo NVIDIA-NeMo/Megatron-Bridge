@@ -15,20 +15,27 @@
 #!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+
+: "${SHARD_ID:?SHARD_ID must be set}"
+: "${NUM_SHARDS:?NUM_SHARDS must be set}"
+
 echo "=================================================="
 echo "🧪 UNIT TESTS (core)"
 echo "=================================================="
 
 # Display MCore commit SHA if triggered from MCore CI
-if [ -f "/opt/Megatron-Bridge/.mcore_commit_sha" ]; then
-    echo "📦 MCore commit: $(cat /opt/Megatron-Bridge/.mcore_commit_sha)"
+if [ -f "${REPO_ROOT}/.mcore_commit_sha" ]; then
+    echo "📦 MCore commit: $(cat "${REPO_ROOT}/.mcore_commit_sha")"
 fi
 echo ""
 
-CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
+CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" -m pytest \
     -o log_cli=true \
     -o log_cli_level=INFO \
     --disable-warnings \
+    --shard-id="${SHARD_ID}" \
+    --num-shards="${NUM_SHARDS}" \
     -vs tests/unit_tests \
     --ignore=tests/unit_tests/diffusion \
     -m "not pleasefixme"

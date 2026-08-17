@@ -622,17 +622,13 @@ def save_megatron_model(
         from megatron.bridge.training.checkpointing import (
             _build_sharded_state_dict_metadata,
             generate_state_dict,
-            get_rng_state,
         )
         from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
         logger.info("[LOW_MEMORY_SAVE] Generating state dict...")
 
-        # Get RNG state (minimal, since save_rng=False)
+        # Conversion checkpoints intentionally omit RNG state.
         pg_collection = get_pg_collection(model)
-        rng_state = get_rng_state(
-            data_parallel_random_init=False, ckpt_format=ckpt_format, pg_collection=pg_collection
-        )
 
         # Build sharded state dict metadata
         sharded_sd_metadata = _build_sharded_state_dict_metadata(False, state.cfg.checkpoint)
@@ -643,7 +639,7 @@ def save_megatron_model(
             model,
             optimizer=None,
             opt_param_scheduler=None,
-            rng_state=rng_state,
+            rng_state=None,
             iteration=0,
             optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
             model_sd_kwargs=dict(metadata=sharded_sd_metadata),

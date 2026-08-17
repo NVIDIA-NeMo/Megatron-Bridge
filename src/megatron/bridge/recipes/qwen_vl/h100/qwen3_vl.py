@@ -197,7 +197,6 @@ def _make_energon_dataset(hf_path: str, seq_length: int, micro_batch_size: int) 
         micro_batch_size=micro_batch_size,
         num_workers=2,
         task_encoder=QwenVLEnergonTaskEncoderConfig(hf_processor_path=hf_path),
-        defer_in_batch_packing_to_step=True,
     )
 
 

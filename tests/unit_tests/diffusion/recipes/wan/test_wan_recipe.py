@@ -15,6 +15,7 @@
 import pytest
 
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
+from megatron.bridge.diffusion.data.wan.wan_mock_datamodule import mock_batch
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.diffusion.recipes.wan.wan import (
     wan_1_3b_pretrain_config,
@@ -23,6 +24,12 @@ from megatron.bridge.diffusion.recipes.wan.wan import (
     wan_1_3b_text2video_pretrain_config,
     wan_14b_pretrain_config,
     wan_14b_sft_config,
+)
+from megatron.bridge.recipes.wan import (
+    wan_1_3b_text2image_pretrain_config as canonical_wan_1_3b_text2image_pretrain_config,
+)
+from megatron.bridge.recipes.wan import (
+    wan_1_3b_text2video_pretrain_config as canonical_wan_1_3b_text2video_pretrain_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 
@@ -180,3 +187,26 @@ class TestWan1_3BText2ImageText2VideoConfigs:
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-4
         assert config.optimizer.weight_decay == 0.001
+
+    @pytest.mark.parametrize(
+        "recipe_factory",
+        [
+            wan_1_3b_text2image_pretrain_config,
+            canonical_wan_1_3b_text2image_pretrain_config,
+        ],
+    )
+    def test_text2image_mock_uses_single_temporal_latent(self, recipe_factory):
+        config = recipe_factory()
+        batch = mock_batch(
+            F_latents=config.dataset.F_latents,
+            H_latents=4,
+            W_latents=4,
+            patch_temporal=config.dataset.patch_temporal,
+            patch_spatial=config.dataset.patch_spatial,
+            number_packed_samples=1,
+            context_seq_len=2,
+            context_embeddings_dim=4,
+        )
+
+        assert batch["grid_sizes"][0, 0].item() == 1
+        assert canonical_wan_1_3b_text2video_pretrain_config().dataset.F_latents > 1

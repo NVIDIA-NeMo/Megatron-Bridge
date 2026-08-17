@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Any, Literal, Optional, Tuple
+from typing import Any, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -62,7 +62,7 @@ class LoRALinear(AdapterWrapper):
         """Return the wrapped linear bias."""
         return getattr(self.to_wrap, "bias", None)
 
-    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any):
         """Forward pass that combines the wrapped module output with the adapter output.
 
         Args:
@@ -71,18 +71,21 @@ class LoRALinear(AdapterWrapper):
             **kwargs: Additional keyword arguments for the wrapped module.
 
         Returns:
-            A tuple containing:
-                - Combined output (linear_output + adapter_output) if adapter is enabled,
-                  otherwise just the linear_output
-                - Bias term (if present, otherwise None)
+            When the wrapped module returns a Megatron-style tuple, a
+            ``(combined_output, bias)`` tuple; when it returns a bare tensor
+            (e.g. a plain ``nn.Linear``), a bare tensor so the wrapper stays a
+            drop-in replacement in simple (non-parallel) models.
         """
         # pylint: disable=C0115,C0116
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
-            return linear_output, bias
+            return linear_output if not self._base_returns_tuple else (linear_output, bias)
         adapter_output = self.adapter_forward(self.adapter, layernorm_output.contiguous(), *args, **kwargs)
         adapter_output = adapter_output.reshape(linear_output.shape)
-        return linear_output + adapter_output, bias
+        combined = linear_output + adapter_output
+        if not self._base_returns_tuple:
+            return combined
+        return combined, bias
 
 
 class LoRATopKRouter(AdapterWrapper):
@@ -343,11 +346,18 @@ class TEFusedLoRALinear(LoRALinear):
         return out, None
 
 
-class LinearAdapter(nn.Linear):
-    """Linear with LoRA that preserves the base weight and bias checkpoint keys.
+class LinearAdapter(nn.Module):
+    """Delta-only LoRA adapter for a plain ``nn.Linear``, mirroring :class:`ParallelLinearAdapter`'s role.
+
+    This adapter holds *only* the low-rank LoRA delta (``linear_in`` -> ``linear_out``) and
+    produces just the scaled adaptation term. It is intended to be wrapped together with the
+    original linear by :class:`LoRALinear` (the ``to_wrap`` / ``adapter`` pattern), so that
+    base weights and adapter weights live in distinct submodules and adapter state is
+    checkpointed under the ``adapter.`` prefix.
 
     Args:
-        orig_linear: The linear module to augment.
+        orig_linear: The linear module to augment (only its shape/dtype/device are used; its
+            weights are *not* copied).
         dim: LoRA's dimension (in_features -> dim -> out_features).
         alpha: LoRA's scaling alpha.
         dropout: Dropout probability (default: 0.0).
@@ -366,10 +376,10 @@ class LinearAdapter(nn.Linear):
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
-        """Initialize LinearAdapter by copying from original Linear and adding LoRA components.
+        """Initialize the LoRA delta weights from the original Linear's shape and dtype.
 
         Args:
-            orig_linear: The original Linear module to adapt.
+            orig_linear: The original Linear module to adapt (weights are not copied).
             dim: LoRA rank dimension.
             alpha: LoRA scaling factor.
             dropout: Dropout probability.
@@ -377,19 +387,10 @@ class LinearAdapter(nn.Linear):
             lora_A_init_method: Initialization method for LoRA matrix A.
             lora_dtype: Data type for LoRA weights.
         """
+        super().__init__()
         assert isinstance(orig_linear, nn.Linear)
-        super(LinearAdapter, self).__init__(
-            in_features=orig_linear.in_features,
-            out_features=orig_linear.out_features,
-            bias=orig_linear.bias is not None,
-            device=orig_linear.weight.device,
-            dtype=orig_linear.weight.dtype,
-        )
-        # copy weights
-        self.weight.data.copy_(orig_linear.weight.data)
-        if orig_linear.bias is not None:
-            self.bias.data.copy_(orig_linear.bias.data)
-        # initialize the adapter
+        self.in_features = orig_linear.in_features
+        self.out_features = orig_linear.out_features
         self._init_adapter(
             dim=dim,
             alpha=alpha,
@@ -397,16 +398,9 @@ class LinearAdapter(nn.Linear):
             dropout_position=dropout_position,
             lora_A_init_method=lora_A_init_method,
             lora_dtype=lora_dtype,
+            device=orig_linear.weight.device,
+            base_dtype=orig_linear.weight.dtype,
         )
-        self._adapter_enabled = True
-
-    def enable_adapter_layers(self) -> None:
-        """Enable the adapter layers, allowing them to contribute to the forward pass output."""
-        self._adapter_enabled = True
-
-    def disable_adapter_layers(self) -> None:
-        """Disable the adapter layers, making the forward pass return only the base module output."""
-        self._adapter_enabled = False
 
     @torch.no_grad
     def _init_adapter(
@@ -417,8 +411,10 @@ class LinearAdapter(nn.Linear):
         dropout_position: Literal["pre", "post"] = "pre",
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
+        device: Optional[torch.device] = None,
+        base_dtype: Optional[torch.dtype] = None,
     ) -> None:
-        """Initialize the LoRA weights and freeze the base parameters.
+        """Initialize the LoRA delta weights.
 
         Args:
             dim: LoRA's dimension (in_features -> dim -> out_features).
@@ -427,20 +423,16 @@ class LinearAdapter(nn.Linear):
             dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
             lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
             lora_dtype: Adapter weight dtype. Defaults to the base weight dtype.
+            device: Device for the LoRA weights.
+            base_dtype: Base weight dtype, used when ``lora_dtype`` is not provided.
         """
         self.dim = dim
         self.alpha = alpha
         self.scale = alpha / dim
 
-        # Freeze original weights
-        device = self.weight.device
-        self.weight.requires_grad = False
-        if self.bias is not None:
-            self.bias.requires_grad = False
-
         in_features = self.in_features
         out_features = self.out_features
-        dtype = lora_dtype or self.weight.dtype
+        dtype = lora_dtype or base_dtype
 
         self.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
         self.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
@@ -457,24 +449,20 @@ class LinearAdapter(nn.Linear):
         self.dropout_position = dropout_position
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass combining Linear output with LoRA adaptation.
+        """Compute the scaled LoRA delta only (no base-weight term).
 
         Args:
             x: Input tensor.
 
         Returns:
-            Combined output from original linear layer and LoRA adaptation.
+            The scaled low-rank adaptation ``scale * linear_out(linear_in(x))`` with dropout
+            applied per ``dropout_position``.
         """
         # pylint: disable=C0115,C0116
-        res = torch.nn.functional.linear(x, self.weight, self.bias)
-
-        if not self._adapter_enabled:
-            return res
-
         if self.dropout_position == "pre":
             x = self.dropout(x)
         lora_res = self.linear_out(self.linear_in(x))
         lora_res = lora_res * self.scale
         if self.dropout_position == "post":
             lora_res = self.dropout(lora_res)
-        return res + lora_res
+        return lora_res

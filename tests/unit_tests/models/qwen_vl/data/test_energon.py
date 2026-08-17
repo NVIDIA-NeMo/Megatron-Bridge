@@ -26,8 +26,10 @@ from PIL import Image
 
 import megatron.bridge.models.qwen_vl.data.energon as task_encoder_module
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
+from megatron.bridge.models.qwen_vl.data.collate_fn import QwenVLPreparedSequence
 from megatron.bridge.models.qwen_vl.data.energon import (
     ChatMLSample,
+    QwenVLPackedTaskSample,
     QwenVLTaskBatch,
     QwenVLTaskEncoder,
     QwenVLTaskSample,
@@ -352,6 +354,165 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.assertIn("input_ids", encoded_dict)
         # Ensure __subflavors__ is removed
         self.assertNotIn("__subflavors__", encoded_dict)
+
+
+class TestQwenVLTaskEncoderNativePacking(unittest.TestCase):
+    def test_native_flag_does_not_change_existing_positional_argument_binding(self):
+        """The appended flag must not capture the legacy positional padding multiple."""
+        tokenizer = MagicMock(image_token_id=151655, video_token_id=151656)
+        encoder = QwenVLTaskEncoder(
+            tokenizer,
+            MagicMock(),
+            2,
+            2,
+            14,
+            4096,
+            200704,
+            1003520,
+            10,
+            60,
+            16384,
+            False,
+            128,
+            False,
+            8,
+        )
+
+        self.assertEqual(encoder.in_batch_packing_pad_to_multiple_of, 8)
+        self.assertFalse(encoder.enable_energon_packing)
+
+    def setUp(self):
+        tokenizer = MagicMock()
+        tokenizer.image_token_id = 151655
+        tokenizer.video_token_id = 151656
+        self.encoder = QwenVLTaskEncoder(
+            tokenizer=tokenizer,
+            image_processor=MagicMock(),
+            max_padding_length=12,
+            enable_energon_packing=True,
+            in_batch_packing_pad_to_multiple_of=4,
+            max_visual_tokens=None,
+        )
+
+    @staticmethod
+    def _sample(key: str, length: int, visual_value: float) -> QwenVLTaskSample:
+        tokens = torch.arange(1, length + 1, dtype=torch.long)
+        prepared = QwenVLPreparedSequence(
+            row={
+                "input_ids": tokens,
+                "attention_mask": torch.ones(length, dtype=torch.long),
+                "position_ids": torch.arange(length, dtype=torch.long),
+                "labels": torch.cat([tokens[1:], torch.tensor([-100])]),
+                "loss_mask": torch.cat([torch.ones(length - 1), torch.zeros(1)]),
+            },
+            visual_values={
+                "pixel_values": torch.full((1, 2), visual_value),
+                "image_grid_thw": torch.tensor([[1, 1, 1]]),
+            },
+        )
+        return QwenVLTaskSample(
+            __key__=key,
+            __restore_key__=("source", key),
+            __subflavors__={},
+            example=None,
+            prepared_sequence=prepared,
+        )
+
+    def test_select_samples_to_pack_uses_aligned_lengths_without_drops(self):
+        samples = [self._sample("five", 5, 5), self._sample("four-a", 4, 4), self._sample("four-b", 4, 4)]
+
+        packs = self.encoder.select_samples_to_pack(samples)
+
+        self.assertEqual([[sample.__key__ for sample in pack] for pack in packs], [["five", "four-a"], ["four-b"]])
+        self.assertCountEqual([id(sample) for pack in packs for sample in pack], [id(sample) for sample in samples])
+        for pack in packs:
+            physical_length = sum(((sample.prepared_sequence.sequence_length + 3) // 4) * 4 for sample in pack)
+            self.assertLessEqual(physical_length, 12)
+
+    def test_pack_and_batch_emit_canonical_thd_metadata_and_visual_order(self):
+        source_samples = [self._sample("five", 5, 5), self._sample("four", 4, 4)]
+
+        packed_sample = self.encoder.pack_selected_samples(source_samples)
+        batch = self.encoder.batch([packed_sample])
+
+        self.assertIsInstance(packed_sample, QwenVLPackedTaskSample)
+        self.assertEqual(packed_sample.__restore_key__, ())
+        self.assertEqual(
+            [sample.__restore_key__ for sample in packed_sample.samples], [("source", "five"), ("source", "four")]
+        )
+        self.assertEqual(batch.__keys__, ["five", "four"])
+        self.assertEqual(batch.input_ids.shape, (1, 12))
+        self.assertEqual(batch.cu_seqlens_q.tolist(), [0, 5, 9])
+        self.assertEqual(batch.cu_seqlens_q_padded.tolist(), [0, 8, 12])
+        self.assertEqual(batch.max_seqlen_q.item(), 8)
+        self.assertEqual(batch.total_tokens, 12)
+        self.assertTrue(torch.equal(batch.labels[0, 5:8], torch.full((3,), -100)))
+        self.assertTrue(torch.equal(batch.loss_mask[0, 5:8], torch.zeros(3)))
+        self.assertEqual(batch.position_ids[0, 8].item(), 0)
+        self.assertEqual(batch.visual_inputs.pixel_values[:, 0].tolist(), [5.0, 4.0])
+
+    def test_native_pack_honors_fixed_final_width(self):
+        self.encoder.pad_to_max_length = True
+        packed_sample = self.encoder.pack_selected_samples([self._sample("four", 4, 4)])
+
+        batch = self.encoder.batch([packed_sample])
+
+        self.assertEqual(batch.input_ids.shape, (1, 12))
+        self.assertEqual(batch.cu_seqlens_q.tolist(), [0, 4])
+        self.assertEqual(batch.cu_seqlens_q_padded.tolist(), [0, 12])
+        self.assertEqual(batch.max_seqlen_q.item(), 12)
+        self.assertEqual(batch.total_tokens, 12)
+        self.assertTrue(torch.equal(batch.labels[0, 4:], torch.full((8,), -100)))
+        self.assertTrue(torch.equal(batch.loss_mask[0, 4:], torch.zeros(8)))
+
+    def test_batch_rejects_malformed_overlength_packed_group(self):
+        source_samples = [self._sample("nine-a", 9, 9), self._sample("nine-b", 9, 9)]
+        packed_sample = self.encoder.pack_selected_samples(source_samples)
+
+        with self.assertRaisesRegex(ValueError, "group length 24 exceeds seq_length=12"):
+            self.encoder.batch([packed_sample])
+
+    def test_encode_sample_preserves_restore_key_without_buffering_raw_media(self):
+        prepared = self._sample("prepared", 4, 1).prepared_sequence
+        raw = ChatMLSample(
+            **sample_metadata_kwargs(key="raw", restore_key=("Webdataset", 7), subflavors={}),
+            imgs=None,
+            videos=None,
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Question"},
+                    {"role": "assistant", "content": "Answer"},
+                ]
+            ),
+        )
+
+        with patch.object(task_encoder_module, "prepare_qwen_vl_sequence", return_value=prepared):
+            encoded = self.encoder.encode_sample(raw)
+
+        self.assertEqual(encoded.__restore_key__, ("Webdataset", 7))
+        self.assertIsNone(encoded.example)
+        self.assertIs(encoded.prepared_sequence, prepared)
+
+    def test_overlength_native_sample_counts_toward_energon_failure_tolerance(self):
+        self.assertEqual(getattr(self.encoder.encode_sample, "__failure_tolerance__", None), 100)
+        prepared = self._sample("overlength", 13, 1).prepared_sequence
+        raw = ChatMLSample(
+            **sample_metadata_kwargs(key="raw", restore_key=("Webdataset", 8), subflavors={}),
+            imgs=None,
+            videos=None,
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Question"},
+                    {"role": "assistant", "content": "Answer"},
+                ]
+            ),
+        )
+
+        with (
+            patch.object(task_encoder_module, "prepare_qwen_vl_sequence", return_value=prepared),
+            self.assertRaisesRegex(ValueError, "aligned sequence length 16 exceeds seq_length=12"),
+        ):
+            self.encoder.encode_sample(raw)
 
 
 class TestQwenVLTaskEncoderLimits(unittest.TestCase):

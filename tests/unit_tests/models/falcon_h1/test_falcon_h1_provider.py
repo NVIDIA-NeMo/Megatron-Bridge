@@ -15,6 +15,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import torch
 
 from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
 
@@ -121,3 +122,12 @@ def test_provide_uses_original_vocab_size_without_padding():
 
     calc_vocab.assert_not_called()
     assert model_cls.call_args.kwargs["vocab_size"] == 1001
+
+
+def test_provide_propagates_requested_logit_dtype():
+    provider = _minimal_provider(logit_dtype=torch.float32)
+
+    with patch("megatron.bridge.models.falcon_h1.falconh1_provider.FalconH1Model") as model_cls:
+        provider.provide(pre_process=True, post_process=True)
+
+    assert model_cls.call_args.kwargs["logit_dtype"] is torch.float32

@@ -11,7 +11,8 @@ own TP/PP/DP configuration.
 Conversation examples are built with the standard HF VLM provider, then the
 resulting Qwen batch is adapted into the MIMO forward shape:
 
-  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask
+  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask, and
+    (when packing) the tokenizer's ``attention_mask``
   - image inputs: ``modality_inputs["images"]["qwen_visual"]``
 
 Example 2-GPU smoke:
@@ -130,6 +131,7 @@ class MIMOBatchSpec:
     labels: bool = True
     loss_mask: bool = True
     modality_inputs: bool = True
+    attention_mask: bool = False
 
     def describe(self) -> str:
         enabled = [
@@ -140,6 +142,7 @@ class MIMOBatchSpec:
                 ("labels", self.labels),
                 ("loss_mask", self.loss_mask),
                 ("modality_inputs", self.modality_inputs),
+                ("attention_mask", self.attention_mask),
             )
             if value
         ]
@@ -163,17 +166,31 @@ def _get_int_attr(config: object | None, name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
-def _build_hf_spec(hf_config: object) -> Qwen35MIMOHFSpec:
+def _build_hf_spec(hf_config: object, *, pad_token_id: int | None = None) -> Qwen35MIMOHFSpec:
     text_config = getattr(hf_config, "text_config", hf_config)
     vision_config = getattr(hf_config, "vision_config", None)
+    if pad_token_id is None:
+        pad_token_id = _get_int_attr(text_config, "pad_token_id", 0)
     return Qwen35MIMOHFSpec(
         image_token_id=_get_int_attr(hf_config, "image_token_id", 248056),
         video_token_id=_get_int_attr(hf_config, "video_token_id", 248057),
         vision_start_token_id=_get_int_attr(hf_config, "vision_start_token_id", 248053),
         vision_end_token_id=_get_int_attr(hf_config, "vision_end_token_id", 248054),
-        pad_token_id=_get_int_attr(text_config, "pad_token_id", 0),
+        pad_token_id=pad_token_id,
         spatial_merge_size=_get_int_attr(vision_config, "spatial_merge_size", 2),
     )
+
+
+def _tokenizer_pad_token_id(args: argparse.Namespace) -> int | None:
+    """Pad id of the tokenizer that actually pads the batches (pad falls back to eos,
+    mirroring ``normalize_direct_hf_sft_processor``)."""
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.processor_path or args.hf_model, trust_remote_code=args.trust_remote_code
+    )
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    return pad_token_id if pad_token_id is not None else getattr(tokenizer, "eos_token_id", None)
 
 
 def _parse_component_spec(raw: str) -> tuple[str, ModuleParallelismConfig]:
@@ -264,6 +281,9 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
     is_first_pp = pp_rank == 0
     is_last_pp = pp_rank == pp_size - 1
 
+    dataset_cfg = getattr(cfg, "dataset", None)
+    packing_active = bool(getattr(dataset_cfg, "enable_in_batch_packing", False))
+
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
         return MIMOBatchSpec(
             input_ids=is_first_pp,
@@ -272,6 +292,8 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
             labels=is_last_pp,
             loss_mask=is_last_pp,
             modality_inputs=False,
+            # Packing length source; the packer nulls it again before the model.
+            attention_mask=packing_active,
         )
 
     return MIMOBatchSpec(
@@ -298,6 +320,8 @@ def _project_adapted_batch(
         adapted["loss_mask"] = None
     if not batch_spec.modality_inputs:
         adapted["modality_inputs"] = None
+    if not batch_spec.attention_mask:
+        adapted["attention_mask"] = None
     return adapted
 
 
@@ -389,7 +413,9 @@ def _build_dataset_config(args: argparse.Namespace) -> DirectHFSFTDatasetConfig:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
-        enable_in_batch_packing=False,
+        # MegatronMIMO packs in the step, after the module-DP slice (deferred packing).
+        enable_in_batch_packing=args.pack_sequences_in_batch,
+        defer_in_batch_packing_to_step=True,
         do_validation=do_validation,
         do_test=False,
         trust_remote_code=args.trust_remote_code,
@@ -689,7 +715,7 @@ def _adapt_qwen35_hf_batch(
         {
             "input_ids": input_ids.contiguous(),
             "position_ids": None if position_ids is None else position_ids.contiguous(),
-            "attention_mask": None,
+            "attention_mask": None if attention_mask is None else attention_mask.contiguous(),
             "labels": None if labels is None else labels.contiguous(),
             "loss_mask": None if loss_mask is None else loss_mask.contiguous(),
             "modality_inputs": modality_inputs,
@@ -1196,6 +1222,14 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="Pad/truncate direct HF SFT batches to --seq-length before MIMO forward.",
     )
+    parser.add_argument(
+        "--pack-sequences-in-batch",
+        type=_str2bool,
+        default=False,
+        help="Enable MegatronMIMO in-batch sequence packing: pack each language DP shard's real "
+        "tokens into one [1, T] THD sequence so the language model skips padding compute "
+        "(block-diagonal attention comes from cu_seqlens).",
+    )
     parser.add_argument("--profile", choices=("none", "nsys", "pytorch"), default="none")
     parser.add_argument("--profile-step-start", type=int, default=1)
     parser.add_argument("--profile-step-end", type=int, default=2)
@@ -1245,7 +1279,8 @@ def main() -> None:
         _log(f"distributed initialized (world_size={dist.get_world_size()})")
         _log(f"loading HF config from {args.hf_model}")
         hf_config = AutoConfig.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        hf_spec = _build_hf_spec(hf_config)
+        # The tokenizer's pad id (not text_config's) pads the batches and fills the tail.
+        hf_spec = _build_hf_spec(hf_config, pad_token_id=_tokenizer_pad_token_id(args))
         _log(
             f"qwen constants: image_token_id={hf_spec.image_token_id}, "
             f"vision_start_token_id={hf_spec.vision_start_token_id}, "

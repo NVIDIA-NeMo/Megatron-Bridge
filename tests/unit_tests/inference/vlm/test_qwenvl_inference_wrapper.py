@@ -139,6 +139,28 @@ class TestQwenVLInferenceWrapper:
         assert result["position_ids"].equal(torch.arange(2, dtype=torch.long).unsqueeze(0).expand(1, 2))
         assert result["attention_mask"].equal(torch.ones(1, 2, dtype=torch.bool))
 
+    def test_nonzero_context_window_returns_only_current_logits(self, wrapper):
+        input_ids = torch.tensor([[1, 2, 3, 4]])
+        inference_input = {
+            "input_ids": input_ids,
+            "position_ids": torch.arange(4, dtype=torch.long).unsqueeze(0).expand_as(input_ids),
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
+            "pixel_values": None,
+            "image_grid_thw": None,
+            "mm_token_type_ids": None,
+        }
+
+        def position_logits(**model_input):
+            sequence_length = model_input["input_ids"].size(1)
+            return torch.arange(sequence_length, dtype=torch.float32).view(1, sequence_length, 1)
+
+        wrapper.model.side_effect = position_logits
+
+        context_window = wrapper.get_batch_for_context_window(inference_input, 2, 3)
+        logits = wrapper.forward_pass_without_pipeline_parallel(context_window)
+
+        assert logits.equal(torch.tensor([[[2.0]]]))
+
     def test_forward_pass_without_pipeline_parallel(self, wrapper):
         input_ids = torch.tensor([[1, 2, 3]])
         inference_input = {

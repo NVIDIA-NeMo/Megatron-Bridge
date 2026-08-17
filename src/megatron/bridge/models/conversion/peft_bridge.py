@@ -39,6 +39,7 @@ from megatron.bridge.models.conversion.utils import (
     persistent_buffers,
 )
 from megatron.bridge.peft.canonical_lora import ModuleDict
+from megatron.bridge.peft.lora_layers import LinearAdapter
 from megatron.bridge.peft.lora_merge import LoRAMerge
 from megatron.bridge.peft.utils import (
     get_adapter_attributes_from_linear,
@@ -595,6 +596,12 @@ class MegatronPeftBridge:
                     input_is_parallel = adapter.input_is_parallel
                     base_linear_is_parallel = True
                     requires_expert_splits = adapter.linear_in.weight.ndim > 2
+                elif isinstance(adapter, LinearAdapter):
+                    # Adapter wrapping a plain nn.Linear: no parallelism layout
+                    # and the wrapped module has no Megatron ``config`` to derive one from.
+                    input_is_parallel = False
+                    base_linear_is_parallel = False
+                    requires_expert_splits = False
                 else:
                     attrs = get_adapter_attributes_from_linear(to_wrap)
                     input_is_parallel = attrs.input_is_parallel

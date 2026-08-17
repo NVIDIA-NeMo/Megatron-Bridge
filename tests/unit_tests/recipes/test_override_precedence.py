@@ -235,6 +235,121 @@ class TestRecomputePrecedence:
 
 
 class TestGbsPrecedence:
+    @staticmethod
+    def _nemotronh_64gpu_base_recipe():
+        return SimpleNamespace(
+            optimizer=SimpleNamespace(optimizer="adam"),
+            model=SimpleNamespace(
+                tensor_model_parallel_size=2,
+                pipeline_model_parallel_size=1,
+                context_parallel_size=1,
+                virtual_pipeline_model_parallel_size=None,
+            ),
+            train=SimpleNamespace(global_batch_size=192),
+            comm_overlap=None,
+        )
+
+    def test_nemotronh_b300_64gpu_recipe_weak_scales_to_8_gpus(self, monkeypatch):
+        """Nemotron-H preserves samples per GPU when its canonical recipe is reused."""
+        from utils import overrides as override_utils
+
+        base_config = SimpleNamespace(
+            num_gpus=64,
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=None,
+            gtp_weight_remat_size=1,
+            expert_gtp_weight_remat_size=1,
+            global_batch_size=192,
+            gbs_scaling_factor=3,
+        )
+        monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+
+        recipe = override_utils.set_post_overrides(
+            self._nemotronh_64gpu_base_recipe(),
+            model_family_name="nemotronh",
+            model_recipe_name="nemotronh_56b",
+            gpu="b300",
+            num_gpus=8,
+            compute_dtype="fp8_cs",
+            task="pretrain",
+        )
+
+        assert recipe.train.global_batch_size == 24
+
+    def test_weak_scaling_uses_effective_data_parallel_ratio(self, monkeypatch):
+        """Parallelism overrides preserve samples per data-parallel rank."""
+        from utils import overrides as override_utils
+
+        base_config = SimpleNamespace(
+            num_gpus=64,
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=None,
+            global_batch_size=192,
+        )
+        monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+        recipe = self._nemotronh_64gpu_base_recipe()
+        recipe.model.tensor_model_parallel_size = 1
+
+        recipe = override_utils.set_post_overrides(
+            recipe,
+            model_family_name="nemotronh",
+            model_recipe_name="nemotronh_56b",
+            gpu="b300",
+            num_gpus=8,
+            compute_dtype="fp8_cs",
+            task="pretrain",
+        )
+
+        # Canonical DP is 32 and requested DP is 8, so 192 * 8 / 32 = 48.
+        assert recipe.train.global_batch_size == 48
+
+    def test_perf_fallback_rejects_world_size_incompatible_with_expert_grid(self, monkeypatch):
+        """The flat fallback rejects GPT-OSS layouts before MCore initialization."""
+        from utils import overrides as override_utils
+
+        base_config = SimpleNamespace(
+            num_gpus=64,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+            expert_tensor_parallel_size=1,
+            gtp_weight_remat_size=1,
+            expert_gtp_weight_remat_size=1,
+            global_batch_size=1280,
+        )
+        monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+        recipe = SimpleNamespace(
+            optimizer=SimpleNamespace(optimizer="adam"),
+            model=SimpleNamespace(
+                tensor_model_parallel_size=1,
+                pipeline_model_parallel_size=4,
+                context_parallel_size=1,
+                virtual_pipeline_model_parallel_size=None,
+                expert_model_parallel_size=8,
+                expert_tensor_parallel_size=1,
+            ),
+            train=SimpleNamespace(global_batch_size=1280),
+            comm_overlap=None,
+        )
+
+        with pytest.raises(ValueError, match=r"expert.*8 GPUs.*ETP \* EP \* PP.*1 \* 8 \* 4 = 32"):
+            override_utils.set_post_overrides(
+                recipe,
+                model_family_name="gpt_oss",
+                model_recipe_name="gpt_oss_120b",
+                gpu="h100",
+                num_gpus=8,
+                compute_dtype="bf16",
+                task="pretrain",
+            )
+
     def test_F_autoscale_fires_when_no_one_sets(self):
         """When neither Hydra nor argparse sets GBS and num_gpus differs from
         the workload default, set_post_overrides should rescale. This is the
@@ -242,7 +357,7 @@ class TestGbsPrecedence:
         recipe = _fresh_recipe()
         # Canonical flat workload default for GB200 is GBS=4096 at 256 GPUs. At 64 GPUs,
         # gbs_scaling_factor * 64 should be applied.
-        recipe = _apply(recipe, num_gpus=64)
+        recipe = _apply(recipe, args_overrides={"expert_model_parallel_size": 16}, num_gpus=64)
         assert recipe.train.global_batch_size != 4096, "GBS auto-scale did not fire for num_gpus=64 (default=256)"
 
     def test_G_hydra_overrides_autoscale(self):
@@ -252,6 +367,7 @@ class TestGbsPrecedence:
         recipe = _apply(
             recipe,
             cli_overrides=["train.global_batch_size=128"],
+            args_overrides={"expert_model_parallel_size": 16},
             num_gpus=64,
         )
         assert recipe.train.global_batch_size == 128
@@ -261,7 +377,7 @@ class TestGbsPrecedence:
         recipe = _fresh_recipe()
         recipe = _apply(
             recipe,
-            args_overrides={"global_batch_size": 256},
+            args_overrides={"global_batch_size": 256, "expert_model_parallel_size": 16},
             num_gpus=64,
         )
         assert recipe.train.global_batch_size == 256

@@ -62,6 +62,7 @@ def _apply_exaone45_common(cfg: ConfigContainer) -> None:
 
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = _HF_PATH
+    cfg.dataset.enable_in_batch_packing = False
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False

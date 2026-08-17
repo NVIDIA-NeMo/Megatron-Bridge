@@ -33,6 +33,7 @@ def prepare_sequence_batch(
     pad_token_id: int = 0,
     ignore_index: int = IGNORE_INDEX,
     sequence_tensor_pad_values: Mapping[str, int | float] | None = None,
+    emit_packed_padding_mask: bool = False,
 ) -> None:
     """Apply the collator's explicit padded or in-batch-packed output policy."""
     if enable_in_batch_packing:
@@ -43,6 +44,7 @@ def prepare_sequence_batch(
             ignore_index=ignore_index,
             pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
             sequence_tensor_pad_values=sequence_tensor_pad_values,
+            emit_padding_mask=emit_packed_padding_mask,
         )
         return
     pad_or_truncate_sequence_batch(

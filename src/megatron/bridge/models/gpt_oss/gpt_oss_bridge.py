@@ -60,7 +60,7 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = True
-        provider.add_qkv_bias = False
+        provider.add_qkv_bias = getattr(hf_pretrained.config, "attention_bias", True)
         provider.share_embeddings_and_output_weights = False
         provider.position_embedding_type = "yarn"
 
@@ -100,6 +100,13 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.yarn_mscale_all_dim = None
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Convert Megatron provider config to a GPT-OSS Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config["attention_bias"] = True
+        return hf_config
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

@@ -427,6 +427,24 @@ class TestDeepSeekV4RotaryPercent:
         assert out.csa_compress_rotary_base == 160000
 
 
+class TestDeepSeekV4MoEDispatcher:
+    """DeepSeek-V4 providers use the inference-validated HybridEP path."""
+
+    def test_provider_bridge_uses_hybridep(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = MagicMock()
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with patch.object(MegatronModelBridge, "provider_bridge", return_value=provider):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.moe_token_dispatcher_type == "flex"
+        assert out.moe_flex_dispatcher_backend == "hybridep"
+        assert out.moe_flex_dispatcher_num_sms == 16
+        assert out.moe_permute_fusion_into_hybridep is False
+
+
 class TestDeepSeekV4HardwareDefaults:
     """DSv4 Blackwell-only fused kernels must not default on for Hopper."""
 

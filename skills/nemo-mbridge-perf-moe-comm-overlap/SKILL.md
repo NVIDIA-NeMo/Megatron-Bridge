@@ -184,3 +184,5 @@ metric. Use a matched Nsight A/B to establish causality:
    not only summed kernel durations.
 4. Report steady step time, model TFLOPS/GPU, loss finiteness, skipped/NaN
    iterations, and peak allocated memory.
+
+_Last signature refresh: 2026-08-03._

@@ -14,6 +14,8 @@
 
 """Declarative Hugging Face sources, named presets, and shared normalization."""
 
+import math
+import random
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -324,3 +326,107 @@ def load_and_adapt_hf_dataset(source: HFDatasetSourceConfig) -> list[dict[str, A
         adapter_name=resolved.schema_adapter,
         adapter_kwargs=resolved.adapter_kwargs,
     )
+
+
+def resolve_blend_weights(
+    sources: Sequence[HFDatasetSourceConfig],
+    weights: Sequence[float] | None,
+) -> list[float]:
+    """Validate blend weights against their sources and fill in the uniform default.
+
+    Args:
+        sources: The sources taking part in the blend.
+        weights: One positive weight per source, or None for equal weights.
+
+    Returns:
+        One weight per source.
+
+    Raises:
+        ValueError: If no source is given, if the counts disagree, or if a weight
+            is not a positive finite number.
+    """
+    if not sources:
+        raise ValueError("A blend must name at least one source.")
+    if weights is None:
+        return [1.0] * len(sources)
+    if len(weights) != len(sources):
+        raise ValueError(f"Blend sources and weights must be equal in number, got {len(sources)} and {len(weights)}.")
+
+    resolved = []
+    for weight in weights:
+        # NaN and infinity pass every comparison below, so they are rejected by
+        # kind rather than by range.
+        value = float(weight)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Blend weights must be positive finite numbers, got {weight}.")
+        resolved.append(value)
+    return resolved
+
+
+def blend_sft_rows(
+    rows_per_source: Sequence[Sequence[dict[str, Any]]],
+    weights: Sequence[float],
+    *,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Draw rows from several sources under per-source epoch counts.
+
+    A weight is how many passes the blend takes over a source: ``1.0`` keeps
+    every row once, ``2.5`` keeps every row twice plus half of them again, and
+    ``0.5`` keeps half of them. Fractional passes draw without replacement and
+    round up to a whole row, so a positive weight always keeps at least one.
+
+    Weights count rows, not tokens. SFT rows vary in length, so equal row counts
+    do not make equal token counts.
+
+    Args:
+        rows_per_source: Canonical SFT rows for each source of the blend.
+        weights: One positive weight per source.
+        seed: Seeds the fractional draws and the shuffle that interleaves sources.
+
+    Returns:
+        The blended rows, holding references to the rows that were passed in.
+
+    Raises:
+        ValueError: If a source contributed no rows.
+    """
+    rng = random.Random(seed)
+    blended: list[dict[str, Any]] = []
+    for index, (rows, weight) in enumerate(zip(rows_per_source, weights)):
+        if not rows:
+            raise ValueError(f"Blend source {index} produced no rows.")
+        full_passes = int(weight)
+        for _ in range(full_passes):
+            blended.extend(rows)
+        # Rounding up rather than to nearest, so a positive weight always draws
+        # something. A share below half a row would otherwise drop the source.
+        remainder = math.ceil(len(rows) * (weight - full_passes))
+        if remainder:
+            blended.extend(rng.sample(list(rows), remainder))
+
+    rng.shuffle(blended)
+    return blended
+
+
+def load_and_blend_hf_datasets(
+    sources: Sequence[HFDatasetSourceConfig],
+    weights: Sequence[float] | None,
+    *,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Load several Hugging Face splits and mix them under per-source epoch counts.
+
+    Each source is adapted to canonical SFT rows first, so sources with unrelated
+    column layouts can be blended as long as they share a schema adapter target.
+
+    Args:
+        sources: The sources taking part in the blend.
+        weights: One positive weight per source, or None for one pass each.
+        seed: Seeds the fractional draws and the shuffle that interleaves sources.
+
+    Returns:
+        The blended canonical SFT rows.
+    """
+    resolved_weights = resolve_blend_weights(sources, weights)
+    rows_per_source = [load_and_adapt_hf_dataset(source) for source in sources]
+    return blend_sft_rows(rows_per_source, resolved_weights, seed=seed)

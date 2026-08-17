@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List
 
 import torch
-from megatron.energon import Batch, DefaultTaskEncoder, SkipSample
+from megatron.energon import Batch, DefaultTaskEncoder, SkipSample, stateless
 
 from megatron.bridge.data.conversation_processing import (
     normalize_energon_vlm_sample,
@@ -38,8 +38,30 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     get_ltor_masks_and_position_ids,  # noqa: F401  -- re-exported for backward compat
     videohandler,  # noqa: F401  -- re-exported for backward compat
 )
-from megatron.bridge.models.qwen_vl.data.collate_fn import qwen2_5_collate_fn
+from megatron.bridge.data.packing.algorithms import first_fit_decreasing
+from megatron.bridge.models.qwen_vl.data.collate_fn import (
+    QwenVLPreparedSequence,
+    build_qwen_vl_packed_batch,
+    prepare_qwen_vl_sequence,
+    qwen2_5_collate_fn,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
+
+
+def _stateless_with_failure_tolerance(failure_tolerance: int):
+    """Apply Energon's failure bound while keeping older container images importable."""
+    try:
+        decorator = stateless(failure_tolerance=failure_tolerance)
+    except TypeError:
+        # Energon releases predating the 7.x project constraint did not accept
+        # the keyword. Preserve their decorator behavior and attach the metadata
+        # understood by 7.x loaders.
+        def decorator(fn):
+            wrapped = stateless(fn)
+            setattr(wrapped, "__failure_tolerance__", failure_tolerance)
+            return wrapped
+
+    return decorator
 
 
 def process_vision(
@@ -109,19 +131,36 @@ class QwenVLTaskSample:
 
     Expected input format:
         Produced by ``QwenVLTaskEncoder.encode_sample`` from an Energon
-        ``ChatMLSample``.  ``example`` follows the HF VLM collate schema:
-        ``{"conversation": [{"role": ..., "content": [...]}, ...]}`` with
-        inline ``{"type": "image"|"video", ...}`` media parts.
+        ``ChatMLSample``. Without native packing, ``example`` follows the HF
+        VLM collate schema with inline image/video media parts. With native
+        packing, ``prepared_sequence`` contains the eagerly processed
+        model-owned sequence and ``example`` is ``None``.
 
     Output format:
-        Consumed by ``QwenVLTaskEncoder.batch``, which passes the ``example``
-        dictionaries to the same Qwen collate function used by HF-style VLM
-        datasets.
+        Consumed by ``QwenVLTaskEncoder.batch``, which either collates the HF
+        examples or assembles the prepared sequences into one packed THD row.
     """
 
     __key__: str
     __subflavors__: Dict
-    example: Dict[str, Any]
+    example: Dict[str, Any] | None
+    __restore_key__: tuple[Any, ...] = ()
+    prepared_sequence: QwenVLPreparedSequence | None = None
+
+
+@dataclass
+class QwenVLPackedTaskSample:
+    """One Energon-selected group of prepared Qwen-VL samples."""
+
+    __key__: str
+    __restore_key__: tuple[Any, ...]
+    __subflavors__: Dict
+    samples: List[QwenVLTaskSample]
+
+
+def _aligned_sequence_length(sequence: QwenVLPreparedSequence, multiple: int) -> int:
+    """Return the physical length consumed by one aligned THD segment."""
+    return ((sequence.sequence_length + multiple - 1) // multiple) * multiple
 
 
 @dataclass
@@ -142,6 +181,7 @@ class QwenVLTaskBatch(Batch):
     cu_seqlens_kv_padded: torch.Tensor | None = None
     max_seqlen_q: torch.Tensor | None = None
     max_seqlen_kv: torch.Tensor | None = None
+    total_tokens: int | None = None
 
 
 def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", video_pattern: str = "<video>"):
@@ -196,6 +236,8 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         in_batch_packing_pad_to_multiple_of: Per-sample padding multiple used
             only by the in-batch packed path, typically to satisfy CP/SP
             divisibility.
+        enable_energon_packing: Whether samples should be prepared for Energon's
+            native online packing hooks.
     """
 
     def __init__(
@@ -215,6 +257,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
+        enable_energon_packing: bool = False,
     ):
         super().__init__()
 
@@ -229,6 +272,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         self.pad_to_max_length = pad_to_max_length
         self.pad_to_multiple_of = pad_to_multiple_of
         self.enable_in_batch_packing = enable_in_batch_packing
+        self.enable_energon_packing = enable_energon_packing
         self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
 
         self.temporal_patch_size = temporal_patch_size
@@ -238,7 +282,11 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         self.seq_len = max_padding_length
         self.image_token_id, self.video_token_id = _resolve_hf_mm_token_ids(self.hf_tokenizer)
 
-    def encode_sample(self, sample: ChatMLSample):
+    # Energon 7.0/7.1 store ``None`` for a bare decorator instead of inheriting
+    # TaskEncoder's default. Keep the bound explicit so an all-overlength stream
+    # fails after consecutive errors instead of iterating forever.
+    @_stateless_with_failure_tolerance(100)
+    def encode_sample(self, sample: ChatMLSample) -> QwenVLTaskSample:
         """Normalize one Energon sample into the HF-style Qwen collate schema.
 
         Expected input format:
@@ -247,12 +295,11 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             payloads.
 
         Output format:
-            Returns ``QwenVLTaskSample`` whose ``example`` is a HF-style VLM
-            collate dictionary:
-            ``{"conversation": [{"role": ..., "content": [{"type": ...}, ...]}]}``.
-            Tokenization, image/video preprocessing, labels, and loss masks are
-            intentionally deferred to ``self.collate_fn`` so HF and Energon data
-            paths share the same Qwen model processing.
+            Without native packing, returns a ``QwenVLTaskSample`` containing
+            the HF-style VLM ``example``; model processing remains deferred to
+            the Qwen collator. With native packing, the same model-owned
+            processing runs eagerly and the result is stored in
+            ``prepared_sequence`` while ``example`` is ``None``.
         """
         normalized_sample = normalize_energon_vlm_sample(sample)
         imgs_for_processing = normalized_sample.images
@@ -283,8 +330,10 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                     clipped.append(v)
             videos_for_processing = clipped
 
-        if self.max_visual_tokens is not None and (
-            imgs_for_processing is not None or videos_for_processing is not None
+        if (
+            not self.enable_energon_packing
+            and self.max_visual_tokens is not None
+            and (imgs_for_processing is not None or videos_for_processing is not None)
         ):
             processed_vision = process_vision(
                 self.image_processor,
@@ -311,10 +360,72 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             videos=videos_for_processing,
         )
         example = normalized_vlm_sample_to_hf_example(normalized_sample, media_first=True)
+        prepared_sequence = None
+        if self.enable_energon_packing:
+            prepared_sequence = prepare_qwen_vl_sequence(
+                example,
+                self.image_processor,
+                min_pixels=self.min_pixels,
+                max_pixels=self.max_pixels,
+                require_assistant_matches=True,
+            )
+            if self.max_visual_tokens is not None:
+                image_tokens = _visual_token_count(
+                    prepared_sequence.visual_values.get("image_grid_thw"), self.merge_size
+                )
+                video_tokens = _visual_token_count(
+                    prepared_sequence.visual_values.get("video_grid_thw"), self.merge_size
+                )
+                total_visual_tokens = image_tokens + video_tokens
+                if total_visual_tokens > self.max_visual_tokens:
+                    logging.warning(
+                        "Skipping sample %s: %d visual tokens exceeds max_visual_tokens=%d",
+                        sample.__key__,
+                        total_visual_tokens,
+                        self.max_visual_tokens,
+                    )
+                    raise SkipSample()
+
+            packing_length = _aligned_sequence_length(prepared_sequence, self.in_batch_packing_pad_to_multiple_of)
+            if packing_length > self.seq_length:
+                raise ValueError(
+                    f"Sample {sample.__key__} aligned sequence length {packing_length} "
+                    f"exceeds seq_length={self.seq_length}."
+                )
+
         return QwenVLTaskSample(
             __key__=sample.__key__,
             __subflavors__=sample.__subflavors__,
-            example=example,
+            example=None if self.enable_energon_packing else example,
+            __restore_key__=sample.__restore_key__,
+            prepared_sequence=prepared_sequence,
+        )
+
+    def select_samples_to_pack(self, samples: List[QwenVLTaskSample]) -> List[List[QwenVLTaskSample]]:
+        """Partition one Energon buffer into packs bounded by ``seq_length``."""
+        if not self.enable_energon_packing:
+            raise RuntimeError("Energon packing hooks require enable_energon_packing=True.")
+        if any(sample.prepared_sequence is None for sample in samples):
+            raise ValueError("Energon packing requires every Qwen-VL sample to be prepared before selection.")
+
+        multiple = self.in_batch_packing_pad_to_multiple_of
+        packing_lengths = [
+            _aligned_sequence_length(sample.prepared_sequence, multiple)
+            for sample in samples
+            if sample.prepared_sequence is not None
+        ]
+        return first_fit_decreasing(samples, self.seq_length, item_lengths=packing_lengths)
+
+    @stateless
+    def pack_selected_samples(self, samples: List[QwenVLTaskSample]) -> QwenVLPackedTaskSample:
+        """Wrap one selected group; Energon assigns its restore key afterwards."""
+        if not samples:
+            raise ValueError("Cannot pack an empty Qwen-VL sample group.")
+        return QwenVLPackedTaskSample(
+            __key__=",".join(sample.__key__ for sample in samples),
+            __restore_key__=(),
+            __subflavors__={},
+            samples=samples,
         )
 
     def collate_fn(self, examples: List[Dict[str, Any]]) -> dict[str, torch.Tensor]:
@@ -343,28 +454,58 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
-    def batch(self, samples: List[QwenVLTaskSample]) -> QwenVLTaskBatch:
+    @stateless
+    def batch(self, samples: List[QwenVLTaskSample | QwenVLPackedTaskSample]) -> QwenVLTaskBatch:
         """Collate normalized Energon samples with the shared Qwen HF collator.
 
         Expected input format:
-            ``samples`` are ``QwenVLTaskSample`` objects whose ``example`` fields
-            follow the HF VLM collate schema.
+            Either normalized ``QwenVLTaskSample`` objects whose ``example``
+            fields follow the HF VLM collate schema, or one physical
+            ``QwenVLPackedTaskSample`` selected by Energon native packing.
 
         Output format:
             Returns ``QwenVLTaskBatch`` carrying the same tensors as
-            ``qwen2_5_collate_fn`` plus Energon batch metadata.
+            ``qwen2_5_collate_fn`` plus Energon batch metadata. Native packs may
+            be padded to ``seq_length`` while retaining separate real and
+            physical THD boundaries.
         """
-        examples = [sample.example for sample in samples]
-        collated = self.collate_fn(examples)
+        if samples and isinstance(samples[0], QwenVLPackedTaskSample):
+            if len(samples) != 1 or not all(isinstance(sample, QwenVLPackedTaskSample) for sample in samples):
+                raise ValueError("Energon native sequence packing requires physical micro_batch_size=1.")
+            packed_sample = samples[0]
+            source_samples = packed_sample.samples
+            if any(sample.prepared_sequence is None for sample in source_samples):
+                raise ValueError("Packed Qwen-VL samples must contain prepared sequences.")
+            packed_length = sum(
+                _aligned_sequence_length(sample.prepared_sequence, self.in_batch_packing_pad_to_multiple_of)
+                for sample in source_samples
+                if sample.prepared_sequence is not None
+            )
+            if packed_length > self.seq_length:
+                raise ValueError(f"Packed Qwen-VL group length {packed_length} exceeds seq_length={self.seq_length}.")
+            collated = build_qwen_vl_packed_batch(
+                [sample.prepared_sequence for sample in source_samples if sample.prepared_sequence is not None],
+                sequence_length=self.seq_length,
+                pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+                pad_to_max_length=self.pad_to_max_length,
+            )
+        else:
+            if not all(isinstance(sample, QwenVLTaskSample) for sample in samples):
+                raise TypeError("Qwen-VL batches cannot mix packed and unpacked Energon samples.")
+            source_samples = samples
+            if any(sample.example is None for sample in source_samples):
+                raise ValueError("Unpacked Qwen-VL samples must retain their normalized examples.")
+            examples = [sample.example for sample in source_samples if sample.example is not None]
+            collated = self.collate_fn(examples)
 
         if collated["input_ids"].shape[1] > self.seq_len:
             logging.warning("max sequence length larger than passed parameter")
 
-        keys = [s.__key__ for s in samples]
+        keys = [sample.__key__ for sample in source_samples]
         return QwenVLTaskBatch(
             **batch_metadata_kwargs(keys=keys),
             __keys__=keys,
-            __subflavors__=[s.__subflavors__ for s in samples],
+            __subflavors__=[sample.__subflavors__ for sample in source_samples],
             input_ids=collated["input_ids"],
             attention_mask=collated.get("attention_mask"),
             position_ids=collated["position_ids"],
@@ -377,8 +518,10 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             cu_seqlens_kv_padded=collated.get("cu_seqlens_kv_padded"),
             max_seqlen_q=collated.get("max_seqlen_q"),
             max_seqlen_kv=collated.get("max_seqlen_kv"),
+            total_tokens=collated.get("total_tokens"),
         )
 
+    @stateless
     def encode_batch(self, batch: QwenVLTaskBatch) -> dict:
         """Encode batch in dict"""
 

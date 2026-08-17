@@ -361,6 +361,7 @@ class TestFp8ParamExport:
                 registry_factory=lambda: MegatronMappingRegistry(MappingT()),
                 pp_rank=1,
                 pp_size=2,
+                detect_fp8=lambda *_a, **_k: {gname: 1},
             )
         else:
             n = {"c": 0}
@@ -387,6 +388,7 @@ class TestFp8ParamExport:
             assert tasks[0] and tasks[1]
             assert tasks[0].megatron_module is None and isinstance(tasks[0].mapping, MappingT)
             assert isinstance(tasks[1].mapping, _HFNameSuffixMapping)
+            assert tasks[1].mapping.scale_block_size == 1
         else:
             assert tasks[0] and tasks[0].global_param_name == gname
             assert tasks[1] is None

@@ -84,6 +84,25 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
     assert cfg.optimizer.lr == 5e-6
 
 
+def test_qwen3_omni_sft_recipe_uses_explicit_local_checkpoint(monkeypatch):
+    local_checkpoint = "/tmp/qwen3-omni-local"
+    seen_paths = []
+
+    class RecordingAutoBridge(_FakeAutoBridge):
+        @staticmethod
+        def from_hf_pretrained(hf_path: str):
+            seen_paths.append(hf_path)
+            return RecordingAutoBridge()
+
+    monkeypatch.setenv("QWEN3_OMNI_HF_PATH", local_checkpoint)
+    patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", RecordingAutoBridge)
+
+    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config()
+
+    assert seen_paths == [local_checkpoint]
+    assert cfg.dataset.hf_processor_path == local_checkpoint
+
+
 def test_qwen3_omni_hf_json_recipe_uses_direct_hf_source(monkeypatch):
     from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 

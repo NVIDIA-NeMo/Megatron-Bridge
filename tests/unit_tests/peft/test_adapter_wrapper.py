@@ -19,6 +19,7 @@ Tests the AdapterWrapper base class and its functionality for wrapping
 modules with adapters in Parameter-Efficient Fine-Tuning scenarios.
 """
 
+import os
 from unittest.mock import Mock, patch
 
 import pytest
@@ -176,15 +177,40 @@ class TestAdapterWrapper:
         assert bias is not None
         assert not torch.equal(layernorm_output, x)
 
-    def test_base_linear_forward_invalid_return(self, simple_adapter):
-        """Test base_linear_forward with invalid return type."""
+    def test_base_linear_forward_tensor_return(self, simple_adapter):
+        """Test base_linear_forward with a bare tensor return (plain nn.Linear path)."""
 
-        class InvalidLinear(nn.Module):
+        class TensorLinear(nn.Module):
             """Mock linear module that returns a tensor instead of a tuple."""
+
+            def __init__(self):
+                super().__init__()
+                self.weight = nn.Parameter(torch.randn(10, 10))
+                self.bias = None
 
             def forward(self, x):
                 """Return a tensor instead of a tuple."""
-                return x
+                return torch.matmul(x, self.weight.t())
+
+        wrapper = ConcreteAdapterWrapper(TensorLinear(), simple_adapter)
+        x = torch.randn(5, 10)
+
+        linear_output, bias, layernorm_output = wrapper.base_linear_forward(x)
+
+        assert isinstance(linear_output, torch.Tensor)
+        assert bias is None
+        assert torch.equal(layernorm_output, x)
+        assert not wrapper._base_returns_tuple
+
+    def test_base_linear_forward_invalid_return(self, simple_adapter):
+        """Test base_linear_forward rejects a return that is neither a tensor nor a tuple."""
+
+        class InvalidLinear(nn.Module):
+            """Mock linear module that returns a non-tensor, non-tuple value."""
+
+            def forward(self, x):
+                """Return an int instead of a tensor or tuple."""
+                return 0
 
         wrapper = ConcreteAdapterWrapper(InvalidLinear(), simple_adapter)
         x = torch.randn(5, 10)
@@ -383,3 +409,92 @@ class TestAdapterWrapper:
         peft.enable_adapter_layers(model)
         reenabled_output = model(x)
         assert torch.allclose(reenabled_output, enabled_output, atol=1e-6)
+
+
+class TestPlainLinearShardedStateDict:
+    """Sharded state dict for LoRALinear(nn.Linear, LinearAdapter) preserves all weights."""
+
+    @pytest.fixture(autouse=True)
+    def setup_dist(self, tmp_path):
+        """Initialize a single-rank process group and model parallel for dist checkpointing."""
+        import os
+
+        import torch.distributed as dist
+        from megatron.core import parallel_state
+
+        if not dist.is_initialized():
+            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            os.environ.setdefault("MASTER_PORT", "29531")
+            os.environ.setdefault("RANK", "0")
+            os.environ.setdefault("LOCAL_RANK", "0")
+            os.environ.setdefault("WORLD_SIZE", "1")
+            backend = "nccl" if torch.cuda.is_available() else "gloo"
+            dist.init_process_group(backend=backend, world_size=1, rank=0)
+
+        if not parallel_state.model_parallel_is_initialized():
+            parallel_state.initialize_model_parallel(
+                tensor_model_parallel_size=1,
+                pipeline_model_parallel_size=1,
+                virtual_pipeline_model_parallel_size=None,
+                context_parallel_size=1,
+            )
+        yield
+        # leave global state intact for subsequent tests
+
+    def _make_wrapped(self):
+        from megatron.bridge.peft.lora_layers import LinearAdapter
+
+        base = nn.Linear(6, 4, bias=True)
+        adapter = LinearAdapter(base, dim=2, alpha=4)
+        # Set distinct, non-zero values so we can detect loss on reload.
+        with torch.no_grad():
+            base.weight.fill_(0.3)
+            base.bias.fill_(0.1)
+            adapter.linear_in.weight.fill_(0.5)
+            adapter.linear_out.weight.fill_(0.7)
+        return LoRALinear(base, adapter)
+
+    def test_sharded_state_dict_has_all_entries(self):
+        """sharded_state_dict must include base + adapter params (not be empty)."""
+        from megatron.core.dist_checkpointing.mapping import ShardedTensor
+
+        wrapped = self._make_wrapped()
+        ssd = wrapped.sharded_state_dict(prefix="layer0.")
+
+        assert set(ssd.keys()) == {
+            "layer0.weight",
+            "layer0.bias",
+            "layer0.adapter.linear_in.weight",
+            "layer0.adapter.linear_out.weight",
+        }
+        for value in ssd.values():
+            assert isinstance(value, ShardedTensor)
+
+    def test_sharded_save_load_roundtrip_preserves_weights(self, tmp_path):
+        """A real dist_checkpointing save -> load round-trip preserves trained LoRA matrices."""
+        from megatron.core.dist_checkpointing import load, save
+
+        wrapped = self._make_wrapped()
+        prefix = "layer0."
+        save_ssd = wrapped.sharded_state_dict(prefix=prefix)
+
+        ckpt_dir = str(tmp_path / "plain_lora_ckpt")
+        os.makedirs(ckpt_dir, exist_ok=True)
+        save(save_ssd, ckpt_dir)
+
+        # Build a fresh load-side sharded state dict on a new wrapper (uninitialized weights).
+        rewrapped = self._make_wrapped()
+        with torch.no_grad():
+            rewrapped.to_wrap.weight.zero_()
+            rewrapped.to_wrap.bias.zero_()
+            rewrapped.adapter.linear_in.weight.zero_()
+            rewrapped.adapter.linear_out.weight.zero_()
+        load_ssd = rewrapped.sharded_state_dict(prefix=prefix)
+        load(load_ssd, ckpt_dir)
+        # dist_checkpointing.load populates each ShardedTensor's .data in place.
+        rewrapped.load_state_dict({k.removeprefix(prefix): v.data for k, v in load_ssd.items()}, strict=False)
+
+        assert torch.allclose(rewrapped.to_wrap.weight, wrapped.to_wrap.weight)
+        assert torch.allclose(rewrapped.to_wrap.bias, wrapped.to_wrap.bias)
+        assert torch.allclose(rewrapped.adapter.linear_in.weight, wrapped.adapter.linear_in.weight)
+        assert torch.allclose(rewrapped.adapter.linear_out.weight, wrapped.adapter.linear_out.weight)

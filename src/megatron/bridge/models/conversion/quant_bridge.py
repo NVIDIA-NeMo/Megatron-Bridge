@@ -52,6 +52,9 @@ class MegatronQuantizationBridge:
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
@@ -73,6 +76,12 @@ class MegatronQuantizationBridge:
                 task,
                 converted_weights_dict,
                 hf_state_dict,
+            )
+            scale_block_size = quant_block_size[0] if quant_block_size is not None else None
+            converted_weights_dict = self._truncate_vocab_padding(
+                task,
+                converted_weights_dict,
+                scale_block_size=scale_block_size,
             )
 
             for hf_name, tensor in converted_weights_dict.items():

@@ -192,6 +192,7 @@ class TestExaone45Conversion:
     @pytest.fixture(scope="class")
     def toy_model_path(self, tmp_path_factory: pytest.TempPathFactory) -> str:
         model_dir = tmp_path_factory.mktemp("exaone45_toy") / "exaone45_toy"
+        torch.manual_seed(1234)
         config = Exaone4_5_Config(**_EXAONE45_CONFIG)
         config.dtype = torch.bfloat16
         config.text_config.dtype = torch.bfloat16
@@ -212,6 +213,7 @@ class TestExaoneMoeConversion:
     @pytest.fixture(scope="class")
     def toy_model_path(self, tmp_path_factory: pytest.TempPathFactory) -> str:
         model_dir = tmp_path_factory.mktemp("exaone_moe_toy") / "exaone_moe_toy"
+        torch.manual_seed(1234)
         config = ExaoneMoeConfig(**_EXAONE_MOE_CONFIG)
         config.dtype = torch.bfloat16
         model = ExaoneMoeForCausalLM(config).to(dtype=torch.bfloat16)

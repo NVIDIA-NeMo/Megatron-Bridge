@@ -357,3 +357,5 @@ def _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=False):
 - MoE overlap and shared-expert overlap are mutually exclusive.
 - CUDA graph plus delayed wgrad is a multi-constraint path that requires
   careful TE version and scope validation.
+
+_Last signature refresh: 2026-08-03._

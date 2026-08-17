@@ -16,7 +16,7 @@
 
 import io
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 from PIL import Image
@@ -110,6 +110,20 @@ def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0)
     pad_len = tp_size - remainder
     padding = torch.full((input_ids.shape[0], pad_len), pad_token_id, dtype=input_ids.dtype, device=input_ids.device)
     return torch.cat([input_ids, padding], dim=1)
+
+
+def decode_generated_tokens(tokenizer: Any, generated_ids: torch.Tensor, prompt_length: int) -> str:
+    """Decode only token IDs produced after the input prompt.
+
+    Args:
+        tokenizer: Tokenizer used to decode generated IDs.
+        generated_ids: Batched prompt and generated token IDs.
+        prompt_length: Number of prompt tokens at the start of ``generated_ids``.
+
+    Returns:
+        Decoded generated text without the prompt or multimodal placeholders.
+    """
+    return tokenizer.decode(generated_ids[0, prompt_length:].tolist())
 
 
 def load_image(image_path: str) -> Image.Image:

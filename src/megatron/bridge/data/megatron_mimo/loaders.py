@@ -90,6 +90,16 @@ def build_megatron_mimo_data_loaders(
                 f"slice_batch_for_megatron_mimo requires an evenly divisible micro-batch."
             )
 
+    eval_micro_batch_size = cfg.validation.eval_micro_batch_size
+    for mod_name, mod_cfg in cfg.model.megatron_mimo_parallelism_config.module_parallelisms.items():
+        dp = mod_cfg.data_parallel_size
+        if eval_micro_batch_size % dp != 0:
+            raise ValueError(
+                f"eval_micro_batch_size ({eval_micro_batch_size}) must be divisible by "
+                f"data_parallel_size ({dp}) of module '{mod_name}'. "
+                "slice_batch_for_megatron_mimo requires an evenly divisible micro-batch."
+            )
+
     print_rank_0("> building MegatronMIMO train, validation, and test datasets ...")
 
     # Use cached grids from build_model()
@@ -125,12 +135,12 @@ def build_megatron_mimo_data_loaders(
     collate_fn = megatron_mimo_provider.get_collate_fn()
     micro_batch_size = cfg.train.micro_batch_size
 
-    def _make_loader(dataset, consumed_samples: int) -> Optional[DataLoader]:
+    def _make_loader(dataset, consumed_samples: int, split_micro_batch_size: int) -> Optional[DataLoader]:
         return build_pretraining_data_loader(
             dataset=dataset,
             consumed_samples=consumed_samples,
             dataloader_type=megatron_mimo_provider.dataloader_type,
-            micro_batch_size=micro_batch_size,
+            micro_batch_size=split_micro_batch_size,
             num_workers=megatron_mimo_provider.num_workers,
             data_sharding=megatron_mimo_provider.data_sharding,
             collate_fn=collate_fn,
@@ -141,8 +151,12 @@ def build_megatron_mimo_data_loaders(
             drop_last=megatron_mimo_provider.drop_last,
         )
 
-    train_loader = _make_loader(train_ds, consumed_samples=train_state.consumed_train_samples)
-    valid_loader = _make_loader(valid_ds, consumed_samples=0)
-    test_loader = _make_loader(test_ds, consumed_samples=0)
+    train_loader = _make_loader(
+        train_ds,
+        consumed_samples=train_state.consumed_train_samples,
+        split_micro_batch_size=micro_batch_size,
+    )
+    valid_loader = _make_loader(valid_ds, consumed_samples=0, split_micro_batch_size=eval_micro_batch_size)
+    test_loader = _make_loader(test_ds, consumed_samples=0, split_micro_batch_size=eval_micro_batch_size)
 
     return train_loader, valid_loader, test_loader

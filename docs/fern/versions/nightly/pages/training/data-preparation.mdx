@@ -191,6 +191,28 @@ dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
 
 Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
 
+To train on several sources at once, pass a list to `source`. Each entry in `source_weights` is an epoch count for its source: `1.0` keeps every row once, `2.5` keeps every row twice plus half of them again, and `0.5` keeps half of them. Fractional passes draw without replacement and round up to a whole row. Omitting the weights gives every source one pass.
+
+```python
+from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+
+dataset = DirectHFSFTDatasetConfig(
+    seq_length=4096,
+    source=[
+        HFDatasetSourceConfig(dataset_name="squad"),
+        HFDatasetSourceConfig(dataset_name="gsm8k"),
+    ],
+    source_weights=[1.0, 2.0],
+    blend_seed=1234,
+    validation_source=HFDatasetSourceConfig(dataset_name="squad", split="validation"),
+    do_test=False,
+)
+```
+
+Sources are adapted to canonical SFT rows before mixing, so their raw column layouts do not have to match. A single source still derives its own validation and test splits; a list has no single split to derive from, so set `validation_source` and `test_source` explicitly or disable those splits.
+
+Weights count rows, not tokens. SFT rows vary in length, so sources with equal row counts can still contribute very different token counts.
+
 Known semantic datasets should use their preset name, for example `squad`, `gsm8k`, `openmathinstruct2`, `cord_v2`, `raven`, `rdr`, `medpix`, `cv17`, or `llava_video_178k`. Do not combine `dataset_name` with `path_or_dataset`, `subset`, or `schema_adapter`; a preset owns those coupled fields. `split`, `load_kwargs`, and `adapter_kwargs` remain available for split selection and declarative runtime options such as a video root. Presets validate published split support: `raven`, `rdr`, and `llava_video_178k` are train-only; `medpix` and `squad` have no test split; `gsm8k` has no validation split; and OpenMathInstruct-2 exposes training variants only. Disable unsupported derived validation/test splits or supply explicit compatible sources.
 
 For text chat, `hf_processor_path=None` reuses the training tokenizer only when that tokenizer already defines the intended chat template. Otherwise select a vocabulary-compatible instruction processor explicitly, as above.

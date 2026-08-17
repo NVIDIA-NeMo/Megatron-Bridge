@@ -26,6 +26,7 @@ __all__ = [
     "gpt_oss_20b_pretrain_16gpu_h100_fp8cs_config",
     "gpt_oss_20b_pretrain_16gpu_h100_fp8mx_config",
     "gpt_oss_20b_sft_8gpu_h100_bf16_config",
+    "gpt_oss_20b_sft_8gpu_h100_bf16_32k_config",
     "gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config",
     "gpt_oss_20b_sft_8gpu_h100_fp8cs_config",
     "gpt_oss_20b_sft_8gpu_h100_fp8mx_config",

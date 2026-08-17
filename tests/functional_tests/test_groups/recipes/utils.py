@@ -152,6 +152,7 @@ def run_pretrain_recipe_perf_test(
     config_func: Callable,
     recipe_name: str,
     config_overrides: Optional[dict] = None,
+    tmp_path: Optional[Path] = None,
 ):
     """
     Common test implementation for pretrain perf recipe configurations.
@@ -165,11 +166,17 @@ def run_pretrain_recipe_perf_test(
         config_func: The recipe's pretrain_config function (parameterless API)
         recipe_name: Name of the recipe for logging/debugging
         config_overrides: Optional mapping of config attribute overrides to apply
+        tmp_path: Optional isolated output directory for checkpoints and logs
     """
     initialize_distributed()
 
     # Pretrain configs use parameterless API - call without arguments
     config: ConfigContainer = config_func()
+    if tmp_path is not None:
+        shared_base_dir = Path(broadcast_path(tmp_path))
+        config.checkpoint.save = str(shared_base_dir / "checkpoints")
+        config.checkpoint.load = str(shared_base_dir / "checkpoints")
+        config.logger.tensorboard_dir = str(shared_base_dir / "tb_logs")
     # Keep runs short and consistent across tests
     config.train.train_iters = 10
     config.validation.eval_interval = 5

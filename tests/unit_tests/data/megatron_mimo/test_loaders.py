@@ -128,6 +128,7 @@ def _make_happy_cfg(micro_batch_size: int = 3):
     return SimpleNamespace(
         model=FakeMegatronMIMOProvider(megatron_mimo_parallelism_config=fake_parallelism_config, grids=fake_grids),
         train=SimpleNamespace(micro_batch_size=micro_batch_size),
+        validation=SimpleNamespace(eval_micro_batch_size=micro_batch_size),
     )
 
 
@@ -158,6 +159,23 @@ def test_build_megatron_mimo_data_loaders_happy_path(monkeypatch):
     assert all(c["drop_last"] is True for c in builder_calls)
     assert all(c["num_workers"] == 0 for c in builder_calls)
     assert all(c["pin_memory"] is False for c in builder_calls)
+
+
+def test_build_megatron_mimo_data_loaders_uses_eval_micro_batch_size_for_eval_splits(monkeypatch):
+    builder_calls = _patch_happy_path_dependencies(monkeypatch)
+    cfg = _make_happy_cfg(micro_batch_size=3)
+    cfg.validation = SimpleNamespace(eval_micro_batch_size=2)
+
+    build_megatron_mimo_data_loaders(
+        cfg,
+        train_state=SimpleNamespace(consumed_train_samples=0),
+        megatron_mimo_provider=FakeProvider(),
+        train_samples=10,
+        valid_samples=4,
+        test_samples=2,
+    )
+
+    assert [call["micro_batch_size"] for call in builder_calls] == [3, 2, 2]
 
 
 def test_build_megatron_mimo_data_loaders_wires_consumed_samples_for_resume(monkeypatch):
@@ -248,6 +266,7 @@ def _make_real_loader_cfg(monkeypatch, *, micro_batch_size: int, sampler_dp_rank
     return SimpleNamespace(
         model=FakeMegatronMIMOProvider(megatron_mimo_parallelism_config=parallelism_config, grids={"llm": object()}),
         train=SimpleNamespace(micro_batch_size=micro_batch_size),
+        validation=SimpleNamespace(eval_micro_batch_size=micro_batch_size),
     )
 
 
@@ -337,6 +356,7 @@ def test_build_megatron_mimo_data_loaders_skips_non_data_ranks(monkeypatch):
             grids={"llm": object()},
         ),
         train=SimpleNamespace(micro_batch_size=2),
+        validation=SimpleNamespace(eval_micro_batch_size=2),
     )
     provider = FakeProvider()
     monkeypatch.setattr(

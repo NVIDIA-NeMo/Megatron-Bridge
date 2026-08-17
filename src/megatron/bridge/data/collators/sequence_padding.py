@@ -153,9 +153,21 @@ def pad_or_truncate_sequence_batch(
         if pad_to_max_length
         else min(sequence_length, _ceil_to_multiple(tokens.size(1), pad_to_multiple_of))
     )
+    loss_mask = batch.get("loss_mask")
+    prepared_loss_mask = _pad_or_truncate_2d(loss_mask, target_length, 0)
+    if tokens.size(1) > target_length and loss_mask is not None and prepared_loss_mask is not None:
+        had_supervision = torch.any(loss_mask != 0, dim=1)
+        has_supervision = torch.any(prepared_loss_mask != 0, dim=1)
+        emptied_rows = torch.nonzero(had_supervision & ~has_supervision, as_tuple=False).flatten().tolist()
+        if emptied_rows:
+            raise ValueError(
+                f"Truncating sequence batch from {tokens.size(1)} to {target_length} tokens removed every "
+                f"supervised token from rows {emptied_rows}. Increase sequence_length or filter overlength samples."
+            )
+
     _set_tokens(batch, token_key, _pad_or_truncate_2d(tokens, target_length, pad_token_id))
     batch["labels"] = _pad_or_truncate_2d(batch.get("labels"), target_length, ignore_index)
-    batch["loss_mask"] = _pad_or_truncate_2d(batch.get("loss_mask"), target_length, 0)
+    batch["loss_mask"] = prepared_loss_mask
     batch["position_ids"] = _pad_or_truncate_position_ids(batch.get("position_ids"), target_length)
     batch["attention_mask"] = _pad_or_truncate_attention_mask(batch.get("attention_mask"), target_length)
     for key, tensor_pad_value in (sequence_tensor_pad_values or {}).items():

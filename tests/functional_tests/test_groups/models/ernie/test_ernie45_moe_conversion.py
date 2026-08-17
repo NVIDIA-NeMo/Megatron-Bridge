@@ -271,8 +271,8 @@ class TestErnie45MoEConversion:
                 "-m",
                 "coverage",
                 "run",
-                "--data-file=/opt/Megatron-Bridge/.coverage",
-                "--source=/opt/Megatron-Bridge/",
+                f"--data-file={Path(__file__).resolve().parents[5] / '.coverage'}",
+                f"--source={Path(__file__).resolve().parents[5]}",
                 "--parallel-mode",
             ]
         cmd += [

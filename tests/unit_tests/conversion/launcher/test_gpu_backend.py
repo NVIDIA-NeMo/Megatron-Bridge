@@ -419,6 +419,8 @@ class TestRoundtrip:
         assert skipped_fp8 is False
 
     def test_verification_raises_on_weight_mismatch(self, cli, monkeypatch):
+        events = []
+
         class FakeBridge:
             hf_pretrained = types.SimpleNamespace(state={"weight": torch.tensor([2.0])})
 
@@ -426,9 +428,12 @@ class TestRoundtrip:
                 yield "weight", torch.tensor([1.0])
 
         monkeypatch.setattr(cli.torch.distributed, "get_rank", lambda: 0)
-        monkeypatch.setattr(cli.torch.distributed, "broadcast", lambda tensor, src: None)
+        monkeypatch.setattr(cli.torch.distributed, "broadcast", lambda tensor, src: events.append("broadcast"))
         monkeypatch.setattr(cli.torch.cuda, "current_device", lambda: "cpu")
-        monkeypatch.setattr(cli._CONSOLE, "print", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli._CONSOLE, "print", lambda *args, **kwargs: events.append("report"))
 
         with pytest.raises(ValueError, match="Weight mismatch detected"):
             cli._verify_roundtrip_weights(FakeBridge(), ["megatron-model"])
+
+        assert events[0] == "broadcast"
+        assert "report" in events

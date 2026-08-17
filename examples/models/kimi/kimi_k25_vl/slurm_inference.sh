@@ -57,6 +57,9 @@ MAX_NEW_TOKENS=200
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=8
+export NVLINK_DOMAIN_SIZE=8
+export USE_MNNVL=0
 
 echo "======================================"
 echo "Kimi-K2.5-VL Inference"

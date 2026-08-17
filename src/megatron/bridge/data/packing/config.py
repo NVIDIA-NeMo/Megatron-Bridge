@@ -28,12 +28,14 @@ class PackedSequenceSpecs:
     """Settings and optional artifact paths for offline sequence packing."""
 
     packed_sequence_size: int = -1
+    max_single_sequence_length: int | None = None
     tokenizer_model_name: str | None = None
     num_tokenizer_workers: int = -1
     packed_train_data_path: str | Path | None = None
     packed_val_data_path: str | Path | None = None
     packed_metadata_path: str | Path | None = None
     pad_cu_seqlens: bool = False
+    """Pad cumulative sequence boundaries for full-iteration, whole-layer, or attention-scoped CUDA graphs."""
     pad_seq_to_mult: int | None = 1
 
     def __post_init__(self) -> None:
@@ -44,6 +46,11 @@ class PackedSequenceSpecs:
             self._validate_packed_path("packed_val_data_path", self.packed_val_data_path)
         if self.pad_seq_to_mult is not None and self.pad_seq_to_mult <= 0:
             raise ValueError("pad_seq_to_mult must be a positive integer when provided.")
+        if self.max_single_sequence_length is not None:
+            if self.max_single_sequence_length <= 0:
+                raise ValueError("max_single_sequence_length must be a positive integer when provided.")
+            if self.packed_sequence_size > 0 and self.max_single_sequence_length > self.packed_sequence_size:
+                raise ValueError("max_single_sequence_length cannot exceed packed_sequence_size.")
 
     def _validate_packed_path(self, attr_name: str, path_value: str | Path) -> None:
         """Validate an explicitly supplied packed artifact path."""

@@ -58,6 +58,8 @@ _TARGET_ALLOWLIST_MUTATORS: tuple[str, ...] = (
 )
 
 _ALLOWED_PRIVATE_TARGETS: set[str] = {
+    # Legacy Gemma 4 checkpoints serialized the block spec under its previous private name.
+    "megatron.bridge.models.gemma.modeling_gemma4._gemma4_block_spec",
     # PyTorch exposes torch.nn.functional.gelu as this C-extension symbol, and
     # the YAML function representer serializes it with its underlying module.
     "torch._C._nn.gelu",

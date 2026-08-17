@@ -69,7 +69,7 @@ def _make_evaluate_state(*, eval_iters, exit_duration_in_mins=None):
             dist=SimpleNamespace(use_decentralized_pg=True),
             optimizer=SimpleNamespace(reuse_grad_buf_for_mxfp8_param_ag=False),
             ddp=SimpleNamespace(overlap_param_gather=False),
-            dataset=SimpleNamespace(dataloader_type="single"),
+            dataset=SimpleNamespace(dataloader_type="single", seq_length=1),
             train=SimpleNamespace(
                 empty_unused_memory_level=0,
                 exit_duration_in_mins=exit_duration_in_mins,

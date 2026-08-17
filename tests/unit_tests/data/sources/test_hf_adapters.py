@@ -106,6 +106,35 @@ def test_image_adapters_normalize_single_image_rows(adapter_name, row):
     assert adapted[0]["conversation"][1]["content"][0]["text"] == "A cat."
 
 
+def test_medpix_adapter_supports_fixed_image_dimensions():
+    adapted = adapt_hf_dataset(
+        [{"image_id": object(), "question": "What?", "answer": "A cat."}],
+        adapter_name="medpix",
+        adapter_kwargs={"resized_height": 448, "resized_width": 448},
+    )
+
+    image = adapted[0]["conversation"][0]["content"][0]
+    assert image["resized_height"] == 448
+    assert image["resized_width"] == 448
+
+
+@pytest.mark.parametrize(
+    "adapter_kwargs",
+    [
+        {"resized_height": 448},
+        {"resized_height": 448, "resized_width": 0},
+        {"resized_height": True, "resized_width": 448},
+    ],
+)
+def test_medpix_adapter_rejects_invalid_fixed_image_dimensions(adapter_kwargs):
+    with pytest.raises(ValueError, match="must both be positive integers"):
+        adapt_hf_dataset(
+            [{"image_id": object(), "question": "What?", "answer": "A cat."}],
+            adapter_name="medpix",
+            adapter_kwargs=adapter_kwargs,
+        )
+
+
 def test_raven_adapter_filters_malformed_rows():
     rows = [
         {"images": [object()], "texts": [{"user": "What?", "assistant": "Answer."}]},

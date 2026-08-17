@@ -5,9 +5,17 @@ import runpy
 import struct
 import tarfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+import torch
+from megatron.energon import WorkerConfig, get_savable_loader, get_val_dataset
 from PIL import Image
+
+import megatron.bridge.models.qwen_vl.data.energon as qwen_energon
+from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
+from megatron.bridge.models.qwen_vl.data.collate_fn import QwenVLPreparedSequence
+from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
 
 
 pytestmark = pytest.mark.unit
@@ -15,10 +23,28 @@ REPO_ROOT = Path(__file__).parents[3]
 HF_MULTIMODAL_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "hf-multimodal"
 ENERGON_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "energon"
 QWEN_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
+QWEN_ENERGON_EXAMPLE = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "peft_energon.sh"
+_QWEN_TEST_SEQUENCE_LENGTHS = {"red": 9, "green": 7, "blue": 6, "yellow": 5, "purple": 9, "orange": 7}
 
 
 def _load_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _prepare_qwen_test_sequence(example, processor, **kwargs):  # noqa: ARG001
+    serialized = repr(example["conversation"])
+    length = next(length for color, length in _QWEN_TEST_SEQUENCE_LENGTHS.items() if color in serialized)
+    tokens = torch.arange(1, length + 1, dtype=torch.long)
+    return QwenVLPreparedSequence(
+        row={
+            "input_ids": tokens,
+            "attention_mask": torch.ones(length, dtype=torch.long),
+            "position_ids": torch.arange(length, dtype=torch.long),
+            "labels": torch.cat([tokens[1:], torch.tensor([-100])]),
+            "loss_mask": torch.cat([torch.ones(length - 1), torch.zeros(1)]),
+        },
+        visual_values={},
+    )
 
 
 def test_hf_multimodal_preparation_writes_resolvable_qwen_rows(tmp_path: Path):
@@ -106,6 +132,88 @@ def test_energon_preparation_uses_api_with_explicit_splits(tmp_path: Path, monke
     ]
 
 
+@pytest.mark.parametrize("num_workers", [0, 2])
+def test_qwen_native_packing_loader_restores_pending_groups_and_flushes_partial_buffer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, num_workers: int
+):
+    """Exercise pending-group restore plus Energon's finite partial-buffer flush."""
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_example_data.py"))
+    module["prepare_example_data"](tmp_path, num_workers=1)
+
+    monkeypatch.setattr(qwen_energon, "prepare_qwen_vl_sequence", _prepare_qwen_test_sequence)
+    tokenizer = MagicMock(image_token_id=151655, video_token_id=151656)
+
+    def build_encoder():
+        return QwenVLTaskEncoder(
+            tokenizer=tokenizer,
+            image_processor=MagicMock(),
+            max_padding_length=16,
+            enable_energon_packing=True,
+            max_visual_tokens=None,
+        )
+
+    def build_loader():
+        worker_config = WorkerConfig.default_worker_config(num_workers)
+        datamodule = EnergonMultiModalDataModule(
+            path=str(tmp_path),
+            tokenizer=tokenizer,
+            seq_length=16,
+            micro_batch_size=1,
+            num_workers=num_workers,
+            pin_memory=False,
+            shuffle_buffer_size=1,
+            packing_buffer_size=3,
+            task_encoder=build_encoder(),
+        )
+        dataset = datamodule.datasets_provider(worker_config, split="train")
+        return get_savable_loader(dataset)
+
+    def assert_batches_equal(actual, expected):
+        def canonical_restore_key(value):
+            if isinstance(value, (list, tuple)):
+                return tuple(canonical_restore_key(item) for item in value)
+            return value
+
+        assert actual["__keys__"] == expected["__keys__"]
+        assert canonical_restore_key(actual["__restore_key__"]) == canonical_restore_key(expected["__restore_key__"])
+        assert actual["total_tokens"] == expected["total_tokens"]
+        for field_name in ("input_ids", "labels", "loss_mask", "cu_seqlens_q", "cu_seqlens_q_padded"):
+            if expected[field_name] is None:
+                assert actual[field_name] is None
+            else:
+                assert torch.equal(actual[field_name], expected[field_name])
+
+    original_loader = build_loader()
+    original_iter = iter(original_loader)
+    first_batch = next(original_iter)
+    assert original_loader.can_restore_sample() is True
+    assert_batches_equal(original_loader.restore_sample(first_batch["__restore_key__"]), first_batch)
+    state = original_loader.save_state_rank()
+    expected_remaining = [next(original_iter) for _ in range(2)]
+
+    restored_loader = build_loader()
+    restored_loader.restore_state_rank(state)
+    restored_iter = iter(restored_loader)
+    restored_remaining = [next(restored_iter) for _ in range(2)]
+
+    for restored, expected in zip(restored_remaining, expected_remaining, strict=True):
+        assert_batches_equal(restored, expected)
+
+    worker_config = WorkerConfig.default_worker_config(0)
+    partial_dataset = get_val_dataset(
+        tmp_path,
+        split_part="val",
+        worker_config=worker_config,
+        batch_size=1,
+        packing_buffer_size=3,
+        task_encoder=build_encoder(),
+    )
+    partial_loader = get_savable_loader(partial_dataset)
+    partial_batches = list(partial_loader)
+    assert len(partial_batches) == 1
+    assert [key.rsplit("/", 1)[-1] for key in partial_batches[0]["__keys__"]] == ["val-000000", "val-000001"]
+
+
 def test_medpix_energon_preparation_writes_real_schema_without_downloading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -179,6 +287,7 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
     hf_multimodal = (HF_MULTIMODAL_TUTORIAL / "README.md").read_text(encoding="utf-8")
     energon = (ENERGON_TUTORIAL / "README.md").read_text(encoding="utf-8")
     qwen = QWEN_README.read_text(encoding="utf-8")
+    energon_example = QWEN_ENERGON_EXAMPLE.read_text(encoding="utf-8")
 
     assert "qwen3_vl_8b_peft_config" in hf_multimodal
     assert "## Start with a hosted chat dataset" in hf_multimodal
@@ -194,15 +303,19 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
     assert "dataset.defer_in_batch_packing_to_step=False" in hf_multimodal
     assert "dataset.defer_in_batch_packing_to_step=True" not in hf_multimodal
     assert "qwen3_vl_8b_peft_energon_config" in energon
-    assert "--dataset vlm-energon" in energon
+    assert "--dataset vlm-energon" not in energon
+    assert "--mode lora" in energon
     assert "--step_func vlm_step" in energon
     assert "dataset.num_workers=2" in energon
     assert "dataset.num_val_workers=2" in energon
-    assert "dataset.defer_in_batch_packing_to_step=False" in energon
+    assert "dataset.enable_in_batch_packing=False" not in energon
+    assert "dataset.defer_in_batch_packing_to_step=False" not in energon
     assert "dataset.defer_in_batch_packing_to_step=True" not in energon
     assert '"train": "train-shard-.*"' in energon
     assert "prepare_medpix_data.py" in energon
-    assert "dataset.enable_in_batch_packing=True" in energon
+    assert "dataset.packing_buffer_size=16" in energon
+    assert "model.calculate_per_token_loss=True" in energon
+    assert "use PACKING_BUFFER_SIZE for Energon-native packing" in energon_example
     assert "min_pixels` and `max_pixels` are not visual keys" in energon
     assert "Hugging Face multimodal tutorial" in qwen
     assert "multimodal Energon tutorial" in qwen

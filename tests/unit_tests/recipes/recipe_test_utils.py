@@ -128,6 +128,8 @@ class _OfflineModelProvider:
         self.context_parallel_size = 1
         self.cross_entropy_fusion_impl = "native"
         self.csa_compress_ratios = [0] * 33
+        self.cuda_graph_modules = None
+        self.cuda_graph_scope = None
         self.dsa_indexer_skip_topk_offset = 0
         self.dsa_indexer_topk_freq = 1
         self.experimental_attention_variant = "dsa"

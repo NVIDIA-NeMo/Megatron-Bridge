@@ -15,6 +15,8 @@
 
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
+
 export CUDA_VISIBLE_DEVICES="0,1"
 
 # Run recipe functional tests on 2 GPUs
@@ -22,7 +24,7 @@ export CUDA_VISIBLE_DEVICES="0,1"
 # they can run basic training without crashes
 uv run pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_qwen3_4b_ckpt_mcore
 
-uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_qwen3_4b_ckpt_mbridge
+uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_qwen3_4b_ckpt_mbridge
 coverage combine -q
 
 uv run pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_remove_artifacts

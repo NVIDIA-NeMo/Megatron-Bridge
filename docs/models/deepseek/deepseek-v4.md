@@ -4,6 +4,30 @@
 
 DeepSeek V4 models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
+## Chat SFT preprocessing
+
+`DirectHFSFTDatasetConfig` automatically selects the DeepSeek V4 chat collator
+from the tokenizer's `name_or_path`. Because the official V4 tokenizer does not
+provide a Jinja chat template, each training row must select the rendering mode
+explicitly with either `enable_thinking` or `thinking_mode`:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Solve 1 + 1."},
+    {"role": "assistant", "reasoning_content": "Add the terms.", "content": "2"}
+  ],
+  "enable_thinking": true,
+  "truncate_history_thinking": false
+}
+```
+
+Use `enable_thinking: false` for chat mode. Historical reasoning is truncated by
+default in thinking mode; set `truncate_history_thinking: false` to retain it.
+OpenAI-format tool definitions can be
+provided in the row's top-level `tools` field, and tool calls/results remain in
+the structured `messages` list.
+
 ## Model Architecture Features
 
 - **Hybrid Attention (DSv4HybridSelfAttention)**: Per-layer mix of dense MLA and Compressed Sparse Attention selected by `compress_ratios`

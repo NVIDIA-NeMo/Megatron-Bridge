@@ -267,6 +267,185 @@ def test_flat_environment_preparation_defaults_missing_recipe_environment(model_
     assert "Performance might be degraded" in caplog.text
 
 
+def test_missing_exact_gpu_recipe_uses_canonical_family_recipe(monkeypatch):
+    """Weak scaling falls back to the canonical recipe for the same workload."""
+    canonical_name = "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config"
+    args = SimpleNamespace(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotronh_56b",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="fp8_cs",
+        config_variant=None,
+        global_batch_size=None,
+    )
+    canonical_recipe = SimpleNamespace(train=SimpleNamespace(global_batch_size=192))
+
+    def missing_exact(**_kwargs):
+        raise utils.PerfRecipeNotFoundError("missing exact 8-GPU recipe")
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
+    monkeypatch.setattr(utils, "flat_perf_recipe_names", lambda: (canonical_name,))
+    monkeypatch.setattr(
+        utils,
+        "find_perf_recipe",
+        lambda name: (lambda: canonical_recipe) if name == canonical_name else None,
+    )
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", lambda recipe, _overrides, _args: recipe)
+
+    def apply_weak_scaling(recipe, **kwargs):
+        assert kwargs["num_gpus"] == 8
+        recipe.train.global_batch_size = 24
+        return recipe
+
+    override_utils = types.ModuleType("utils.overrides")
+    override_utils.set_post_overrides = apply_weak_scaling
+    monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
+
+    result = run_script._prepare_perf_recipe(args, [])
+
+    assert result is canonical_recipe
+    assert result.train.global_batch_size == 24
+
+
+def test_exact_gpu_recipe_takes_precedence_over_canonical_fallback(monkeypatch):
+    """A tuned exact-count recipe must not be replaced by weak scaling."""
+    exact_recipe = object()
+    args = SimpleNamespace(
+        model_family_name="test",
+        model_recipe_name="test_model",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="bf16",
+        config_variant=None,
+        global_batch_size=None,
+    )
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", lambda **_kwargs: exact_recipe)
+    monkeypatch.setattr(
+        run_script,
+        "get_perf_optimized_recipe",
+        lambda **_kwargs: pytest.fail("canonical fallback must not run for an exact recipe"),
+    )
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", lambda recipe, _overrides, _args: recipe)
+
+    result = run_script._prepare_perf_recipe(args, [])
+
+    assert result is exact_recipe
+
+
+def test_exact_recipe_construction_error_is_not_treated_as_missing(monkeypatch):
+    args = SimpleNamespace(
+        model_family_name="test",
+        model_recipe_name="test_model",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="bf16",
+        config_variant=None,
+        global_batch_size=None,
+    )
+
+    def construction_error(**_kwargs):
+        raise RuntimeError("recipe builder failed")
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", construction_error)
+    monkeypatch.setattr(
+        run_script,
+        "get_perf_optimized_recipe",
+        lambda **_kwargs: pytest.fail("construction failures must not invoke canonical fallback"),
+    )
+
+    with pytest.raises(RuntimeError, match="recipe builder failed"):
+        run_script._prepare_perf_recipe(args, [])
+
+
+def test_missing_perf_recipe_family_reports_requested_workload(monkeypatch):
+    args = SimpleNamespace(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotronh_56b",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="fp8_cs",
+        config_variant=None,
+        global_batch_size=None,
+    )
+
+    def missing_exact(**_kwargs):
+        raise utils.PerfRecipeNotFoundError("missing exact 8-GPU recipe")
+
+    def missing_family(**_kwargs):
+        raise ValueError("No flat perf recipe found for nemotronh_56b/pretrain/b300/fp8_cs/default")
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
+    monkeypatch.setattr(run_script, "get_perf_optimized_recipe", missing_family)
+
+    with pytest.raises(
+        ValueError,
+        match=r"nemotronh_56b/pretrain/b300/fp8_cs/default",
+    ):
+        run_script._prepare_perf_recipe(args, [])
+
+
+def test_weak_scaling_validates_world_size_and_integer_gbs():
+    assert (
+        utils._data_parallel_size(
+            num_gpus=8,
+            tensor_parallel=2,
+            pipeline_parallel=1,
+            context_parallel=1,
+        )
+        == 4
+    )
+    assert utils._weak_scaled_global_batch_size(base_gbs=192, base_data_parallel=32, data_parallel=4) == 24
+
+    with pytest.raises(ValueError, match=r"7 GPUs.*TP \* PP \* CP.*2 \* 1 \* 1"):
+        utils._data_parallel_size(
+            num_gpus=7,
+            tensor_parallel=2,
+            pipeline_parallel=1,
+            context_parallel=1,
+        )
+    with pytest.raises(ValueError, match=r"does not produce an integer global batch size"):
+        utils._weak_scaled_global_batch_size(base_gbs=190, base_data_parallel=32, data_parallel=4)
+
+
+def test_exp_name_rejects_fractional_data_parallel_weak_scaling(monkeypatch):
+    base_config = utils.WorkloadBaseConfig(
+        num_gpus=64,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
+        context_parallel_size=1,
+        expert_model_parallel_size=1,
+        expert_tensor_parallel_size=None,
+        global_batch_size=190,
+    )
+    monkeypatch.setattr(utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+    args = SimpleNamespace(
+        num_gpus=8,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        virtual_pipeline_model_parallel_size=-1,
+        expert_model_parallel_size=None,
+        expert_tensor_parallel_size=None,
+        micro_batch_size=None,
+        global_batch_size=None,
+    )
+
+    with pytest.raises(ValueError, match="does not produce an integer global batch size"):
+        utils.get_exp_name_config(
+            args,
+            model_family_name="nemotronh",
+            model_recipe_name="nemotronh_56b",
+            gpu="b300",
+            compute_dtype="fp8_cs",
+            task="pretrain",
+        )
+
+
 def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):
     """Hydra env overrides must be reflected in the bootstrap recipe."""
     args = SimpleNamespace(

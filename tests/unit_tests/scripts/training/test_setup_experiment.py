@@ -116,7 +116,7 @@ def test_library_resolved_recipe_does_not_enable_benchmark_executor():
     assert module.selected_benchmark_recipe(training_args) is None
 
 
-def test_benchmark_recipe_validates_total_submission_size():
+def test_benchmark_recipe_accepts_weak_scaling_submission_size():
     module = _load_setup_experiment_module()
     args, training_args = module.parse_args(
         [
@@ -135,8 +135,7 @@ def test_benchmark_recipe_validates_total_submission_size():
         ]
     )
 
-    with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
-        module._validate_args(args, module.selected_benchmark_recipe(training_args))
+    module._validate_args(args, module.selected_benchmark_recipe(training_args))
 
 
 def test_benchmark_recipe_accepts_user_selected_node_shape():
@@ -459,6 +458,8 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
+    assert "exclusive" not in executor.kwargs
+    assert "mem" not in executor.kwargs
     assert executor.env_vars == {}
     assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH"}
     assert executor.additional_parameters == {"export": "PATH,HF_TOKEN"}

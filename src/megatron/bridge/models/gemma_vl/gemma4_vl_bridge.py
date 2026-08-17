@@ -21,10 +21,14 @@ Usage::
 
   AutoBridge.from_hf_pretrained("google/gemma-4-E4B-it")
     └─ Gemma4VLBridge (registered for Gemma4ForConditionalGeneration)
-         ├─ provider_bridge()  text mode → Gemma4DenseProvider (pretraining)
-         │                     auto/vl   → Gemma4DenseVLProvider (full VL)
-         └─ mapping_registry()  Dense → _dense_vl_mapping_registry()
-                                 MoE   → _moe_vl_mapping_registry()
+         ├─ provider_bridge()  Dense: text mode → Gemma4DenseProvider (pretraining)
+         │                            auto/vl   → Gemma4DenseVLProvider (full VL)
+         │                     MoE:   text mode → Gemma4ModelProvider (text-only training)
+         │                            auto/vl   → Gemma4VLModelProvider (full VL)
+         └─ mapping_registry()  Dense: text → _dense_mapping_registry("")
+                                        vl   → _dense_vl_mapping_registry()
+                                 MoE:   text → _moe_mapping_registry()
+                                        vl   → _moe_vl_mapping_registry()
 """
 
 import os
@@ -91,6 +95,8 @@ class Gemma4VLBridge(Gemma4Bridge):
             return self._build_dense_vl_provider(hf_config, text_config, vision_config)
 
         self._is_dense = False
+        if self._conversion_mode() == "text":
+            return self._build_moe_provider(text_config)
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
         provider = Gemma4VLModelProvider(**provider_kwargs)
@@ -226,6 +232,8 @@ class Gemma4VLBridge(Gemma4Bridge):
             if self._conversion_mode() == "text":
                 return self._dense_mapping_registry(megatron_prefix="")
             return self._dense_vl_mapping_registry()
+        if self._conversion_mode() == "text":
+            return self._moe_mapping_registry()
         return self._moe_vl_mapping_registry()
 
     def _dense_vl_mapping_registry(self) -> MegatronMappingRegistry:

@@ -247,10 +247,10 @@ class TestLoRA:
         transformed_model = lora(model, training=True)
 
         # Check that target modules were transformed to LinearAdapter
-        assert isinstance(transformed_model.linear_qkv, LinearAdapter)
-        assert isinstance(transformed_model.linear_proj, LinearAdapter)
-        assert isinstance(transformed_model.linear_fc1, LinearAdapter)
-        assert isinstance(transformed_model.linear_fc2, LinearAdapter)
+        assert isinstance(transformed_model.linear_qkv, LoRALinear)
+        assert isinstance(transformed_model.linear_proj, LoRALinear)
+        assert isinstance(transformed_model.linear_fc1, LoRALinear)
+        assert isinstance(transformed_model.linear_fc2, LoRALinear)
 
         # Check that non-target modules were not transformed
         assert isinstance(transformed_model.output_projection, nn.Linear)
@@ -275,9 +275,9 @@ class TestLoRA:
 
         # Check that non-excluded linear modules were transformed
         # (In exclude mode, all linear layers except excluded ones should be transformed)
-        assert isinstance(transformed_model.linear_qkv, LinearAdapter)
-        assert isinstance(transformed_model.linear_proj, LinearAdapter)
-        assert isinstance(transformed_model.linear_fc1, LinearAdapter)
+        assert isinstance(transformed_model.linear_qkv, LoRALinear)
+        assert isinstance(transformed_model.linear_proj, LoRALinear)
+        assert isinstance(transformed_model.linear_fc1, LoRALinear)
 
         # Non-linear modules should never be transformed regardless
         assert isinstance(transformed_model.embedding, nn.Embedding)
@@ -293,10 +293,10 @@ class TestLoRA:
 
         # Check that nested target modules were transformed
         for layer in transformed_model.layers:
-            assert isinstance(layer["attention"]["linear_qkv"], LinearAdapter)
-            assert isinstance(layer["attention"]["linear_proj"], LinearAdapter)
-            assert isinstance(layer["mlp"]["linear_fc1"], LinearAdapter)
-            assert isinstance(layer["mlp"]["linear_fc2"], LinearAdapter)
+            assert isinstance(layer["attention"]["linear_qkv"], LoRALinear)
+            assert isinstance(layer["attention"]["linear_proj"], LoRALinear)
+            assert isinstance(layer["mlp"]["linear_fc1"], LoRALinear)
+            assert isinstance(layer["mlp"]["linear_fc2"], LoRALinear)
 
     def test_lora_grouped_expert_transform_uses_shared_adapter_by_default(self):
         """Grouped expert linears should keep the cheaper shared adapter path by default."""
@@ -362,8 +362,8 @@ class TestLoRA:
         transformed_model = lora(model, training=True)
 
         # Check first layer attention modules are transformed
-        assert isinstance(transformed_model.layers[0]["attention"]["linear_qkv"], LinearAdapter)
-        assert isinstance(transformed_model.layers[0]["attention"]["linear_proj"], LinearAdapter)
+        assert isinstance(transformed_model.layers[0]["attention"]["linear_qkv"], LoRALinear)
+        assert isinstance(transformed_model.layers[0]["attention"]["linear_proj"], LoRALinear)
 
         # Check first layer MLP modules are NOT transformed
         assert isinstance(transformed_model.layers[0]["mlp"]["linear_fc1"], nn.Linear)
@@ -400,7 +400,7 @@ class TestLoRA:
 
         transformed = lora(model, training=True)
 
-        assert isinstance(transformed.linear_qkv, LinearAdapter)
+        assert isinstance(transformed.linear_qkv, LoRALinear)
         assert isinstance(transformed.linear_proj, nn.Linear)
         assert isinstance(transformed.linear_fc1, nn.Linear)
         assert isinstance(transformed.linear_fc2, nn.Linear)
@@ -413,8 +413,8 @@ class TestLoRA:
         # Apply LoRA
         transformed_model = lora(model, training=True)
 
-        # Check adapter properties
-        adapter = transformed_model.linear_qkv
+        # Adapter properties live on the delta-only LinearAdapter sub-module.
+        adapter = transformed_model.linear_qkv.adapter
         assert hasattr(adapter, "dim")
         assert hasattr(adapter, "alpha")
         assert hasattr(adapter, "scale")
@@ -434,15 +434,15 @@ class TestLoRA:
         # Apply LoRA
         transformed_model = lora(model, training=True)
 
-        # Check that original weights are frozen
-        linear_adapter = transformed_model.linear_qkv
-        assert not linear_adapter.weight.requires_grad
-        if linear_adapter.bias is not None:
-            assert not linear_adapter.bias.requires_grad
+        # Check that original weights are frozen (base weight on the wrapped module)
+        wrapped = transformed_model.linear_qkv
+        assert not wrapped.to_wrap.weight.requires_grad
+        if wrapped.to_wrap.bias is not None:
+            assert not wrapped.to_wrap.bias.requires_grad
 
         # Check that LoRA parameters are trainable
-        assert linear_adapter.linear_in.weight.requires_grad
-        assert linear_adapter.linear_out.weight.requires_grad
+        assert wrapped.adapter.linear_in.weight.requires_grad
+        assert wrapped.adapter.linear_out.weight.requires_grad
 
     def test_lora_forward_pass(self):
         """Test that LoRA adapted models can perform forward passes."""
@@ -499,10 +499,10 @@ class TestLoRA:
 
         # Each chunk should have LoRA applied
         for chunk in transformed_chunks:
-            assert isinstance(chunk.linear_qkv, LinearAdapter)
-            assert isinstance(chunk.linear_proj, LinearAdapter)
-            assert isinstance(chunk.linear_fc1, LinearAdapter)
-            assert isinstance(chunk.linear_fc2, LinearAdapter)
+            assert isinstance(chunk.linear_qkv, LoRALinear)
+            assert isinstance(chunk.linear_proj, LoRALinear)
+            assert isinstance(chunk.linear_fc1, LoRALinear)
+            assert isinstance(chunk.linear_fc2, LoRALinear)
 
 
 class TestModelOptLinear:
@@ -786,10 +786,10 @@ class TestLoRANormalizeMoE:
 
         transformed_model = lora(model, training=True)
 
-        assert isinstance(transformed_model.linear_fc1, LinearAdapter)
-        assert isinstance(transformed_model.linear_fc2, LinearAdapter)
-        assert transformed_model.linear_fc1.dim == 32
-        assert transformed_model.linear_fc2.dim == 32
+        assert isinstance(transformed_model.linear_fc1, LoRALinear)
+        assert isinstance(transformed_model.linear_fc2, LoRALinear)
+        assert transformed_model.linear_fc1.adapter.dim == 32
+        assert transformed_model.linear_fc2.adapter.dim == 32
 
 
 class TestLoRAMerge:
@@ -1015,7 +1015,7 @@ class TestLoRAIntegration:
         adapted_model = lora(model, training=True)
 
         # Verify LoRA was applied
-        assert isinstance(adapted_model.linear_qkv, LinearAdapter)
+        assert isinstance(adapted_model.linear_qkv, LoRALinear)
 
         # Perform training step (mock)
         optimizer = torch.optim.Adam(adapted_model.parameters())
@@ -1030,7 +1030,7 @@ class TestLoRAIntegration:
         loss.backward()
         optimizer.step()
 
-        assert isinstance(adapted_model.linear_qkv, LinearAdapter)
+        assert isinstance(adapted_model.linear_qkv, LoRALinear)
 
     def test_lora_parameter_efficiency(self):
         """Test that LoRA significantly reduces trainable parameters."""
@@ -1064,12 +1064,12 @@ class TestLoRAIntegration:
         adapted_model2 = lora2(model2, training=True)
 
         # LoRA weights should be identical with same seed
-        linear_in_1 = adapted_model1.linear_qkv.linear_in.weight.data
-        linear_in_2 = adapted_model2.linear_qkv.linear_in.weight.data
+        linear_in_1 = adapted_model1.linear_qkv.adapter.linear_in.weight.data
+        linear_in_2 = adapted_model2.linear_qkv.adapter.linear_in.weight.data
         assert torch.equal(linear_in_1, linear_in_2)
 
-        linear_out_1 = adapted_model1.linear_qkv.linear_out.weight.data
-        linear_out_2 = adapted_model2.linear_qkv.linear_out.weight.data
+        linear_out_1 = adapted_model1.linear_qkv.adapter.linear_out.weight.data
+        linear_out_2 = adapted_model2.linear_qkv.adapter.linear_out.weight.data
         assert torch.equal(linear_out_1, linear_out_2)
 
     def test_lora_transform_idempotent(self):
@@ -1086,8 +1086,8 @@ class TestLoRAIntegration:
         first_linear_fc1 = first_transform.linear_fc1  # Should remain unchanged
 
         # Verify first transformation worked
-        assert isinstance(first_linear_qkv, LinearAdapter)
-        assert isinstance(first_linear_proj, LinearAdapter)
+        assert isinstance(first_linear_qkv, LoRALinear)
+        assert isinstance(first_linear_proj, LoRALinear)
         assert isinstance(first_linear_fc1, nn.Linear)
 
         # Apply LoRA second time to the already-transformed model
@@ -1099,16 +1099,18 @@ class TestLoRAIntegration:
         assert second_transform.linear_fc1 is first_linear_fc1
 
         # Verify the module types are still correct
-        assert isinstance(second_transform.linear_qkv, LinearAdapter)
-        assert isinstance(second_transform.linear_proj, LinearAdapter)
+        assert isinstance(second_transform.linear_qkv, LoRALinear)
+        assert isinstance(second_transform.linear_proj, LoRALinear)
         assert isinstance(second_transform.linear_fc1, nn.Linear)
 
         # Verify the LoRA parameters are identical
         assert torch.equal(
-            first_transform.linear_qkv.linear_in.weight.data, second_transform.linear_qkv.linear_in.weight.data
+            first_transform.linear_qkv.adapter.linear_in.weight.data,
+            second_transform.linear_qkv.adapter.linear_in.weight.data,
         )
         assert torch.equal(
-            first_transform.linear_qkv.linear_out.weight.data, second_transform.linear_qkv.linear_out.weight.data
+            first_transform.linear_qkv.adapter.linear_out.weight.data,
+            second_transform.linear_qkv.adapter.linear_out.weight.data,
         )
 
 

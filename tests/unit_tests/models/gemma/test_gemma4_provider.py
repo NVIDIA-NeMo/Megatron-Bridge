@@ -14,11 +14,13 @@
 
 """Unit tests for Gemma 4 text-only providers."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
+import yaml
 from torch import nn
 
 from megatron.bridge.models.gemma.gemma4_provider import (
@@ -31,9 +33,17 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     _gemma4_checkpointed_forward,
     _install_tied_kv,
     _patch_ple_block_threading,
+    gemma4_block_spec,
 )
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.utils.instantiate_utils import InstantiationMode
+
+
+@dataclass
+class Gemma4RunConfigForTest(_ConfigContainerBase):
+    model: Gemma4ModelProvider
 
 
 class _IdentityOutputLayer(nn.Module):
@@ -546,6 +556,42 @@ class TestGemma4ModelProviderDefaults:
         raw_logits = torch.tensor([[-120.0, 120.0]])
         logits, _ = built.output_layer(raw_logits)
         torch.testing.assert_close(logits, 30.0 * torch.tanh(raw_logits / 30.0))
+
+
+class TestGemma4TransformerLayerSpecCheckpoint:
+    """Gemma 4's default layer spec must survive run-config checkpoint reloads."""
+
+    @staticmethod
+    def _write_run_config(tmp_path, provider):
+        run_config_path = tmp_path / "run_config.yaml"
+        Gemma4RunConfigForTest(model=provider).to_yaml(str(run_config_path))
+        return run_config_path
+
+    def test_default_provider_serializes_a_public_reloadable_spec_target(self, tmp_path):
+        provider = Gemma4ModelProvider()
+        run_config_path = self._write_run_config(tmp_path, provider)
+        serialized = yaml.safe_load(run_config_path.read_text())
+
+        spec_func = provider.transformer_layer_spec.func
+        target = f"{spec_func.__module__}.{spec_func.__qualname__}"
+        assert serialized["model"]["transformer_layer_spec"]["_target_"] == target
+        assert target == "megatron.bridge.models.gemma.modeling_gemma4.gemma4_block_spec"
+
+        loaded = Gemma4RunConfigForTest.from_yaml(str(run_config_path), mode=InstantiationMode.STRICT)
+
+        assert loaded.model.transformer_layer_spec.func is gemma4_block_spec
+
+    def test_legacy_private_spec_target_reloads(self, tmp_path):
+        run_config_path = self._write_run_config(tmp_path, Gemma4ModelProvider())
+        serialized = yaml.safe_load(run_config_path.read_text())
+        serialized["model"]["transformer_layer_spec"]["_target_"] = (
+            "megatron.bridge.models.gemma.modeling_gemma4._gemma4_block_spec"
+        )
+        run_config_path.write_text(yaml.safe_dump(serialized))
+
+        loaded = Gemma4RunConfigForTest.from_yaml(str(run_config_path), mode=InstantiationMode.STRICT)
+
+        assert loaded.model.transformer_layer_spec.func is gemma4_block_spec
 
 
 class TestInstallTiedKV:

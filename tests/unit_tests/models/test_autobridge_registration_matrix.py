@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -151,6 +152,57 @@ def test_public_autobridge_import_registers_every_supported_model() -> None:
             json.dumps(sorted(DEPRECATED_REGISTRATIONS)),
         ],
         capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_public_autobridge_import_does_not_require_flash_linear_attention(tmp_path: Path) -> None:
+    """Models unrelated to Kimi K3 remain available without its FLA runtime."""
+    blocker_dir = tmp_path / "without_fla"
+    blocker_dir.mkdir()
+    (blocker_dir / "sitecustomize.py").write_text(
+        """
+import builtins
+import importlib.util
+
+_original_find_spec = importlib.util.find_spec
+_original_import = builtins.__import__
+
+def _find_spec(fullname, package=None):
+    if fullname == "fla" or fullname.startswith("fla."):
+        return None
+    return _original_find_spec(fullname, package)
+
+def _import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "fla" or name.startswith("fla."):
+        raise ModuleNotFoundError("No module named 'fla'", name="fla")
+    return _original_import(name, globals, locals, fromlist, level)
+
+importlib.util.find_spec = _find_spec
+builtins.__import__ = _import
+"""
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(blocker_dir), environment.get("PYTHONPATH")) if value
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from megatron.bridge import AutoBridge; "
+                "supported = set(AutoBridge.list_supported_models()); "
+                "assert {'DeepseekV3ForCausalLM', 'KimiK3ForConditionalGeneration', "
+                "'Qwen3ForCausalLM'} <= supported"
+            ),
+        ],
+        capture_output=True,
+        env=environment,
         text=True,
         timeout=180,
         check=False,

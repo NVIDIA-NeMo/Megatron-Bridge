@@ -144,7 +144,7 @@ class TestBailingMoeV2Conversion:
         test_output_dir = tmp_path / f"bailing_moe2_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        repo_root = "/opt/Megatron-Bridge"
+        repo_root = Path(__file__).resolve().parents[5]
         cmd = [
             sys.executable,
             "-m",

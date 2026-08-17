@@ -31,6 +31,7 @@ from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
@@ -63,15 +64,18 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a VL SFT config for Nemotron Omni on CORD v2.
 
     Vision-language finetuning on the CORD v2 receipt parsing dataset.
+    Sound modules are omitted because this dataset contains only image-text samples.
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
     """
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
+    cfg.model.has_sound = False
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=4096,
         preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=_DEFAULT_HF_PATH,
+        trust_remote_code=True,
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="cyclic",
@@ -88,11 +92,45 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return an 8K CORD v2 SFT config with in-batch packing and CP2.
+
+    In-batch packing requires a micro batch greater than one. The TP4/CP2
+    topology needs at least eight GPUs and aligns every packed row to the
+    combined CP/SP multiple. Precision-aware Adam uses FP16 main parameters
+    with stored FP32 remainders, BF16 gradients, and BF16 moments so first-step
+    optimizer-state initialization fits within 80 GB H100 memory.
+    """
+    cfg = nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
+    cfg.model.seq_length = 8192
+    cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
+    cfg.train.micro_batch_size = 2
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.store_param_remainders = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.enable_in_batch_packing = True
+    cfg.dataset.in_batch_packing_pad_to_multiple_of = 8
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
 def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a LoRA PEFT config for Nemotron Omni on CORD v2.
 
     LoRA adapters are applied to attention, Mamba, and FC1/FC2 projections.
-    Vision and sound base modules remain frozen while matching adapters are trainable.
+    Vision base modules remain frozen and sound modules are omitted.
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
     """
@@ -100,6 +138,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
+    cfg.model.has_sound = False
     cfg.peft = LoRA(
         target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"],
         dim=16,
@@ -125,6 +164,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         seq_length=4096,
         preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=_DEFAULT_HF_PATH,
+        trust_remote_code=True,
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="cyclic",
@@ -278,6 +318,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
 
 __all__ = [
+    "nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config",
     "nemotron_omni_valor32k_peft_4gpu_h100_bf16_config",

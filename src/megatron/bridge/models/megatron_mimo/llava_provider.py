@@ -4,6 +4,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Type
 
+import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -12,6 +13,7 @@ from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
 
@@ -42,6 +44,7 @@ class LlavaMegatronMIMOProvider(MegatronMIMOProvider):
     # Override defaults
     image_special_token_id: int = 32000
     vocab_size: int = 32256  # Vicuna vocab size
+    logit_dtype: torch.dtype | None = None
 
     # Optional custom configs
     language_config: Optional[TransformerConfig] = None
@@ -66,6 +69,7 @@ class LlavaMegatronMIMOProvider(MegatronMIMOProvider):
                 "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(),
                 "vocab_size": self.vocab_size,
                 "max_sequence_length": 4096,
+                **logit_dtype_kwarg(GPTModel, self.logit_dtype),
                 "pre_process": True,
                 "post_process": True,
                 "position_embedding_type": "rope",

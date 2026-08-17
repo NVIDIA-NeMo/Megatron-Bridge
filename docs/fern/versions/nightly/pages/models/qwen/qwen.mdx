@@ -106,23 +106,24 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 
 | Model | Mode | TP | PP | EP | Total GPUs | Use Case |
 |-------|------|----|----|----|-----------:|----------|
-| **Qwen3-Next-80B** | Pretrain | 2 | 8 | 16 | 256 | Pre-training (32 nodes) |
-| **Qwen3-Next-80B** | Full SFT | 2 | 8 | 16 | 256 | Full supervised finetuning (32 nodes) |
+| **Qwen3-Next-80B** | Pretrain | 1 | 4 | 8 | 32 | Pre-training (4 nodes) |
+| **Qwen3-Next-80B** | Full SFT | 1 | 2 | 8 | 16 | Full supervised finetuning (2 nodes) |
 
 #### Pre-training Example
 
 ```python
 from megatron.bridge.recipes.qwen import qwen3_next_80b_a3b_pretrain_config
 
-config = qwen3_next_80b_a3b_pretrain_config(
-    name="qwen3_next_80b_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/qwen3_next_80b",
-    train_iters=500_000,
-    global_batch_size=2048,
-    seq_length=4096,
-    # Uses TP=2, PP=8, EP=16 (256 GPUs) automatically
-)
+config = qwen3_next_80b_a3b_pretrain_config()
+config.dataset.data_path = "/path/to/dataset_text_document"
+config.checkpoint.save = "/results/qwen3_next_80b/checkpoints"
+config.logger.tensorboard_dir = "/results/qwen3_next_80b/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 2048
+config.scheduler.lr_decay_iters = 500_000
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=1, PP=4, EP=8 (32 GPUs) automatically
 ```
 
 #### Finetuning Example
@@ -130,14 +131,13 @@ config = qwen3_next_80b_a3b_pretrain_config(
 ```python
 from megatron.bridge.recipes.qwen import qwen3_next_80b_a3b_sft_config
 
-config = qwen3_next_80b_a3b_sft_config(
-    name="qwen3_next_80b_full_sft",
-    pretrained_checkpoint="/results/qwen3_next_80b/checkpoints/iter_0500000",
-    train_iters=1000,
-    global_batch_size=64,
-    finetune_lr=5e-6,
-    # Uses TP=2, PP=8, EP=16 (256 GPUs) automatically
-)
+config = qwen3_next_80b_a3b_sft_config()
+config.checkpoint.pretrained_checkpoint = "/results/qwen3_next_80b/checkpoints/iter_0500000"
+config.train.train_iters = 1000
+config.train.global_batch_size = 64
+config.scheduler.lr_decay_iters = 1000
+config.optimizer.lr = 5e-6
+# Uses TP=1, PP=2, EP=8 (16 GPUs) automatically
 ```
 
 **Note**: PEFT (LoRA/DoRA) finetuning is not currently available for Qwen3-Next models.

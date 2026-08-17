@@ -21,7 +21,10 @@
 #
 # Install them directly with `uv pip install --no-config`: --no-config ignores the
 # project's [tool.uv] config, so the `sys_platform == 'never'` override does not
-# neutralize the install.
+# neutralize the install. The requirements lock pins each version and accepted artifact
+# digest so CI never executes mutable package contents from the index.
 set -euo pipefail
 
-uv pip install --no-config imageio imageio-ffmpeg av easydict
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+uv pip install --no-config --require-hashes --no-deps \
+    --requirement "${script_dir}/diffusion-deps.lock"

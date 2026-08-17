@@ -151,7 +151,7 @@ from megatron.bridge.training.state import GlobalState
 # Minimal bootstrap
 state = GlobalState()
 state.cfg = megatron_cfg
-initialize_megatron(cfg=megatron_cfg)
+pg_collection = initialize_megatron(cfg=megatron_cfg)
 set_jit_fusion_options(megatron_cfg.model, megatron_cfg.train.micro_batch_size)
 
 ckpt_ctx = init_checkpointing_context(megatron_cfg.checkpoint)
@@ -161,6 +161,7 @@ model_list = get_model(
     use_torch_fsdp2=megatron_cfg.dist.use_torch_fsdp2,
     overlap_param_gather_with_optimizer_step=megatron_cfg.optimizer.overlap_param_gather_with_optimizer_step,
     data_parallel_random_init=megatron_cfg.rng.data_parallel_random_init,
+    pg_collection=pg_collection,
 )
 optimizer, scheduler = setup_optimizer(
     optimizer_config=megatron_cfg.optimizer,
@@ -431,11 +432,12 @@ class MegatronBridgeAdapter:
         from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
         from megatron.bridge.models.model_provider import get_model
         from megatron.bridge.training.optim import setup_optimizer
-        initialize_megatron(cfg=self.megatron_cfg)
+        pg_collection = initialize_megatron(cfg=self.megatron_cfg)
         set_jit_fusion_options(self.megatron_cfg.model, self.megatron_cfg.train.micro_batch_size)
         self.model_list = get_model(self.megatron_cfg.model, self.megatron_cfg.ddp,
                                     use_torch_fsdp2=self.megatron_cfg.dist.use_torch_fsdp2,
-                                    overlap_param_gather_with_optimizer_step=self.megatron_cfg.optimizer.overlap_param_gather_with_optimizer_step)
+                                    overlap_param_gather_with_optimizer_step=self.megatron_cfg.optimizer.overlap_param_gather_with_optimizer_step,
+                                    pg_collection=pg_collection)
         self.model = self.model_list[0]
         self.optimizer, self.scheduler = setup_optimizer(self.megatron_cfg.optimizer, self.megatron_cfg.scheduler, self.model_list,
                                                          use_gloo_process_groups=self.megatron_cfg.dist.use_gloo_process_groups)

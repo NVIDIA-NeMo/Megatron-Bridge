@@ -313,6 +313,7 @@ def wan_1_3b_text2image_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = wan_1_3b_pretrain_8gpu_h100_bf16_config()
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
+    cfg.dataset.F_latents = 1
     cfg.model.context_parallel_size = 1
     cfg.optimizer.lr = 1e-4
     cfg.optimizer.min_lr = 1e-4

@@ -1223,12 +1223,14 @@ class TestGemma4PLEHelpers:
         calls = []
 
         class FakeVocabParallelEmbedding:
-            def __init__(self, vocab_size, hidden_size, config, init_method):
-                calls.append(("embedding", vocab_size, hidden_size, config, init_method))
+            def __init__(self, vocab_size, hidden_size, config, init_method, tp_group):
+                calls.append(("embedding", vocab_size, hidden_size, config, init_method, tp_group))
 
         class FakeColumnParallelLinear:
-            def __init__(self, input_size, output_size, config, init_method, bias, gather_output):
-                calls.append(("projection", input_size, output_size, config, init_method, bias, gather_output))
+            def __init__(self, input_size, output_size, config, init_method, bias, gather_output, tp_group):
+                calls.append(
+                    ("projection", input_size, output_size, config, init_method, bias, gather_output, tp_group)
+                )
 
         monkeypatch.setattr(
             "megatron.core.tensor_parallel.VocabParallelEmbedding",
@@ -1238,7 +1240,8 @@ class TestGemma4PLEHelpers:
             "megatron.core.tensor_parallel.ColumnParallelLinear",
             FakeColumnParallelLinear,
         )
-        model = SimpleNamespace()
+        tp_group = object()
+        model = SimpleNamespace(pg_collection=SimpleNamespace(tp=tp_group))
         config = _config(init_method="init", layernorm_epsilon=1e-6)
         provider = SimpleNamespace(
             num_layers=3,
@@ -1254,8 +1257,8 @@ class TestGemma4PLEHelpers:
         assert isinstance(model.per_layer_model_proj, FakeColumnParallelLinear)
         assert isinstance(model.per_layer_proj_norm, Gemma4RMSNorm)
         assert calls == [
-            ("embedding", 128, 6, config, "init"),
-            ("projection", 4, 6, config, "init", False, True),
+            ("embedding", 128, 6, config, "init", tp_group),
+            ("projection", 4, 6, config, "init", False, True, tp_group),
         ]
 
     def test_compute_per_layer_inputs_combines_token_and_model_projections(self):
@@ -1285,6 +1288,56 @@ class TestGemma4PLEHelpers:
 
         out = _compute_per_layer_inputs(model, input_ids, decoder_input)
 
+        assert out.shape == (2, 3, 2, 3)
+        expected_value = (4.0 * (4**-0.5) + (3**0.5)) * (2.0**-0.5)
+        torch.testing.assert_close(out, torch.full_like(out, expected_value))
+
+    def test_compute_per_layer_inputs_preserves_sequence_major_sp_projection(self, monkeypatch):
+        tp_group = object()
+        scatter_shapes = []
+
+        def fake_scatter(tensor, *, group):
+            assert group is tp_group
+            assert tensor.shape[0] % 2 == 0
+            scatter_shapes.append(tensor.shape)
+            return tensor.chunk(2, dim=0)[0].contiguous()
+
+        class FakeEmbedding(torch.nn.Module):
+            def forward(self, input_ids):
+                batch, seq = input_ids.shape
+                return torch.ones(batch, seq, 6)
+
+        class FakeProjection(torch.nn.Module):
+            def forward(self, hidden_states):
+                # SP input is already sharded and must remain [sequence, batch, hidden].
+                assert hidden_states.shape == (3, 2, 4)
+                # Emulate ColumnParallelLinear's internal sequence all-gather.
+                return torch.full((6, 2, 6), 4.0), None
+
+        monkeypatch.setattr(
+            "megatron.core.tensor_parallel.scatter_to_sequence_parallel_region",
+            fake_scatter,
+        )
+        model = SimpleNamespace(
+            config=SimpleNamespace(
+                per_layer_embed_dim=3,
+                num_layers=2,
+                hidden_size=4,
+                sequence_parallel=True,
+            ),
+            pg_collection=SimpleNamespace(tp=tp_group),
+            per_layer_embedding=FakeEmbedding(),
+            per_layer_model_proj=FakeProjection(),
+            per_layer_proj_norm=torch.nn.Identity(),
+        )
+
+        out = _compute_per_layer_inputs(
+            model,
+            input_ids=torch.ones(2, 6, dtype=torch.long),
+            decoder_input=torch.zeros(3, 2, 4),
+        )
+
+        assert scatter_shapes == [torch.Size((6, 2, 6)), torch.Size((6, 2, 6))]
         assert out.shape == (2, 3, 2, 3)
         expected_value = (4.0 * (4**-0.5) + (3**0.5)) * (2.0**-0.5)
         torch.testing.assert_close(out, torch.full_like(out, expected_value))

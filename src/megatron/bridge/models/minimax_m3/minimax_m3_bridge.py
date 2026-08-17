@@ -346,7 +346,10 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         # MoE settings — sigmoid routing with expert bias correction and
         # normalized top-k weights scaled by routed_scaling_factor (DeepSeek-V3 style)
         provider.moe_grouped_gemm = True
-        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_token_dispatcher_type = "flex"
+        provider.moe_flex_dispatcher_backend = "hybridep"
+        provider.moe_flex_dispatcher_num_sms = 16
+        provider.moe_permute_fusion_into_hybridep = False
         provider.moe_permute_fusion = True
         provider.moe_router_pre_softmax = False
         provider.moe_router_score_function = "sigmoid"

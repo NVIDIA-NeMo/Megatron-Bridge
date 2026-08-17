@@ -11,16 +11,43 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""GB300 performance recipe for DeepSeek V4 Pro."""
+"""GB300 performance recipes for DeepSeek V4."""
 
 import torch
 
 from megatron.bridge.perf_recipes._common import _benchmark_common
+from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
+)
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+
+
+def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
+    cfg = deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+    return cfg
 
 
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
@@ -45,6 +72,8 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj", "mhc"]
 
     _benchmark_common(cfg, cross_entropy_impl="native")
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_hybridep_num_sms = None
 
     cfg.model.cuda_graph_impl = "full_iteration"
     cfg.model.cuda_graph_scope = []
