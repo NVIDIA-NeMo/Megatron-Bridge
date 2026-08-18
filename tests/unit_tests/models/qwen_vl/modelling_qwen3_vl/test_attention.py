@@ -25,12 +25,53 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.attention import AttnMaskType
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import (
+    Qwen3VLSelfAttention,
+    _get_core_attention_packed_seq_params,
+)
+
+
+def test_core_attention_packed_params_use_physical_tail_boundary():
+    logical = torch.tensor([0, 5], dtype=torch.int32)
+    physical = torch.tensor([0, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=logical,
+        cu_seqlens_kv=logical,
+        cu_seqlens_q_padded=physical,
+        cu_seqlens_kv_padded=physical,
+        max_seqlen_q=8,
+        max_seqlen_kv=8,
+    )
+
+    actual = _get_core_attention_packed_seq_params(packed_seq_params)
+
+    assert actual is not packed_seq_params
+    assert actual.cu_seqlens_q is physical
+    assert actual.cu_seqlens_kv is physical
+    assert actual.cu_seqlens_q_padded is None
+    assert actual.cu_seqlens_kv_padded is None
+    assert actual.pad_between_seqs is False
+    assert packed_seq_params.cu_seqlens_q is logical
+    assert packed_seq_params.cu_seqlens_q_padded is physical
+
+
+def test_core_attention_packed_params_preserve_unpadded_metadata():
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=torch.tensor([0, 8], dtype=torch.int32),
+        cu_seqlens_kv=torch.tensor([0, 8], dtype=torch.int32),
+        max_seqlen_q=8,
+        max_seqlen_kv=8,
+    )
+
+    assert _get_core_attention_packed_seq_params(packed_seq_params) is packed_seq_params
 
 
 class TestQwen3VLSelfAttention:
