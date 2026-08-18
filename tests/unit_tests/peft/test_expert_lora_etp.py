@@ -14,10 +14,10 @@
 
 """Fail-first wiring and exactness tests for expert LoRA at expert-TP > 1.
 
-Each defect-demonstrating test carries ``@pytest.mark.xfail(strict=True, reason="<defect>: ...")``
-and fails against the current adapter code — the marker is the fail-first record. The fix
-commit deletes the markers; ``strict=True`` turns the resulting XPASS into a suite failure, so
-the fix cannot merge with any demonstration left unfixed. Behavior pins are plain tests.
+Each defect-demonstrating test was introduced one commit earlier carrying
+``@pytest.mark.xfail(strict=True)`` and failing against the pre-fix adapter code — the
+fail-first record lives in that commit. The markers were deleted together with the fix, so
+every demonstration now asserts for real. Behavior pins are plain tests throughout.
 
 The harness runs the real shipped adapters through the real MCore suppression logic on CPU: a
 one-rank gloo init plus a mock process group reporting ``size() == 2`` makes MCore's
@@ -218,11 +218,6 @@ def _patch_fix_ops_if_present(stack, *, copy_to=None, reduce_from=None, ag_last_
             True,
             True,
             False,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="expert-fc2: linear_out keeps gather_output=True — the gathered delta is "
-                "summed once per rank by the dispatcher's expert-TP reduce",
-            ),
             id="expert-fc2",
         ),
         pytest.param(
@@ -231,11 +226,6 @@ def _patch_fix_ops_if_present(stack, *, copy_to=None, reduce_from=None, ag_last_
             True,
             True,
             False,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="shared-overlap: linear_out keeps gather_output=True — the gathered "
-                "delta is summed TP times by SharedExpertMLP.post_forward_comm",
-            ),
             id="shared-overlap-fc2",
         ),
         pytest.param(False, True, True, False, True, id="dense-fc2-keeps-gather"),
@@ -310,12 +300,6 @@ def _expert_fc2_fixtures():
     return x, a, b, z_partials, out_slots
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="expert-fc2: A@h stays a per-rank partial (row-parallel reduce suppressed under "
-    "explicit_expert_comm) and the gathered delta is summed once per ETP rank — "
-    "combined == 2 * cat_s((x_s @ A_s^T) @ B_s^T), not x @ (B@A)^T",
-)
 def test_expert_fc2_adapter_is_exact_under_the_dispatcher_etp_sum():
     """Forward exactness of the default expert fc2 adapter under the dispatcher's ETP sum."""
 
@@ -383,11 +367,6 @@ def test_expert_fc1_forward_and_dL_dB_are_exact():
         assert torch.allclose(adapter.linear_out.weight.grad, g[rank].t() @ z, atol=TOL)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="expert-fc1-dgrad: allreduce_dgrad is forced False under explicit_expert_comm, so dL/dA_r keeps "
-    "only the own-rank term (g_r @ B_r) and loses every cross-rank term",
-)
 def test_expert_fc1_dL_dA_recovers_cross_rank_terms():
     x, a, b, g, z_slots = _expert_fc1_fixtures()
     dz_sum = sum(g[s] @ b[s * OUT_SHARD : (s + 1) * OUT_SHARD, :] for s in range(ETP))
@@ -462,11 +441,6 @@ def _sequential_slot_fake(expected_slot_lists, rank):
     return fake
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="grouped-autograd: _gather_along_last_dim is a bare torch.distributed.all_gather into empty_like "
-    "buffers — invisible to autograd, so dL/dA is None on the fc1 path",
-)
 def test_grouped_fc1_gather_severs_dL_dA():
     x, a, b = _grouped_fixtures()
     rank = 0
@@ -499,11 +473,6 @@ def test_grouped_fc1_gather_severs_dL_dA():
     assert x.grad is not None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="grouped-autograd: the fc2 path gathers after linear_out through the autograd-invisible "
-    "all_gather — the adapter output carries no graph at all (dL/dA = dL/dB = 0)",
-)
 def test_grouped_fc2_output_requires_grad():
     x, a, b = _grouped_fixtures()
     rank = 0
@@ -537,11 +506,6 @@ def test_grouped_fc2_output_requires_grad():
     assert out.requires_grad
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="grouped-fc2: the adapter emits an unsummed-partial delta gathered identically on "
-    "every rank — the dispatcher's ETP sum yields 2 * cat_s((x_s A_s^T) B_s^T)",
-)
 def test_grouped_fc2_is_exact_under_the_dispatcher_etp_sum():
     x, a, b = _grouped_fixtures()
     outputs = []
@@ -602,12 +566,6 @@ def _build_shared_overlap_adapter(rank):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="shared-overlap: the adapter's linear_in reduce completes z, linear_out gathers the full-width "
-    "delta on every rank, and SharedExpertMLP.post_forward_comm sums it TP times — "
-    "combined == 2 * (x @ (B@A)^T)",
-)
 def test_shared_expert_fc2_delta_is_counted_once_by_post_forward_comm():
     x = _seeded((TOKENS, IN), 0)
     a = _seeded((DIM, IN), 1)

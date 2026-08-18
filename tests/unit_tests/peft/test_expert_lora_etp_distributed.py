@@ -24,9 +24,9 @@ faithful to MCore + c10d. Here real NCCL groups and real ``parallel_state`` topo
 same defect sites. One topology serves every defect: TP=2 gives the dense group for the
 shared-expert-overlap case (V5), ETP=2 the expert group for V1/V2/V4, world size 2, DP=1.
 
-Each defect-demonstrating assertion carries ``@pytest.mark.xfail(strict=True)`` — the
-fail-first record; the fix commit deletes the markers. All collectives run unconditionally
-before any assert so a failing assert cannot desync the two ranks.
+Each defect-demonstrating assertion was introduced one commit earlier as a strict xfail
+(the fail-first record) and asserts for real now that the fix has landed. All collectives
+run unconditionally before any assert so a failing assert cannot desync the two ranks.
 """
 
 import os
@@ -134,11 +134,6 @@ def _copy_expert_shards(adapter, a, b, rank, *, input_is_parallel):
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True,
-    reason="expert-fc2: A@h stays a per-rank partial and the gathered delta is summed once per rank "
-    "by the dispatcher's expert-TP reduce — real-collective form of the CPU demonstration",
-)
 def test_default_fc2_adapter_delta_matches_merged_reference(pg_collection) -> None:
     device = torch.device("cuda", torch.cuda.current_device())
     rank = parallel_state.get_expert_tensor_parallel_rank()
@@ -221,11 +216,6 @@ def test_default_fc1_forward_and_dL_dB_are_exact(pg_collection) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True,
-    reason="expert-fc1-dgrad: allreduce_dgrad is forced False under explicit_expert_comm — each rank's "
-    "dL/dA keeps only its own-rank term (~72% relative error measured on 2xH100)",
-)
 def test_default_fc1_dL_dA_matches_merged_reference(pg_collection) -> None:
     _, _, _, _, dz_full, da_shards, _, x, _ = _run_fc1(pg_collection)
     for s in range(_ETP_SIZE):
@@ -268,11 +258,6 @@ def _build_grouped(pg_collection, *, input_is_parallel):
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True,
-    reason="grouped-autograd: the real bare torch.distributed.all_gather severs autograd — grouped fc2 "
-    "adapter output carries no graph (dL/dA = dL/dB = 0, silently)",
-)
 def test_grouped_fc2_output_requires_grad(pg_collection) -> None:
     adapter, device = _build_grouped(pg_collection, input_is_parallel=True)
     x = torch.randn(TOKENS, IN_SHARD, device=device)
@@ -282,10 +267,6 @@ def test_grouped_fc2_output_requires_grad(pg_collection) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True,
-    reason="grouped-autograd: grouped fc1 forward is exact but the gather severs the graph — dL/dA is None",
-)
 def test_grouped_fc1_dL_dA_flows(pg_collection) -> None:
     adapter, device = _build_grouped(pg_collection, input_is_parallel=False)
     x = torch.randn(TOKENS, IN, device=device)
@@ -306,12 +287,6 @@ def _per_expert_weights(device):
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True,
-    reason="grouped-fc2: the adapter emits an unsummed-partial delta gathered identically on "
-    "every rank — the real dispatcher-style expert-TP sum yields 2 * cat_s((x_s A_s^T) B_s^T), "
-    "not the merged reference",
-)
 def test_grouped_fc2_delta_matches_merged_reference(pg_collection) -> None:
     """Real-collective form of the CPU grouped-fc2 wrong-value demonstration."""
     adapter, device = _build_grouped(pg_collection, input_is_parallel=True)
@@ -345,12 +320,6 @@ def test_grouped_fc2_delta_matches_merged_reference(pg_collection) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True,
-    reason="multi-lora-overlap: the dense wrapper gathers its full-width delta on every "
-    "rank while the suppressed-comm base's partials are summed downstream across dense TP "
-    "— the delta is counted exactly TP times",
-)
 def test_multi_lora_shared_expert_fc2_delta_counted_once(pg_collection) -> None:
     """Real-collective MultiLoRALinear on a base whose own TP comms are suppressed.
 
@@ -456,11 +425,6 @@ def test_grouped_adapter_handles_empty_expert_split(pg_collection) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True,
-    reason="shared-overlap: the gathered full-width delta is summed once per dense-TP rank by "
-    "post_forward_comm — combined comes out exactly 2x the merged reference",
-)
 def test_shared_expert_fc2_delta_counted_once_by_tp_sum(pg_collection) -> None:
     device = torch.device("cuda", torch.cuda.current_device())
     rank = parallel_state.get_tensor_model_parallel_rank()

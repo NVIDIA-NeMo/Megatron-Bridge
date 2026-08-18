@@ -850,6 +850,10 @@ class TestParallelLinearAdapter:
             base_linear_name="test",
             is_expert=True,
             model_parallel_config=mock_config,
+            # The expert-TP completion needs a resolvable group at ETP>1; the mock
+            # group's copy_to completion is a forward identity, so the padded-shape
+            # arithmetic under test is unchanged.
+            pg_collection=make_mock_pg_collection(etp_size=4),
         )
 
         # Test with sequence length that needs padding (7 -> 8 when tensor_model_parallel_size=4)

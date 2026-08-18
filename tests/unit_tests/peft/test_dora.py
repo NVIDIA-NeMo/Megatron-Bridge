@@ -415,15 +415,9 @@ class TestDoRA:
 
         return _FakeDoRALinear
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="dora-guard: transform silently builds a dense-group, is_expert=False adapter on an "
-        "MoE expert linear — its sharding and collectives do not compose with expert "
-        "parallelism at TP, ETP, or EP > 1",
-    )
     def test_dora_refuses_expert_linears(self):
         """DoRA must refuse expert linears loudly instead of mis-building an adapter."""
-        # Demonstrates the missing guard fail-first; the strict marker is deleted by the fix change.
+        # Introduced fail-first with a strict xfail marker, removed when the guard landed.
         module = MockRowParallelLinear(16, 16)
         module.config = MockModelParallelConfig()
         dora = DoRA(dim=4, alpha=8)
@@ -435,15 +429,9 @@ class TestDoRA:
             with pytest.raises(NotImplementedError, match="expert"):
                 dora.transform(module, name="linear_fc2", prefix="decoder.layers.0.mlp.experts")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="dora-guard: a TP-sharded base with suppressed tensor-parallel communication "
-        "(shared experts under moe_shared_expert_overlap) reaches DoRA unguarded — its "
-        "per-rank magnitude norm does not compose with the downstream TP reduction",
-    )
     def test_dora_refuses_suppressed_comm_parallel_bases(self):
         """DoRA must refuse suppressed-comm TP-sharded bases (e.g. shared-expert overlap)."""
-        # Demonstrates the missing guard fail-first; the strict marker is deleted by the fix change.
+        # Introduced fail-first with a strict xfail marker, removed when the guard landed.
         module = MockRowParallelLinear(16, 16)
         module.config = MockModelParallelConfig()
         dora = DoRA(dim=4, alpha=8)
