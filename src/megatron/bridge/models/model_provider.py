@@ -204,6 +204,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         pg_collection: ProcessGroupCollection | None = None,
+        use_layer_wise_distributed_optimizer: bool = False,
+        use_layer_wise_param_layout: bool = True,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -216,6 +218,10 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             ddp_config: Configuration for distributed data parallel.
             model_type: Type of model (encoder, decoder, or both).
             overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
+            use_layer_wise_distributed_optimizer: Whether to enable LayerWise optimizer wiring.
+            use_layer_wise_param_layout: Whether LayerWise uses the precomputed shard-aligned layout.
+                Set to ``False`` for the legacy whole-parameter ping-pong layout. Ignored when
+                ``use_layer_wise_distributed_optimizer`` is disabled.
             fp16: Override FP16 setting.
             bf16: Override BF16 setting.
             use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
@@ -283,6 +289,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             ddp_config=ddp_config,
             model_type=model_type,
             overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
             fp16=fp16,
             bf16=bf16,
             use_megatron_fsdp=use_megatron_fsdp,
@@ -503,6 +511,8 @@ class GetModelKwargs(TypedDict, total=False):
         ddp_config: Configuration for distributed data parallel.
         model_type: Type of model (encoder, decoder, or both).
         overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
+        use_layer_wise_distributed_optimizer: Whether to enable LayerWise optimizer wiring.
+        use_layer_wise_param_layout: Whether LayerWise uses the precomputed shard-aligned layout.
         fp16: Override FP16 setting.
         bf16: Override BF16 setting.
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
@@ -519,6 +529,8 @@ class GetModelKwargs(TypedDict, total=False):
     ddp_config: DistributedDataParallelConfig | None
     model_type: ModelType
     overlap_param_gather_with_optimizer_step: bool
+    use_layer_wise_distributed_optimizer: bool
+    use_layer_wise_param_layout: bool
     fp16: bool | None
     bf16: bool | None
     use_megatron_fsdp: bool
@@ -580,6 +592,8 @@ def get_model(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,
+    use_layer_wise_distributed_optimizer: bool = False,
+    use_layer_wise_param_layout: bool = True,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -598,6 +612,10 @@ def get_model(
         model_type: Type of model (encoder, decoder)
         overlap_param_gather_with_optimizer_step: Whether to overlap parameter
             gathering with optimizer step for performance optimization
+        use_layer_wise_distributed_optimizer: Whether to enable LayerWise optimizer wiring.
+        use_layer_wise_param_layout: Whether LayerWise uses the precomputed shard-aligned layout.
+            Set to ``False`` for the legacy whole-parameter ping-pong layout. Ignored when
+            ``use_layer_wise_distributed_optimizer`` is disabled.
         fp16: Enable FP16 mixed precision training. If None, uses model config
         bf16: Enable BF16 mixed precision training. If None, uses model config
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
@@ -703,6 +721,8 @@ def get_model(
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             pg_collection=pg_collection,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
         )
 
     return model
