@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -48,6 +49,20 @@ from megatron.bridge.training.utils.flop_utils import num_floating_point_operati
 
 
 pytestmark = pytest.mark.unit
+
+_NVTE_ATTENTION_ENV_VARS = ("NVTE_FLASH_ATTN", "NVTE_FUSED_ATTN", "NVTE_UNFUSED_ATTN")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def restore_nvte_attention_environment() -> Iterator[None]:
+    """Keep MCore attention-backend selection local to this test module."""
+    original_values = {name: os.environ.get(name) for name in _NVTE_ATTENTION_ENV_VARS}
+    yield
+    for name, value in original_values.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 def _tiny_hf_config() -> MuseGlimmerConfig:
