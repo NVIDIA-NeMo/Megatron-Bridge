@@ -17,6 +17,7 @@
 This module provides SFT and PEFT configurations for GLM-4.5V (106B MoE).
 """
 
+from functools import partial
 from typing import List, Optional, Union
 
 import torch
@@ -31,23 +32,10 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam
 from megatron.bridge.training.config import ConfigContainer
 
 
-def set_glm_45v_pipeline_model_parallel_layout(
-    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None, is_peft: bool = False
-) -> None:
-    """Set the GLM-4.5V pipeline model parallel layout.
-
-    GLM-4.5V (based on GLM-4.5 Air) has 46 decoder layers and no MTP layers.
-    This function sets up predefined layouts for common PP/VP combinations.
-
-    Args:
-        model_cfg: The model provider configuration to modify.
-        layout: Optional custom layout. If None, uses predefined layouts based on PP/VP sizes.
-        is_peft: Whether the model is trained with PEFT.
-    """
+def _get_glm_45v_pipeline_layout(pp_size: int, vp_size: int | None, *, is_peft: bool) -> list[list[str]]:
+    """Get a GLM-4.5V pipeline layout for the requested topology."""
     # GLM-4.5V has no MTP layers
     last_layer = ["loss"]
-    pp_size = model_cfg.pipeline_model_parallel_size or 1
-    vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
 
     # GLM-4.5 Air has 46 decoder layers
     # GLM-4.5 Vision Encoder is huge, we need to balance the first stage with the least number of layers
@@ -73,13 +61,46 @@ def set_glm_45v_pipeline_model_parallel_layout(
                 ["decoder"] * 11 + last_layer,
             ],
             (8, 1): [["embedding"] + ["decoder"]] + [["decoder"] * 7] * 6 + [["decoder"] * 3 + last_layer],
-            (16, 1): [["embedding"]] + [["decoder"] * 3] * 14 + [["decoder"] * 3 + last_layer],
+            (16, 1): [["embedding", "decoder"]] + [["decoder"] * 3] * 14 + [["decoder"] * 3 + last_layer],
         }
 
+    effective_vp_size = 1 if vp_size is None else vp_size
+    if (pp_size, effective_vp_size) not in layout_map:
+        raise ValueError(
+            f"Invalid PP and VP size: {pp_size} and {effective_vp_size} to infer PP layout "
+            f"for GLM-4.5V. Known PP and VP combinations: {layout_map.keys()}"
+        )
+    return layout_map[(pp_size, effective_vp_size)]
+
+
+def set_glm_45v_pipeline_model_parallel_layout(
+    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None, is_peft: bool = False
+) -> None:
+    """Set the GLM-4.5V pipeline model parallel layout.
+
+    GLM-4.5V (based on GLM-4.5 Air) has 46 decoder layers and no MTP layers.
+    This function sets up predefined layouts for common PP/VP combinations.
+
+    Args:
+        model_cfg: The model provider configuration to modify.
+        layout: Optional custom layout. If None, uses predefined layouts based on PP/VP sizes.
+        is_peft: Whether the model is trained with PEFT.
+    """
     if layout is not None:
         model_cfg.pipeline_model_parallel_layout = layout
-    elif (pp_size, vp_size) in layout_map:
-        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
+        if hasattr(model_cfg, "_pipeline_model_parallel_layout_builder"):
+            del model_cfg._pipeline_model_parallel_layout_builder
+        return
+
+    layout_builder = partial(_get_glm_45v_pipeline_layout, is_peft=is_peft)
+    model_cfg._pipeline_model_parallel_layout_builder = layout_builder
+    try:
+        model_cfg.pipeline_model_parallel_layout = layout_builder(
+            model_cfg.pipeline_model_parallel_size or 1,
+            model_cfg.virtual_pipeline_model_parallel_size,
+        )
+    except ValueError:
+        pass
 
 
 # =============================================================================
@@ -94,6 +115,7 @@ def glm_45v_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 8192
     """
     cfg = _sft_common_vlm()
+    cfg.dataset.enable_in_batch_packing = False
 
     # Model configuration
     hf_path = "zai-org/GLM-4.5V"
@@ -244,6 +266,7 @@ def glm_45v_peft_32gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
     """
     cfg = _peft_common_vlm()
+    cfg.dataset.enable_in_batch_packing = False
 
     # PEFT scheme
     if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:

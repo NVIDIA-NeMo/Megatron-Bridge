@@ -74,7 +74,14 @@ def add_server_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         default=4,
         help="Number of HTTP frontend processes spawned on the primary rank.",
     )
-    group.add_argument("--return-log-probs", action="store_true", help="Materialize all logits for log probs.")
+    # The HTTP frontend accepts prompt-logprob requests per request. A last-token-only
+    # engine context asserts on those requests and tears down the serving loop.
+    group.add_argument(
+        "--return-log-probs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Materialize all logits for request-level log probs (enabled by default for server compatibility).",
+    )
 
     profiling = parser.add_argument_group(title="Profiling")
     profiling.add_argument("--profile", action="store_true", help="Enable profiling hooks.")

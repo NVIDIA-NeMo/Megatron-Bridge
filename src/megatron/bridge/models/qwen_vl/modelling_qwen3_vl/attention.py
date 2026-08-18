@@ -15,6 +15,7 @@
 
 import torch
 from einops import rearrange
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer.attention import (
     HAVE_FA3,
     BaseInferenceContext,
@@ -29,6 +30,30 @@ from megatron.core.transformer.dot_product_attention import DotProductAttention
 from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import apply_rotary_pos_emb_absolute
+
+
+def _qwen_attention_mask_for_core_attention(
+    core_attention: object,
+    attention_mask: Tensor | None,
+    packed_seq_params: PackedSeqParams | None,
+) -> Tensor | None:
+    """Translate Qwen's 2D valid-token mask to TE's masked-token convention."""
+    if (
+        not isinstance(core_attention, TEDotProductAttention)
+        or packed_seq_params is not None
+        or not isinstance(attention_mask, Tensor)
+        or attention_mask.ndim != 2
+    ):
+        return attention_mask
+
+    if attention_mask.dtype == torch.bool:
+        valid_mask = attention_mask
+    elif attention_mask.dtype in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64):
+        valid_mask = attention_mask != 0
+    else:
+        return attention_mask
+
+    return (~valid_mask).unsqueeze(1).unsqueeze(1)
 
 
 class Qwen3VLSelfAttention(SelfAttention):
@@ -239,6 +264,11 @@ class Qwen3VLSelfAttention(SelfAttention):
         # ==================================
 
         nvtx_range_push(suffix="core_attention")
+        core_attention_mask = _qwen_attention_mask_for_core_attention(
+            self.core_attention,
+            attention_mask,
+            packed_seq_params,
+        )
         if (
             isinstance(self.core_attention, DotProductAttention)
             and packed_seq_params is None
@@ -252,7 +282,7 @@ class Qwen3VLSelfAttention(SelfAttention):
                 query,
                 key,
                 value,
-                attention_mask,
+                core_attention_mask,
                 attn_mask_type=attn_mask_type,
                 attention_bias=attention_bias,
                 packed_seq_params=packed_seq_params,
@@ -264,7 +294,7 @@ class Qwen3VLSelfAttention(SelfAttention):
                     query,
                     key,
                     value,
-                    attention_mask,
+                    core_attention_mask,
                     attn_mask_type=attn_mask_type,
                     attention_bias=attention_bias,
                     packed_seq_params=packed_seq_params,

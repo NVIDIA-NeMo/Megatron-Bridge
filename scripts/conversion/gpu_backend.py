@@ -21,7 +21,6 @@ from pathlib import Path
 import torch
 import yaml
 from rich.console import Console
-from rich.table import Table
 from utils import parse_dtype, prepare_output_directory, validate_output_path
 
 from megatron.bridge import AutoBridge
@@ -80,7 +79,16 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
     validate_output_path(path, source_paths=source_paths)
     if torch.distributed.get_rank() == 0:
         prepare_output_directory(path, overwrite=overwrite, source_paths=source_paths)
-    torch.distributed.barrier()
+    # Without device_ids, torch guesses the barrier's device as
+    # rank % local_gpu_count. Slurm assigns SLURM_PROCID cyclically across
+    # nodes (RANK = num_nodes * local_rank + node_id, not block-wise), so
+    # that guess collides across ranks on the same node once more than one
+    # node is used, and NCCL aborts with "Multiple ranks detected using the
+    # same GPU on this node." Passing the real device (already set via
+    # torch.cuda.set_device in _ensure_distributed_initialized) avoids the
+    # guess, matching the pattern used by training/initialize.py's own
+    # first post-init barrier.
+    torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
@@ -204,24 +212,25 @@ def _roundtrip_weights_match(name: str, exported: torch.Tensor, original: torch.
 
 
 def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.Module]) -> None:
-    """Verify exported Megatron weights against the original Hugging Face state."""
+    """Exhaustively verify exported Megatron weights against the original Hugging Face state.
+
+    Every rank participates in the collective Megatron-to-Hugging-Face export, but only rank 0 lazily reads each
+    original Hugging Face tensor and compares it serially. This does not materialize a complete Hugging Face model
+    on every rank. For very large checkpoints, the rank-0 work can create prolonged rank skew before the result
+    broadcast, exceed the process-group collective timeout, and incur substantial transient tensor memory and
+    storage I/O.
+    """
     is_rank_0 = torch.distributed.get_rank() == 0
     all_match = True
+    verified_count = 0
+    mismatch_count = 0
+    mismatch_samples: list[str] = []
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
-    table = None
-    if is_rank_0:
-        table = Table(title="Hugging Face Weights Verification")
-        table.add_column("Weight Name", style="cyan")
-        table.add_column("Shape")
-        table.add_column("DType")
-        table.add_column("Device")
-        table.add_column("Matches Original", justify="center")
 
     for name, exported in bridge.export_hf_weights(megatron_model, show_progress=False):
         if not is_rank_0:
             continue
-        assert table is not None
         original = bridge.hf_pretrained.state[name]
         match, skipped_fp8 = _roundtrip_weights_match(name, exported, original)
         if skipped_fp8:
@@ -229,16 +238,24 @@ def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.
             if len(fp8_skip_samples) < 20:
                 fp8_skip_samples.append(f"{name}: exported {exported.dtype} vs original {original.dtype}")
         all_match = all_match and match
-        table.add_row(
-            name,
-            str(tuple(exported.shape)),
-            str(exported.dtype).replace("torch.", ""),
-            str(exported.device),
-            "✅" if match else "❌",
-        )
+        verified_count += 1
+        if not match:
+            mismatch_count += 1
+            if len(mismatch_samples) < 20:
+                mismatch_samples.append(name)
+
+    mismatch = torch.tensor(not all_match, dtype=torch.int32, device=torch.cuda.current_device())
+    torch.distributed.broadcast(mismatch, src=0)
 
     if is_rank_0:
-        assert table is not None
+        compared_count = verified_count - fp8_skip_count
+        matched_count = compared_count - mismatch_count
+        color = "green" if mismatch_count == 0 else "red"
+        _CONSOLE.print(f"[{color}]Weight verification: {matched_count}/{compared_count} compared weights matched[/]")
+        if mismatch_count:
+            _CONSOLE.print(f"[red]{mismatch_count} weight mismatches (showing up to 20):[/red]")
+            for entry in mismatch_samples:
+                _CONSOLE.print(f"  [red]{entry}[/red]")
         if fp8_skip_count:
             _CONSOLE.print(
                 f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
@@ -247,10 +264,6 @@ def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.
                 _CONSOLE.print(f"  [yellow]{entry}[/yellow]")
             if fp8_skip_count > len(fp8_skip_samples):
                 _CONSOLE.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
-        _CONSOLE.print(table)
-
-    mismatch = torch.tensor(not all_match, dtype=torch.int32, device=torch.cuda.current_device())
-    torch.distributed.broadcast(mismatch, src=0)
     if mismatch.item():
         raise ValueError("Weight mismatch detected")
 
@@ -426,6 +439,13 @@ def roundtrip_checkpoint(
     distributed_timeout_minutes: int | None,
 ) -> None:
     """Validate a Hugging Face to Megatron to Hugging Face round trip.
+
+    This workflow performs exhaustive equality validation and is not intended as the scalable conversion path for
+    very large checkpoints. When the goal is conversion rather than exhaustive validation, prefer separate
+    ``convert.sh import`` and ``convert.sh export --distributed-save`` workflows. If a full round trip is required,
+    provision sufficient time and memory and choose an appropriate ``--distributed-timeout-minutes`` value. A
+    longer timeout can accommodate expected rank skew, but does not reduce serial verification cost or memory and
+    I/O pressure.
 
     Args:
         hf_model: Hugging Face model ID or local path.

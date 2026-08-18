@@ -36,10 +36,13 @@ bridge-tech-details.md
 models/README.md
 models/bailing/index.md
 models/deepseek/index.md
+models/ernie/ernie45.md
+models/exaone/exaone.md
 models/falcon/index.md
 models/gemma/index.md
 models/glm/index.md
 models/gpt_oss/index.md
+models/hy_v3/hy-v3.md
 models/kimi/index.md
 models/llama/index.md
 models/minimax/index.md
@@ -79,6 +82,7 @@ training/moe-optimization.md
 training/peft.md
 training/packed-sequences.md
 training/multi-token-prediction.md
+training/dspark-speculative-decoding.md
 training/callbacks.md
 ```
 

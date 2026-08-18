@@ -21,7 +21,7 @@ and the ParallelLinearAdapter class for distributed PEFT scenarios.
 
 import math
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 import torch
@@ -1012,6 +1012,87 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_init_across_ep(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Shared grouped-expert adapters must broadcast every weight across EP."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(2, 2))
+        mock_linear_out.weight = nn.Parameter(torch.ones(2, 2))
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2)
+        ep_group = mock_config._pg_collection.ep
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_global_rank", return_value=7) as mock_get_global_rank,
+            patch("torch.distributed.broadcast") as mock_broadcast,
+            patch.object(torch.Tensor, "is_cuda", new_callable=PropertyMock, return_value=True),
+        ):
+            ParallelLinearAdapter(
+                in_features=2,
+                out_features=2,
+                dim=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+                is_expert=True,
+                model_parallel_config=mock_config,
+            )
+
+        mock_get_global_rank.assert_called_once_with(ep_group, 0)
+        assert mock_broadcast.call_count == 2
+        for call, expected_weight in zip(
+            mock_broadcast.call_args_list,
+            (mock_linear_in.weight, mock_linear_out.weight),
+            strict=True,
+        ):
+            assert call.args[0] is expected_weight
+            assert call.kwargs == {"src": 7, "group": ep_group}
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_cpu_init_across_ep(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """CPU-initialized shared adapters must stage both weights through NCCL."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(2, 2))
+        mock_linear_out.weight = nn.Parameter(torch.ones(2, 2))
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2)
+        ep_group = mock_config._pg_collection.ep
+        staged_weights = (torch.full((2, 2), 3.0), torch.full((2, 2), 5.0))
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_global_rank", return_value=7),
+            patch("torch.distributed.get_backend", return_value="nccl"),
+            patch("torch.distributed.broadcast") as mock_broadcast,
+            patch("torch.cuda.current_device", return_value=0),
+            patch.object(torch.Tensor, "to", side_effect=staged_weights) as mock_to,
+        ):
+            ParallelLinearAdapter(
+                in_features=2,
+                out_features=2,
+                dim=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+                is_expert=True,
+                model_parallel_config=mock_config,
+            )
+
+        assert mock_to.call_count == 2
+        assert mock_broadcast.call_count == 2
+        for call, staged_weight in zip(mock_broadcast.call_args_list, staged_weights, strict=True):
+            assert call.args[0] is staged_weight
+            assert call.kwargs == {"src": 7, "group": ep_group}
+        torch.testing.assert_close(mock_linear_in.weight, staged_weights[0])
+        torch.testing.assert_close(mock_linear_out.weight, staged_weights[1])
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_grouped_expert_swiglu_sharded_state_dict_uses_expert_axis(
         self, mock_row_linear, mock_col_linear, mock_config
     ):
@@ -1663,6 +1744,65 @@ class TestGroupedExpertLinearAdapter:
 
             @staticmethod
             def forward(ctx, inp, non_tensor_args, *weights_and_biases):
+                (
+                    m_splits,
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    module,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
+                assert ctx is None
+                calls.append((inp, None, non_tensor_args, weights_and_biases))
+                return expected
+
+        class TE216GroupedLinear:
+            @staticmethod
+            def apply(inp, non_tensor_args, *weights_and_biases):
+                calls.append((inp, None, non_tensor_args, weights_and_biases))
+                return expected
+
+            @staticmethod
+            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
+                (
+                    m_splits,
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
                 assert ctx is None
                 calls.append((inp, None, non_tensor_args, weights_and_biases))
                 return expected
@@ -1697,7 +1837,7 @@ class TestGroupedExpertLinearAdapter:
 
         autograd_functions = {
             "2.14": TE214GroupedLinear,
-            "2.16": TE214GroupedLinear,
+            "2.16": TE216GroupedLinear,
             "2.17": TE217GroupedLinear,
             "2.18": TE218GroupedLinear,
         }
@@ -2199,32 +2339,49 @@ class TestGroupedExpertLinearAdapter:
         assert built[0].global_offset == (2, 0, 0)
         assert built[1].global_offset == (2, 2, 0)
 
-    def test_grouped_expert_linear_fc1_factory_merge_restores_gate_up_order(self):
-        """Grouped expert fc1 checkpoint reload should de-interleave gate/up expert-TP shards."""
+    @pytest.mark.parametrize("etp_size", [1, 2])
+    def test_grouped_expert_linear_fc1_factory_merge_preserves_gate_up_and_expert_order(self, etp_size):
+        """Grouped expert fc1 checkpoint reload should preserve exact adapter weight ordering."""
         config = MockModelParallelConfig()
         config.gated_linear_unit = True
-        config._pg_collection = make_mock_pg_collection(ep_size=1, ep_rank=0, edp_rank=0, etp_size=2, etp_rank=0)
+        config._pg_collection = make_mock_pg_collection(
+            ep_size=1,
+            ep_rank=0,
+            edp_rank=0,
+            etp_size=etp_size,
+            etp_rank=0,
+        )
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
             out_features=8,
             dim=2,
-            num_local_experts=1,
+            num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
             activation="identity",
             input_is_parallel=False,
             model_parallel_config=config,
         )
 
+        expert = torch.arange(2).reshape(2, 1, 1) * 1000
+        local_rows = adapter.linear_out.weight.shape[1]
+        gate_rows = local_rows // 2
+        projection = torch.tensor([0] * gate_rows + [1] * gate_rows).reshape(1, local_rows, 1) * 100
+        row = torch.arange(gate_rows).repeat(2).reshape(1, local_rows, 1) * 10
+        column = torch.arange(2).reshape(1, 1, 2)
+        expected = (expert + projection + row + column).to(adapter.linear_out.weight)
+        with torch.no_grad():
+            adapter.linear_out.weight.copy_(expected)
+
         factory = adapter.sharded_state_dict("adapter.")["adapter.linear_out.weight"]
+        built = factory.build()
 
-        fused_tp0 = torch.tensor([[[1.0, 1.0], [1.0, 1.0], [2.0, 2.0], [2.0, 2.0]]])
-        fused_tp1 = torch.tensor([[[3.0, 3.0], [3.0, 3.0], [4.0, 4.0], [4.0, 4.0]]])
+        assert len(built) == 2
+        torch.testing.assert_close(built[0].data, expected[:, :gate_rows], rtol=0, atol=0)
+        torch.testing.assert_close(built[1].data, expected[:, gate_rows:], rtol=0, atol=0)
 
-        merged = factory.merge_fn([fused_tp0, fused_tp1])
-        expected = torch.tensor(
-            [[[1.0, 1.0], [1.0, 1.0], [3.0, 3.0], [3.0, 3.0], [2.0, 2.0], [2.0, 2.0], [4.0, 4.0], [4.0, 4.0]]]
-        )
-        torch.testing.assert_close(merged, expected)
+        merged = factory.merge_fn([shard.data for shard in built])
+
+        torch.testing.assert_close(merged, expected, rtol=0, atol=0)
 
     @pytest.mark.parametrize(
         ("ep_size", "tp_size", "etp_size", "expected_allreduce"),

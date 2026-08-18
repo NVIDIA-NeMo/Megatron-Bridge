@@ -188,6 +188,36 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     assert cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model
 
 
+def test_gb200_mxfp8_enables_cutedsl_fusion() -> None:
+    """The non-FSDP Lightning recipe enables CutDSL without MoE A2A overlap."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config()
+
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.model.high_priority_a2a_comm_stream is False
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+
+
+def test_gb200_mxfp8_fsdp_skips_cutedsl_fusion() -> None:
+    """The Lightning MXFP8 FSDP variant remains outside the CutDSL tuning scope."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config()
+
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
+    assert "CUDNNFE_CLUSTER_OVERLAP_MARGIN" not in cfg.env_vars
+    assert getattr(cfg.model, "use_transformer_engine_op_fuser", False) is False
+    assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
+    assert getattr(cfg.model, "high_priority_a2a_comm_stream", False) is False
+    assert getattr(cfg.model, "moe_hybridep_num_sms_preprocessing", None) != 32
+    assert cfg.mixed_precision.fp8_dot_product_attention is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+
+
 @pytest.mark.parametrize("recipe_factory", _H100_RECIPES, ids=lambda recipe: recipe.__name__)
 def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]) -> None:
     """H100 Nemotron 3.5 Lightning variants retain the established performance topology."""

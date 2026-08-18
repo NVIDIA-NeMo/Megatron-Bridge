@@ -1,8 +1,8 @@
-# GLM-5 / GLM-5.1 Examples
+# GLM-5 Family Examples
 
-Scripts for the GLM-5 family — [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`) and [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1) (`zai-org/GLM-5.1`) — large sparse MoE models with Multi-Latent Attention (MLA) and Dynamic Sparse Attention (DSA).
+Examples for the GLM-5 family — [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`), [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1) (`zai-org/GLM-5.1`), and [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2) (`zai-org/GLM-5.2`) — large sparse MoE models with Multi-Latent Attention (MLA) and Dynamic Sparse Attention (DSA).
 
-GLM-5 and GLM-5.1 share the `GlmMoeDsaForCausalLM` architecture and identical MoE / MLA / DSA dimensions, so the same `GLM5Bridge` handles both. To run the GLM-5.1 checkpoint, replace `zai-org/GLM-5` with `zai-org/GLM-5.1` in the relevant example script.
+All three checkpoints use the `GlmMoeDsaForCausalLM` architecture and are handled by `GLM5Bridge`. GLM-5 and GLM-5.1 have identical MoE / MLA / DSA dimensions, while GLM-5.2 adds IndexShare-style DSA index reuse settings.
 
 | Property | Value |
 |---|---|
@@ -18,12 +18,11 @@ GLM-5 and GLM-5.1 share the `GlmMoeDsaForCausalLM` architecture and identical Mo
 
 ## Hardware Requirements
 
-Full-model conversion and inference in BF16 requires **at least 8 nodes (64 GPUs × 80 GB)**. Key constraints:
+The included GLM-5 round-trip conversion example uses **8 nodes (64 GPUs × 80 GB)**. See the [GLM-5.2 model verification card](../../../model_verification_cards/glm5-2/card.yaml) for the hardware and parallelism used by each verified GLM-5.2 workflow. Key constraints include:
 
 - EP must divide 256 (number of routed experts). Valid: 1, 2, 4, 8, 16, 32, 64, 128, 256.
 - TP does **not** reduce expert memory — increase EP instead.
-- Minimum recommended: `TP=1, PP=2, EP=32` (64 GPUs, 8 nodes). PP splits the 78 transformer layers evenly, with 39 layers per stage, and EP places 8 routed experts per GPU.
-- `TP=1, PP=1, EP=64` works for conversion but may cause empty-dispatch issues during autoregressive inference with single-token batches. Prefer `PP=2, EP=32` for inference on 64 GPUs.
+- The conversion wrapper uses `TP=1, PP=2, EP=32` on 64 GPUs. PP splits the 78 transformer layers evenly, with 39 layers per stage, and EP places 8 routed experts per GPU.
 
 ### Pre-requisites
 
@@ -38,22 +37,9 @@ The PyPI source distribution is incomplete; install from the git repo.
 
 ## Inference (Megatron)
 
-[slurm_inference.sh](slurm_inference.sh) loads the HF checkpoint, converts to Megatron in-memory, and runs greedy text generation with `TP=1, PP=2, EP=32` across 64 GPUs. TP remains disabled because AbsorbedMLA requires sequence parallelism when `TP > 1`. The launcher passes `--legacy-full-prefix` to use non-cached autoregressive generation, which recomputes the full prefix at every decoding step. Cached MCore inference is not yet supported for AbsorbedMLA.
+Use the verified `inference` item in the [GLM-5.2 model verification card](../../../model_verification_cards/glm5-2/card.yaml). The card is the canonical source for the pinned checkpoint revision, tested topology, `scripts/inference/infer.sh` command, and expected result.
 
-```bash
-sbatch examples/models/glm/glm5/slurm_inference.sh
-```
-
-### Expected output
-
-```
-======== GENERATED TEXT OUTPUT ========
-Prompt: What is artificial intelligence?
-Generated: What is artificial intelligence? Artificial intelligence (AI) is a field of
-computer Science and Engineering that deals with the creation of intelligent
-machines, which are used in different areas such...
-=======================================
-```
+The verified command selects the `legacy-full-prefix-generation` compatibility task. It recomputes the accumulated prefix at every decoding step because cached inference is not yet supported for AbsorbedMLA.
 
 ## Checkpoint Conversion (Round-Trip)
 
@@ -71,12 +57,11 @@ bash examples/models/glm/glm5/slurm_conversion.sh
 The script uses 8 nodes (64 GPUs) with `TP=1`, `PP=2`, and `EP=32`.
 
 > **Note:** The round-trip verification step (comparing ~63K weight tensors on rank 0)
-> may hit Lustre I/O contention at this model scale. The HF→Megatron conversion
-> itself is validated by the successful inference above.
+> may hit shared-filesystem I/O contention at this model scale.
 
-## Script Configuration
+## Conversion Script Configuration
 
-Both scripts resolve the HF model from the local cache to avoid `snapshot_download` race conditions with 64 concurrent processes. Set these environment variables before submitting:
+Set these environment variables before submitting the round-trip conversion wrapper:
 
 | Variable | Description |
 |---|---|

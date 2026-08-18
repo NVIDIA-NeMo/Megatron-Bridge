@@ -41,7 +41,7 @@ from transformers import AutoProcessor, AutoTokenizer
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_and_adapt_hf_dataset
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
-    inference_merged_sequence_length,
+    inference_expanded_image_token_counts,
     inference_num_image_tiles,
     select_inference_next_token,
 )
@@ -78,7 +78,7 @@ class SingleBatchIterator:
 
     def __init__(self, input_ids, position_ids, attention_mask, **kwargs):
         self.batch = dict(tokens=input_ids, position_ids=position_ids, attention_mask=attention_mask)
-        for key in ("images", "imgs_sizes", "num_image_tiles", "vision_packed_seq_params"):
+        for key in ("images", "imgs_sizes", "vision_packed_seq_params"):
             if kwargs.get(key) is not None:
                 self.batch[key] = kwargs[key]
         self._yielded = False
@@ -106,7 +106,7 @@ def vlm_forward_step(data_iterator, model, **_):
         forward_args["images"] = batch["images"]
     else:
         forward_args["images"] = torch.tensor([], dtype=torch.bfloat16, device=batch["tokens"].device).reshape(0, 0, 0)
-    for key in ("imgs_sizes", "num_image_tiles", "vision_packed_seq_params"):
+    for key in ("imgs_sizes", "vision_packed_seq_params"):
         if key in batch:
             forward_args[key] = batch[key]
 
@@ -131,18 +131,16 @@ def prepare_image_sample(tokenizer, processor, image, prompt, system_prompt=None
 
     input_ids = inputs.input_ids
 
-    # Adjust image tokens: collapse <img>...<image>...</img> to single <image> per tile.
     img_start_id = tokenizer.convert_tokens_to_ids("<img>")
     img_end_id = tokenizer.convert_tokens_to_ids("</img>")
     pixel_values = inputs.pixel_values
     num_patches = getattr(inputs, "num_patches", None)
     if num_patches is None:
-        num_patches = torch.ones(len(pixel_values), dtype=torch.long)
+        # This helper processes exactly one source image, so every returned
+        # processor tile belongs to its single wrapper.
+        num_patches = torch.tensor([len(pixel_values)], dtype=torch.long)
     else:
         num_patches = torch.as_tensor(num_patches, dtype=torch.long).reshape(-1)
-    if img_start_id != tokenizer.unk_token_id and (input_ids == img_start_id).any():
-        input_ids = adjust_image_tokens(input_ids, num_patches, img_start_id, img_end_id)
-
     # Patchify every processor tile into RADIO's packed dynamic-resolution path.
     P = _VISION_PATCH_DIM
     patches = []
@@ -158,16 +156,20 @@ def prepare_image_sample(tokenizer, processor, image, prompt, system_prompt=None
         sizes.append([height, width])
     pv_patched = torch.cat(patches).unsqueeze(0).contiguous().bfloat16()
     imgs_sizes = torch.tensor(sizes, dtype=torch.long)
-    num_image_tiles = inference_num_image_tiles(imgs_sizes, patch_dim=P)
+    tile_feature_counts = inference_num_image_tiles(imgs_sizes, patch_dim=P)
+    expanded_counts = inference_expanded_image_token_counts(tile_feature_counts, num_patches)
+    if img_start_id != tokenizer.unk_token_id and (input_ids == img_start_id).any():
+        input_ids = adjust_image_tokens(input_ids, expanded_counts, img_start_id, img_end_id)
     image_token_id = tokenizer.convert_tokens_to_ids("<image>")
     num_placeholders = int((input_ids == image_token_id).sum().item())
-    if num_image_tiles.numel() != num_placeholders:
+    expected_placeholders = int(expanded_counts.sum().item())
+    if num_placeholders != expected_placeholders:
         raise ValueError(
-            "Vision metadata produced "
-            f"{num_image_tiles.numel()} replacement counts for {num_placeholders} image placeholders."
+            f"Vision metadata requires {expected_placeholders} expanded image placeholders; "
+            f"the prompt contains {num_placeholders}."
         )
 
-    return input_ids, pv_patched, imgs_sizes, num_image_tiles
+    return input_ids, pv_patched, imgs_sizes
 
 
 @torch.no_grad()
@@ -177,7 +179,6 @@ def generate(
     input_ids,
     images,
     imgs_sizes,
-    num_image_tiles,
     *,
     sequence_length,
     max_new_tokens=200,
@@ -188,7 +189,6 @@ def generate(
     input_ids = input_ids.cuda()
     images = images.cuda()
     imgs_sizes = imgs_sizes.cuda()
-    num_image_tiles = num_image_tiles.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -196,7 +196,6 @@ def generate(
     attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
     generated_ids = input_ids.clone()
     stop_tokens = {tokenizer.eos_token_id}
-    image_token_id = tokenizer.convert_tokens_to_ids("<image>")
 
     fwd_bwd = get_forward_backward_func()
     for _ in range(max_new_tokens):
@@ -209,7 +208,6 @@ def generate(
             attention_mask,
             images=images,
             imgs_sizes=imgs_sizes,
-            num_image_tiles=num_image_tiles,
             vision_packed_seq_params=vision_packed_seq_params,
         )
         output = fwd_bwd(
@@ -232,12 +230,7 @@ def generate(
             gathered = [torch.zeros_like(output) for _ in range(world_size)]
             dist.all_gather(gathered, output, group=parallel_state.get_tensor_model_parallel_group())
             full = torch.cat(gathered, dim=2)
-            merged_sequence_length = inference_merged_sequence_length(
-                input_ids,
-                image_token_index=image_token_id,
-                num_image_tiles=num_image_tiles,
-                image_seq_len=1,
-            )
+            merged_sequence_length = input_ids.shape[1]
             next_token_ids = select_inference_next_token(full, merged_sequence_length)
         else:
             next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
@@ -303,6 +296,9 @@ def main():
     model_provider.separate_video_embedder = True
     model_provider.temporal_ckpt_compat = True
     model_provider.vision_class_token_len = 10
+    # Canonical multimodal inputs retain their actual expanded length. PP
+    # stages therefore need shape exchange instead of fixed receive buffers.
+    model_provider.variable_seq_lengths = args.pp > 1
     model_provider.initialize_model_parallel(seed=0)
 
     if args.megatron_model_path:
@@ -319,6 +315,7 @@ def main():
                 "separate_video_embedder": True,
                 "temporal_ckpt_compat": True,
                 "vision_class_token_len": 10,
+                "variable_seq_lengths": args.pp > 1,
             },
             wrap_with_ddp=False,
         )
@@ -369,9 +366,7 @@ def main():
             except Exception as e:
                 print_rank_0(f"WARN: could not save sample image {i}: {e}")
 
-        input_ids, pv_patched, imgs_sizes, num_image_tiles = prepare_image_sample(
-            tokenizer, processor, image, args.prompt
-        )
+        input_ids, pv_patched, imgs_sizes = prepare_image_sample(tokenizer, processor, image, args.prompt)
 
         cleaned, prediction_full = generate(
             model,
@@ -379,7 +374,6 @@ def main():
             input_ids,
             pv_patched,
             imgs_sizes,
-            num_image_tiles,
             sequence_length=model_provider.seq_length,
             max_new_tokens=args.max_new_tokens,
         )

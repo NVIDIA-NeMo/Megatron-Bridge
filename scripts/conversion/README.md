@@ -13,6 +13,22 @@ Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
 `./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
+### Megatron-LM checkpoint compatibility
+
+Training with Megatron-LM and later relying on Megatron Bridge for Hugging Face
+export is **not recommended**. Megatron-LM checkpoints normally store their
+arguments in `common.pt` instead of the `run_config.yaml` used by the supported
+Bridge export launcher, so the launcher cannot consume them directly. For an
+existing trusted checkpoint, the
+[best-effort compatibility guidance](../../docs/megatron-lm-to-megatron-bridge.md#best-effort-export-of-an-existing-megatron-lm-checkpoint)
+describes how to generate and validate the required provider configuration. It
+does not guarantee compatibility, and any unclassified metadata mismatch must
+stop the export.
+
+Output from `scripts/translate_mlm_to_bridge.py` is best-effort configuration
+guidance for a new Bridge run. It is not checkpoint metadata and must not be
+renamed or inserted as `run_config.yaml`.
+
 ## Local CPU conversion
 
 Local execution uses the current Megatron Bridge environment and waits for the

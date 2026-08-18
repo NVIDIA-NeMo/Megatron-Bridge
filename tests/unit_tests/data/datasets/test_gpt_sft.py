@@ -13,11 +13,16 @@
 # limitations under the License.
 
 import json
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+import torch
 
 from megatron.bridge.data.datasets import gpt_sft as gpt_sft_module
 from megatron.bridge.data.datasets.gpt_sft import (
@@ -27,6 +32,47 @@ from megatron.bridge.data.datasets.gpt_sft import (
 )
 from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 from megatron.bridge.data.samplers import build_pretraining_data_loader
+
+
+@pytest.mark.unit
+def test_import_preserves_tokenizers_fork_safety():
+    """Importing the SFT dataset must not enable tokenizer parallelism across a fork."""
+    code = textwrap.dedent(
+        """
+        import multiprocessing
+
+        import megatron.bridge.data.datasets.gpt_sft
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordPiece
+        from tokenizers.pre_tokenizers import Whitespace
+
+        tokenizer = Tokenizer(
+            WordPiece(vocab={"[UNK]": 0, "hello": 1, "world": 2}, unk_token="[UNK]")
+        )
+        tokenizer.pre_tokenizer = Whitespace()
+        batch = ["hello world"] * 4096
+        tokenizer.encode_batch(batch)
+
+        def encode_batch():
+            return len(tokenizer.encode_batch(batch))
+
+        with multiprocessing.get_context("fork").Pool(1) as pool:
+            result = pool.apply_async(encode_batch)
+            assert result.get(timeout=10) == len(batch)
+        """
+    )
+    environment = os.environ.copy()
+    environment.pop("TOKENIZERS_PARALLELISM", None)
+    environment["RAYON_NUM_THREADS"] = "2"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def create_mock_tokenizer():
@@ -108,6 +154,7 @@ def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default", global_
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
@@ -171,6 +218,25 @@ class TestDataGPTSFTDataset:
 
         assert context_ids == [101, 102, 103, 104, 201, 202, 203]
         assert label_ids == [301, 302]
+
+    def test_repeated_truncation_field_placeholder_handles_overflow(self, tmp_path):
+        dataset_path = tmp_path / "repeated_prompt.jsonl"
+        dataset_path.write_text(json.dumps({"input": "one two three four five", "output": "answer"}) + "\n")
+        dataset = GPTSFTDataset(
+            file_path=str(dataset_path),
+            tokenizer=create_mock_tokenizer(),
+            max_seq_length=8,
+            max_num_samples=None,
+            label_key="output",
+            prompt_template="{input} Again: {input} {output}",
+            truncation_field="input",
+            memmap_workers=1,
+        )
+
+        processed = dataset[0]
+
+        assert len(processed["input_ids"]) <= dataset.max_seq_length
+        assert processed["answer_ids"]
 
     def test_utils_func(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path)
@@ -312,6 +378,106 @@ class TestDataGPTSFTPackedDataset:
         ]
         dataset.collate_fn(batch)
 
+    def test_collate_fn_supports_different_sequence_counts(self, tmp_path):
+        """Packed rows with different logical sequence counts collate into one global batch."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_seq_length_to_mult = 1
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 13, 20, 21, 22, 23]),
+                "seq_boundaries": [0, 4, 8],
+                "loss_mask": np.ones(8, dtype=np.int64),
+            },
+            {
+                "input_ids": np.array([30, 31, 32, 33, 34, 35, 36, 37]),
+                "seq_boundaries": [0, 8],
+                "loss_mask": np.ones(8, dtype=np.int64),
+            },
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 6, 7], [0, 7, 7, 7]]
+        assert processed["cu_seqlens_kv"].tolist() == processed["cu_seqlens_q"].tolist()
+        assert processed["max_seqlen_q"].tolist() == [[3], [7]]
+        assert processed["max_seqlen_kv"].tolist() == [[3], [7]]
+        assert processed["padding_mask"].dtype == torch.bool
+        assert processed["padding_mask"].tolist() == [
+            [False, False, False, False, False, False, True],
+            [False, False, False, False, False, False, False],
+        ]
+
+    def test_collate_fn_marks_offline_alignment_padding(self, tmp_path):
+        """Offline-packed rows expose physical alignment gaps to the MoE router."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset._pad_seq_to_mult = 4
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2, 2, 20, 21, 2, 2, 2]),
+                "seq_boundaries": [0, 5, 10],
+                "loss_mask": np.ones(10, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["tokens"].tolist() == [[10, 11, 12, 2, 20, 21, 2, 2]]
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 5]]
+        assert processed["cu_seqlens_q_padded"].tolist() == [[0, 4, 8]]
+        assert processed["padding_mask"].dtype == torch.bool
+        assert processed["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
+
+    def test_collate_fn_marks_offline_trailing_padding_without_alignment(self, tmp_path):
+        """Default offline packing masks padding added to reach the batch width."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_to_max_length = True
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2]),
+                "seq_boundaries": [0, 4],
+                "loss_mask": np.ones(4, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["tokens"].tolist() == [[10, 11, 12, 2, 2, 2, 2, 2]]
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 8]]
+        assert "cu_seqlens_q_padded" not in processed
+        assert processed["padding_mask"].tolist() == [[False, False, False, True, True, True, True, True]]
+
+    def test_collate_fn_keeps_padding_mask_key_stable_across_batches(self, tmp_path):
+        """Full-iteration graphs require an invariant input dictionary and tensor shape."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_to_max_length = True
+
+        padded = dataset.collate_fn(
+            [
+                {
+                    "input_ids": np.array([10, 11, 12, 2]),
+                    "seq_boundaries": [0, 4],
+                    "loss_mask": np.ones(4, dtype=np.int64),
+                }
+            ]
+        )
+        full = dataset.collate_fn(
+            [
+                {
+                    "input_ids": np.array([20, 21, 22, 23, 24, 25, 26, 27, 2]),
+                    "seq_boundaries": [0, 9],
+                    "loss_mask": np.ones(9, dtype=np.int64),
+                }
+            ]
+        )
+
+        assert padded["padding_mask"].shape == full["padding_mask"].shape == (1, 8)
+        assert padded["padding_mask"].any()
+        assert not full["padding_mask"].any()
+
     def test_utils_func_packed(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
 
@@ -407,6 +573,7 @@ class TestDataGPTSFTChatDataset:
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
