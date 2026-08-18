@@ -160,6 +160,7 @@ def _pretrain(
                     checkpoint_manager,
                     pg_collection,
                     callback_manager=callback_manager,
+                    is_inprocess_restart_retry=is_inprocess_restart_retry,
                 )
 
             barrier_and_log("after training is done")
@@ -182,7 +183,6 @@ def _pretrain(
                 verbose=True,
                 write_to_tensorboard=not config.validation.skip_train,
                 callback_manager=callback_manager,
-                is_inprocess_restart_retry=is_inprocess_restart_retry,
             )
         if state.train_state.do_test:
             prefix = f"iteration {iteration} on test set"
