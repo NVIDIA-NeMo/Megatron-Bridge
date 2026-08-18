@@ -221,21 +221,13 @@ def test_ncclep_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContaine
     assert cfg.model.moe_flex_dispatcher_num_sms is None
     assert cfg.model.moe_ncclep_zero_copy is False
 
-    assert cfg.model.moe_grouped_gemm is True
-    assert cfg.model.use_transformer_engine_op_fuser is True
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
-
     assert cfg.model.offload_modules == []
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.05
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
 
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
     assert cfg.env_vars.keys().isdisjoint(_HYBRID_EP_ENV_NAMES)
-    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
 
     if recipe_factory in _NEMOTRON_3_NANO_NCCLEP_RECIPES:
         assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
@@ -245,12 +237,24 @@ def test_ncclep_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContaine
         assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
 
+    # The CuTe DSL fused grouped MLP, and the static receive buffer that depends on it, exist only
+    # for MXFP8. BF16 runs eager NCCL EP so the arm measures the dispatcher and not the fusion.
     if "fp8mx" in recipe_factory.__name__:
         assert cfg.model.moe_router_padding_for_quantization is True
+        assert cfg.model.moe_grouped_gemm is True
+        assert cfg.model.use_transformer_engine_op_fuser is True
+        assert cfg.model.moe_mlp_glu_interleave_size == 32
+        assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.05
         assert cfg.model.moe_paged_stash is True
+        assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+        assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
     else:
         assert cfg.model.moe_router_padding_for_quantization is False
-        # Paged stashing only captures TE's quantized grouped tensors, so it is a no-op in BF16.
+        assert cfg.model.use_transformer_engine_op_fuser is False
+        assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
+        assert cfg.model.moe_expert_rank_capacity_factor is None
+        # Paged stashing requires the capacity factor, and only captures quantized grouped tensors.
         assert cfg.model.moe_paged_stash is False
 
 

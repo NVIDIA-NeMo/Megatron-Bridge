@@ -285,23 +285,17 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
     _benchmark_common(cfg)
 
     cfg.model.moe_grouped_gemm = True
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.high_priority_a2a_comm_stream = True
-    # cfg.model.moe_router_padding_for_quantization = True
 
     cfg.model.offload_modules = []
-    # Paged stashing only captures TE's quantized grouped tensors, so it is a no-op in BF16.
+    # BF16 has no CuTe DSL fused grouped MLP, so the op fuser and the static receive buffer that
+    # depends on it do not belong in this arm. Eager NCCL EP sizes the receive buffer per step,
+    # which keeps this a dispatcher-only ablation against the HybridEP recipe and drops the padded
+    # MoE activations that previously put this run within ~1 GiB of OOM.
+    cfg.model.use_transformer_engine_op_fuser = False
+    cfg.model.moe_expert_rank_capacity_factor = None
+    # Paged stashing requires the capacity factor, and only captures quantized grouped tensors.
     cfg.model.moe_paged_stash = False
-    # The static receive buffer is sized at capacity_factor x the ideal token count, and every MoE
-    # activation saved for backward inherits that padding. This recipe force-balances the router, so
-    # the measured worst case is only ~1.005x ideal; 1.5 padded all of it by 50%. PagedStashRunner
-    # replays the step dropless and grows the budget if a routing ever exceeds this.
-    # 1.02 rather than the 1.05 the other NCCL EP recipes use: at mbs=8 the 64xGB300 run sits ~1 GiB
-    # short of fitting the fp32 cross-entropy temp, and this is the only in-recipe lever left (BF16
-    # has no stash pool to shrink). Still ~4x the measured routing worst case, but the margin here is
-    # thin -- halving mbs is the durable fix if this regresses.
-    cfg.model.moe_expert_rank_capacity_factor = 1.02
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -317,7 +311,6 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
     }
     return cfg

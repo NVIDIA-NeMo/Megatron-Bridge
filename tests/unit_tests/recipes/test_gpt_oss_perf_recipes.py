@@ -57,7 +57,7 @@ _NCCLEP_RECIPES = tuple(_NCCLEP_TO_PARENT)
 
 @pytest.mark.parametrize("recipe_factory", _NCCLEP_RECIPES, ids=lambda recipe: recipe.__name__)
 def test_gpt_oss_ncclep_dispatch_stack(recipe_factory: Callable[[], ConfigContainer]) -> None:
-    """The NCCL EP variants select static-shape NCCL EP over the fused grouped GEMM."""
+    """Every NCCL EP variant selects the ncclep flex backend, whatever its precision."""
     cfg = recipe_factory()
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -68,31 +68,41 @@ def test_gpt_oss_ncclep_dispatch_stack(recipe_factory: Callable[[], ConfigContai
     assert cfg.model.moe_flex_dispatcher_num_sms is None
     assert cfg.model.moe_ncclep_zero_copy is False
 
-    # Static shapes require the fused grouped GEMM over device-side per-expert counts.
-    assert cfg.model.moe_grouped_gemm is True
-    assert cfg.model.use_transformer_engine_op_fuser is True
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
-
     assert cfg.model.offload_modules == []
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.05
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.0
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
-
     assert cfg.comm_overlap is not None
     assert cfg.comm_overlap.delay_wgrad_compute is False
     assert cfg.env_vars.keys().isdisjoint(_HYBRID_EP_ENV_NAMES)
-    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
 
 
 @pytest.mark.parametrize("recipe_factory", _NCCLEP_RECIPES, ids=lambda recipe: recipe.__name__)
-def test_gpt_oss_ncclep_paged_stash_is_mxfp8_only(recipe_factory: Callable[[], ConfigContainer]) -> None:
-    """Paged stashing only captures TE's quantized grouped tensors, so it is a no-op in BF16."""
+def test_gpt_oss_ncclep_fused_grouped_mlp_is_mxfp8_only(
+    recipe_factory: Callable[[], ConfigContainer],
+) -> None:
+    """The CuTe DSL fused grouped MLP exists only for MXFP8; BF16 runs eager NCCL EP.
+
+    On BF16 the op fuser makes TE reject GPT-OSS's clamped quick-GeLU outright
+    (``ScaledClampedQGeGLU(...) requires the fused grouped MLP path``) when moe_act recompute is
+    on, and run ~9x slower when it is not.
+    """
     cfg = recipe_factory()
 
     if "fp8mx" in recipe_factory.__name__:
-        assert cfg.model.moe_paged_stash is True
+        assert cfg.model.moe_grouped_gemm is True
+        assert cfg.model.use_transformer_engine_op_fuser is True
+        assert cfg.model.moe_mlp_glu_interleave_size == 32
+        assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
         assert cfg.model.moe_router_padding_for_quantization is True
+        # Static shapes: the fused grouped GEMM consumes device-side per-expert counts.
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.05
+        assert cfg.model.moe_paged_stash is True
+        assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.0
+        assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
     else:
+        assert cfg.model.use_transformer_engine_op_fuser is False
+        assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
+        # Eager NCCL EP sizes the receive buffer per step, so no static capacity factor and
+        # therefore no paged stash either.
+        assert cfg.model.moe_expert_rank_capacity_factor is None
         assert cfg.model.moe_paged_stash is False
 
 

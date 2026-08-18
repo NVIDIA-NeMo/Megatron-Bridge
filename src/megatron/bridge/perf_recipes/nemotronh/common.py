@@ -79,28 +79,37 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
     cfg.model.moe_flex_dispatcher_num_sms = None
     cfg.model.moe_ncclep_zero_copy = False
 
-    cfg.model.moe_grouped_gemm = True
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
-
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = moe_a2a_overlap
     cfg.comm_overlap.delay_wgrad_compute = False
 
     cfg.model.offload_modules = []
-    # The static receive buffer is sized at capacity_factor x the ideal token count, and every MoE
-    # activation saved for backward inherits that padding. These recipes force-balance the router,
-    # so the measured worst case is only 1.008x ideal; 1.5 padded all of it by 50%. PagedStashRunner
-    # replays the step dropless and grows the budget if a routing ever exceeds this.
-    cfg.model.moe_expert_rank_capacity_factor = 1.05
-    # Paged stashing only captures TE's quantized grouped tensors, so it is a no-op outside MXFP8.
-    cfg.model.moe_paged_stash = mxfp8
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-
     cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in _HYBRID_EP_ENV_NAMES}
-    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
+
     if mxfp8:
+        # Static shapes hand the experts the whole receive buffer, so the grouped GEMM has to
+        # consume the ragged per-expert counts on device. That is the CuTe DSL fused grouped MLP,
+        # which exists only for MXFP8/FP4.
+        cfg.model.moe_grouped_gemm = True
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
+        cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
         cfg.model.moe_router_padding_for_quantization = True
+        # The static receive buffer is sized at capacity_factor x the ideal token count, and every
+        # MoE activation saved for backward inherits that padding. These recipes force-balance the
+        # router, so the measured worst case is only 1.008x ideal; 1.5 padded all of it by 50%.
+        # PagedStashRunner replays the step dropless and grows the budget on overflow.
+        cfg.model.moe_expert_rank_capacity_factor = 1.05
+        cfg.model.moe_paged_stash = True
+        cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+        cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    else:
+        # BF16 has no CuTe DSL fused grouped MLP, so the op fuser and its static-shape requirement
+        # do not belong here; forcing them makes the arm measure fusion rather than the dispatcher.
+        # Eager NCCL EP sizes the receive buffer per step, needing neither.
+        cfg.model.use_transformer_engine_op_fuser = False
+        cfg.model.moe_expert_rank_capacity_factor = None
+        # Paged stashing requires the capacity factor, and only captures quantized grouped tensors.
+        cfg.model.moe_paged_stash = False
 
 
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:

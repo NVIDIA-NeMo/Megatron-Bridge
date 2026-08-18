@@ -281,13 +281,12 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
 
     _benchmark_common(cfg, cross_entropy_impl="native")
 
-    # The static receive buffer is sized at capacity_factor x the ideal token count, and every MoE
-    # activation saved for backward inherits that padding. This recipe force-balances the router, so
-    # the measured worst case is only ~1.005x ideal; 1.5 padded all of it by 50%. PagedStashRunner
-    # replays the step dropless and grows the budget if a routing ever exceeds this.
-    cfg.model.moe_expert_rank_capacity_factor = 1.05
+    # BF16 has no CuTe DSL fused grouped MLP, so the op fuser and the static receive buffer that
+    # depends on it do not belong in this arm. Eager NCCL EP sizes the receive buffer per step,
+    # which keeps this a dispatcher-only ablation against the HybridEP recipe.
+    cfg.model.moe_expert_rank_capacity_factor = None
     cfg.model.moe_grouped_gemm = True
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -303,7 +302,6 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
     }
     return cfg
