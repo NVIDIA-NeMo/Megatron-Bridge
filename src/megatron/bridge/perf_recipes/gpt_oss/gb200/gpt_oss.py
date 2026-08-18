@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
     _apply_gpt_oss_20b_transformer_engine_graph_configs,
     _apply_gpt_oss_120b_full_iter_fp8mx_configs,
     _benchmark_common,
+    _enable_ncclep,
     _gpt_oss_20b_fp8mx_precision,
     _gpt_oss_20b_nvfp4_precision,
     _perf_precision,
@@ -261,4 +262,18 @@ def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    return cfg
+
+
+def gpt_oss_120b_pretrain_64gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× GB200, BF16, NCCL EP=64."""
+    cfg = gpt_oss_120b_pretrain_64gpu_gb200_bf16_config()
+    _enable_ncclep(cfg, mxfp8=False, moe_a2a_overlap=True)
+    return cfg
+
+
+def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_ncclep_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× GB200, FP8-MX, NCCL EP=64."""
+    cfg = gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config()
+    _enable_ncclep(cfg, mxfp8=True, moe_a2a_overlap=True)
     return cfg
