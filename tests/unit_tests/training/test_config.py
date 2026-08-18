@@ -539,7 +539,9 @@ class TestConfigContainerValidation:
 
     def test_full_validation_rejected(self):
         """full_validation is inherited from MCore but unimplemented; setting it must fail loud."""
-        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
         container.validation.full_validation = True
 
         try:
@@ -550,7 +552,9 @@ class TestConfigContainerValidation:
 
     def test_validation_set_names_require_multiple_validation_sets(self):
         """validation_set_names without multiple_validation_sets fails config validation."""
-        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
         container.validation.validation_set_names = ["alpha", "beta"]
 
         try:
@@ -563,7 +567,9 @@ class TestConfigContainerValidation:
         """multiple_validation_sets is rejected for MegatronMIMO models, whose data path bypasses it."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
-        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
         container.validation.multiple_validation_sets = True
 
         try:
