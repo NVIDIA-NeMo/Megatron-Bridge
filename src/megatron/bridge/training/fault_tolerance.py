@@ -256,6 +256,23 @@ def shutdown(global_state: GlobalState) -> None:
     global_state.rank_monitor_client = None
 
 
+def abort(global_state: GlobalState) -> None:
+    """Disconnect fault-tolerance monitoring after a failed workload.
+
+    Unlike :func:`shutdown`, this does not update timeouts because timeout
+    calculation synchronizes ranks and is unsafe while peers may be blocked.
+
+    Args:
+        global_state: Global training state.
+    """
+    rmon_cli = global_state.rank_monitor_client
+    try:
+        if rmon_cli is not None:
+            rmon_cli.shutdown_workload_monitoring()
+    finally:
+        global_state.rank_monitor_client = None
+
+
 def maybe_setup_simulated_fault(config: FaultToleranceConfig) -> None:
     """Sets up a simulated fault for fault tolerance testing, if configured.
 
