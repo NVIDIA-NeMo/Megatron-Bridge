@@ -414,21 +414,19 @@ def test_multiple_validation_sets_built_in_gpt_builder(_mock_rank, _mock_world_s
     prefix when the dataset-side flag (mirrored from ValidationConfig by validate()) is set."""
     from megatron.core.datasets.indexed_dataset import DType, IndexedDatasetBuilder
     from megatron.core.datasets.utils import compile_helpers
+    from megatron.core.tokenizers.text.libraries.null_tokenizer import NullTokenizer
 
     from megatron.bridge.training.config import GPTDatasetConfig
 
     compile_helpers()
 
-    class _Tokenizer:
-        vocab_size = 128
-        eod = 0
-        pad = 1
+    tokenizer = NullTokenizer(vocab_size=128, eod_id=0)
 
     def make_prefix(name, token_offset):
         prefix = str(tmp_path / name)
-        builder = IndexedDatasetBuilder(prefix + ".bin", dtype=DType.optimal_dtype(_Tokenizer.vocab_size))
+        builder = IndexedDatasetBuilder(prefix + ".bin", dtype=DType.optimal_dtype(tokenizer.vocab_size))
         for doc in range(8):
-            tokens = [(token_offset + doc + k) % _Tokenizer.vocab_size for k in range(32)]
+            tokens = [(token_offset + doc + k) % tokenizer.vocab_size for k in range(32)]
             builder.add_document(tokens, [len(tokens)])
         builder.finalize(prefix + ".idx")
         return prefix
@@ -450,7 +448,7 @@ def test_multiple_validation_sets_built_in_gpt_builder(_mock_rank, _mock_world_s
         reset_attention_mask=False,
         eod_mask_loss=False,
         create_attention_mask=False,
-        tokenizer=_Tokenizer(),
+        tokenizer=tokenizer,
         path_to_cache=str(tmp_path / "cache"),
         dataloader_type="single",
         drop_last=True,

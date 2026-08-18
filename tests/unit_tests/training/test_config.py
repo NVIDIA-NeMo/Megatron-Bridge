@@ -599,10 +599,11 @@ class TestConfigContainerValidation:
         )
         container.validation.multiple_validation_sets = True
 
+        container.model = MagicMock(spec=MegatronMIMOProvider)
+
         try:
-            with patch.object(type(container), "model", property(lambda self: MagicMock(spec=MegatronMIMOProvider))):
-                with pytest.raises(ValueError, match="MegatronMIMO"):
-                    container.validate()
+            with pytest.raises(ValueError, match="MegatronMIMO"):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
