@@ -212,9 +212,68 @@ build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "
 # `sys_platform == 'never'`), so they are never installed and appear only as `never`-marked
 # edges in uv.lock — keeping them out of both the image and SBOM/manifest scans. Install
 # them at test time with scripts/install_diffusion_deps.sh. This group is kept for
-# documentation purposes only.
-wan-diffusion-codecs = [
-    "av",
-    "imageio",
-    "imageio-ffmpeg",
+# documentation only; `uv sync --group diffusion` will NOT install them on Linux.
+diffusion = ["imageio", "imageio-ffmpeg", "av"]
+# flash-mla has no PyPI wheel and is built from source by uv (no-build-isolation) during the
+# image's `uv sync --all-groups`. Megatron-LM declares it in the same group, but uv does not
+# install a path dependency's groups, so it is declared here too.
+no_pypi_wheels = ["flash_mla"]
+
+[project.entry-points."nemo_run.cli"]
+lm = "megatron.bridge"
+
+[project.urls]
+Download = "https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases"
+Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Bridge"
+
+[tool.pytest.ini_options]
+# durations=0 will display all tests execution time, sorted in ascending order starting from from the slowest one.
+# -vv will also display tests with durration = 0.00s
+addopts = "--verbose --pyargs --durations=0 --strict-markers"  # always add these arguments to pytest
+testpaths = ["tests"]
+# directories to ignore when discovering tests
+norecursedirs = [
+    "src",
+    "external",
+    "examples",
+    "docs",
+    "scripts",
+    "tools",
+    "tutorials",
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "venv",
+    "{arch}"
+]
+# markers to select tests, use `pytest --markers` to see all available markers, `pytest -m "<marker>"` to select tests
+markers = [
+    "unit: marks unit test, i.e. testing a single, well isolated functionality (deselect with '-m \"not unit\"')",
+    "integration: marks test checking the elements when integrated into subsystems (deselect with '-m \"not integration\"')",
+    "system: marks test working at the highest integration level (deselect with '-m \"not system\"')",
+    "acceptance: marks test checking whether the developed product/model passes the user defined acceptance criteria (deselect with '-m \"not acceptance\"')",
+    "docs: mark tests related to documentation (deselect with '-m \"not docs\"')",
+    "internal: marks tests requiring internal NVIDIA infrastructure or resources",
+    "gpu: marks tests requiring GPU hardware",
+    "skipduringci: marks tests that are skipped ci as they are addressed by Jenkins jobs but should be run to test user setups",
+    "pleasefixme: marks tests that are broken and need fixing",
+]
+
+[tool.coverage.run]
+concurrency = ["thread", "multiprocessing"]
+omit = [
+    "/tmp/*",
+    "/opt/Megatron-Bridge/tests/*",
+    "/opt/Megatron-Bridge/*.py",
+    "*_ray.py",
+]
+
+[tool.coverage.report]
+source = [
+    ".",
+    "/opt/Megatron-Bridge/",
+    "/home/runner/work/Megatron-Bridge/Megatron-Bridge",
 ]
