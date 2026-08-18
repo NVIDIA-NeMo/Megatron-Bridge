@@ -18,6 +18,7 @@ from unittest import mock
 
 import pytest
 import torch
+from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
@@ -402,3 +403,101 @@ def test_disabling_multiple_validation_sets_resets_resume_offset(_mock_rank, _mo
         )
 
     assert next(iter(valid_dataloader))["sample_id"][0].item() == 0
+
+
+@pytest.mark.unit
+@mock.patch("torch.distributed.broadcast")
+@mock.patch("torch.distributed.get_world_size", return_value=1)
+@mock.patch("torch.distributed.get_rank", return_value=0)
+def test_multiple_validation_sets_built_in_gpt_builder(_mock_rank, _mock_world_size, _mock_broadcast, tmp_path):
+    """The built-in GPT blended-builder path splits the validation blend into one dataset per
+    prefix when the dataset-side flag (mirrored from ValidationConfig by validate()) is set."""
+    from megatron.core.datasets.indexed_dataset import DType, IndexedDatasetBuilder
+    from megatron.core.datasets.utils import compile_helpers
+
+    from megatron.bridge.training.config import GPTDatasetConfig
+
+    compile_helpers()
+
+    class _Tokenizer:
+        vocab_size = 128
+        eod = 0
+        pad = 1
+
+    def make_prefix(name, token_offset):
+        prefix = str(tmp_path / name)
+        builder = IndexedDatasetBuilder(prefix + ".bin", dtype=DType.optimal_dtype(_Tokenizer.vocab_size))
+        for doc in range(8):
+            tokens = [(token_offset + doc + k) % _Tokenizer.vocab_size for k in range(32)]
+            builder.add_document(tokens, [len(tokens)])
+        builder.finalize(prefix + ".idx")
+        return prefix
+
+    train_prefix = make_prefix("train", 0)
+    valid_prefix_a = make_prefix("valid_a", 1)
+    valid_prefix_b = make_prefix("valid_b", 2)
+
+    dataset_cfg = GPTDatasetConfig(
+        seq_length=8,
+        random_seed=1234,
+        blend_per_split=[
+            get_blend_from_list([train_prefix]),
+            get_blend_from_list([valid_prefix_a, valid_prefix_b]),
+            None,
+        ],
+        multiple_validation_sets=True,
+        reset_position_ids=False,
+        reset_attention_mask=False,
+        eod_mask_loss=False,
+        create_attention_mask=False,
+        tokenizer=_Tokenizer(),
+        path_to_cache=str(tmp_path / "cache"),
+        dataloader_type="single",
+        drop_last=True,
+        num_workers=0,
+        persistent_workers=False,
+    )
+    dataset_cfg.finalize()
+
+    cfg = SimpleNamespace(
+        model=object(),
+        dataset=dataset_cfg,
+        train=SimpleNamespace(
+            train_samples=8,
+            train_iters=1,
+            global_batch_size=2,
+            micro_batch_size=1,
+            num_epochs=None,
+            exit_signal=None,
+            exit_signal_handler_for_dataloader=False,
+        ),
+        validation=SimpleNamespace(
+            eval_interval=1,
+            eval_iters=1,
+            eval_global_batch_size=None,
+            eval_micro_batch_size=None,
+            skip_train=False,
+            eval_at_step_zero=False,
+            multiple_validation_sets=True,
+            validation_set_names=["a", "b"],
+        ),
+    )
+
+    real_torch_tensor = torch.tensor
+
+    def tensor_on_cpu(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_torch_tensor(*args, **kwargs)
+
+    with mock.patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu):
+        _, valid_dataloader, _ = build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=get_dataset_provider(dataset_cfg),
+            dp_group=object(),
+        )
+
+    assert isinstance(valid_dataloader, list) and len(valid_dataloader) == 2
+    for per_set_loader in valid_dataloader:
+        batch = next(iter(per_set_loader))
+        assert batch["tokens"].shape[-1] == 8

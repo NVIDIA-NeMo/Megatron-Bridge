@@ -579,6 +579,63 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_dataset_side_full_validation_rejected(self):
+        """The duplicate full_validation field on the mcore dataset config is rejected too."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.dataset.full_validation = True
+
+        try:
+            with pytest.raises(ValueError, match="full_validation is not supported"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_multiple_validation_sets_propagated_to_dataset_config(self):
+        """ValidationConfig is the source of truth; validate() mirrors the switch onto the
+        mcore dataset config so BlendedMegatronDatasetBuilder splits the validation blend."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.multiple_validation_sets = True
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.dataset.multiple_validation_sets is True
+
+    def test_multiple_validation_sets_dataset_only_setting_adopted(self):
+        """A legacy Megatron-LM style dataset-side setting is adopted into ValidationConfig."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.dataset.multiple_validation_sets = True
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.validation.multiple_validation_sets is True
+        assert container.dataset.multiple_validation_sets is True
+
+    def test_multiple_validation_sets_conflicting_settings_rejected(self):
+        """An explicit dataset-side False with ValidationConfig True is a contradiction."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.multiple_validation_sets = True
+        container.dataset.multiple_validation_sets = False
+
+        try:
+            with pytest.raises(ValueError, match="Conflicting multiple_validation_sets"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize("pipeline_model_parallel_size", [1, 2])
     def test_multiple_validation_sets_allows_pipeline_parallel(self, monkeypatch, pipeline_model_parallel_size):
         """multiple_validation_sets validates with any PP size.

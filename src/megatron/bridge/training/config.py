@@ -1158,10 +1158,25 @@ class ConfigContainer(Container):
         if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
             raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
 
-        if self.validation.full_validation:
+        if self.validation.full_validation or getattr(self.dataset, "full_validation", None):
             raise ValueError(
-                "full_validation is not supported by Megatron Bridge; use eval_iters to bound evaluation."
+                "full_validation is not supported by Megatron Bridge; use eval_iters to bound evaluation. "
+                "This applies to both ValidationConfig.full_validation and the dataset-side full_validation field."
             )
+        # ValidationConfig owns multiple_validation_sets; mirror it onto the dataset config's
+        # duplicate field (consumed by BlendedMegatronDatasetBuilder) before dataset construction.
+        dataset_multi_val = getattr(self.dataset, "multiple_validation_sets", None)
+        if dataset_multi_val is not None:
+            if self.validation.multiple_validation_sets and not dataset_multi_val:
+                raise ValueError(
+                    "Conflicting multiple_validation_sets settings: ValidationConfig enables it but the "
+                    "dataset config explicitly disables it. Set it on ValidationConfig only."
+                )
+            if dataset_multi_val:
+                # Backward compatibility: adopt a dataset-only (Megatron-LM style) setting.
+                self.validation.multiple_validation_sets = True
+        if hasattr(self.dataset, "multiple_validation_sets"):
+            self.dataset.multiple_validation_sets = self.validation.multiple_validation_sets
         if self.validation.validation_set_names is not None and not self.validation.multiple_validation_sets:
             raise ValueError("validation_set_names requires multiple_validation_sets to be set.")
         if self.validation.multiple_validation_sets:
