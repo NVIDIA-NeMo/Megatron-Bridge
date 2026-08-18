@@ -30,6 +30,25 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
+# Public Nemotron 3.5 Lightning checkpoint used by the Lightning recipe API.
+_NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
+
+
+def _apply_nemotron_3_5_lightning_defaults(cfg: ConfigContainer) -> ConfigContainer:
+    """Apply the Nemotron 3.5 Lightning workload contract to a B300 execution config."""
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    return cfg
+
+
 def nemotronh_56b_pretrain_64gpu_b300_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 64× B300, FP8 current-scaling."""
     cfg = nemotronh_56b_pretrain_config()
@@ -379,3 +398,18 @@ def nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B300, BF16."""
+    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b300_bf16_config())
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B300, MXFP8."""
+    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config())
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B300, NVFP4."""
+    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config())
