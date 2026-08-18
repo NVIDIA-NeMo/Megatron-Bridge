@@ -24,6 +24,7 @@ from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.loaders import (
     build_train_valid_test_data_iterators,
     build_train_valid_test_data_loaders,
+    get_train_valid_test_num_samples,
 )
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.state import TrainState
@@ -295,3 +296,30 @@ def test_multiple_validation_sets_build_time_guards(_mock_rank, _mock_world_size
                 build_train_valid_test_datasets_provider=get_dataset_provider(provider),
                 dp_group=object(),
             )
+
+
+@pytest.mark.unit
+def test_eval_at_step_zero_reserves_pre_and_post_training_passes():
+    """eval_at_step_zero budgets the step-zero pass, plus the post-training pass in _pretrain()
+    when eval_interval is None and the base formula reserves nothing; a finite
+    dataloader_type="single" loader must be sized for both."""
+
+    def make_cfg(eval_interval):
+        return SimpleNamespace(
+            train=SimpleNamespace(train_samples=None, train_iters=10, global_batch_size=4),
+            validation=SimpleNamespace(
+                eval_interval=eval_interval,
+                eval_iters=2,
+                eval_global_batch_size=None,
+                eval_at_step_zero=True,
+            ),
+        )
+
+    # With a schedule, the base formula's "+1" already covers the post-training pass;
+    # only the step-zero pass is extra.
+    _, valid_samples, _ = get_train_valid_test_num_samples(make_cfg(eval_interval=5))
+    assert valid_samples == ((10 // 5 + 1) * 2 + 2) * 4
+
+    # Without a schedule, the run still evaluates at step zero and once after training.
+    _, valid_samples, _ = get_train_valid_test_num_samples(make_cfg(eval_interval=None))
+    assert valid_samples == 2 * 2 * 4
