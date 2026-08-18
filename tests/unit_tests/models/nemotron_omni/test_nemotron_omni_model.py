@@ -30,6 +30,7 @@ from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
+    _pad_patch_grid_to_even,
     _pixel_shuffle_dynamic_resolution,
 )
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
@@ -296,6 +297,38 @@ def test_dynamic_resolution_pixel_shuffle_groups_spatial_2x2_blocks():
             dtype=torch.float32,
         ),
     )
+
+
+def test_even_patch_grid_is_returned_unchanged():
+    features = torch.randn(1, 32 * 32, 8)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=32, width=32)
+
+    assert padded is features
+    assert (height, width) == (32, 32)
+
+
+def test_odd_patch_grid_is_zero_padded_so_pixel_shuffle_accepts_it():
+    # The CP vision split injects 1x1-patch placeholder images to keep every
+    # rank non-empty; pixel shuffle rejects odd grids outright.
+    features = torch.arange(8, dtype=torch.float32).reshape(1, 1, 8)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=1, width=1)
+
+    assert (height, width) == (2, 2)
+    assert torch.equal(padded[0, 0], features[0, 0])
+    assert padded[0, 1:].abs().sum() == 0
+    assert _pixel_shuffle_dynamic_resolution(padded, height=height, width=width).shape == (1, 1, 32)
+
+
+def test_odd_patch_grid_padding_keeps_real_patches_differentiable():
+    features = torch.randn(1, 3 * 5, 8, requires_grad=True)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=3, width=5)
+    _pixel_shuffle_dynamic_resolution(padded, height=height, width=width).sum().backward()
+
+    assert (height, width) == (4, 6)
+    assert torch.count_nonzero(features.grad) == features.numel()
 
 
 def test_image_forward_replaces_expanded_placeholders_without_changing_length():

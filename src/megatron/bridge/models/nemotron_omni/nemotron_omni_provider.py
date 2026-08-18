@@ -174,6 +174,12 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
 
+    # Shard images (or tubelets, when temporal compression is on) across the
+    # context-parallel group instead of encoding every image on every CP rank.
+    # The vision tower is replicated, so this is data parallelism borrowing the
+    # CP group, not sequence sharding: RADIO already attends per image.
+    vision_context_parallel: bool = False
+
     # This field is serialized in run_config.yaml. It prevents an older
     # checkpoint whose provider had the same class name but LLaVA semantics
     # from being loaded as the canonical expanded-sequence implementation.
@@ -459,6 +465,7 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
             temporal_patch_dim=self.temporal_patch_dim,
             separate_video_embedder=self.separate_video_embedder,
             temporal_ckpt_compat=self.temporal_ckpt_compat,
+            vision_context_parallel=self.vision_context_parallel,
             sound_model=sound_model,
             sound_projection=sound_projection,
             sound_token_index=self.sound_context_token_id,
