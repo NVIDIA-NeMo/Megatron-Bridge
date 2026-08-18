@@ -72,6 +72,19 @@ def test_dataloader_default_is_cyclic(monkeypatch):
         sys.modules.pop(name, None)
 
 
+def test_component_spec_accepts_expert_parallelism():
+    name = "qwen35_vl_mimo_component_ep"
+    try:
+        module = _load_example_module(name)
+
+        component_name, parallelism = module._parse_component_spec("language=tp=1,dp=4,ep=4,rank_offset=0")
+
+        assert component_name == "language"
+        assert parallelism.expert_model_parallel_size == 4
+    finally:
+        sys.modules.pop(name, None)
+
+
 @pytest.mark.parametrize(
     "dataset_name",
     ["cord_v2", "rdr", "medpix"],

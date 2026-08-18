@@ -92,6 +92,7 @@ G_COMPONENT_KEY_TO_FIELD = {
     "pp": "pipeline_model_parallel_size",
     "dp": "data_parallel_size",
     "cp": "context_parallel_size",
+    "ep": "expert_model_parallel_size",
     "etp": "expert_tensor_parallel_size",
     "rank_offset": "rank_offset",
 }
@@ -365,10 +366,48 @@ def _build_mimo_provider(
     standard_provider.bf16 = not args.fp32
     standard_provider.fp16 = False
     standard_provider.use_cpu_initialization = True
+    # The current non-colocated MIMO path does not support sequence or virtual
+    # pipeline parallelism. Keep both disabled independently of provider
+    # defaults so a checkpoint-backed smoke cannot enable either implicitly.
+    standard_provider.sequence_parallel = False
+    standard_provider.virtual_pipeline_model_parallel_size = None
+    # Match the tuned Standard recipe for loss-parity and performance pairs.
+    standard_provider.batch_p2p_sync = False
+    standard_provider.use_te_rng_tracker = True
     if hasattr(standard_provider, "mtp_num_layers"):
         standard_provider.mtp_num_layers = None
     if hasattr(standard_provider, "_enable_in_batch_packing"):
         standard_provider._enable_in_batch_packing = False
+    if args.recompute_granularity is not None:
+        standard_provider.recompute_granularity = args.recompute_granularity
+        standard_provider.recompute_method = args.recompute_method
+        standard_provider.recompute_num_layers = args.recompute_num_layers
+    if args.cross_entropy_fusion_impl is not None:
+        standard_provider.cross_entropy_loss_fusion = True
+        standard_provider.cross_entropy_fusion_impl = args.cross_entropy_fusion_impl
+    if args.moe_token_dispatcher_type is not None:
+        standard_provider.moe_token_dispatcher_type = args.moe_token_dispatcher_type
+    if args.moe_flex_dispatcher_backend is not None:
+        standard_provider.moe_flex_dispatcher_backend = args.moe_flex_dispatcher_backend
+    if args.moe_router_fusion is not None:
+        standard_provider.moe_router_fusion = args.moe_router_fusion
+    if args.moe_flex_dispatcher_num_sms is not None:
+        standard_provider.moe_flex_dispatcher_num_sms = args.moe_flex_dispatcher_num_sms
+    if args.moe_hybridep_num_sms_preprocessing is not None:
+        standard_provider.moe_hybridep_num_sms_preprocessing = args.moe_hybridep_num_sms_preprocessing
+    if args.moe_permute_fusion is not None:
+        standard_provider.moe_permute_fusion = args.moe_permute_fusion
+    if args.moe_permute_fusion_into_hybridep is not None:
+        standard_provider.moe_permute_fusion_into_hybridep = args.moe_permute_fusion_into_hybridep
+    if args.moe_shared_expert_overlap is not None:
+        standard_provider.moe_shared_expert_overlap = args.moe_shared_expert_overlap
+    if args.overlap_dispatch_backward_with_experts_wgrad is not None:
+        standard_provider.overlap_dispatch_backward_with_experts_wgrad = (
+            args.overlap_dispatch_backward_with_experts_wgrad
+        )
+    if args.num_layers_in_first_pipeline_stage is not None:
+        standard_provider.num_layers_in_first_pipeline_stage = args.num_layers_in_first_pipeline_stage
+        standard_provider.num_layers_in_last_pipeline_stage = args.num_layers_in_last_pipeline_stage
 
     provider = MegatronMIMOProvider.from_standard_provider(
         standard_provider=standard_provider,
@@ -412,7 +451,8 @@ def _build_dataset_config(args: argparse.Namespace) -> DirectHFSFTDatasetConfig:
         dataloader_type=args.dataloader_type,
         data_sharding=True,
         pin_memory=True,
-        persistent_workers=args.num_workers > 0,
+        persistent_workers=args.num_workers > 0 if args.persistent_workers is None else args.persistent_workers,
+        pad_to_max_length=args.pad_to_max_length,
         # MegatronMIMO packs in the step, after the module-DP slice (deferred packing).
         enable_in_batch_packing=args.pack_sequences_in_batch,
         defer_in_batch_packing_to_step=True,
@@ -940,8 +980,10 @@ def _build_checkpoint_config(args: argparse.Namespace) -> CheckpointConfig:
         raise ValueError(
             "Use either --load-checkpoint for resume or --pretrained-checkpoint for model weights, not both."
         )
-    checkpoint_cfg.save = args.checkpoint_dir
-    if args.checkpoint_interval is not None:
+    checkpoint_cfg.save = None if args.disable_checkpoint_save else args.checkpoint_dir
+    if args.disable_checkpoint_save:
+        checkpoint_cfg.save_interval = args.train_iters + 1
+    elif args.checkpoint_interval is not None:
         checkpoint_cfg.save_interval = args.checkpoint_interval
     if args.load_checkpoint is not None:
         checkpoint_cfg.load = args.load_checkpoint
@@ -1089,6 +1131,7 @@ def _build_config(
     )
     cfg.data_parallel_size = 1
     cfg.rng.seed = args.seed
+    cfg.rng.te_rng_tracker = True
     cfg.mixed_precision = "bf16_mixed" if not args.fp32 else None
     return cfg
 
@@ -1168,9 +1211,40 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--global-batch-size", type=int, default=8)
     parser.add_argument("--train-iters", type=int, default=20)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--persistent-workers", type=_str2bool, default=None)
     parser.add_argument("--dataloader-type", choices=("single", "cyclic"), default="cyclic")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--fp32", action="store_true", help="Use fp32 instead of bf16")
+    parser.add_argument(
+        "--recompute-granularity",
+        choices=("full", "selective"),
+        default=None,
+        help="Override the wrapped provider's activation-recompute granularity.",
+    )
+    parser.add_argument("--recompute-method", choices=("uniform", "block"), default=None)
+    parser.add_argument("--recompute-num-layers", type=int, default=None)
+    parser.add_argument(
+        "--cross-entropy-fusion-impl",
+        choices=("native", "te"),
+        default=None,
+        help="Override the wrapped provider's fused cross-entropy implementation.",
+    )
+    parser.add_argument(
+        "--moe-token-dispatcher-type",
+        choices=("allgather", "alltoall", "flex"),
+        default=None,
+        help="Override the wrapped MoE provider's token dispatcher.",
+    )
+    parser.add_argument("--moe-flex-dispatcher-backend", type=str, default=None)
+    parser.add_argument("--moe-router-fusion", type=_str2bool, default=None)
+    parser.add_argument("--moe-flex-dispatcher-num-sms", type=int, default=None)
+    parser.add_argument("--moe-hybridep-num-sms-preprocessing", type=int, default=None)
+    parser.add_argument("--moe-permute-fusion", type=_str2bool, default=None)
+    parser.add_argument("--moe-permute-fusion-into-hybridep", type=_str2bool, default=None)
+    parser.add_argument("--moe-shared-expert-overlap", type=_str2bool, default=None)
+    parser.add_argument("--overlap-dispatch-backward-with-experts-wgrad", type=_str2bool, default=None)
+    parser.add_argument("--num-layers-in-first-pipeline-stage", type=int, default=None)
+    parser.add_argument("--num-layers-in-last-pipeline-stage", type=int, default=None)
     parser.add_argument("--freeze-vision", type=_str2bool, default=False)
     parser.add_argument("--freeze-llm", type=_str2bool, default=False)
     parser.add_argument("--freeze-projector", type=_str2bool, default=False)
@@ -1204,6 +1278,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-save-dir", type=str, default=None)
     parser.add_argument("--checkpoint-dir", type=str, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
+    parser.add_argument(
+        "--disable-checkpoint-save",
+        action="store_true",
+        help="Disable periodic and end-of-training checkpoint saves.",
+    )
     parser.add_argument("--load-checkpoint", type=str, default=None, help="Checkpoint directory for full resume")
     parser.add_argument(
         "--pretrained-checkpoint",
@@ -1215,6 +1294,12 @@ def _parse_args() -> argparse.Namespace:
         "--allow-random-init",
         action="store_true",
         help="Allow training without --pretrained-checkpoint or --load-checkpoint for performance-only smoke runs.",
+    )
+    parser.add_argument(
+        "--pad-to-max-length",
+        type=_str2bool,
+        default=False,
+        help="Pad direct HF SFT samples to --seq-length in the model collator.",
     )
     parser.add_argument(
         "--pad-to-seq-length",
@@ -1243,6 +1328,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-nvtx-ranges", action="store_true")
     parser.add_argument("--log-batches", action="store_true", help="Log per-batch image/token summary.")
     args = parser.parse_args()
+    recompute_values = (args.recompute_method, args.recompute_num_layers)
+    if args.recompute_granularity is None and any(value is not None for value in recompute_values):
+        parser.error("--recompute-method/--recompute-num-layers require --recompute-granularity")
+    if args.recompute_granularity == "full" and any(value is None for value in recompute_values):
+        parser.error("full recompute requires --recompute-method and --recompute-num-layers")
+    if args.moe_flex_dispatcher_backend is not None and args.moe_token_dispatcher_type != "flex":
+        parser.error("--moe-flex-dispatcher-backend requires --moe-token-dispatcher-type=flex")
+    if args.persistent_workers and args.num_workers == 0:
+        parser.error("--persistent-workers=True requires --num-workers greater than zero")
+    pipeline_stage_values = (
+        args.num_layers_in_first_pipeline_stage,
+        args.num_layers_in_last_pipeline_stage,
+    )
+    if any(value is None for value in pipeline_stage_values) and any(
+        value is not None for value in pipeline_stage_values
+    ):
+        parser.error(
+            "--num-layers-in-first-pipeline-stage and --num-layers-in-last-pipeline-stage must be set together"
+        )
     _resolve_default_paths(args)
     return args
 
