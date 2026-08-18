@@ -292,9 +292,6 @@ Multi-image data whose per-sample image count varies (Mantis at CP=4) therefore
 balances less evenly than uniform data, which is why its memory saving is the
 smallest of the three.
 
-For code anchors, pitfalls, and the A/B verification procedure, see
-[the vision context parallel skill](../../../../skills/nemo-mbridge-perf-vision-context-parallel/SKILL.md).
-
 ### Image-Text — CORD-V2
 
 [CORD-V2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) is a

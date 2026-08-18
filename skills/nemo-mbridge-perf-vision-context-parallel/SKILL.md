@@ -22,6 +22,22 @@ borrowing the CP group** — a rank encodes whole images, never partial ones.
 Shipped for Nemotron Omni. The MCore split/gather helpers are model-agnostic, so
 the pattern generalizes to any Bridge VLM with a dynamic-resolution encoder.
 
+## Do Not Confuse With `dist_train.vision_context_parallel_size`
+
+Bridge already has a similarly named and completely different knob:
+`vision_context_parallel_size` on the dist-train path
+(`src/megatron/bridge/models/qwen_vl/qwen3_vl_provider.py`, consumed in
+`src/megatron/bridge/training/initialize.py`).
+
+| | `model.vision_context_parallel` (bool) | `dist_train.vision_context_parallel_size` (int) |
+|---|---|---|
+| Ranks | Reuses the language model's CP ranks | Gives the vision tower its **own** ranks |
+| Splits | Whole images across those ranks | The vision encoder's own sequence dimension |
+| Encoder `context_parallel_size` | Stays `1` | Set to this value |
+| Models | Nemotron Omni | Qwen3-VL dist-train |
+
+They are not alternatives and do not compose in any tested configuration.
+
 ## Enablement
 
 ```python
@@ -95,7 +111,10 @@ Upstream helpers (do not modify — changes go through the MCore repo):
    images so no rank runs an empty encoder, and returns `num_padded_ranks` so the
    gather can drop them again.
 3. **Encode.** Each rank runs the full vision tower on its own images only.
-   Activations, not just compute, are what drop by `1/CP`.
+   Activations, not just compute, are what drop by `1/CP`. The vision encoder's
+   own `context_parallel_size` stays hardcoded to `1` in
+   `_build_vision_config` — that is correct and unchanged by this feature, since
+   the sharding happens *outside* the encoder, over its inputs.
 4. **Even-grid padding.** `_pad_patch_grid_to_even` zero-pads an odd patch grid
    before pixel shuffle. Only the injected `1x1` placeholders hit this path;
    real frames are already even in both extents.
