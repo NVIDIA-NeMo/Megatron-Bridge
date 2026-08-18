@@ -62,6 +62,8 @@ class MuseGlimmerSelfAttention(SelfAttention):
 
     def __init__(self, config: TransformerConfig, *args: Any, **kwargs: Any) -> None:
         super().__init__(config, *args, **kwargs)
+        # TE RMSNorm always registers an affine weight, while Muse Q/K norms are
+        # parameter-free; use native RMSNorm to preserve the HF checkpoint contract.
         self.q_layernorm = nn.RMSNorm(
             self.hidden_size_per_attention_head,
             eps=config.layernorm_epsilon,
