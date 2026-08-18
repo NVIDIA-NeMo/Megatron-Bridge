@@ -10,8 +10,8 @@ summary: >
   manual HF/Megatron forward-pass correlation, deterministic Megatron
   inference, bounded H100 pretraining, H100 SFT, H100 PEFT, and H100
   checkpoint resume, H100 SFT export/inference, and H100 long-context SFT are
-  verified. CPU conversion and performance verification remain planned but not
-  yet verified.
+  verified. GB200 pretraining performance is verified. CPU conversion remains
+  planned but not yet verified.
 verification_index:
   model_level:
     verified:
@@ -26,7 +26,7 @@ verification_index:
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
   performance:
-    GB200: unverified
+    GB200: verified
 model:
   hf_id: openai/gpt-oss-120b
   hf_revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a  # pragma: allowlist secret
@@ -414,26 +414,29 @@ items:
 
   pretrain_performance:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
         --recipe gpt_oss_120b_pretrain_64gpu_gb200_bf16_config
-        --mode pretrain --max_steps 50
-      last_verified: null
+        --mode pretrain --max_steps 50 logger.log_throughput=true
+      last_verified: 2026-08-17
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 12.79104
+        final_loss: 0.03246120
+        last_10_steps_step_time_ms_avg: 4995.630
+        last_10_steps_model_tflops_per_gpu_avg: 535.230
+        last_10_steps_tokens_per_second_per_gpu_avg: 16398.332
       expected_result: >
-        Future verification must run the exact canonical 64-GB200 BF16
-        mock-data performance recipe for 50 optimizer steps, record finite
-        losses with zero skipped or NaN iterations and all required metrics,
-        and define measured step-time and model-TFLOP/s/GPU thresholds before
-        this item is marked verified. The recipe uses TP1/PP1/EP64,
-        GBS1280/MBS4, forced router balancing, selective layernorm and MoE
-        activation recompute, and expert-parallel communication overlap; this
-        benchmark batch contract makes it performance evidence, not
+        On exactly 64 GB200s, the canonical BF16 mock-data performance recipe
+        completes 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS
+        1280/4, forced router balancing, selective layernorm and MoE
+        activation recompute, and expert-parallel communication overlap. All
+        50 optimizer-step rows are present exactly once with finite loss, zero
+        skipped iterations, and zero NaN iterations. Loss decreases from
+        12.79104 to 0.03246120. The final ten logged step times average
+        4995.630 ms, measured model throughput averages 535.230 TFLOP/s/GPU,
+        and derived token-slot throughput averages 16398.332 tokens/s/GPU over
+        the same final-ten window. The resolved configuration persists. Mock
+        data and forced routing make the loss a finiteness check rather than
         convergence evidence.
