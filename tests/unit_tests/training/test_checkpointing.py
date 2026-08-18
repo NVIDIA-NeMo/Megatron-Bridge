@@ -5011,7 +5011,7 @@ class TestMaybeLoadDataloaderState:
             yield
 
     @staticmethod
-    def _pg(cp: int | None = 0, pp: int = 0, tp: int = 0, dp: int = 0):
+    def _pg(cp: int | None = 0, pp: int = 0, tp: int = 0, dp: int = 0, dp_size: int = 1):
         """Mock a ProcessGroupCollection with the given per-dimension ranks. Only cp may be None —
         modeling a collection configured without context parallelism (tp/pp/dp are always
         populated); the real get_pg_rank then reads the absent cp group as rank 0."""
@@ -5023,6 +5023,7 @@ class TestMaybeLoadDataloaderState:
         pg.pp.rank.return_value = pp
         pg.tp.rank.return_value = tp
         pg.dp.rank.return_value = dp
+        pg.dp.size.return_value = dp_size
         return pg
 
     def test_noop_when_no_path(self):
@@ -5068,6 +5069,27 @@ class TestMaybeLoadDataloaderState:
         # The selected iteration exists but contains no state file for this data-parallel rank.
         with pytest.raises(RuntimeError, match="data-parallel size"):
             maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+    @patch("megatron.bridge.training.checkpointing.energon_torch_load")
+    def test_extra_saved_dp_rank_file_raises(self, mock_load, tmp_path):
+        """A smaller current DP size must not silently discard saved rank state."""
+        train_iterator = Mock()
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        (iter_dir / "train_dataloader_dprank000.pt").touch()
+        (iter_dir / "train_dataloader_dprank001.pt").touch()
+        pg_collection = self._pg(dp=0, dp_size=1)
+
+        with pytest.raises(RuntimeError, match="data-parallel size"):
+            maybe_load_dataloader_state(
+                train_iterator,
+                10,
+                str(tmp_path),
+                pg_collection=pg_collection,
+            )
+
+        mock_load.assert_not_called()
+        train_iterator.iterable.restore_state.assert_not_called()
 
     @patch("megatron.bridge.training.checkpointing.energon_torch_load")
     def test_restores_on_every_cp_tp_pp_rank(self, mock_load, tmp_path):
