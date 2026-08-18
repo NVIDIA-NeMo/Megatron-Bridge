@@ -297,7 +297,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_ncclep_config() -> ConfigContainer:
     # activation saved for backward inherits that padding. This recipe force-balances the router, so
     # the measured worst case is only ~1.005x ideal; 1.5 padded all of it by 50%. PagedStashRunner
     # replays the step dropless and grows the budget if a routing ever exceeds this.
-    cfg.model.moe_expert_rank_capacity_factor = 1.05
+    # 1.02 rather than the 1.05 the other NCCL EP recipes use: at mbs=8 the 64xGB300 run sits ~1 GiB
+    # short of fitting the fp32 cross-entropy temp, and this is the only in-recipe lever left (BF16
+    # has no stash pool to shrink). Still ~4x the measured routing worst case, but the margin here is
+    # thin -- halving mbs is the durable fix if this regresses.
+    cfg.model.moe_expert_rank_capacity_factor = 1.02
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

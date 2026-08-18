@@ -75,7 +75,12 @@ def _enable_ncclep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
     # so the measured worst case is only ~1.005x ideal; 1.5 padded all of it by 50%.
     # PagedStashRunner replays the step dropless and grows the budget if a routing exceeds this.
     cfg.model.moe_expert_rank_capacity_factor = 1.05
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    # The CUDA stash pool is sized at this factor x the unpadded per-layer token count, which made it
+    # 90.7 GB on 64xGB300 and 45.2 GB on 64xGB200 -- enough to OOM both MXFP8 runs by under a GiB.
+    # The pool is capacity-factor-independent, so it has to shrink here rather than via the capacity
+    # factor. At 1.0 an overflow spills to the pinned host buffer below and logs a hint, so the cost
+    # of undersizing is throughput, not failure.
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
     cfg.model.moe_shared_expert_overlap = False
