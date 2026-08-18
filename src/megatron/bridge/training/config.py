@@ -71,6 +71,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import Megatron
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
+from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
@@ -1074,13 +1075,21 @@ class ConfigContainer(Container):
         torch.use_deterministic_algorithms(True)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
-        """
-        Validate Megatron-FSDP configuration when Megatron-FSDP is used.
-        """
+        """Validate and apply configuration required by the selected Megatron-FSDP version."""
         # Set configs needed for Megatron-FSDP.
         self.dist.use_megatron_fsdp = True
         self.ddp.use_megatron_fsdp = True
 
+        megatron_fsdp_version = getattr(self.ddp, "megatron_fsdp_version", 1)
+        if not MCORE_HAS_MEGATRON_FSDP_V2 or megatron_fsdp_version == 1:
+            self._validate_and_apply_megatron_fsdp_v1_configs()
+        elif megatron_fsdp_version == 2:
+            self._validate_and_apply_megatron_fsdp_v2_configs()
+        else:
+            raise ValueError(f"Unsupported megatron_fsdp_version: {megatron_fsdp_version}")
+
+    def _validate_and_apply_megatron_fsdp_v1_configs(self) -> None:
+        """Validate and apply the established MFSDP V1 training contract."""
         # Megatron-FSDP always uses a distributed optimizer.
         if not self.ddp.use_distributed_optimizer or not self.optimizer.use_distributed_optimizer:
             print_rank_0("use_distributed_optimizer=True is required for Megatron-FSDP. Activating...")
@@ -1126,6 +1135,80 @@ class ConfigContainer(Container):
             )
         assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
 
+    def _validate_and_apply_megatron_fsdp_v2_configs(self) -> None:
+        """Validate and apply the experimental MFSDP V2 training contract.
+
+        MFSDP V2 owns its sharded parameter and gradient storage, so it must use
+        its dedicated optimizer rather than Bridge's distributed-optimizer path.
+        Checkpointing and model-parallel topologies remain intentionally unsupported
+        upstream and are rejected here before model construction.
+        """
+        if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
+            raise ValueError("MFSDP V2 requires BF16 training (model.bf16=True and optimizer.bf16=True).")
+        if self.model.params_dtype != torch.bfloat16:
+            raise ValueError("MFSDP V2 requires model.params_dtype=torch.bfloat16.")
+
+        unsupported_parallelisms = (
+            "tensor_model_parallel_size",
+            "pipeline_model_parallel_size",
+            "context_parallel_size",
+            "expert_model_parallel_size",
+        )
+        configured_parallelisms = [
+            f"{name}={getattr(self.model, name)}"
+            for name in unsupported_parallelisms
+            if getattr(self.model, name) != 1
+        ]
+        if configured_parallelisms:
+            raise ValueError(
+                "MFSDP V2 currently supports DP-only training; unsupported settings: "
+                + ", ".join(configured_parallelisms)
+            )
+        if self.model.num_moe_experts is not None:
+            raise ValueError("MFSDP V2 does not currently support MoE models.")
+        if self.model.virtual_pipeline_model_parallel_size is not None:
+            raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
+        if self.dist.use_tp_pp_dp_mapping:
+            raise ValueError("MFSDP V2 does not support use_tp_pp_dp_mapping.")
+        if self.rng.data_parallel_random_init:
+            raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
+        if self.ddp.num_distributed_optimizer_instances != 1:
+            raise ValueError("MFSDP V2 does not currently support HSDP.")
+        if self.ddp.outer_dp_sharding_strategy != "no_shard":
+            raise ValueError("MFSDP V2 does not currently support outer DP sharding.")
+        if self.checkpoint.save is not None or self.checkpoint.load is not None:
+            raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
+        if self.checkpoint.pretrained_checkpoint is not None:
+            raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
+        if self.optimizer.loss_scale is not None:
+            raise ValueError("MFSDP V2 does not support loss scaling.")
+        if self.optimizer.clip_grad > 0.0:
+            raise ValueError("MFSDP V2 does not currently support gradient clipping.")
+        if self.optimizer.use_precision_aware_optimizer:
+            raise ValueError("MFSDP V2 does not support precision-aware optimizer.")
+        if self.optimizer.optimizer_cpu_offload:
+            raise ValueError("MFSDP V2 does not support optimizer CPU offload.")
+        if self.optimizer.use_layer_wise_distributed_optimizer:
+            raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
+        if self.optimizer.optimizer_cuda_graph:
+            raise ValueError("MFSDP V2 does not support optimizer CUDA graphs.")
+        if self.model.calculate_per_token_loss:
+            raise ValueError("MFSDP V2 does not support per-token loss normalization.")
+        if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
+            raise ValueError("MFSDP V2 does not support FP8 or FP4.")
+        if self.model.cuda_graph_impl != "none" or self.ddp.megatron_fsdp_cuda_graph_mode:
+            raise ValueError("MFSDP V2 does not support CUDA graphs.")
+
+        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        self.ddp.use_distributed_optimizer = False
+        self.optimizer.use_distributed_optimizer = False
+        self.ddp.overlap_grad_reduce = False
+        self.ddp.overlap_param_gather = False
+        self.optimizer.overlap_param_gather = False
+        self.optimizer.overlap_param_gather_with_optimizer_step = False
+        self.model.gradient_accumulation_fusion = False
+        self.ddp.fsdp_all_gather_in_start_param_sync = False
+
     def _validate_hf_checkpoint_export_source(self) -> None:
         """Validate that HF sidecar export has a source for HF config/tokenizer assets."""
         if not self.checkpoint.also_save_hf_checkpoint:
@@ -1143,6 +1226,43 @@ class ConfigContainer(Container):
             "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
             "an HF model id."
         )
+
+    def _disable_native_energon_packing_moe_overlap(self) -> None:
+        """Disable EP overlap until packed VLM schedule plans preserve every model input."""
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
+        if not enable_energon_packing:
+            return
+
+        # The same request can live on the model, on CommOverlapConfig, and on
+        # its resolved user config. CommOverlapConfig.setup() runs after this
+        # method and copies its value back to the model, so clearing only the
+        # model would allow a stale wrapper value to re-enable the unsafe path.
+        overlap_configs: list[object] = [self.model]
+        if self.comm_overlap is not None:
+            overlap_configs.append(self.comm_overlap)
+            resolved_overlap = getattr(self.comm_overlap, "user_comm_overlap_cfg", None)
+            if resolved_overlap is not None:
+                overlap_configs.append(resolved_overlap)
+
+        overlap_fields = ("overlap_moe_expert_parallel_comm", "delay_wgrad_compute")
+        overlap_requested = any(
+            getattr(config, field_name, False) is True for config in overlap_configs for field_name in overlap_fields
+        )
+        if not overlap_requested:
+            return
+
+        warnings.warn(
+            "Disabling MoE expert-parallel communication overlap and delayed weight-gradient compute because "
+            "overlap switches MCore to combined-1F1B schedule-plan execution, but the current VLM path does not "
+            "forward visual inputs or packed-sequence metadata through that plan.",
+            stacklevel=3,
+        )
+        for config in overlap_configs:
+            for field_name in overlap_fields:
+                if hasattr(config, field_name):
+                    setattr(config, field_name, False)
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
@@ -1189,6 +1309,9 @@ class ConfigContainer(Container):
                 )
 
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
+        enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.packing_buffer_size is not None
+        )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
 
@@ -1243,6 +1366,26 @@ class ConfigContainer(Container):
                 f"({self.dataset.micro_batch_size} != {self.train.micro_batch_size})."
             )
 
+        if enable_energon_packing:
+            if self.train.micro_batch_size != 1:
+                raise ValueError("Energon native sequence packing requires train.micro_batch_size=1.")
+            if not self.model.calculate_per_token_loss:
+                raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
+            if self.ddp.average_in_collective:
+                raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
+            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
+                raise ValueError("Energon native sequence packing does not support MTP.")
+            if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
+                self.model, "vision_cuda_graph_impl", None
+            ) not in (None, "none"):
+                raise ValueError("Energon native sequence packing does not support CUDA graphs.")
+            dist_train = getattr(self.model, "dist_train", None)
+            if dist_train is not None and getattr(dist_train, "use_dist_train", False):
+                raise ValueError("Energon native sequence packing does not support Qwen3-VL DistTrain.")
+            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+                raise ValueError("Energon native sequence packing does not yet support pipeline parallelism.")
+            self._disable_native_energon_packing_moe_overlap()
+
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
                 getattr(self.model, "pipeline_model_parallel_size", 1) > 1
@@ -1272,7 +1415,7 @@ class ConfigContainer(Container):
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if enable_in_batch_packing:
+        if enable_in_batch_packing or enable_energon_packing:
             transformer_config = getattr(self.model, "transformer", self.model)
             transformer_config._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
@@ -1916,6 +2059,11 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Calculate data parallel size (needed for comm overlap methods)
     cfg.set_data_parallel_size()
+
+    # EP overlap switches MCore to combined-1F1B schedule-plan execution. The current
+    # VLM plan does not forward visual inputs or packed-sequence metadata, so clear every
+    # user-facing copy before CommOverlapConfig can apply the requested value to the model.
+    cfg._disable_native_energon_packing_moe_overlap()
 
     # Apply communication overlap configuration if provided
     if cfg.comm_overlap is not None:

@@ -24,7 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp import mcore_fsdp_adapter
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -74,6 +73,7 @@ from megatron.bridge.training.checkpointing import (
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -527,6 +527,11 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        global_state._flops_vision_patch_sum = 0
+        global_state._flops_vision_patch_sq_sum = 0
+        global_state._flops_vision_merged_token_sum = 0
+        global_state._flops_cross_seqlen_sum = 0
+        global_state._flops_cross_seqlen_product_sum = 0
         global_state._flops_requires_global_reduce = False
 
         (
@@ -639,19 +644,32 @@ def train(
         # fixed-length stats from the local DP rank; THD batches request one exact SUM
         # all-reduce over the pure DP group because packed sub-sequence lengths can
         # differ by rank.
-        seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
+        flops_stats = flop_utils.resolve_global_flops_runtime_stats(
             global_state,
             data_parallel_size=dp_size,
             vp_size=config.model.virtual_pipeline_model_parallel_size,
             dp_group=pg_collection.dp,
+            include_vision_patch_stats=True,
+            include_cross_attention_stats=hasattr(
+                config.model, "_get_num_floating_point_operations_with_runtime_stats"
+            ),
         )
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
             config,
             batch_size=batch_size,
-            seqlen_sum=seqlen_sum,
-            seqlen_squared_sum=seqlen_squared_sum,
-            num_vision_patches=num_vision_patches,
+            seqlen_sum=flops_stats.seqlen_sum,
+            seqlen_squared_sum=flops_stats.seqlen_squared_sum,
+            num_vision_patches=0 if flops_stats.has_exact_vision_stats else flops_stats.num_vision_patches,
+            cross_seqlen_sum=flops_stats.cross_seqlen_sum,
+            cross_seqlen_product_sum=flops_stats.cross_seqlen_product_sum,
         )
+        if flops_stats.has_exact_vision_stats:
+            num_floating_point_operations_in_batch += flop_utils.vit_flops_from_patch_stats(
+                config,
+                patch_sum=flops_stats.vision_patch_sum,
+                patch_squared_sum=flops_stats.vision_patch_squared_sum,
+                merged_token_sum=flops_stats.vision_merged_token_sum,
+            )
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
@@ -1706,22 +1724,6 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
     gc.collect()
 
 
-def _get_megatron_fsdp_types(adapter: Any = mcore_fsdp_adapter) -> tuple[type, ...]:
-    """Return the concrete MCore FSDP wrapper types exposed by an adapter version."""
-    return tuple(
-        module_type
-        for module_type in (
-            getattr(adapter, "FullyShardedDataParallel", None),
-            getattr(adapter, "FullyShardedDataParallelV1", None),
-            getattr(adapter, "FullyShardedDataParallelV2", None),
-        )
-        if isinstance(module_type, type)
-    )
-
-
-_MEGATRON_FSDP_TYPES = _get_megatron_fsdp_types()
-
-
 def _maybe_register_fsdp_buffers(
     config: ConfigContainer,
     model: list[MegatronModule],
@@ -1735,7 +1737,7 @@ def _maybe_register_fsdp_buffers(
     ):
         print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
         for model_chunk in model:
-            if isinstance(model_chunk, _MEGATRON_FSDP_TYPES) and getattr(
+            if isinstance(model_chunk, MEGATRON_FSDP_TYPES) and getattr(
                 model_chunk.ddp_config, "fsdp_manual_registration", False
             ):
                 fsdp_param_and_grad_buffer = getattr(model_chunk, "param_and_grad_buffer", None)

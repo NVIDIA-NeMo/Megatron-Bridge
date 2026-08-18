@@ -79,7 +79,16 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
     validate_output_path(path, source_paths=source_paths)
     if torch.distributed.get_rank() == 0:
         prepare_output_directory(path, overwrite=overwrite, source_paths=source_paths)
-    torch.distributed.barrier()
+    # Without device_ids, torch guesses the barrier's device as
+    # rank % local_gpu_count. Slurm assigns SLURM_PROCID cyclically across
+    # nodes (RANK = num_nodes * local_rank + node_id, not block-wise), so
+    # that guess collides across ranks on the same node once more than one
+    # node is used, and NCCL aborts with "Multiple ranks detected using the
+    # same GPU on this node." Passing the real device (already set via
+    # torch.cuda.set_device in _ensure_distributed_initialized) avoids the
+    # guess, matching the pattern used by training/initialize.py's own
+    # first post-init barrier.
+    torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
@@ -203,7 +212,14 @@ def _roundtrip_weights_match(name: str, exported: torch.Tensor, original: torch.
 
 
 def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.Module]) -> None:
-    """Verify exported Megatron weights against the original Hugging Face state."""
+    """Exhaustively verify exported Megatron weights against the original Hugging Face state.
+
+    Every rank participates in the collective Megatron-to-Hugging-Face export, but only rank 0 lazily reads each
+    original Hugging Face tensor and compares it serially. This does not materialize a complete Hugging Face model
+    on every rank. For very large checkpoints, the rank-0 work can create prolonged rank skew before the result
+    broadcast, exceed the process-group collective timeout, and incur substantial transient tensor memory and
+    storage I/O.
+    """
     is_rank_0 = torch.distributed.get_rank() == 0
     all_match = True
     verified_count = 0
@@ -423,6 +439,13 @@ def roundtrip_checkpoint(
     distributed_timeout_minutes: int | None,
 ) -> None:
     """Validate a Hugging Face to Megatron to Hugging Face round trip.
+
+    This workflow performs exhaustive equality validation and is not intended as the scalable conversion path for
+    very large checkpoints. When the goal is conversion rather than exhaustive validation, prefer separate
+    ``convert.sh import`` and ``convert.sh export --distributed-save`` workflows. If a full round trip is required,
+    provision sufficient time and memory and choose an appropriate ``--distributed-timeout-minutes`` value. A
+    longer timeout can accommodate expected rank skew, but does not reduce serial verification cost or memory and
+    I/O pressure.
 
     Args:
         hf_model: Hugging Face model ID or local path.

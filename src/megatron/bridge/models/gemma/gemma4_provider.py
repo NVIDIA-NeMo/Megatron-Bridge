@@ -36,14 +36,15 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4OutputLayer,
     Gemma4RotaryEmbedding,
     _attach_ple_modules,
-    _gemma4_block_spec,
     _install_ple_forward,
     _install_tied_kv,
+    gemma4_block_spec,
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 
 
 def _validate_gemma4_moe_orchestration(provider: GPTModelProvider) -> None:
@@ -234,6 +235,7 @@ class Gemma4DenseProvider(GPTModelProvider):
                 transformer_layer_spec=get_gemma4_layer_spec(config),
                 vocab_size=padded_vocab,
                 max_sequence_length=self.seq_length,
+                **logit_dtype_kwarg(GPTModel, self.logit_dtype),
                 position_embedding_type=self.position_embedding_type,
                 rotary_percent=self.rotary_percent,
                 share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
@@ -320,7 +322,7 @@ class Gemma4ModelProvider(GPTModelProvider):
 
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
-        default_factory=lambda: partial(_gemma4_block_spec, use_transformer_engine=HAVE_TE)
+        default_factory=lambda: partial(gemma4_block_spec, use_transformer_engine=HAVE_TE)
     )
     scatter_embedding_sequence_parallel: bool = True
 

@@ -37,6 +37,21 @@ _LEGACY_CHAT_ROLE_ALIASES = {"human": "user", "gpt": CHATML_ASSISTANT_ROLE}
 # will tokenize. Sized to admit payloads that print themselves in full — a few hundred frame
 # reprs, or a float array below numpy's summarization threshold — and reject the rest.
 _MAX_SCANNED_REPR_CHARS = 65536
+_PIPELINE_CONTROLLED_CHAT_TEMPLATE_KWARGS = frozenset(
+    {
+        "add_generation_prompt",
+        "chat_template",
+        "continue_final_message",
+        "max_length",
+        "padding",
+        "return_assistant_tokens_mask",
+        "return_dict",
+        "return_tensors",
+        "tokenize",
+        "tools",
+        "truncation",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +77,9 @@ class AssistantMaskBoundaryConfig:
         ``role_end_token_variants`` provides ordered fallback end sequences for
         formats whose final turn may omit a trailing delimiter such as a
         newline. The primary ``role_end_tokens`` sequence is always preferred.
+        ``rendered_turn_end_roles`` covers formats such as GLM-5.2 whose
+        assistant turn has no explicit end token. For those roles, the
+        conversation-prefix render determines the exclusive content boundary.
 
         Example::
 
@@ -90,6 +108,7 @@ class AssistantMaskBoundaryConfig:
     trim_leading_token_ids: Sequence[int] = ()
     trim_leading_token_sequences: Sequence[Sequence[int]] = ()
     role_end_token_variants: Mapping[str, Sequence[Sequence[int]]] = field(default_factory=dict)
+    rendered_turn_end_roles: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -436,23 +455,90 @@ def _conversation_from_example(
 def chat_template_kwargs_from_example(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Return optional HF chat-template kwargs stored alongside a conversation."""
+    """Return optional HF chat-template kwargs stored alongside a conversation.
+
+    Rows may provide model-template controls such as ``enable_thinking`` or
+    ``truncate_history_thinking`` under ``chat_template_kwargs``. Rendering
+    and tokenization controls remain owned by the data pipeline, while tool
+    schemas use the established top-level ``tools`` field.
+
+    Raises:
+        ValueError: If ``chat_template_kwargs`` is not a string-keyed mapping or
+            attempts to override a pipeline-controlled argument.
+    """
     if not isinstance(example_or_conversation, Mapping):
         return {}
 
-    kwargs: dict[str, Any] = {}
+    raw_kwargs = example_or_conversation.get("chat_template_kwargs")
+    if raw_kwargs is None:
+        kwargs: dict[str, Any] = {}
+    elif not isinstance(raw_kwargs, Mapping) or not all(isinstance(key, str) for key in raw_kwargs):
+        raise ValueError("chat_template_kwargs must be a string-keyed mapping.")
+    else:
+        controlled_keys = sorted(_PIPELINE_CONTROLLED_CHAT_TEMPLATE_KWARGS.intersection(raw_kwargs))
+        if controlled_keys:
+            joined_keys = ", ".join(controlled_keys)
+            raise ValueError(f"chat_template_kwargs cannot override pipeline-controlled arguments: {joined_keys}.")
+        kwargs = dict(raw_kwargs)
+        truncate_history = kwargs.get("truncate_history_thinking")
+        if truncate_history is not None and not isinstance(truncate_history, bool):
+            raise ValueError("chat_template_kwargs.truncate_history_thinking must be a boolean.")
+
     tools = example_or_conversation.get("tools")
     if tools is not None:
         kwargs["tools"] = tools
     return kwargs
 
 
+def resolve_chat_template_kwargs(template_owner: Any, template_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate canonical chat controls to a template's native parameter names.
+
+    MBridge exposes ``truncate_history_thinking`` consistently. Templates that
+    implement the inverse ``preserve_thinking`` control receive the equivalent
+    negated value only at the rendering boundary, while GLM-style
+    ``clear_thinking`` receives the same value. Custom tokenizers such as
+    Kimi-K3 use ``thinking`` instead of ``enable_thinking``.
+
+    Args:
+        template_owner: Processor or tokenizer that owns the chat template.
+        template_kwargs: Canonical chat-template keyword arguments.
+
+    Returns:
+        A copied mapping adapted to the selected template.
+    """
+    kwargs = dict(template_kwargs)
+    tokenizer = get_processor_tokenizer(template_owner)
+    template = _get_chat_template(template_owner, tokenizer)
+
+    if "truncate_history_thinking" in kwargs and (template is None or "truncate_history_thinking" not in template):
+        truncate_history = kwargs["truncate_history_thinking"]
+        if template is not None and "preserve_thinking" in template:
+            kwargs.pop("truncate_history_thinking")
+            kwargs["preserve_thinking"] = not truncate_history
+        elif template is not None and "clear_thinking" in template:
+            kwargs.pop("truncate_history_thinking")
+            kwargs["clear_thinking"] = truncate_history
+
+    if "enable_thinking" in kwargs and (template is None or "enable_thinking" not in template):
+        parameters: set[str] = set()
+        for owner in (template_owner, tokenizer):
+            apply_chat_template = _get_explicit_attribute(owner, "apply_chat_template")
+            try:
+                parameters.update(inspect.signature(apply_chat_template).parameters if apply_chat_template else {})
+            except (TypeError, ValueError):
+                continue
+        if "thinking" in parameters and "enable_thinking" not in parameters:
+            enable_thinking = kwargs.pop("enable_thinking")
+            kwargs.setdefault("thinking", enable_thinking)
+    return kwargs
+
+
 def shared_chat_template_kwargs_from_examples(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Return dataset-wide chat-template kwargs shared by a processor batch.
 
-    Processor-batched VLM collators accept one tool schema for the whole
-    microbatch. Datasets using these collators must therefore use a shared tool
-    registry instead of varying tool definitions per row.
+    Processor-batched VLM collators accept one set of template kwargs for the
+    whole microbatch. Datasets using these collators must therefore keep those
+    controls and any tool registry identical across rows.
 
     Raises:
         ValueError: If rows in one processor batch use different template kwargs.
@@ -461,8 +547,29 @@ def shared_chat_template_kwargs_from_examples(examples: Sequence[Mapping[str, An
         return {}
     kwargs = chat_template_kwargs_from_example(examples[0])
     if any(chat_template_kwargs_from_example(example) != kwargs for example in examples[1:]):
-        raise ValueError("All examples in one processor batch must use the same chat-template tools.")
+        raise ValueError("All examples in one processor batch must use the same chat-template kwargs and tools.")
     return kwargs
+
+
+def _normalize_assistant_tool_call_arguments(turn: dict[str, Any]) -> None:
+    """Parse OpenAI JSON-string tool arguments for chat-template consumption."""
+    if turn.get("role") != CHATML_ASSISTANT_ROLE or not isinstance(turn.get("tool_calls"), list):
+        return
+
+    for tool_call in turn["tool_calls"]:
+        function = tool_call.get("function") if isinstance(tool_call, Mapping) else None
+        if not isinstance(function, MutableMapping):
+            continue
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str):
+            continue
+        try:
+            parsed_arguments = json.loads(arguments)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Assistant tool call function.arguments must be valid JSON.") from exc
+        if not isinstance(parsed_arguments, dict):
+            raise ValueError("Assistant tool call function.arguments must be a JSON object.")
+        function["arguments"] = parsed_arguments
 
 
 def normalize_chat_conversation(
@@ -471,7 +578,8 @@ def normalize_chat_conversation(
     """Normalize supported text-chat schemas to OpenAI-style messages.
 
     Rows may use ``messages``, singular ``conversation``, or legacy plural
-    ``conversations`` with ``from``/``value`` keys.
+    ``conversations`` with ``from``/``value`` keys. Null OpenAI message content
+    is converted to an empty string before chat-template rendering.
     """
     if isinstance(example_or_conversation, Mapping):
         source = example_or_conversation
@@ -496,6 +604,9 @@ def normalize_chat_conversation(
             raise ValueError("Chat conversation turns must be dictionaries.")
         turn = dict(raw_turn)
         if "role" in turn and "content" in turn:
+            if turn["content"] is None:
+                turn["content"] = ""
+            _normalize_assistant_tool_call_arguments(turn)
             normalized.append(turn)
             continue
         if "from" in turn and "value" in turn:
@@ -562,7 +673,7 @@ def _apply_tokenized_chat_template(
     apply_chat_template = _get_explicit_attribute(template_owner, "apply_chat_template")
     if apply_chat_template is None:
         raise ValueError("Chat preprocessing requires a processor or tokenizer with apply_chat_template.")
-    kwargs = dict(tokenize_kwargs)
+    kwargs = resolve_chat_template_kwargs(template_owner, tokenize_kwargs)
     try:
         return apply_chat_template(conversation, **kwargs)
     except TypeError:
@@ -664,6 +775,7 @@ def _infer_terminal_assistant_content_start(
 
     empty_conversation = [dict(turn) for turn in conversation]
     empty_conversation[-1]["content"] = ""
+    empty_conversation[-1].pop("tool_calls", None)
     empty_chat = _apply_tokenized_chat_template(template_owner, empty_conversation, untruncated_kwargs)
     empty_ids = _chat_template_input_ids(empty_chat)
     untruncated_content_start = _common_token_prefix_length(empty_ids, full_ids)
@@ -766,7 +878,12 @@ def tokenize_chat_example(
         )
 
     chat_example: dict[str, Any] = {"conversation": conversation}
-    chat_example.update(template_kwargs)
+    mask_template_kwargs = dict(template_kwargs)
+    mask_tools = mask_template_kwargs.pop("tools", None)
+    if mask_template_kwargs:
+        chat_example["chat_template_kwargs"] = mask_template_kwargs
+    if mask_tools is not None:
+        chat_example["tools"] = mask_tools
     effective_boundary_config = boundary_config or infer_assistant_mask_boundary_config(processor)
     if returned_mask is not None and effective_boundary_config is None:
         assistant_mask = returned_mask
@@ -951,8 +1068,41 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
     """Infer assistant role boundaries from known HF chat-template formats."""
     tokenizer = get_processor_tokenizer(processor)
     template = _get_chat_template(tokenizer, processor)
+
     if template is None:
+        # Kimi-K3 owns rendering in a custom tokenizer rather than a Jinja
+        # ``chat_template``. Detect its XTML structural vocabulary instead of a
+        # Python class name so local/remote-code wrappers retain the same behavior.
+        apply_chat_template = _get_explicit_attribute(tokenizer, "apply_chat_template")
+        try:
+            template_parameters = inspect.signature(apply_chat_template).parameters if apply_chat_template else {}
+        except (TypeError, ValueError):
+            template_parameters = {}
+        if "thinking" in template_parameters:
+            get_vocab = _get_explicit_attribute(tokenizer, "get_vocab")
+            try:
+                vocab = get_vocab() if callable(get_vocab) else {}
+            except (AttributeError, TypeError, ValueError):
+                vocab = {}
+            kimi_markers = ("<|open|>", "<|close|>", "<|sep|>", "<|end_of_msg|>")
+            if isinstance(vocab, Mapping) and all(marker in vocab for marker in kimi_markers):
+                return assistant_mask_boundary_config_from_markers(
+                    processor,
+                    assistant_start='<|open|>message role="assistant"<|sep|>',
+                    assistant_end="<|close|>message<|sep|><|end_of_msg|>",
+                )
         return None
+
+    # GLM-5.2 does not terminate completed assistant turns with a structural
+    # token. Prefix rendering is therefore the only loss boundary that remains
+    # exact for both terminal and historical turns.
+    if all(marker in template for marker in ("<|assistant|>", "clear_thinking", "<think>")):
+        return assistant_mask_boundary_config_from_markers(
+            processor,
+            assistant_start="<|assistant|>",
+            assistant_end=None,
+            rendered_turn_end_roles=(CHATML_ASSISTANT_ROLE,),
+        )
 
     candidates: tuple[tuple[tuple[str, ...], str, str, tuple[str, ...], Mapping[str, str]], ...] = (
         (
@@ -972,7 +1122,7 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                 "user": "<|im_user|>user<|im_middle|>",
             },
         ),
-        (("<|turn>model", "<turn|>"), "<|turn>model\n", "<turn|>", (), {}),
+        (("<|turn>model", "<turn|>"), "<|turn>model\n", "<turn|>", ("<|tool_response>",), {}),
         (("<start_of_turn>model", "<end_of_turn>"), "<start_of_turn>model\n", "<end_of_turn>", (), {}),
         (
             ("<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"),
@@ -1000,6 +1150,18 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
             ("<|end|>", "<|call|>"),
             {role: f"<|start|>{role}" for role in ("system", "developer", "user", "tool")},
         ),
+        (
+            ("]~!b[", "]~b]", "[e~[", "<mm:think>"),
+            "]~b]ai\n",
+            "[e~[\n",
+            (),
+            {
+                "system": "]~!b[]~b]system\n",
+                "developer": "]~b]developer\n",
+                "user": "]~b]user\n",
+                "tool": "]~b]tool",
+            },
+        ),
     )
     for required_markers, assistant_start, assistant_end, assistant_end_fallbacks, other_role_starts in candidates:
         if not all(marker in template for marker in required_markers):
@@ -1020,10 +1182,17 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
                     if (token_ids := tokenize_text_without_special_tokens(tokenizer, marker))
                 }
             )
+            trim_leading_token_sequences = ()
+            if all(marker in template for marker in ("truncate_history_thinking", "<think>", "</think>")):
+                empty_think_tokens = tokenize_text_without_special_tokens(tokenizer, "<think></think>")
+                think_open_tokens = tokenize_text_without_special_tokens(tokenizer, "<think>\n")
+                if empty_think_tokens and think_open_tokens:
+                    trim_leading_token_sequences = (empty_think_tokens, think_open_tokens)
             return AssistantMaskBoundaryConfig(
                 role_start_tokens=role_start_tokens,
                 role_end_tokens={role: end_tokens for role in role_start_tokens},
                 role_end_token_variants={role: end_token_variants for role in role_start_tokens},
+                trim_leading_token_sequences=trim_leading_token_sequences,
             )
     return None
 
@@ -1032,7 +1201,7 @@ def assistant_mask_boundary_config_from_markers(
     processor: Any,
     *,
     assistant_start: str,
-    assistant_end: str,
+    assistant_end: str | None,
     assistant_end_fallbacks: Sequence[str] = (),
     role_start_markers: Mapping[str, str] | None = None,
     loss_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,),
@@ -1040,17 +1209,18 @@ def assistant_mask_boundary_config_from_markers(
     include_end_tokens_for_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,),
     trim_leading_token_ids: Sequence[int] = (),
     trim_leading_token_sequences: Sequence[Sequence[int]] = (),
+    rendered_turn_end_roles: Sequence[str] = (),
 ) -> AssistantMaskBoundaryConfig:
     """Build explicit assistant boundary config from model-declared marker strings."""
     tokenizer = get_processor_tokenizer(processor)
     start_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_start)
-    end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end)
+    end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end) if assistant_end is not None else []
     end_token_variants = [
         token_ids
         for fallback in assistant_end_fallbacks
         if (token_ids := tokenize_text_without_special_tokens(tokenizer, fallback))
     ]
-    if not start_tokens or not end_tokens:
+    if not start_tokens or (not end_tokens and CHATML_ASSISTANT_ROLE not in rendered_turn_end_roles):
         raise ValueError(
             "Unable to tokenize assistant loss-mask boundary markers. "
             "Check the model collator's assistant_start and assistant_end markers."
@@ -1063,13 +1233,14 @@ def assistant_mask_boundary_config_from_markers(
         role_start_tokens[role] = marker_tokens
     return AssistantMaskBoundaryConfig(
         role_start_tokens=role_start_tokens,
-        role_end_tokens={role: end_tokens for role in role_start_tokens},
+        role_end_tokens={role: end_tokens for role in role_start_tokens if role not in rendered_turn_end_roles},
         loss_roles=loss_roles,
         include_start_tokens_for_roles=include_start_tokens_for_roles,
         include_end_tokens_for_roles=include_end_tokens_for_roles,
         trim_leading_token_ids=trim_leading_token_ids,
         trim_leading_token_sequences=trim_leading_token_sequences,
         role_end_token_variants={role: end_token_variants for role in role_start_tokens},
+        rendered_turn_end_roles=rendered_turn_end_roles,
     )
 
 
@@ -1122,13 +1293,16 @@ def _assistant_mask_from_hf_chat_template(
             continue
 
         try:
-            tokenized_chat = apply_chat_template(
+            tokenized_chat = _apply_tokenized_chat_template(
+                template_owner,
                 conversation,
-                tokenize=True,
-                add_generation_prompt=False,
-                return_dict=True,
-                return_assistant_tokens_mask=True,
-                **chat_template_kwargs,
+                {
+                    "tokenize": True,
+                    "add_generation_prompt": False,
+                    "return_dict": True,
+                    "return_assistant_tokens_mask": True,
+                    **chat_template_kwargs,
+                },
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
@@ -1219,13 +1393,14 @@ def _assistant_mask_from_conversation_turns(
     }
     include_start_roles = set(boundary_config.include_start_tokens_for_roles)
     include_end_roles = set(boundary_config.include_end_tokens_for_roles)
+    rendered_turn_end_roles = set(boundary_config.rendered_turn_end_roles)
     rendered_mask = torch.zeros(len(rendered_ids), dtype=torch.float32)
 
     for turn_index, turn in loss_turns:
         role = turn["role"]
         start_tokens = role_start_tokens.get(role)
         end_patterns = [role_end_tokens.get(role, []), *role_end_token_variants.get(role, [])]
-        if not start_tokens or not any(end_patterns):
+        if not start_tokens or (not any(end_patterns) and role not in rendered_turn_end_roles):
             return None
 
         try:
@@ -1252,23 +1427,34 @@ def _assistant_mask_from_conversation_turns(
             return None
 
         role_start, content_start = find_token_span(rendered_ids, start_tokens, turn_search_start)
-        if role_start < 0 or content_start > turn_limit:
+        matched_start_length = len(start_tokens)
+        if role_start < 0:
+            if turn_index == 0 or conversation[turn_index - 1].get("role") != "tool":
+                return None
+            # Some tool templates continue the same model turn after an inline tool response,
+            # so the next assistant payload begins at the prefix boundary without another role header.
+            role_start = content_start = turn_search_start
+            matched_start_length = 0
+        if content_start > turn_limit:
             return None
 
-        candidate_ends: list[tuple[int, int, int, list[int]]] = []
-        for priority, pattern in enumerate(end_patterns):
-            if not pattern:
-                continue
-            search_start = content_start
-            while search_start < turn_limit:
-                end_start, after_end = find_token_span(rendered_ids, pattern, search_start)
-                if end_start < 0 or after_end > turn_limit:
-                    break
-                candidate_ends.append((end_start, -priority, after_end, pattern))
-                search_start = end_start + 1
-        if not candidate_ends:
-            return None
-        content_end, _, after_end, _ = max(candidate_ends)
+        if role in rendered_turn_end_roles:
+            content_end = after_end = turn_limit
+        else:
+            candidate_ends: list[tuple[int, int, int, list[int]]] = []
+            for priority, pattern in enumerate(end_patterns):
+                if not pattern:
+                    continue
+                search_start = content_start
+                while search_start < turn_limit:
+                    end_start, after_end = find_token_span(rendered_ids, pattern, search_start)
+                    if end_start < 0 or after_end > turn_limit:
+                        break
+                    candidate_ends.append((end_start, -priority, after_end, pattern))
+                    search_start = end_start + 1
+            if not candidate_ends:
+                return None
+            content_end, _, after_end, _ = max(candidate_ends)
 
         loss_start = _trim_leading_token_sequences(
             rendered_ids,
@@ -1285,8 +1471,8 @@ def _assistant_mask_from_conversation_turns(
         if include_content:
             rendered_mask[loss_start:content_end] = 1.0
         if role in include_start_roles:
-            rendered_mask[role_start : role_start + len(start_tokens)] = 1.0
-        if role in include_end_roles:
+            rendered_mask[role_start : role_start + matched_start_length] = 1.0
+        if role in include_end_roles and role not in rendered_turn_end_roles:
             rendered_mask[content_end:after_end] = 1.0
 
     aligned_mask = _align_assistant_mask_to_padded_ids(rendered_ids, rendered_mask.tolist(), ids, tokenizer)
@@ -1446,6 +1632,12 @@ def _assistant_mask_from_boundary_config(
         for role, raw_variants in boundary_config.role_end_token_variants.items()
     }
     loss_roles = set(boundary_config.loss_roles)
+    rendered_turn_end_roles = set(boundary_config.rendered_turn_end_roles)
+    if rendered_turn_end_roles:
+        # A raw token scan cannot distinguish the end of an unterminated turn
+        # from following non-loss roles. Only the conversation-prefix renderer
+        # can establish this boundary safely.
+        return None
     if not role_start_tokens or not role_end_tokens or not loss_roles:
         raise ValueError(
             "AssistantMaskBoundaryConfig must provide non-empty role_start_tokens, role_end_tokens, and loss_roles."
@@ -1552,7 +1744,7 @@ def build_assistant_loss_mask(
 
     mask = _assistant_mask_from_hf_chat_template(example_or_conversation, ids, processor, tokenizer)
     if boundary_config is not None:
-        boundary_scan_is_safe = (
+        boundary_scan_is_safe = not boundary_config.rendered_turn_end_roles and (
             not conversation
             or _conversation_contains_boundary_tokens(example_or_conversation, tokenizer, boundary_config) is False
         )

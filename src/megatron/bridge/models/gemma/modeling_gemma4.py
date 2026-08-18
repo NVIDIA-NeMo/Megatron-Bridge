@@ -1514,7 +1514,7 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
         attn._tied_kv = True
 
 
-def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
+def gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
     """Build Gemma 4 MoE block spec with patched attention, layer, and MoE modules."""
     block_spec = get_gpt_decoder_block_spec(config, use_transformer_engine=use_transformer_engine, **kwargs)
 
@@ -1544,8 +1544,8 @@ def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
     return block_spec
 
 
-# Preserve checkpoint configs serialized with this public target name.
-gemma4_block_spec = _gemma4_block_spec
+# Preserve references to the previous private name.
+_gemma4_block_spec = gemma4_block_spec
 
 
 class Gemma4SelfAttention(SelfAttention):
