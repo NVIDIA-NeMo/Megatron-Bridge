@@ -36,6 +36,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
+from megatron.core.utils import get_pg_rank
 
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -256,11 +257,16 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
         transformer_layer_spec = self.transformer_layer_spec
         if not isinstance(transformer_layer_spec, ModuleSpec):
-            # Check if the transformer_layer_spec function accepts vp_stage parameter
-            if "vp_stage" in inspect.signature(transformer_layer_spec).parameters:
-                transformer_layer_spec = transformer_layer_spec(self, vp_stage=vp_stage)
-            else:
-                transformer_layer_spec = transformer_layer_spec(self)
+            # Only pass parameters the spec factory declares, taking the pipeline rank from the
+            # injected collection rather than the global parallel state.
+            spec_params = inspect.signature(transformer_layer_spec).parameters
+            spec_kwargs = {}
+            if "vp_stage" in spec_params:
+                spec_kwargs["vp_stage"] = vp_stage
+            pp_group = getattr(self._pg_collection, "pp", None) if self._pg_collection is not None else None
+            if "pp_rank" in spec_params and pp_group is not None:
+                spec_kwargs["pp_rank"] = get_pg_rank(pp_group)
+            transformer_layer_spec = transformer_layer_spec(self, **spec_kwargs)
 
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
         if self.should_pad_vocab:

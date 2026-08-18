@@ -635,3 +635,75 @@ class TestGPTModelProvider:
 
         assert result == "te_spec_unsupported"
         assert "use_grouped_gemm_for_dense_mlp" not in captured
+
+
+class TestGPTModelProviderSpecFactoryArguments:
+    """Tests for the arguments provide() forwards to a callable transformer_layer_spec."""
+
+    @staticmethod
+    def _build_provider(spec_factory, pp_group):
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            make_vocab_size_divisible_by=128,
+            transformer_layer_spec=spec_factory,
+        )
+        if pp_group is None:
+            provider._pg_collection = None
+        else:
+            provider._pg_collection = type("PG", (), {"pp": pp_group, "tp": object(), "cp": object()})()
+        return provider
+
+    @staticmethod
+    def _provide(provider, vp_stage=None):
+        with patch("torch.distributed.is_initialized", return_value=True):
+            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024):
+                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel"):
+                    provider.provide(pre_process=True, post_process=True, vp_stage=vp_stage)
+
+    def test_pp_rank_comes_from_the_process_group_collection(self):
+        """A spec factory declaring pp_rank receives the collection's pipeline rank."""
+        captured: dict = {}
+
+        def spec_factory(config, vp_stage=None, pp_rank=None):
+            captured["vp_stage"] = vp_stage
+            captured["pp_rank"] = pp_rank
+            return Mock()
+
+        pp_group = Mock()
+        pp_group.rank.return_value = 3
+
+        self._provide(self._build_provider(spec_factory, pp_group), vp_stage=1)
+
+        assert captured["pp_rank"] == 3, "spec factory must be given the collection's pipeline rank"
+        assert captured["vp_stage"] == 1, "vp_stage must still be forwarded"
+
+    def test_pp_rank_is_omitted_when_the_factory_does_not_accept_it(self):
+        """A spec factory without a pp_rank parameter is called exactly as before."""
+        captured: dict = {}
+
+        def spec_factory(config, vp_stage=None):
+            captured["vp_stage"] = vp_stage
+            return Mock()
+
+        pp_group = Mock()
+        pp_group.rank.return_value = 3
+
+        self._provide(self._build_provider(spec_factory, pp_group), vp_stage=2)
+
+        assert captured == {"vp_stage": 2}
+
+    def test_pp_rank_is_omitted_when_no_process_group_collection_is_set(self):
+        """Without an injected collection the factory keeps its own pp_rank default."""
+        captured: dict = {}
+
+        def spec_factory(config, pp_rank=None):
+            captured["pp_rank"] = pp_rank
+            return Mock()
+
+        self._provide(self._build_provider(spec_factory, None))
+
+        assert captured["pp_rank"] is None
