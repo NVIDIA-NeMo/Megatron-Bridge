@@ -182,12 +182,13 @@ items:
         final_loss: 5.828481
         last_10_steps_step_time_ms_avg: 16664.930
         last_10_steps_model_tflops_per_gpu_avg: 58.420
+        last_10_steps_tokens_per_second_per_gpu_avg: 1966.285
       expected_result: >
         On 64x H100, the command completes exactly 100 bounded pretraining
         optimizer steps using the recipe-owned GBS/MBS, natural routing, and
         BF16 configuration. All 100 optimizer-step rows are present exactly
         once with finite loss, zero skipped iterations, and zero NaN
-        iterations. Loss decreases from 10.91136 to 5.828481, all four metrics
+        iterations. Loss decreases from 10.91136 to 5.828481, all five metrics
         are recorded, the post-setup run_config.yaml persists, and complete
         64-shard iter_0000050 and iter_0000100 checkpoints are saved with
         metadata, train state, tokenizer artifacts, and latest-checkpoint
@@ -228,13 +229,14 @@ items:
         final_loss: 0.7468084
         last_10_steps_step_time_ms_avg: 8063.150
         last_10_steps_model_tflops_per_gpu_avg: 33.800
+        last_10_steps_tokens_per_second_per_gpu_avg: 1015.980
       expected_result: >
         Completed 100 full-SFT steps from the imported checkpoint on 32x H100
         with immutable Tulu3 selection, assistant-token masking, offline
         packing, TP2/SP, and selective MoE-activation recompute. All 100
         optimizer-step rows are present with finite losses, zero skipped
         iterations, and zero NaN iterations; loss decreases from 6.751403 to
-        0.7468084. All four metrics are recorded, the checkpoint-local
+        0.7468084. All five metrics are recorded, the checkpoint-local
         post-setup run_config.yaml persists, and the final full-model
         checkpoint at iter_0000100 is complete with 32 DistCP shards, metadata,
         train state, tokenizer artifacts, and latest-checkpoint marker 100.
@@ -305,6 +307,7 @@ items:
         final_loss: 1.238030
         last_10_steps_step_time_ms_avg: 24388.780
         last_10_steps_model_tflops_per_gpu_avg: 5.070
+        last_10_steps_tokens_per_second_per_gpu_avg: 111.964
       expected_result: >
         Completed 20 long-context full-SFT optimizer steps from the imported
         checkpoint on 48x H100 with 32K sequence length, immutable Tulu3
@@ -313,7 +316,7 @@ items:
         and bias-activation fusions, and selective MoE-activation recompute.
         All 20 optimizer-step rows are present exactly once with finite losses,
         zero skipped iterations, and zero NaN iterations. Loss decreases from
-        6.666666 to 1.238030, all four metrics are recorded, and no checkpoint
+        6.666666 to 1.238030, all five metrics are recorded, and no checkpoint
         is saved because this bounded long-context verification run disables
         checkpoint output.
 
@@ -349,6 +352,7 @@ items:
         final_loss: 0.9883968
         last_10_steps_step_time_ms_avg: 11509.100
         last_10_steps_model_tflops_per_gpu_avg: 89.850
+        last_10_steps_tokens_per_second_per_gpu_avg: 2847.138
       expected_result: >
         Completed 100 LoRA steps from the imported checkpoint with the base
         frozen, model-native target modules, immutable Tulu3 selection,
@@ -388,6 +392,7 @@ items:
         final_loss: 5.825046
         last_10_steps_step_time_ms_avg: 16625.300
         last_10_steps_model_tflops_per_gpu_avg: 58.560
+        last_10_steps_tokens_per_second_per_gpu_avg: 1970.972
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -402,7 +407,7 @@ items:
         skipped iterations, and zero NaN iterations. The step-51 loss matches
         the reference exactly at 6.489011, and the step-100 loss 5.825046 is
         within the declared one percent relative plus 1e-6 absolute gate
-        against reference loss 5.828481. All four metrics are recorded, the
+        against reference loss 5.828481. All five metrics are recorded, the
         post-setup run_config.yaml persists, and the final step-100 checkpoint
         is complete with 64 DistCP shards, metadata, train state, tokenizer
         artifacts, and latest-checkpoint marker 100.
@@ -421,6 +426,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Future verification must run the exact canonical 64-GB200 BF16
         mock-data performance recipe for 50 optimizer steps, record finite
