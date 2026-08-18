@@ -69,6 +69,9 @@ class _ModelChatTokenizer:
         assert add_special_tokens is False
         marker_ids = {
             "<|assistant|>": [ASSISTANT_START],
+            "<|system|>": [40],
+            "<|user|>": [USER_START],
+            "<|observation|>": [TOOL_RESULT],
             '<|open|>message role="assistant"<|sep|>': [ASSISTANT_START],
             "<|close|>message<|sep|><|end_of_msg|>": [TURN_END],
             "]~b]ai\n": [ASSISTANT_START],
@@ -266,6 +269,29 @@ def test_model_chat_four_way_rendering_and_loss_boundaries(model: str, tools: bo
         assert semantic_kwargs
         assert all(entry["thinking"] is thinking for entry in semantic_kwargs)
         assert all("enable_thinking" not in entry for entry in semantic_kwargs)
+
+
+def test_glm_history_thinking_truncation_preserves_historical_answer_loss() -> None:
+    tokenizer = _ModelChatTokenizer("glm")
+    example = {
+        "messages": _messages(tools=False, thinking=True),
+        "chat_template_kwargs": {
+            "enable_thinking": True,
+            "truncate_history_thinking": True,
+        },
+    }
+
+    tokenized = tokenize_chat_example(example, tokenizer, warn_on_all_masked=False)
+
+    assert tokenized.input_ids[tokenized.assistant_mask].tolist() == [
+        THINK_OPEN,
+        THINK_CLOSE,
+        TEXT_IDS["answer one"],
+        THINK_OPEN,
+        TEXT_IDS["reason two"],
+        THINK_CLOSE,
+        TEXT_IDS["answer two"],
+    ]
 
 
 @pytest.mark.parametrize("model", ["glm", "kimi", "minimax"])
