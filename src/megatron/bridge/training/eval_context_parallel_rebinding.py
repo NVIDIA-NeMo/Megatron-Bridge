@@ -80,9 +80,14 @@ def install_pg_collection(
     try:
         from megatron.core.ssm.gated_delta_net import GatedDeltaNet as _GDN
 
-        _gdn_cls: type | None = _GDN
+        try:
+            from megatron.core.ssm.gated_delta_net import GatedDeltaNet2 as _GDN2
+
+            _gdn_classes: tuple[type, ...] = (_GDN, _GDN2)
+        except (ImportError, AttributeError):
+            _gdn_classes = (_GDN,)
     except (ImportError, AttributeError):
-        _gdn_cls = None
+        _gdn_classes = ()
 
     cp_group = target.cp
     cp_size = cp_group.size()
@@ -120,7 +125,7 @@ def install_pg_collection(
 
         # GDN caches the construction-time CP size and derives its post-A2A
         # split metadata from it. Refresh both when the live CP group changes.
-        if _gdn_cls is not None and isinstance(module, _gdn_cls):
+        if _gdn_classes and isinstance(module, _gdn_classes):
             module.cp_size = cp_size
             module._setup_variant_attrs()
 
