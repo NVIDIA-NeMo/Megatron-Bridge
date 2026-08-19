@@ -177,6 +177,18 @@ class EnergonDatasetConfig(DataloaderConfig):
             raise ValueError("max_samples_per_sequence must be greater than 0 when set.")
         if self.packing_buffer_size is not None and self.packing_buffer_size <= 0:
             raise ValueError("packing_buffer_size must be greater than 0 when set.")
+        if self.packing_buffer_size is not None and self.enable_in_batch_packing:
+            raise ValueError(
+                "packing_buffer_size and enable_in_batch_packing=True are mutually exclusive; "
+                "select exactly one packing owner."
+            )
+        if self.packing_buffer_size is not None and self.defer_in_batch_packing_to_step:
+            raise ValueError(
+                "Energon native sequence packing is incompatible with defer_in_batch_packing_to_step=True; "
+                "use the canonical vlm_step path."
+            )
+        if self.packing_buffer_size is not None and self.micro_batch_size != 1:
+            raise ValueError("Energon native sequence packing requires micro_batch_size=1.")
         if self.pad_to_multiple_of <= 0:
             raise ValueError("pad_to_multiple_of must be greater than 0.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
@@ -188,6 +200,8 @@ class EnergonDatasetConfig(DataloaderConfig):
             (HFEnergonTaskEncoderConfig, QwenVLEnergonTaskEncoderConfig, NemotronOmniEnergonTaskEncoderConfig),
         ):
             raise TypeError("task_encoder must be a supported declarative Energon task-encoder config.")
+        if self.packing_buffer_size is not None and not isinstance(self.task_encoder, QwenVLEnergonTaskEncoderConfig):
+            raise ValueError("Energon native sequence packing currently supports only QwenVLEnergonTaskEncoderConfig.")
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
         reserved_dataset_kwargs = {
             "batch_size",
@@ -216,6 +230,7 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
     task_config = config.task_encoder
     task_config.validate()
     effective_packing = config.enable_in_batch_packing and not config.defer_in_batch_packing_to_step
+    enable_energon_packing = config.packing_buffer_size is not None
 
     trust_remote_code = is_safe_repo(
         trust_remote_code=(
@@ -271,6 +286,7 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
             pad_to_max_length=config.pad_to_max_length,
             pad_to_multiple_of=config.pad_to_multiple_of,
             enable_in_batch_packing=effective_packing,
+            enable_energon_packing=enable_energon_packing,
             in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
         )
 

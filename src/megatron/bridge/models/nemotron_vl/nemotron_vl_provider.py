@@ -23,6 +23,7 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 from megatron.core.transformer.spec_utils import get_submodules
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 
 
 def get_language_mlp_submodules(language_spec: Any) -> Any:
@@ -145,6 +146,7 @@ class NemotronVLModelProvider(HybridModelProvider):
             language_transformer_layer_spec=language_spec,
             language_vocab_size=self.vocab_size,
             language_max_sequence_length=self.seq_length,
+            **logit_dtype_kwarg(LLaVAModel, self.logit_dtype),
             vision_transformer_config=vision_cfg,
             vision_transformer_layer_spec=vision_spec,
             drop_vision_class_token=True,

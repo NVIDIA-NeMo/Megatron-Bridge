@@ -106,6 +106,7 @@ REQUIRED_METRIC_NAMES = frozenset(
         "final_loss",
         "last_10_steps_step_time_ms_avg",
         "last_10_steps_model_tflops_per_gpu_avg",
+        "last_10_steps_tokens_per_second_per_gpu_avg",
     }
 )
 OPTIONAL_METRIC_NAMES = frozenset({"peak_allocated_memory_gib", "peak_reserved_memory_gib"})
@@ -681,6 +682,7 @@ def _validate_metrics(
                 in {
                     "last_10_steps_step_time_ms_avg",
                     "last_10_steps_model_tflops_per_gpu_avg",
+                    "last_10_steps_tokens_per_second_per_gpu_avg",
                     "peak_allocated_memory_gib",
                     "peak_reserved_memory_gib",
                 }
@@ -1172,7 +1174,7 @@ def _validate_inference(
     if token_count_text not in expected:
         errors.append(f"{_pointer(*path, 'expected_result')}: state the {token_count_text}-token maximum")
     actual_count_patterns = (
-        r"\bexact(?:ly)?\s+(\d+)(?:-token|\s+(?:new\s+|generated\s+)?tokens?|\s+generation\s+steps?)\b",
+        r"\bexact(?:ly)?\s+(\d+)(?:-token|\s+(?:new\s+|generated\s+)?(?:greedy\s+)?tokens?|\s+generation\s+steps?)\b",
         r"\b(\d+)-token\s+(?:greedy\s+)?(?:result|output|completion|completions)\b",
         r"\b(?:generated|produced|returned?)\s+(?:exactly\s+)?(\d+)\s+(?:new\s+|generated\s+)?tokens?\b",
         r"\bafter\s+(\d+)\s+(?:new\s+|generated\s+)?tokens?\b",

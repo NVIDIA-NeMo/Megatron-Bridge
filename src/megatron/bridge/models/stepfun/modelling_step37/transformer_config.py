@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 
@@ -48,6 +49,7 @@ class Step37TransformerConfig(TransformerConfig):
     understand_projector_stride: int = 2
     projector_bias: bool = False
     language_max_sequence_length: int = 262144
+    logit_dtype: torch.dtype | None = None
 
 
 def get_vision_model_config(vision_cfg: Any) -> Any:

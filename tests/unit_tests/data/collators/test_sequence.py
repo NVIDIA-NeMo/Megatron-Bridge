@@ -226,7 +226,7 @@ def test_prepare_sequence_batch_omits_padded_metadata_when_alignment_is_not_requ
     assert "cu_seqlens_unpadded_argmin" not in batch
 
 
-def test_prepare_sequence_batch_emits_padded_metadata_for_aligned_cp_multiple():
+def test_prepare_sequence_batch_omits_padded_metadata_when_cp_rows_are_aligned():
     batch = {
         "input_ids": torch.tensor([[1, 2, 3, 4, 0, 0, 0, 0], [5, 6, 7, 8, 9, 10, 11, 12]]),
         "position_ids": torch.arange(8).unsqueeze(0).expand(2, -1).clone(),
@@ -241,8 +241,8 @@ def test_prepare_sequence_batch_emits_padded_metadata_for_aligned_cp_multiple():
     )
 
     assert batch["cu_seqlens_q"].tolist() == [0, 4, 12]
-    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
-    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
+    assert "cu_seqlens_q_padded" not in batch
+    assert "cu_seqlens_kv_padded" not in batch
 
 
 def test_prepare_sequence_batch_rejects_overlength_packed_row():

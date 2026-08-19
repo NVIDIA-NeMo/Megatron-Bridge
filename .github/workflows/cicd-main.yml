@@ -67,7 +67,7 @@ env:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@c1a0837f362a1a696e647238ab1cf916b2a7cf4a # v1.8.6
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
@@ -90,6 +90,7 @@ jobs:
       expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
       expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
       perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
+      skip_queue:        ${{ steps.configure.outputs.skip_queue }}
       merge_sha:         ${{ steps.merge-sha.outputs.merge_sha }}
     steps:
       - name: Get PR info
@@ -122,6 +123,7 @@ jobs:
           EVENT_NAME:    ${{ github.event_name }}
           REF:           ${{ github.ref }}
           TEST_SUITE:    ${{ github.event.inputs.test_suite }}
+          PR_HEAD_LABEL: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.label || '' }}
         run: |
           PR_NUMBER=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').number }}
 
@@ -130,6 +132,9 @@ jobs:
 
           NEEDS_MORE_TESTS=$(echo "$LABELS" | jq 'any(. == "needs-more-tests")')
           FULL_TEST_SUITE=$(echo "$LABELS"  | jq 'any(. == "full-test-suite")')
+
+          SKIP_QUEUE=false
+          [[ "$PR_HEAD_LABEL" == svcnemo-autobot:chore/bump-mcore-* ]] && SKIP_QUEUE=true
 
           # Detect if every changed file lives under scripts/performance/
           PERF_SCRIPTS_ONLY=false
@@ -173,6 +178,7 @@ jobs:
           echo "docs_only=$DOCS_ONLY"               | tee -a "$GITHUB_OUTPUT"
           echo "needs_more_tests=$NEEDS_MORE_TESTS"   | tee -a "$GITHUB_OUTPUT"
           echo "full_test_suite=$FULL_TEST_SUITE"     | tee -a "$GITHUB_OUTPUT"
+          echo "skip_queue=$SKIP_QUEUE"               | tee -a "$GITHUB_OUTPUT"
           echo "expect_l0=$EXPECT_L0"                 | tee -a "$GITHUB_OUTPUT"
           echo "expect_l1=$EXPECT_L1"                 | tee -a "$GITHUB_OUTPUT"
           echo "expect_l2=$EXPECT_L2"                 | tee -a "$GITHUB_OUTPUT"
@@ -262,7 +268,7 @@ jobs:
           echo "📍 MCore repo: $MCORE_REPO"
           echo "🎯 Triggered by: $TRIGGERED_BY"
 
-          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF"; then
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"; then
             echo "MCore revision is not an approved NVIDIA branch head: $MCORE_REF" >&2
             exit 1
           fi
@@ -281,6 +287,7 @@ jobs:
         run: |
           .github/scripts/test_cache_keys.sh
           .github/scripts/test_docker_dependency_layers.sh
+          .github/scripts/test_queue_bypass.sh
 
       - name: Check lint
         run: |
@@ -296,7 +303,8 @@ jobs:
       !(needs.pre-flight.outputs.is_ci_workload == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true'
       || needs.configure.outputs.docs_only == 'true'
-      || needs.configure.outputs.perf_scripts_only == 'true')
+      || needs.configure.outputs.perf_scripts_only == 'true'
+      || needs.configure.outputs.skip_queue == 'true')
       && github.event_name != 'merge_group'
     steps:
       - name: Running CI tests
@@ -310,6 +318,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -340,7 +349,7 @@ jobs:
           echo "matrix=$MATRIX" | tee -a "$GITHUB_OUTPUT"
 
   cicd-container-build:
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-compute-build-matrix]
+    needs: [pre-flight, configure, cicd-compute-build-matrix]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.cicd-compute-build-matrix.outputs.matrix) }}
@@ -350,6 +359,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -391,7 +401,7 @@ jobs:
           echo "📍 MCore repo: $MCORE_REPO"
           echo "🎯 Triggered by: $TRIGGERED_BY"
 
-          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF"; then
+          if ! .github/scripts/validate_mcore_revision.sh "$MCORE_REPO" "$MCORE_REF" "$TRIGGERED_BY"; then
             echo "MCore revision is not an approved NVIDIA branch head: $MCORE_REF" >&2
             exit 1
           fi
@@ -515,26 +525,27 @@ jobs:
             BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
+            # Test images run the diffusion unit job; install its hash-locked codecs while building as root.
+            INSTALL_DIFFUSION_DEPS=true
           cache-from: type=registry,ref=${{ steps.cache_from.outputs.donor }},mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
             ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
             ${{ matrix.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
-          secrets: |
-            GH_TOKEN=${{ secrets.PAT }}
 
   cicd-import-check:
     if: |
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
       && !cancelled()
       && needs.configure.outputs.perf_scripts_only != 'true'
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Import_Check
     steps:
@@ -556,18 +567,23 @@ jobs:
               --skip-file /opt/import-check/import_check_skip.txt
 
   cicd-unit-tests-core:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard-id: [0, 1, 2]
     if: |
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
-    name: Launch_Unit_Tests_Core
+    name: Launch_Unit_Tests_Core_${{ matrix.shard-id }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -578,13 +594,22 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Core
-          timeout: 18
+          timeout: 30
           is_unit_test: "true"
-          PAT: ${{ secrets.PAT }}
+          shard-id: ${{ matrix.shard-id }}
+          num-shards: 3
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
@@ -594,12 +619,13 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Diffusion
     env:
@@ -612,13 +638,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Diffusion
           timeout: 18
           is_unit_test: "true"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
@@ -635,6 +668,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -659,7 +693,7 @@ jobs:
             local gpu_count
             gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
             if [ -n "$gpu_count" ]; then
-              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-${gpu_count}/"
+              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-x${gpu_count}/"
             else
               echo "${RUNNER_PREFIX}"
             fi
@@ -697,6 +731,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -714,13 +749,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -737,6 +779,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -755,13 +798,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -778,6 +828,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -796,13 +847,20 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -827,6 +885,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -834,7 +899,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -851,6 +916,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -913,6 +979,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -933,6 +1000,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -944,7 +1018,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -961,6 +1035,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -982,6 +1057,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -993,7 +1075,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1010,6 +1092,7 @@ jobs:
       (
         success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || (needs.configure.outputs.skip_queue == 'true' && !failure())
         || needs.pre-flight.outputs.force_run_all == 'true'
         || github.event_name == 'merge_group'
       )
@@ -1031,6 +1114,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -1042,7 +1132,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1068,6 +1158,13 @@ jobs:
           submodules: recursive
           ref: ${{ needs.configure.outputs.merge_sha }}
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: main
         uses: ./.github/actions/test-template
         with:
@@ -1079,7 +1176,7 @@ jobs:
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          PAT: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
@@ -1174,10 +1271,17 @@ jobs:
         || needs.configure.outputs.perf_scripts_only == 'true'
       )
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+
       - name: Generate fake coverage report
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
-          github-token: ${{ secrets.PAT }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
