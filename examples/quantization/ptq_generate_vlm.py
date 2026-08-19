@@ -44,20 +44,26 @@ import os
 import sys
 import warnings
 
+import modelopt.torch.utils.distributed as dist
 import torch
 from megatron.core.utils import unwrap_model
-from quantize_utils import console
+from quantize_utils import (
+    add_common_model_args,
+    build_bridge_and_provider,
+    console,
+    load_quantized_megatron_model,
+    print_parallelism_summary,
+    require_checkpoint,
+    require_torchrun,
+)
 from quantize_vlm import _custom_prompt_forward_loop_func
 from transformers import AutoProcessor
 
-from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 warnings.filterwarnings("ignore")
 
-HF_MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 DEFAULT_IMAGE_PATH = "/models/demo.jpeg"
 
 
@@ -113,7 +119,7 @@ def _validate_quantized_model(model: torch.nn.Module, is_rank_0: bool) -> None:
 
 @torchrun_main
 def main(
-    hf_model_id: str = HF_MODEL_ID,
+    hf_model_id: str,
     tp: int = 1,
     pp: int = 1,
     ep: int = 1,
@@ -125,20 +131,14 @@ def main(
     trust_remote_code: bool = True,
 ) -> None:
     """Load a quantized Megatron-LM VLM checkpoint and perform image+text generation on multiple GPUs."""
-    if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
-        sys.exit(1)
-
-    # Check if the checkpoint path exists
-    if not os.path.exists(megatron_load_path):
-        console.print(f"[red]Error: Quantized checkpoint path {megatron_load_path} does not exist![/red]")
-        console.print("[yellow]Please run the quantization process first:[/yellow]")
-        console.print(
-            f"[yellow]torchrun --nproc_per_node {tp} examples/quantization/quantize_vlm.py "
-            f"--hf-model-id {hf_model_id} --megatron-save-path {megatron_load_path} --tp {tp}[/yellow]"
-        )
-        sys.exit(1)
+    require_torchrun()
+    require_checkpoint(
+        megatron_load_path,
+        quantize_command=(
+            f"torchrun --nproc_per_node {tp} examples/quantization/quantize_vlm.py "
+            f"--hf-model-id {hf_model_id} --megatron-save-path {megatron_load_path} --tp {tp}"
+        ),
+    )
 
     # Check if the image path exists (skip check for URLs)
     is_url = image_path.startswith("http://") or image_path.startswith("https://")
@@ -147,53 +147,32 @@ def main(
         sys.exit(1)
 
     # Initialize bridge from HF model to get processor and model structure
-    bridge = AutoBridge.from_hf_pretrained(
+    bridge, model_provider = build_bridge_and_provider(
         hf_model_id,
-        trust_remote_code=is_safe_repo(
-            trust_remote_code=trust_remote_code,
-            hf_path=hf_model_id,
-        ),
+        tp=tp,
+        pp=pp,
+        ep=ep,
+        etp=etp,
+        load_weights=False,
+        pipeline_dtype=torch.bfloat16,
+        trust_remote_code=trust_remote_code,
     )
 
     # Load processor for VLM
     processor = AutoProcessor.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
 
-    # Get model provider and configure for multi-GPU execution
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = torch.bfloat16
-
-    # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-    megatron_model = bridge.load_megatron_model(
-        megatron_load_path,
-        mp_overrides={
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-        },
-        wrap_with_ddp=False,
-    )
+    megatron_model = load_quantized_megatron_model(bridge, megatron_load_path, tp=tp, pp=pp, ep=ep, etp=etp)
     megatron_model = [m.cuda() for m in megatron_model]
 
     # Now we can check for rank
-    is_rank_0 = torch.distributed.get_rank() == 0
+    is_rank_0 = dist.is_master()
 
+    print_parallelism_summary(model_provider)
     if is_rank_0:
-        console.print(f"[green]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/green]")
-        console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
-        console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
-        console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
         console.print(f"[green]Loaded quantized model from: {megatron_load_path}[/green]")
 
     # Get the unwrapped model for generation
     unwrapped_model = unwrap_model(megatron_model)[0]
-    unwrapped_model.eval()
 
     # Validate that the model has quantized layers
     _validate_quantized_model(unwrapped_model, is_rank_0)
@@ -203,7 +182,14 @@ def main(
         console.print(f"[green]Loaded Quantized Model:\n {unwrapped_model}[/green]")
         console.print("[green]Testing quantized VLM model with image and prompt...[/green]")
 
-    _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts, osl, test_image_path=image_path)
+    # .eval() above disables dropout/etc but not autograd -- without no_grad(),
+    # every decode step in the osl loop retains a full backward-pass graph it
+    # never uses, which was enough to OOM a 27B TP=8 model at ~79GB/79.18GB
+    # even after model loading and quantization validation had succeeded.
+    with torch.no_grad():
+        _custom_prompt_forward_loop_func(
+            unwrapped_model, processor, is_rank_0, prompts, osl, test_image_path=image_path
+        )
 
     if is_rank_0:
         console.print("[green]Generation completed successfully![/green]")
@@ -213,17 +199,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Load a quantized Megatron-LM VLM checkpoint and perform image+text generation on multiple GPUs"
     )
-    parser.add_argument(
-        "--hf-model-id",
-        type=str,
-        default=HF_MODEL_ID,
-        help="HuggingFace model ID for processor and model structure (e.g., Qwen/Qwen3-VL-8B-Instruct)",
-    )
+    add_common_model_args(parser)
 
-    parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
-    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
-    parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
-    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument(
         "--megatron-load-path",
         type=str,
@@ -248,7 +225,6 @@ if __name__ == "__main__":
         default=DEFAULT_IMAGE_PATH,
         help="Path to the image file for VLM generation.",
     )
-    parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
     try:
@@ -265,5 +241,4 @@ if __name__ == "__main__":
             args.trust_remote_code,
         )
     finally:
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
+        dist.cleanup()

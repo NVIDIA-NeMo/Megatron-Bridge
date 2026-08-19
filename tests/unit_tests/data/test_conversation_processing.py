@@ -28,6 +28,7 @@ from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
+    chat_template_kwargs_from_example,
     gather_assistant_text_segments,
     get_processor_tokenizer,
     infer_assistant_mask_boundary_config,
@@ -146,6 +147,8 @@ def test_get_processor_tokenizer_does_not_probe_dynamic_wrapper_attributes():
 
 
 class _ToolsGenerationMaskTokenizer(_GenerationMaskTokenizer):
+    chat_template = _GenerationMaskTokenizer.chat_template + "{% if preserve_thinking %}history{% endif %}"
+
     def __init__(self):
         self.template_kwargs = []
 
@@ -570,13 +573,24 @@ def test_build_assistant_loss_mask_aligns_hf_generation_mask_to_batch_padding(in
     assert mask.tolist() == expected_mask
 
 
-def test_build_assistant_loss_mask_forwards_tools_to_hf_generation_mask():
+@pytest.mark.parametrize(
+    ("truncate_history_thinking", "native_preserve_thinking"),
+    [(True, False), (False, True)],
+)
+def test_build_assistant_loss_mask_adapts_history_thinking_kwarg_to_native_template(
+    truncate_history_thinking,
+    native_preserve_thinking,
+):
     tools = [{"type": "function", "function": {"name": "lookup"}}]
     example = {
         "conversation": [
             {"role": "user", "content": "question"},
             {"role": "assistant", "content": "answer"},
         ],
+        "chat_template_kwargs": {
+            "enable_thinking": True,
+            "truncate_history_thinking": truncate_history_thinking,
+        },
         "tools": tools,
     }
 
@@ -585,15 +599,37 @@ def test_build_assistant_loss_mask_forwards_tools_to_hf_generation_mask():
     mask = build_assistant_loss_mask(example, torch.tensor([1, 2, 3, 4]), processor)
 
     assert mask.tolist() == [0.0, 0.0, 1.0, 0.0]
-    assert processor.tokenizer.template_kwargs == [{"tools": tools}]
+    assert processor.tokenizer.template_kwargs == [
+        {"enable_thinking": True, "preserve_thinking": native_preserve_thinking, "tools": tools}
+    ]
 
 
-def test_shared_chat_template_kwargs_from_examples_requires_shared_tools():
+def test_chat_template_kwargs_from_example_rejects_invalid_or_pipeline_controlled_values():
+    with pytest.raises(ValueError, match="string-keyed mapping"):
+        chat_template_kwargs_from_example({"chat_template_kwargs": ["truncate_history_thinking"]})
+    with pytest.raises(ValueError, match="pipeline-controlled arguments: tokenize, tools"):
+        chat_template_kwargs_from_example({"chat_template_kwargs": {"tokenize": False, "tools": []}})
+    with pytest.raises(ValueError, match="truncate_history_thinking must be a boolean"):
+        chat_template_kwargs_from_example({"chat_template_kwargs": {"truncate_history_thinking": "yes"}})
+
+
+def test_shared_chat_template_kwargs_from_examples_requires_shared_values():
     tools = [{"type": "function", "function": {"name": "lookup"}}]
+    kwargs = {"truncate_history_thinking": False}
 
-    assert shared_chat_template_kwargs_from_examples([{"tools": tools}, {"tools": tools}]) == {"tools": tools}
-    with pytest.raises(ValueError, match="same chat-template tools"):
-        shared_chat_template_kwargs_from_examples([{"tools": tools}, {"tools": []}])
+    assert shared_chat_template_kwargs_from_examples(
+        [
+            {"chat_template_kwargs": kwargs, "tools": tools},
+            {"chat_template_kwargs": kwargs, "tools": tools},
+        ]
+    ) == {"truncate_history_thinking": False, "tools": tools}
+    with pytest.raises(ValueError, match="same chat-template kwargs and tools"):
+        shared_chat_template_kwargs_from_examples(
+            [
+                {"chat_template_kwargs": {"truncate_history_thinking": True}, "tools": tools},
+                {"chat_template_kwargs": {"truncate_history_thinking": False}, "tools": tools},
+            ]
+        )
 
 
 def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():
@@ -1153,6 +1189,227 @@ def test_infer_assistant_mask_boundary_config_from_llama_template():
     assert all(token_ids == [303] for token_ids in boundary_config.role_end_tokens.values())
 
 
+class _HarmonyBoundaryTokenizer(_Tokenizer):
+    """gpt-oss / OpenAI Harmony tokenizer double.
+
+    A single assistant turn renders as two channel segments (``analysis`` then
+    ``final``), each wrapped in its own ``<|start|>assistant<|channel|>...
+    <|message|>...`` header. ``<|start|>`` and the role are emitted separately,
+    so the literal string ``<|start|>assistant`` never appears in the template.
+    """
+
+    chat_template = (
+        "{% for message in messages %}"
+        "<|start|>{{ message.role }}<|channel|>{{ channel }}<|message|>{{ message.content }}<|end|>"
+        "{% endfor %}<|return|>"
+    )
+
+    _role_ids = {"assistant": 210, "user": 211, "system": 212, "developer": 213, "tool": 214}
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "<|start|>assistant": [200, 210],
+            "<|start|>user": [200, 211],
+            "<|start|>system": [200, 212],
+            "<|start|>developer": [200, 213],
+            "<|start|>tool": [200, 214],
+            "<|return|>": [204],
+            "<|end|>": [203],
+            "<|call|>": [205],
+            "question": [20],
+            "reasoning": [30, 31],
+            "answer": [40, 41],
+        }
+        return {"input_ids": mapping.get(text, [42])}
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        **kwargs,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = []
+        for turn in conversation:
+            role_id = self._role_ids[turn["role"]]
+            content_ids = self(turn["content"])["input_ids"]
+            if turn["role"] == "assistant":
+                # Chain-of-thought in the analysis channel, then the user-facing final channel.
+                input_ids.extend([200, role_id, 201, 220, 202] + self("reasoning")["input_ids"] + [203])
+                input_ids.extend([200, role_id, 201, 221, 202] + content_ids + [204])
+            else:
+                input_ids.extend([200, role_id, 202] + content_ids + [203])
+        return {"input_ids": input_ids}
+
+
+class _HarmonyBoundaryProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _HarmonyBoundaryTokenizer()
+
+
+def test_infer_assistant_mask_boundary_config_from_gpt_oss_harmony_template():
+    processor = _HarmonyBoundaryProcessor()
+    # The concatenated assistant header is not a literal substring of the template;
+    # detection must rely on the standalone structural specials.
+    assert "<|start|>assistant" not in processor.tokenizer.chat_template
+    boundary_config = infer_assistant_mask_boundary_config(processor)
+
+    assert boundary_config is not None
+    # Start markers stop at the role header so the loss span begins at <|channel|>,
+    # covering the analysis channel as well as the final channel.
+    assert boundary_config.role_start_tokens == {
+        "assistant": [200, 210],
+        "system": [200, 212],
+        "developer": [200, 213],
+        "user": [200, 211],
+        "tool": [200, 214],
+    }
+    assert all(token_ids == [204] for token_ids in boundary_config.role_end_tokens.values())
+    # <|end|> (message) and <|call|> (tool call) terminators back up the <|return|> primary.
+    assert all(variants == [[203], [205]] for variants in boundary_config.role_end_token_variants.values())
+
+
+def test_gpt_oss_harmony_assistant_mask_covers_analysis_and_final_channels():
+    processor = _HarmonyBoundaryProcessor()
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        processor,
+    )
+
+    user_block = [200, 211, 202, 20, 203]  # <|start|>user<|message|>question<|end|>
+    analysis_block = [200, 210, 201, 220, 202, 30, 31, 203]  # ...<|channel|>analysis<|message|>reasoning<|end|>
+    final_block = [200, 210, 201, 221, 202, 40, 41, 204]  # ...<|channel|>final<|message|>answer<|return|>
+    assert tokenized.input_ids.tolist() == user_block + analysis_block + final_block
+
+    mask = tokenized.assistant_mask.tolist()
+    assert len(mask) == len(user_block + analysis_block + final_block)
+
+    # The user turn and the assistant's priming role header (<|start|>assistant) carry no loss.
+    priming_header_len = 2
+    assert not any(mask[: len(user_block) + priming_header_len])
+    # Everything from the first <|channel|> through the final <|return|> is trained, so the
+    # analysis chain-of-thought and the final answer both contribute to the loss.
+    assert all(mask[len(user_block) + priming_header_len :])
+
+    # Pin the reasoning (analysis channel) and answer (final channel) token positions so a
+    # regression that drops the analysis channel from the loss fails loudly here.
+    reasoning_positions = [len(user_block) + 5, len(user_block) + 6]
+    answer_positions = [len(user_block) + len(analysis_block) + 5, len(user_block) + len(analysis_block) + 6]
+    assert tokenized.input_ids[reasoning_positions].tolist() == [30, 31]
+    assert tokenized.input_ids[answer_positions].tolist() == [40, 41]
+    assert all(mask[position] for position in reasoning_positions + answer_positions)
+
+
+class _Gemma4ToolCallBoundaryTokenizer(_Tokenizer):
+    chat_template = (
+        "{% if add_generation_prompt %}<|turn>model\n{% endif %}"
+        "{% for message in messages %}<|turn>{{ message.role }}{{ message.content }}"
+        "{% if message.tool_calls %}<|tool_call>{{ message.tool_calls }}<tool_call|><|tool_response>{% endif %}"
+        "<turn|>{% endfor %}"
+    )
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "<|turn>model\n": [10],
+            "<turn|>": [11],
+            "<|tool_response>": [12],
+            "<tool_response|>": [13],
+        }
+        return {"input_ids": mapping.get(text, [42])}
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        **kwargs,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = []
+        previous_non_tool_role = None
+        for turn_index, turn in enumerate(conversation):
+            role = turn["role"]
+            if role == "user":
+                input_ids.extend([20, 21, 11])
+            elif role == "assistant":
+                if previous_non_tool_role != "assistant":
+                    input_ids.append(10)
+                if turn.get("tool_calls"):
+                    input_ids.append(30)
+                    following_turn = conversation[turn_index + 1] if turn_index + 1 < len(conversation) else None
+                    if following_turn is not None and following_turn["role"] == "tool":
+                        input_ids.extend([12, 40, 13])
+                    else:
+                        input_ids.append(12)
+                if turn.get("content"):
+                    input_ids.append(50)
+                if not turn.get("tool_calls"):
+                    input_ids.append(11)
+                previous_non_tool_role = role
+        return {"input_ids": input_ids}
+
+
+@pytest.mark.parametrize(
+    ("trailing_messages", "expected_input_ids", "expected_mask", "expected_final_start"),
+    [
+        ([], [20, 21, 11, 10, 30, 12], [False, False, False, False, True, True], 4),
+        (
+            [
+                {"role": "tool", "tool_call_id": "call-1", "content": '{"temperature":"72F"}'},
+                {"role": "assistant", "content": "It is 72F."},
+            ],
+            [20, 21, 11, 10, 30, 12, 40, 13, 50, 11],
+            [False, False, False, False, True, True, False, False, True, True],
+            8,
+        ),
+    ],
+)
+def test_gemma4_tool_call_assistant_mask_and_generation_boundary(
+    trailing_messages,
+    expected_input_ids,
+    expected_mask,
+    expected_final_start,
+):
+    messages = [
+        {"role": "user", "content": "Weather?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"city":"Denver"}'},
+                }
+            ],
+        },
+        *trailing_messages,
+    ]
+
+    tokenized = tokenize_chat_example(
+        {"messages": messages},
+        _Gemma4ToolCallBoundaryTokenizer(),
+        return_final_assistant_start=True,
+    )
+
+    assert tokenized.input_ids.tolist() == expected_input_ids
+    assert tokenized.assistant_mask.tolist() == expected_mask
+    assert tokenized.final_assistant_start == expected_final_start
+
+
 @pytest.mark.parametrize("column", ["messages", "conversation", "conversations"])
 def test_shared_chat_preprocessing_supports_all_declared_conversation_columns(column):
     turns = [
@@ -1180,6 +1437,46 @@ def test_shared_chat_preprocessing_normalizes_sharegpt_roles_before_templating()
 
     assert [turn["role"] for turn in tokenized.conversation] == ["user", "assistant"]
     assert tokenized.assistant_mask.any()
+
+
+def test_normalize_chat_conversation_parses_openai_tool_call_arguments_without_mutating_input():
+    row = {
+        "messages": [
+            {"role": "user", "content": "Weather?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": '{"city":"Seattle"}'},
+                    }
+                ],
+            },
+        ]
+    }
+
+    normalized = normalize_chat_conversation(row)
+
+    assert normalized[1]["tool_calls"][0]["function"]["arguments"] == {"city": "Seattle"}
+    assert row["messages"][1]["tool_calls"][0]["function"]["arguments"] == '{"city":"Seattle"}'
+
+
+@pytest.mark.parametrize("arguments", ["not JSON", "[]", '"Seattle"'])
+def test_normalize_chat_conversation_rejects_invalid_openai_tool_call_arguments(arguments):
+    row = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"type": "function", "function": {"name": "lookup", "arguments": arguments}}],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match=r"function\.arguments must be (valid JSON|a JSON object)"):
+        normalize_chat_conversation(row)
 
 
 def test_ultrachat_style_row_has_matching_gpt_sft_and_direct_hf_collation():

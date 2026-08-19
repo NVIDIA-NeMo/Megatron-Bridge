@@ -94,6 +94,7 @@ def build_mcore_thd_sequence_batch_from_rows(
     pad_token_id: int = 0,
     ignore_index: int = IGNORE_INDEX,
     pad_to_multiple_of: int = 1,
+    pad_to_max_length: bool = False,
     sequence_tensor_pad_values: Mapping[str, int | float] | None = None,
     emit_padding_mask: bool = False,
 ) -> dict[str, Any]:
@@ -102,10 +103,12 @@ def build_mcore_thd_sequence_batch_from_rows(
     Args:
         rows: Per-example mappings containing 1D sequence tensors.
         token_key: Token tensor key present in each row.
-        sequence_length: Optional maximum length for each unpadded row.
+        sequence_length: Optional maximum length for each unpadded input row.
         pad_token_id: Token value for per-sequence alignment padding.
         ignore_index: Label value for per-sequence alignment padding.
         pad_to_multiple_of: Per-sequence alignment multiple for CP/SP.
+        pad_to_max_length: Treat ``sequence_length`` as the fixed physical pack
+            width and pad the final segment to exactly that width.
         sequence_tensor_pad_values: Additional sequence-aligned tensor keys and
             the value used for alignment padding.
         emit_padding_mask: Whether to emit a boolean mask whose true values
@@ -123,6 +126,8 @@ def build_mcore_thd_sequence_batch_from_rows(
         raise ValueError("pad_to_multiple_of must be >= 1.")
     if sequence_length is not None and sequence_length < 1:
         raise ValueError("sequence_length must be >= 1.")
+    if pad_to_max_length and sequence_length is None:
+        raise ValueError("sequence_length must be set when pad_to_max_length=True.")
 
     extra_pad_values = dict(sequence_tensor_pad_values or {})
     reserved_keys = {token_key, "position_ids", "labels", "loss_mask", "attention_mask", "padding_mask"}
@@ -162,6 +167,13 @@ def build_mcore_thd_sequence_batch_from_rows(
 
     unpadded_lengths = [row[token_key].numel() for row in normalized_rows]
     padded_lengths = [_ceil_to_multiple(length, pad_to_multiple_of) for length in unpadded_lengths]
+    aligned_total_length = sum(padded_lengths)
+    if pad_to_max_length and aligned_total_length > sequence_length:
+        raise ValueError(
+            f"Packed sequence length {aligned_total_length} exceeds configured sequence_length {sequence_length}."
+        )
+    if pad_to_max_length:
+        padded_lengths[-1] += sequence_length - aligned_total_length
     cu_seqlens = [0]
     cu_seqlens_padded = [0]
     for length, padded_length in zip(unpadded_lengths, padded_lengths):
@@ -215,7 +227,7 @@ def build_mcore_thd_sequence_batch_from_rows(
     cu_seqlens_t = torch.tensor(cu_seqlens, dtype=torch.int32, device=first_tokens.device)
     packed["cu_seqlens_q"] = cu_seqlens_t
     packed["cu_seqlens_kv"] = cu_seqlens_t
-    if pad_to_multiple_of > 1:
+    if padded_lengths != unpadded_lengths:
         cu_seqlens_padded_t = torch.tensor(cu_seqlens_padded, dtype=torch.int32, device=first_tokens.device)
         packed["cu_seqlens_q_padded"] = cu_seqlens_padded_t
         packed["cu_seqlens_kv_padded"] = cu_seqlens_padded_t

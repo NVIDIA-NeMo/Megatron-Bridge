@@ -20,6 +20,7 @@ Mock/synthetic data is used when dataset.path is not set (no --mock flag).
 
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -52,8 +53,8 @@ class TestMcoreFluxPretrain:
             "-m",
             "coverage",
             "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
+            f"--data-file={Path(__file__).resolve().parents[5] / '.coverage'}",
+            f"--source={Path(__file__).resolve().parents[5]}",
             "--parallel-mode",
             "scripts/training/run_recipe.py",
             "--recipe",

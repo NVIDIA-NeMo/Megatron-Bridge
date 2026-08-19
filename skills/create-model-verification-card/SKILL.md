@@ -700,7 +700,18 @@ For every verified training item, record:
 - `final_loss`: loss at its final optimizer step;
 - `last_10_steps_step_time_ms_avg`: arithmetic mean over the final 10 executed
   optimizer steps;
-- `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
+- `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows;
+- `last_10_steps_tokens_per_second_per_gpu_avg`: token-slot throughput derived
+  from the same final-10-step average. Compute token slots per optimizer step as
+  `packed_sequence_size * global_batch_size` for packed training, or
+  `effective_seq_length * global_batch_size` otherwise, then divide by
+  `(last_10_steps_step_time_ms_avg / 1000) * total_gpus`.
+
+Use recipe-owned batch size and the resolved sequence or pack length, and
+derive `total_gpus` from the public command's positive node and GPU counts.
+Count total token slots, not supervised or loss-bearing tokens. This metric is
+training-only; do not add it to inference results. When a training leaf is not
+verified, record this metric as `null` alongside its other training metrics.
 
 Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
@@ -797,7 +808,7 @@ an item verified merely to make validation pass.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Put every training result under its canonical public hardware key and include
-  all four metrics for each verified training leaf; never record a private
+  all five metrics for each verified training leaf; never record a private
   cluster name or retain the old `gpu_type` field.
 - Keep `verification_index` synchronized with `items`, omit empty status
   buckets, list every item name explicitly, and never use the scalar `all` in

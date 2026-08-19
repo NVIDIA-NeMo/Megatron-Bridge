@@ -89,6 +89,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     patchify_temporal_frame,
     select_inference_next_token,
     temporal_model_frames,
+    valid_audio_feature_lengths,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
@@ -149,10 +150,9 @@ def _fastconformer_output_length(mel_length: int, subsampling_factor: int = 8) -
 def _align_sound_tokens(input_ids: torch.Tensor, sound_token_id: int, desired_count: int) -> torch.Tensor:
     """Rewrite ``input_ids`` so the contiguous run of sound tokens has ``desired_count`` entries.
 
-    The HF processor estimates sound-token count from ``len(waveform) // hop_length``, but
-    ``ParakeetFeatureExtractor`` (STFT with ``center=True``) produces one extra mel frame,
-    so ``BridgeSoundEncoder``'s output length can exceed the HF-inserted count by 1. We
-    realign here using the true encoder output length computed from ``sound_length``.
+    The HF processor estimates the sound-token count from the waveform length. Bridge
+    recomputes it from Parakeet's semantic feature-mask length so padding and boundary
+    frames remain invalid, then defensively realigns any differing processor token run.
     """
     assert input_ids.dim() == 2 and input_ids.size(0) == 1, "Expected a single-sample batch"
     mask = input_ids[0] == sound_token_id
@@ -508,9 +508,17 @@ def process_audio_inputs(tokenizer, processor, audio_path: str, prompt: str, sys
 
     # Extract mel spectrogram features (Megatron BridgeSoundEncoder expects mel, not raw waveform)
     feature_extractor = ParakeetFeatureExtractor(sampling_rate=16000, feature_size=128)
-    audio_features = feature_extractor(raw_sound_clips, sampling_rate=16000, return_tensors="pt")
+    audio_features = feature_extractor(
+        raw_sound_clips,
+        sampling_rate=16000,
+        return_tensors="pt",
+        return_attention_mask=True,
+    )
     sound_clips = audio_features.input_features  # [batch, frames, mel_bins]
-    sound_length = torch.tensor([sound_clips.shape[1]], dtype=torch.long)
+    sound_length = valid_audio_feature_lengths(
+        audio_features.attention_mask,
+        num_frames=sound_clips.shape[1],
+    )
 
     # Realign <so_embedding> tokens in the prompt to match the encoder's actual output
     # length (see _align_sound_tokens docstring for why this can differ from the HF count).
@@ -587,9 +595,17 @@ def process_video_audio_inputs(
     # Extract raw sound clips and convert to mel spectrogram for BridgeSoundEncoder
     raw_sound_clips = proc_output.pop("sound_clips", None)
     feature_extractor = ParakeetFeatureExtractor(sampling_rate=16000, feature_size=128)
-    audio_features = feature_extractor(raw_sound_clips, sampling_rate=16000, return_tensors="pt")
+    audio_features = feature_extractor(
+        raw_sound_clips,
+        sampling_rate=16000,
+        return_tensors="pt",
+        return_attention_mask=True,
+    )
     sound_clips = audio_features.input_features
-    sound_length = torch.tensor([sound_clips.shape[1]], dtype=torch.long)
+    sound_length = valid_audio_feature_lengths(
+        audio_features.attention_mask,
+        num_frames=sound_clips.shape[1],
+    )
 
     sound_token_id = tokenizer.convert_tokens_to_ids(audio_token)
     expected_sound_tokens = _fastconformer_output_length(int(sound_length.item()))

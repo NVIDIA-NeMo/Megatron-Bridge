@@ -28,7 +28,9 @@ The process is as follows:
     model back into the Hugging Face format. A new directory, named after the
     model, will be created for the converted model files. By default, this
     directory is created in the current working directory, but a different
-    parent directory can be specified via the `--output-dir` argument.
+    parent directory can be specified via the `--output-dir` argument. Multi-GPU
+    exports use distributed saving by default; pass `--no-distributed-save` to
+    select rank-0-only saving explicitly.
 7. Optionally, the `save_megatron_model` method can be used to save the model
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
@@ -51,7 +53,6 @@ import sys
 
 import torch
 from rich.console import Console
-from rich.table import Table
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
@@ -99,10 +100,59 @@ def _configure_slurm_distributed_environment() -> None:
         os.environ["MASTER_PORT"] = str(master_port)
 
 
+def _synchronize_weight_verification(all_match: bool) -> bool:
+    """Return the rank-0 verification result consistently on every rank.
+
+    Args:
+        all_match: Whether the locally verified weights match. Only rank 0's
+            value is authoritative.
+
+    Returns:
+        Whether rank 0 observed any weight mismatch.
+    """
+    mismatch = torch.tensor(not all_match, dtype=torch.int32, device=torch.cuda.current_device())
+    torch.distributed.broadcast(mismatch, src=0)
+    return bool(mismatch.item())
+
+
+def _print_verification_results(
+    verified_count: int,
+    mismatch_count: int,
+    mismatch_samples: list[str],
+    fp8_skip_count: int,
+    fp8_skip_samples: list[str],
+) -> None:
+    """Print a bounded rank-0-only verification summary.
+
+    Args:
+        verified_count: Number of weights compared or skipped as lossy FP8.
+        mismatch_count: Number of weights that did not match.
+        mismatch_samples: Bounded sample of mismatched weight names.
+        fp8_skip_count: Number of lossy FP8 comparisons that were skipped.
+        fp8_skip_samples: Sample names and dtypes for skipped FP8 comparisons.
+    """
+    compared_count = verified_count - fp8_skip_count
+    matched_count = compared_count - mismatch_count
+    color = "green" if mismatch_count == 0 else "red"
+    console.print(f"[{color}]Weight verification: {matched_count}/{compared_count} compared weights matched[/]")
+    if mismatch_count:
+        console.print(f"[red]{mismatch_count} weight mismatches (showing up to 20):[/red]")
+        for entry in mismatch_samples:
+            console.print(f"  [red]{entry}[/red]")
+    if fp8_skip_count > 0:
+        console.print(
+            f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
+        )
+        for entry in fp8_skip_samples:
+            console.print(f"  [yellow]{entry}[/yellow]")
+        if fp8_skip_count > len(fp8_skip_samples):
+            console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
+
+
 @torchrun_main
 def main(
     hf_model_id: str = HF_MODEL_ID,
-    output_dir: str = None,
+    output_dir: str | None = None,
     tp: int = 1,
     pp: int = 1,
     ep: int = 1,
@@ -111,6 +161,7 @@ def main(
     megatron_load_path: str | None = None,
     trust_remote_code: bool | None = None,
     strict: bool = False,
+    distributed_save: bool = True,
     skip_save: bool = False,
     atol: float = 1e-1,
     rtol: float = 1e-5,
@@ -180,15 +231,6 @@ def main(
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0
 
-    # Formatting
-    if is_rank_0:
-        table = Table(title="Hugging Face Weights Verification")
-        table.add_column("Weight Name", style="cyan")
-        table.add_column("Shape")
-        table.add_column("DType")
-        table.add_column("Device")
-        table.add_column("Matches Original", justify="center")
-
     if is_rank_0:
         console.print(f"[yellow]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/yellow]")
@@ -210,6 +252,9 @@ def main(
     # 3. Regular params (same dtype, not in ignore list)  →  direct allclose.
 
     all_match = True
+    verified_count = 0
+    mismatch_count = 0
+    mismatch_samples: list[str] = []
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
@@ -248,26 +293,22 @@ def main(
                 )
 
             all_match = all_match and match
-            table.add_row(
-                name,
-                str(tuple(param.shape)),
-                str(param.dtype).replace("torch.", ""),
-                str(param.device),
-                "✅" if match else "❌",
-            )
+            verified_count += 1
+            if not match:
+                mismatch_count += 1
+                if len(mismatch_samples) < 20:
+                    mismatch_samples.append(name)
 
-    if is_rank_0:
-        if fp8_skip_count > 0:
-            console.print(
-                f"[yellow]WARNING: {fp8_skip_count} FP8 params skipped allclose (dequantisation is lossy):[/yellow]"
+    verification_failed = _synchronize_weight_verification(all_match)
+    if verification_failed:
+        if is_rank_0:
+            _print_verification_results(
+                verified_count,
+                mismatch_count,
+                mismatch_samples,
+                fp8_skip_count,
+                fp8_skip_samples,
             )
-            for entry in fp8_skip_samples:
-                console.print(f"  [yellow]{entry}[/yellow]")
-            if fp8_skip_count > len(fp8_skip_samples):
-                console.print(f"  [yellow]... and {fp8_skip_count - len(fp8_skip_samples)} more[/yellow]")
-        console.print(table)
-
-    if not all_match:
         raise ValueError("Weight mismatch detected")
 
     if skip_save:
@@ -276,13 +317,27 @@ def main(
     else:
         if is_rank_0:
             console.print(f"Saving HF-ckpt in {save_path}...")
-        bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
+        bridge.save_hf_pretrained(
+            megatron_model,
+            save_path,
+            strict=strict,
+            distributed_save=distributed_save,
+        )
 
         # Save in Megatron format if path is provided
         if megatron_save_path:
             if is_rank_0:
                 console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
             bridge.save_megatron_model(megatron_model, megatron_save_path)
+
+    if is_rank_0:
+        _print_verification_results(
+            verified_count,
+            mismatch_count,
+            mismatch_samples,
+            fp8_skip_count,
+            fp8_skip_samples,
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -324,6 +379,12 @@ def _build_parser() -> argparse.ArgumentParser:
     strictness.add_argument("--not-strict", dest="strict", action="store_false", help=argparse.SUPPRESS)
     parser.set_defaults(strict=False)
     parser.add_argument(
+        "--distributed-save",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Let ranks save assigned Hugging Face shards independently (default: enabled)",
+    )
+    parser.add_argument(
         "--skip-save", action="store_true", help="Skip saving the model after comparison (verification only)"
     )
     parser.add_argument("--atol", type=float, default=1e-1, help="Absolute tolerance for tensor comparison")
@@ -344,6 +405,7 @@ if __name__ == "__main__":
         args.megatron_load_path,
         args.trust_remote_code,
         strict=args.strict,
+        distributed_save=args.distributed_save,
         skip_save=args.skip_save,
         atol=args.atol,
         rtol=args.rtol,

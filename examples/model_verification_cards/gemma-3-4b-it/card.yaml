@@ -172,6 +172,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Megatron Bridge does not provide a public Gemma 3 VL 4B pretraining
         recipe. The available exact-model recipes cover SFT and PEFT, so a
@@ -197,10 +198,11 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Pending exact-revision CORD-v2 full-SFT verification with the public
         Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer
-        steps with finite loss, no skipped or NaN iterations, all four metrics,
+        steps with finite loss, no skipped or NaN iterations, all five metrics,
         and a reloadable final full-model checkpoint.
 
   sft_export_inference:
@@ -228,6 +230,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Gemma 3 VL image-bidirectional attention uses dense local/global
         additive biases with FusedAttention. The provider rejects context
@@ -255,10 +258,11 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Pending exact-revision CORD-v2 LoRA verification with the public Gemma 3
         VL 4B H100 recipe. The run must complete at least ten optimizer steps
-        with finite loss, no skipped or NaN iterations, all four metrics, and a
+        with finite loss, no skipped or NaN iterations, all five metrics, and a
         reloadable adapter checkpoint.
 
   checkpoint_resume:
@@ -273,6 +277,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison: null
       expected_result: >
         Checkpoint-resume verification depends on a supported pretraining

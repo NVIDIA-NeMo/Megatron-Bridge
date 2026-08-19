@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
@@ -38,7 +39,8 @@ def test_flux_mock_datamodule_build_and_batch_shapes():
         num_train_samples=100,
     )
     train_dl, val_dl, test_dl = cfg.build_datasets(_context=None)
-    assert train_dl is val_dl and val_dl is test_dl
+    assert train_dl is not val_dl
+    assert val_dl is not test_dl
 
     batch = next(iter(train_dl))
     expected_keys = {
@@ -75,6 +77,48 @@ def test_flux_mock_datamodule_build_and_batch_shapes():
     num_patches = latent_h * latent_w
     assert batch["loss_mask"].shape == (batch_size, num_patches)
     assert batch["loss_mask"].dtype == torch.bfloat16
+
+
+def test_flux_mock_datamodule_repeats_with_independent_splits():
+    cfg = FluxMockDataModuleConfig(
+        micro_batch_size=1,
+        global_batch_size=2,
+        num_workers=0,
+        image_H=8,
+        image_W=8,
+        vae_channels=1,
+        vae_scale_factor=8,
+        prompt_seq_len=2,
+        context_dim=2,
+        pooled_prompt_dim=2,
+        num_train_samples=2,
+    )
+
+    train_dl, val_dl, test_dl = cfg.build_datasets(_context=None)
+
+    for _ in range(cfg.num_train_samples + 1):
+        next(train_dl)
+    next(val_dl)
+    next(test_dl)
+    assert train_dl is not val_dl
+    assert val_dl is not test_dl
+
+
+def test_flux_mock_datamodule_rejects_empty_repeated_epochs():
+    with pytest.raises(ValueError, match="num_train_samples.*micro_batch_size"):
+        FluxMockDataModuleConfig(
+            micro_batch_size=2,
+            global_batch_size=2,
+            num_workers=0,
+            image_H=8,
+            image_W=8,
+            vae_channels=1,
+            vae_scale_factor=8,
+            prompt_seq_len=2,
+            context_dim=2,
+            pooled_prompt_dim=2,
+            num_train_samples=1,
+        )
 
 
 def test_flux_mock_datamodule_without_precaching():

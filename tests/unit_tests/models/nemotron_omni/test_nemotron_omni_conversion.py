@@ -41,6 +41,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 )
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -120,6 +121,18 @@ def _mock_omni_hf_config():
     )
 
 
+def _mock_legacy_v2_omni_hf_config():
+    """Represent Nano Omni weights exported before the V3 architecture name."""
+
+    hf_config = _mock_omni_hf_config()
+    hf_config.architectures = ["NemotronH_Nano_VL_V2"]
+    hf_config.model_type = "NemotronH_Nano_VL_V2"
+    del hf_config.sound_config
+    del hf_config.sound_context_token_id
+    hf_config.vision_config.args = {"register_multiple": 10}
+    return hf_config
+
+
 def test_public_nemotron_omni_architecture_is_registered():
     hf_config = _mock_omni_hf_config()
 
@@ -129,6 +142,46 @@ def test_public_nemotron_omni_architecture_is_registered():
     hf_config.architectures = ["NemotronH_Super_Omni_Reasoning_V3"]
     assert AutoBridge.supports(hf_config)
     assert isinstance(get_model_bridge("NemotronH_Super_Omni_Reasoning_V3", hf_config=hf_config), NemotronOmniBridge)
+
+
+def test_legacy_v2_moe_checkpoint_routes_to_canonical_nemotron_omni():
+    hf_config = _mock_legacy_v2_omni_hf_config()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    bridge = get_model_bridge("NemotronH_Nano_VL_V2", hf_config=hf_config)
+    provider = bridge.provider_bridge(hf_pretrained)
+    registry = bridge.mapping_registry()
+
+    assert isinstance(bridge, NemotronVLBridge)
+    assert isinstance(provider, NemotronOmniModelProvider)
+    assert provider.nemotron_omni_contract == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
+    assert provider.image_token_index == 18
+    assert provider.img_start_token_id == 19
+    assert provider.img_end_token_id == 20
+    assert provider.has_sound is False
+    assert provider.separate_video_embedder is True
+    assert provider.temporal_patch_dim == 2
+    assert provider.temporal_ckpt_compat is True
+    video_mapping = registry.hf_to_megatron_lookup(
+        "vision_model.radio_model.model.patch_generator.video_embedder.weight"
+    )
+    assert video_mapping.megatron_param == "vision_model.video_embedder.weight"
+    assert all(not mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
+
+
+def test_dense_legacy_v2_checkpoint_keeps_nemotron_vl_path():
+    hf_config = _mock_legacy_v2_omni_hf_config()
+    del hf_config.llm_config.n_routed_experts
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    bridge = get_model_bridge("NemotronH_Nano_VL_V2", hf_config=hf_config)
+    provider = bridge.provider_bridge(hf_pretrained)
+    registry = bridge.mapping_registry()
+
+    assert isinstance(provider, NemotronVLModelProvider)
+    assert any(mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
 
 
 def test_nemotron_omni_provider_bridge_maps_public_config_fields():

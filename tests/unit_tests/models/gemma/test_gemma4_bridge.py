@@ -23,6 +23,7 @@ from transformers import Gemma4TextConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gemma.gemma3_provider import _is_local_attn_layer
 from megatron.bridge.models.gemma.gemma4_bridge import (
     Gemma4Bridge,
     _infer_attn_pattern,
@@ -188,6 +189,44 @@ class TestGemma4BridgeProviderBridgeMoE:
 
     def test_interleaved_attn_pattern(self, bridge, mock_pretrained_moe):
         assert bridge.provider_bridge(mock_pretrained_moe).interleaved_attn_pattern == (5, 1)
+
+    def test_runtime_preserves_consecutive_full_attention_layers(self, bridge, mock_pretrained_moe):
+        layer_types = ["sliding_attention"] * 3 + ["full_attention"] * 2
+        mock_pretrained_moe.config.num_hidden_layers = len(layer_types)
+        mock_pretrained_moe.config.layer_types = layer_types
+
+        provider = bridge.provider_bridge(mock_pretrained_moe)
+        runtime_layer_types = [
+            "sliding_attention"
+            if _is_local_attn_layer(layer_number, provider.interleaved_attn_pattern)
+            else "full_attention"
+            for layer_number in range(1, provider.num_layers + 1)
+        ]
+
+        assert runtime_layer_types == layer_types
+
+    def test_runtime_preserves_nonperiodic_attention_schedule(self, bridge):
+        layer_types = ["full_attention", "sliding_attention", "full_attention"]
+        hf_config = Gemma4TextConfig(
+            num_hidden_layers=len(layer_types),
+            enable_moe_block=True,
+            num_experts=2,
+            top_k_experts=1,
+            moe_intermediate_size=4,
+            layer_types=layer_types,
+        )
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = hf_config
+
+        provider = bridge.provider_bridge(pretrained)
+        runtime_layer_types = [
+            "sliding_attention"
+            if _is_local_attn_layer(layer_number, provider.interleaved_attn_pattern)
+            else "full_attention"
+            for layer_number in range(1, provider.num_layers + 1)
+        ]
+
+        assert runtime_layer_types == layer_types
 
     def test_logit_softcapping(self, bridge, mock_pretrained_moe):
         assert bridge.provider_bridge(mock_pretrained_moe).final_logit_softcapping == 30.0
@@ -367,7 +406,8 @@ class TestInferAttnPattern:
         assert _infer_attn_pattern(lt) == (3, 2)
 
     def test_global_at_start(self):
-        assert _infer_attn_pattern(["full_attention"] + ["sliding_attention"] * 5) == (0, 1)
+        layer_types = ["full_attention"] + ["sliding_attention"] * 5
+        assert _infer_attn_pattern(layer_types) == layer_types
 
 
 # ===========================================================================
