@@ -278,6 +278,11 @@ def build_train_valid_test_data_loaders(
             "The dataset provider returned multiple validation datasets but "
             "ValidationConfig.multiple_validation_sets is not set."
         )
+    if isinstance(test_ds, list):
+        raise ValueError(
+            "The dataset provider returned a list of test datasets; multiple evaluation sets are "
+            "only supported for the validation split."
+        )
     if cfg.validation.multiple_validation_sets and valid_ds is not None and not isinstance(valid_ds, list):
         valid_ds = [valid_ds]
 

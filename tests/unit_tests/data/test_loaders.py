@@ -499,3 +499,37 @@ def test_multiple_validation_sets_built_in_gpt_builder(_mock_rank, _mock_world_s
     for per_set_loader in valid_dataloader:
         batch = next(iter(per_set_loader))
         assert batch["tokens"].shape[-1] == 8
+
+
+@pytest.mark.unit
+def test_multiple_test_datasets_rejected():
+    """Only the validation split supports multiple sets; a test-slot list fails loudly."""
+
+    @dataclass
+    class MultiTestDatasetProvider(DatasetProvider):
+        def build_datasets(self, context: DatasetBuildContext):
+            return None, None, [object(), object()]
+
+    provider = MultiTestDatasetProvider(dataloader_type="single", num_workers=0, persistent_workers=False)
+    provider.finalize()
+
+    cfg = SimpleNamespace(
+        model=object(),
+        dataset=provider,
+        train=SimpleNamespace(train_samples=4, train_iters=1, global_batch_size=2, num_epochs=None),
+        validation=SimpleNamespace(
+            eval_interval=1,
+            eval_iters=1,
+            eval_global_batch_size=None,
+            eval_at_step_zero=False,
+            multiple_validation_sets=False,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="list of test datasets"):
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+            dp_group=object(),
+        )
