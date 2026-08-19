@@ -114,80 +114,20 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V1 = replace(
     virtual_pipeline_model_parallel_size=8,
     global_batch_size=64,
     cuda_graph_impl="none",
-    cuda_graph_scope=[],
+    cuda_graph_scope="full_iteration",
     recompute_num_layers=1,
 )
 
 
-LLAMA31_405B_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
-    BASE_LLAMA31_405B_CONFIG,
-    num_gpus=128,
-    tensor_model_parallel_size=2,
-    pipeline_model_parallel_size=8,
-    context_parallel_size=1,
-    virtual_pipeline_model_parallel_size=8,
-    global_batch_size=64,
-)
+LLAMA31_405B_PRETRAIN_CONFIG_B300_BF16_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_BF16_V1
+LLAMA31_405B_PRETRAIN_CONFIG_B300_FP8_CS_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_CS_V1
+LLAMA31_405B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_MX_V1
+LLAMA31_405B_PRETRAIN_CONFIG_B300_NVFP4_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V1
 
-
-LLAMA31_405B_PRETRAIN_CONFIG_B300_FP8_CS_V1 = replace(
-    BASE_LLAMA31_405B_CONFIG,
-    num_gpus=128,
-    tensor_model_parallel_size=2,
-    pipeline_model_parallel_size=8,
-    context_parallel_size=1,
-    virtual_pipeline_model_parallel_size=8,
-    global_batch_size=64,
-)
-
-
-LLAMA31_405B_PRETRAIN_CONFIG_B300_FP8_MX_V1 = LLAMA31_405B_PRETRAIN_CONFIG_B300_FP8_CS_V1
-
-LLAMA31_405B_PRETRAIN_CONFIG_B300_NVFP4_V1 = replace(
-    BASE_LLAMA31_405B_CONFIG,
-    num_gpus=128,
-    tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=8,
-    context_parallel_size=2,
-    virtual_pipeline_model_parallel_size=4,
-    global_batch_size=64,
-)
-
-
-LLAMA31_405B_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
-    BASE_LLAMA31_405B_CONFIG,
-    num_gpus=128,
-    tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=8,
-    context_parallel_size=2,
-    virtual_pipeline_model_parallel_size=8,
-    global_batch_size=64,
-)
-
-
-LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_CS_V1 = replace(
-    BASE_LLAMA31_405B_CONFIG,
-    num_gpus=128,
-    tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=8,
-    context_parallel_size=2,
-    virtual_pipeline_model_parallel_size=8,
-    global_batch_size=64,
-)
-
-
-LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_CS_V1
-
-LLAMA31_405B_PRETRAIN_CONFIG_B200_NVFP4_V1 = replace(
-    BASE_LLAMA31_405B_CONFIG,
-    num_gpus=128,
-    tensor_model_parallel_size=4,
-    pipeline_model_parallel_size=16,
-    context_parallel_size=1,
-    virtual_pipeline_model_parallel_size=8,
-    global_batch_size=64,
-    recompute_num_layers=1,
-)
+LLAMA31_405B_PRETRAIN_CONFIG_B200_BF16_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_BF16_V1
+LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_CS_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_CS_V1
+LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_MX_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_MX_V1
+LLAMA31_405B_PRETRAIN_CONFIG_B200_NVFP4_V1 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V1
 
 LLAMA31_405B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     BASE_LLAMA31_405B_CONFIG,
@@ -247,7 +187,6 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = replace(
     num_gpus=256,
     global_batch_size=1536,
     cuda_graph_impl="none",
-    cuda_graph_scope=[],
 )
 
 
@@ -287,6 +226,17 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V2 = replace(
     global_batch_size=1536,
     recompute_num_layers=None,
 )
+
+
+LLAMA31_405B_PRETRAIN_CONFIG_B300_BF16_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_BF16_V2
+LLAMA31_405B_PRETRAIN_CONFIG_B300_FP8_CS_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_CS_V2
+LLAMA31_405B_PRETRAIN_CONFIG_B300_FP8_MX_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_FP8_MX_V2
+LLAMA31_405B_PRETRAIN_CONFIG_B300_NVFP4_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB300_NVFP4_V2
+
+LLAMA31_405B_PRETRAIN_CONFIG_B200_BF16_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_BF16_V2
+LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_CS_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_CS_V2
+LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_MX_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_MX_V2
+LLAMA31_405B_PRETRAIN_CONFIG_B200_NVFP4_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V2
 
 
 LLAMA31_405B_PRETRAIN_CONFIG_VR200_BF16_V2 = LLAMA31_405B_PRETRAIN_CONFIG_GB200_BF16_V2
