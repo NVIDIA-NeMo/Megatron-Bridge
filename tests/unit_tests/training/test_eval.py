@@ -256,6 +256,27 @@ def test_evaluate_and_print_results_dispatches_per_set_index(mock_evaluate, mock
     assert [call.kwargs["valid_set_index"] for call in mock_evaluate.call_args_list] == [0, 1]
 
 
+@patch("megatron.bridge.training.eval.print_rank_last")
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_rejects_scalar_iterator_with_multi_set_flag(mock_evaluate, mock_print_rank_last):
+    """A single (non-list) iterator with multiple_validation_sets set fails fast instead of
+    iterating batches as if they were sets."""
+    state = _make_state(multiple_validation_sets=True)
+
+    with pytest.raises(ValueError, match="not a list"):
+        evaluate_and_print_results(
+            state=state,
+            prefix="iteration 0",
+            forward_step_func=MagicMock(),
+            data_iterator=iter([object()]),
+            model=[MagicMock()],
+            config=SimpleNamespace(),
+            write_to_tensorboard=False,
+        )
+
+    mock_evaluate.assert_not_called()
+
+
 @patch("megatron.bridge.training.eval.is_last_rank", return_value=True)
 @patch("megatron.bridge.training.eval.print_rank_last")
 @patch("megatron.bridge.training.eval.evaluate")

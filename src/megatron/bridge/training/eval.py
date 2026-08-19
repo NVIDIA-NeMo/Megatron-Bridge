@@ -458,6 +458,11 @@ def evaluate_and_print_results(
     # flag, not on the type of data_iterator.
     val_config = state.cfg.validation
     multi_set = val_config.multiple_validation_sets and not is_test
+    if multi_set and not isinstance(data_iterator, list):
+        # Rejects only the scalar misuse; a single VPP iterator is itself a list.
+        raise ValueError(
+            "multiple_validation_sets is set but data_iterator is not a list; pass one iterator per validation set."
+        )
     data_iterators = data_iterator if multi_set else [data_iterator]
 
     set_loss_dict = None
