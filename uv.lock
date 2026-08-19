@@ -29,6 +29,11 @@ overrides = [
 ]
 
 [[manifest.dependency-metadata]]
+name = "fast-hadamard-transform"
+version = "1.1.0"
+requires-dist = ["torch", "packaging", "ninja"]
+
+[[manifest.dependency-metadata]]
 name = "flash-mla"
 version = "1.0.0+b7643bd"
 
