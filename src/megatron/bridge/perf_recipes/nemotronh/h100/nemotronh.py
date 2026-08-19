@@ -287,7 +287,10 @@ def nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        # Fuse mode (inherited moe_permute_fusion_into_hybridep=True) needs matching chunk sizes.
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 128,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
