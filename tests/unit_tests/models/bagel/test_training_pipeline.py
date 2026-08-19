@@ -222,9 +222,13 @@ def test_32gpu_recipe_uses_pure_dp_fsdp_topology():
     assert config.model.pipeline_model_parallel_size == 1
     assert config.model.context_parallel_size == 1
     assert config.model.moe_token_dispatcher_type == "alltoall"
+    assert config.model.recompute_method == "block"
+    assert config.model.recompute_num_layers == 23
     assert config.ddp.use_megatron_fsdp
     assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert not config.ddp.average_in_collective
+    assert not config.ddp.overlap_grad_reduce
+    assert config.ddp.overlap_param_gather
     assert not config.ddp.fsdp_double_buffer
     assert config.checkpoint.ckpt_format == "fsdp_dtensor"
 

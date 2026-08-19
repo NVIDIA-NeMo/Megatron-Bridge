@@ -72,6 +72,10 @@ def bagel_7b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 32
     cfg.dataset.t2i_num_used_data = 40
     cfg.dataset.editing_num_used_data = 40
+    # Saving five of the 28 language layers reduces recompute while retaining H100 memory headroom.
+    cfg.model.recompute_method = "block"
+    cfg.model.recompute_num_layers = 23
+    cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.fsdp_double_buffer = False
     return cfg
 
