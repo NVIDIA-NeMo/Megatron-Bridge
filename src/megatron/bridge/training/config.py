@@ -1299,6 +1299,13 @@ class ConfigContainer(Container):
             self.dataset.multiple_validation_sets = self.validation.multiple_validation_sets
         if self.validation.validation_set_names is not None and not self.validation.multiple_validation_sets:
             raise ValueError("validation_set_names requires multiple_validation_sets to be set.")
+        if self.validation.validation_set_names is not None and len(set(self.validation.validation_set_names)) != len(
+            self.validation.validation_set_names
+        ):
+            raise ValueError(
+                "validation_set_names must be unique: duplicate names collide in logging keys and "
+                "in the per-set loss dict."
+            )
         if self.validation.multiple_validation_sets:
             from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 

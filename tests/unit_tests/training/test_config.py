@@ -607,6 +607,20 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_duplicate_validation_set_names_rejected(self):
+        """Duplicate set names would collide in logging keys and the per-set loss dict."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=create_test_gpt_config()
+        )
+        container.validation.multiple_validation_sets = True
+        container.validation.validation_set_names = ["wiki", "wiki"]
+
+        try:
+            with pytest.raises(ValueError, match="must be unique"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_dataset_side_full_validation_rejected(self):
         """The duplicate full_validation field on the mcore dataset config is rejected too."""
         container, og_ws, cfg_mod = create_test_config_container(
