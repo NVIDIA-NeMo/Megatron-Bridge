@@ -169,6 +169,8 @@ def _canonical_prompt_completion_values(example: Mapping[str, Any]) -> tuple[str
         return None
     prompt = example[_CANONICAL_PROMPT_KEY]
     completion = example[_CANONICAL_COMPLETION_KEY]
+    if prompt is None and completion is None:
+        return None
     if not isinstance(prompt, str) or not isinstance(completion, str):
         raise ValueError("Canonical prompt and completion values must be strings.")
     return prompt, completion
@@ -199,7 +201,7 @@ def normalize_sft_example(
             metadata = {
                 key: value
                 for key, value in row.items()
-                if key not in {_CANONICAL_PROMPT_KEY, _CANONICAL_COMPLETION_KEY}
+                if key not in {*_CONVERSATION_KEYS, _CANONICAL_PROMPT_KEY, _CANONICAL_COMPLETION_KEY}
             }
             return {
                 "conversation": [
@@ -209,7 +211,11 @@ def normalize_sft_example(
                 **metadata,
             }
         conversation = normalize_chat_conversation(row)
-        metadata = {key: value for key, value in row.items() if key not in _CONVERSATION_KEYS}
+        metadata = {
+            key: value
+            for key, value in row.items()
+            if key not in {*_CONVERSATION_KEYS, _CANONICAL_PROMPT_KEY, _CANONICAL_COMPLETION_KEY}
+        }
         # Keep the canonical singular key expected by registered VLM/audio
         # collators; shared text preprocessing accepts it as well.
         return {"conversation": conversation, **metadata}
