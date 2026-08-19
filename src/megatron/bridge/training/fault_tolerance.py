@@ -50,6 +50,7 @@ import os
 import random
 import signal
 import sys
+import tempfile
 import threading
 import time
 from typing import List
@@ -345,8 +346,26 @@ def _update_timeouts(selected_sections: List[str], calc_out_of_section: bool, gl
     )
     if get_rank_safe() == 0:
         rmon_state = rmon_cli.state_dict()
-        with open(ft_state.ft_state_path, "w") as f:
-            json.dump(rmon_state, f)
+        temp_state_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=os.path.dirname(ft_state.ft_state_path),
+                prefix=".ft_state.",
+                delete=False,
+            ) as f:
+                temp_state_path = f.name
+                json.dump(rmon_state, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_state_path, ft_state.ft_state_path)
+            temp_state_path = None
+        finally:
+            if temp_state_path is not None:
+                try:
+                    os.unlink(temp_state_path)
+                except FileNotFoundError:
+                    pass
         print_rank_0(f"FT: updated timeouts saved to {ft_state.ft_state_path}. {rmon_cli.section_timeouts}")
 
 
