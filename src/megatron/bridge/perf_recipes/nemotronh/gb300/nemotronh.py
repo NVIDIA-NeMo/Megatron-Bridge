@@ -588,9 +588,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config() -> ConfigCont
     """Nemotron 3.5 Lightning pretrain: 8× GB300, MXFP8, Megatron FSDP."""
     cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
 
-    # FSDP reduces the model-state footprint enough to use the larger measured
-    # microbatch. Megatron FSDP registers module hooks that Transformer Engine
-    # CUDA graph capture rejects.
+    # Megatron FSDP registers module hooks that Transformer Engine CUDA graph
+    # capture rejects.
     cfg.train.global_batch_size = 384
     cfg.train.micro_batch_size = 3
     cfg.model.cuda_graph_impl = "none"
