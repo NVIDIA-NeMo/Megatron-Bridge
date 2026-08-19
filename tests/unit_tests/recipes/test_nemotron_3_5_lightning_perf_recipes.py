@@ -26,11 +26,18 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
     nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config,
     nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
 )
@@ -51,13 +58,24 @@ _GB200_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
 )
-_GB200_FSDP_RECIPES = (nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,)
+_GB300_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
+)
+_GB_FSDP_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config,
+)
 _NEMOTRON_3_RECIPES = (
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
 )
 _NEMOTRON_3_5_BASE_RECIPE_PAIRS = (
     (
@@ -79,6 +97,18 @@ _NEMOTRON_3_5_BASE_RECIPE_PAIRS = (
     (
         nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
         nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
+    ),
+    (
+        nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
+        nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
+    ),
+    (
+        nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+        nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config,
+    ),
+    (
+        nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
+        nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
     ),
 )
 _NEMOTRON_NANO_PERF_FACTORIES = (
@@ -123,6 +153,22 @@ _NEMOTRON_NANO_PERF_FACTORIES = (
         "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config",
     ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+        "nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config",
+    ),
 )
 
 
@@ -148,7 +194,7 @@ def test_standard_perf_recipes_do_not_expose_mtp_flag(recipe_factory: Callable[[
 
 @pytest.mark.parametrize(
     "recipe_factory",
-    (*_H100_RECIPES, *_GB200_RECIPES, *_GB200_FSDP_RECIPES),
+    (*_H100_RECIPES, *_GB200_RECIPES, *_GB300_RECIPES, *_GB_FSDP_RECIPES),
     ids=lambda recipe: recipe.__name__,
 )
 def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) -> None:
@@ -188,9 +234,17 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     assert cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model
 
 
-def test_gb200_mxfp8_enables_cutedsl_fusion() -> None:
-    """The non-FSDP Lightning recipe enables CutDSL without MoE A2A overlap."""
-    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config()
+@pytest.mark.parametrize(
+    "recipe_factory",
+    (
+        nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
+        nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    ),
+    ids=lambda recipe: recipe.__name__,
+)
+def test_gb_mxfp8_enables_cutedsl_fusion(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """The non-FSDP Lightning GB recipes enable CutDSL without MoE A2A overlap."""
+    cfg = recipe_factory()
 
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
@@ -203,9 +257,10 @@ def test_gb200_mxfp8_enables_cutedsl_fusion() -> None:
     assert cfg.comm_overlap.delay_wgrad_compute is False
 
 
-def test_gb200_mxfp8_fsdp_skips_cutedsl_fusion() -> None:
-    """The Lightning MXFP8 FSDP variant remains outside the CutDSL tuning scope."""
-    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config()
+@pytest.mark.parametrize("recipe_factory", _GB_FSDP_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_gb_mxfp8_fsdp_skips_cutedsl_fusion(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """The Lightning GB MXFP8 FSDP variants remain outside the CutDSL tuning scope."""
+    cfg = recipe_factory()
 
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
     assert "CUDNNFE_CLUSTER_OVERLAP_MARGIN" not in cfg.env_vars
@@ -317,9 +372,26 @@ def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
     assert cfg.env_vars["USE_MNNVL"] == 1
 
 
-def test_gb200_fsdp_perf_recipe_defaults() -> None:
-    """The GB200 FSDP variant retains its measured 8-GPU performance settings."""
-    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config()
+@pytest.mark.parametrize("recipe_factory", _GB300_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_gb300_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """GB300 Nemotron 3.5 Lightning variants retain the established performance topology."""
+    cfg = recipe_factory()
+
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.model.moe_hybridep_num_sms == 16
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.parametrize("recipe_factory", _GB_FSDP_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_gb_fsdp_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """The GB FSDP variants retain their measured 8-GPU performance settings."""
+    cfg = recipe_factory()
 
     assert cfg.train.global_batch_size == 384
     assert cfg.train.micro_batch_size == 3
