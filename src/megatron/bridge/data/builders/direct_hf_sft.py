@@ -166,7 +166,12 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     def _inherit_source_adapter_kwargs(self, split_source: HFDatasetSourceConfig) -> None:
         """Fill unset adapter arguments on another split of the training source."""
         source = self.split_source
-        if source is None or split_source.dataset_name != source.dataset_name or not source.adapter_kwargs:
+        if (
+            source is None
+            or split_source.dataset_name != source.dataset_name
+            or (source.dataset_name is None and split_source.path_or_dataset != source.path_or_dataset)
+            or not source.adapter_kwargs
+        ):
             return
         split_adapter_kwargs = dict(split_source.adapter_kwargs or {})
         for key, value in source.adapter_kwargs.items():
