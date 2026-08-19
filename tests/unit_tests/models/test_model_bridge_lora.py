@@ -759,6 +759,97 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
     assert alpha == 8 and dim == 2 and pp_rank == 0 and vp_stage == 0
 
 
+def test_build_adapter_conversion_tasks_uses_model_process_groups(monkeypatch):
+    bridge = DummyBridge()
+
+    class DummyGroup:
+        def size(self):
+            return 1
+
+        def rank(self):
+            return 0
+
+    pp_group = DummyGroup()
+    tp_group = object()
+    ep_group = object()
+    expert_tp_group = object()
+    pg_collection = SimpleNamespace(pp=pp_group, tp=tp_group, ep=ep_group, expt_tp=expert_tp_group)
+
+    class FakeAdapter:
+        def __init__(self):
+            self.linear_in = SimpleNamespace(weight=torch.ones(2, 2))
+            self.linear_out = SimpleNamespace(weight=torch.ones(2, 2))
+            self.input_is_parallel = True
+            self.base_linear_is_parallel = True
+            self.alpha = 8
+            self.dim = 2
+
+    class FakeModel:
+        def __init__(self):
+            self.config = SimpleNamespace()
+            self.pg_collection = pg_collection
+            param = torch.nn.Parameter(torch.zeros(2, 2))
+            self._params = [
+                ("decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight", param),
+                ("decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight", param),
+            ]
+
+        def named_parameters(self):
+            return self._params
+
+        def named_modules(self):
+            return []
+
+    def fail_global_lookup():
+        raise AssertionError("global process-group state must not be used")
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_pipeline_model_parallel_group",
+        fail_global_lookup,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_pipeline_model_parallel_rank",
+        fail_global_lookup,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.persistent_buffers",
+        lambda *_: [],
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge._megatron_local_name_to_global",
+        lambda *_args, **_kwargs: _args[2],
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        lambda model: model[0] if isinstance(model, list) else model,
+    )
+    monkeypatch.setattr(
+        "torch.distributed.all_gather_object",
+        lambda output, obj, group=None: output.__setitem__(0, obj),
+    )
+    monkeypatch.setattr("torch.distributed.get_rank", lambda group=None: group.rank())
+
+    adapter = FakeAdapter()
+    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: (adapter, None))
+    monkeypatch.setattr(
+        bridge,
+        "mapping_registry",
+        lambda: MegatronMappingRegistry(
+            AutoMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                hf_param="model.layers.*.mlp.gate_proj.weight",
+            )
+        ),
+    )
+
+    tasks = bridge.build_adapter_conversion_tasks([FakeModel()])["decoder.layers.0.mlp.linear_fc1"]
+    for task in (tasks[0].linear_in_task, tasks[0].linear_out_task):
+        assert task.mapping.pp_group is pp_group
+        assert task.mapping._tp_group is tp_group
+        assert task.mapping.ep_group is ep_group
+        assert task.mapping._etp_group is expert_tp_group
+
+
 def test_construct_adapters_names():
     bridge = DummyBridge()
     linear_in, linear_out = bridge._construct_adapters_names("decoder.layers.0.mlp.linear_fc1", None)
@@ -838,7 +929,7 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     )
     monkeypatch.setattr(bridge, "mapping_registry", lambda: registry)
 
-    tasks_by_base = bridge.build_adapter_conversion_tasks([Mock()])
+    tasks_by_base = bridge.build_adapter_conversion_tasks([SimpleNamespace(pg_collection=None)])
     assert "decoder.layers.0.mlp.linear_fc1" in tasks_by_base
     tasks = tasks_by_base["decoder.layers.0.mlp.linear_fc1"]
     assert len(tasks) == 1

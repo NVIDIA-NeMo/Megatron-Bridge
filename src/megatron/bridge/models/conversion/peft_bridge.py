@@ -561,9 +561,9 @@ class MegatronPeftBridge:
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        from megatron.bridge.models.conversion.model_bridge import _megatron_local_name_to_global
+        from megatron.bridge.models.conversion.model_bridge import _get_pp_group, _megatron_local_name_to_global
 
-        pp_group = parallel_state.get_pipeline_model_parallel_group()
+        pp_group = _get_pp_group(megatron_model)
         pp_rank = get_pg_rank(pp_group)
         model_config = unwrap_model(megatron_model)[0].config
         global_param_objects: List[tuple[str, str, bool, bool, bool, int, int, int, int]] = []
@@ -676,11 +676,18 @@ class MegatronPeftBridge:
         tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = defaultdict(list)  # type: ignore[name-defined]
         excluded_prefixes = tuple(exclude_adapter_base_prefixes or ())
 
-        from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+        from megatron.bridge.models.conversion.model_bridge import (
+            WeightConversionTask,
+            _get_pg_collection_from_model,
+            _get_pp_rank,
+        )
 
         # `MegatronModelBridge` mixes in this class and provides `mapping_registry`.
         assert hasattr(self, "mapping_registry"), "MegatronModelBridge must define mapping_registry"
         mapping_registry = self.mapping_registry()  # type: ignore[attr-defined]
+        pg_collection = _get_pg_collection_from_model(megatron_model)
+        mapping_registry.set_process_groups_from_pg_collection(pg_collection)
+        current_pp_rank = None
 
         for (
             global_base_name,
@@ -724,7 +731,9 @@ class MegatronPeftBridge:
 
             linear_in_module, linear_in_weight = None, None
             linear_out_module, linear_out_weight = None, None
-            if parallel_state.get_pipeline_model_parallel_rank() == pp_rank:
+            if current_pp_rank is None:
+                current_pp_rank = _get_pp_rank(megatron_model)
+            if current_pp_rank == pp_rank:
                 adapter, _ = self._get_adapter_wrap_module(local_base_prefix, megatron_model, vp_stage)
                 if isinstance(adapter, ModuleDict):
                     adapter = adapter[adapter_key]
@@ -742,26 +751,30 @@ class MegatronPeftBridge:
                 linear_in_mapping_cls = ReplicatedMapping
                 linear_out_mapping_cls = ReplicatedMapping
 
+            linear_in_mapping = linear_in_mapping_cls(
+                megatron_param=local_linear_in_name,
+                hf_param=hf_linear_in_name,
+            )
+            linear_in_mapping.set_process_groups_from_pg_collection(pg_collection)
             linear_in_task = WeightConversionTask(
                 param_name=local_linear_in_name,
                 global_param_name=global_linear_in_name,
-                mapping=linear_in_mapping_cls(
-                    megatron_param=local_linear_in_name,
-                    hf_param=hf_linear_in_name,
-                ),
+                mapping=linear_in_mapping,
                 pp_rank=pp_rank,
                 vp_stage=vp_stage,
                 megatron_module=linear_in_module,
                 param_weight=linear_in_weight,
             )
 
+            linear_out_mapping = linear_out_mapping_cls(
+                megatron_param=local_linear_out_name,
+                hf_param=hf_linear_out_name,
+            )
+            linear_out_mapping.set_process_groups_from_pg_collection(pg_collection)
             linear_out_task = WeightConversionTask(
                 param_name=local_linear_out_name,
                 global_param_name=global_linear_out_name,
-                mapping=linear_out_mapping_cls(
-                    megatron_param=local_linear_out_name,
-                    hf_param=hf_linear_out_name,
-                ),
+                mapping=linear_out_mapping,
                 pp_rank=pp_rank,
                 vp_stage=vp_stage,
                 megatron_module=linear_out_module,
