@@ -59,6 +59,9 @@ def nemotron_3_nano_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, FP8-MX (alias of GB300)."""
     cfg = _build_nemotron_3_nano_gb300_mxfp8()
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -76,7 +79,9 @@ def nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -145,6 +150,9 @@ def nemotron_3_super_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
 def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, FP8-MX (alias of GB300)."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -162,7 +170,9 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
