@@ -157,6 +157,23 @@ name = "flash-mla"
 version = "1.0.0+b7643bd"
 requires-dist = []
 
+# MCore's `te` extra selects a source-only Transformer Engine revision. Because it is also
+# listed in no-build-isolation-package, uv otherwise compiles it just to inspect metadata
+# while resolving the lock. Keep this in sync with MCore's metadata and TE source pin.
+[[tool.uv.dependency-metadata]]
+name = "transformer-engine"
+version = "2.18.0+e7c550c5"
+requires-dist = [
+    "einops",
+    "importlib-metadata>=1.0",
+    "nvdlfw-inspect",
+    "onnx",
+    "onnxscript",
+    "packaging",
+    "pydantic<2.14",
+    "torch>=2.1",
+]
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }

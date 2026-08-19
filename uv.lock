@@ -32,6 +32,11 @@ overrides = [
 name = "flash-mla"
 version = "1.0.0+b7643bd"
 
+[[manifest.dependency-metadata]]
+name = "transformer-engine"
+version = "2.18.0+e7c550c5"
+requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic<2.14", "torch>=2.1"]
+
 [[package]]
 name = "absl-py"
 version = "2.5.0"
