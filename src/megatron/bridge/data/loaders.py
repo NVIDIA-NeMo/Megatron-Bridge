@@ -453,15 +453,16 @@ def build_train_valid_test_data_loaders(
         else:
             if train_state.consumed_valid_samples_per_set:
                 # The aggregate counter spans the former sets, so no offset is valid for a single
-                # dataset. Restart from zero, as on a set-count change.
+                # dataset. Restart from zero, as on a set-count change. Clear the counters so
+                # later checkpoints are self-consistent single-set state (one-time reset).
                 print_rank_0(
                     "WARNING: checkpoint contains per-set validation counters but "
                     "multiple_validation_sets is disabled; the aggregate offset is not valid for a "
                     "single validation dataset. Restarting validation sampling from offset 0."
                 )
-                valid_consumed_samples = 0
-            else:
-                valid_consumed_samples = train_state.consumed_valid_samples
+                train_state.consumed_valid_samples_per_set = []
+                train_state.consumed_valid_samples = 0
+            valid_consumed_samples = train_state.consumed_valid_samples
         valid_dataloader = _build_eval_test_dataloaders(valid_ds, valid_consumed_samples, val_dataloader_type)
 
     if cfg.validation.eval_iters > 0:

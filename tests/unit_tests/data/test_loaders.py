@@ -403,6 +403,10 @@ def test_disabling_multiple_validation_sets_resets_resume_offset(_mock_rank, _mo
         )
 
     assert next(iter(valid_dataloader))["sample_id"][0].item() == 0
+    # One-time reset: the stale counters are cleared so later checkpoints resume normally
+    # instead of re-triggering the offset-0 fallback forever.
+    assert train_state.consumed_valid_samples_per_set == []
+    assert train_state.consumed_valid_samples == 0
 
 
 @pytest.mark.unit
