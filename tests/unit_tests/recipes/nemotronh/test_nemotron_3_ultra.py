@@ -17,6 +17,7 @@ import importlib
 import pytest
 import torch
 
+import megatron.bridge.recipes as recipes
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config,
@@ -172,6 +173,10 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
 
 @pytest.mark.unit
 def test_gb200_mxfp8_fsdp_pretrain_adopts_execution_config_without_benchmark_policy() -> None:
+    assert recipes.nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config is (
+        nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config
+    )
+
     cfg = nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config()
 
     assert cfg.mixed_precision.bf16 is True
