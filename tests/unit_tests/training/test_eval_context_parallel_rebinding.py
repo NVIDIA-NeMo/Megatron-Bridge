@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import builtins
 from types import SimpleNamespace
 
 import pytest
@@ -75,6 +76,38 @@ def test_eval_cp_context_refreshes_gdn_runtime_shape_metadata(monkeypatch: pytes
         assert gdn.cp_size == 2
         live_feature_width = sum(gdn.in_proj_split_sections) // gdn.cp_size
         torch.split(torch.empty(live_feature_width), gdn.feat_dim_split)
+
+    assert gdn.cp_size == 1
+    assert gdn.config.context_parallel_size == 1
+
+
+@pytest.mark.unit
+def test_eval_cp_context_supports_mcore_without_gdn2(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_import = builtins.__import__
+
+    def _import_without_gdn2(
+        name: str,
+        globals_: dict[str, object] | None = None,
+        locals_: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if name == "megatron.core.ssm.gated_delta_net" and "GatedDeltaNet2" in fromlist:
+            raise ImportError("GatedDeltaNet2 unavailable")
+        return original_import(name, globals_, locals_, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _import_without_gdn2)
+    monkeypatch.setattr(
+        torch.distributed,
+        "get_process_group_ranks",
+        lambda group: list(range(group.size())),
+    )
+    gdn = _make_gdn(cp_size=1)
+    train_pgs = gdn.pg_collection
+    eval_pgs = SimpleNamespace(cp=_FakeProcessGroup(2))
+
+    with eval_cp_context(gdn, eval_pgs, train_pgs):
+        assert gdn.cp_size == 2
 
     assert gdn.cp_size == 1
     assert gdn.config.context_parallel_size == 1
