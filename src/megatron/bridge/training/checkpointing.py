@@ -16,6 +16,7 @@
 
 import contextlib
 import gc
+import inspect
 import os
 import random
 import shutil
@@ -822,6 +823,14 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' "
                 f"does not implement the CheckpointManager protocol."
             )
+
+        try:
+            inspect.signature(manager.save).bind(None, None)
+        except (TypeError, ValueError) as err:
+            raise TypeError(
+                f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' save method "
+                "must accept (ctx, callback_manager)."
+            ) from err
 
         return manager
 
@@ -1769,6 +1778,14 @@ def maybe_save_dataloader_state(
     torch.distributed.barrier(group=pg_collection.dp)
 
     if get_pg_rank(pg_collection.dp) == 0:
+        # A retained Energon generation may outlive its model checkpoint. Replace the generation
+        # before reusing an iteration so rank files from a previous, larger DP world cannot survive.
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            if msc.os.path.isdir(iter_dir):
+                msc.delete(iter_dir, recursive=True)
+        elif os.path.isdir(iter_dir):
+            shutil.rmtree(iter_dir)
         ensure_directory_exists(data_state_save_path)
 
     torch.distributed.barrier(group=pg_collection.dp)
@@ -1803,11 +1820,11 @@ def maybe_load_dataloader_state(
     on *every* rank: each tensor/pipeline/context rank pulls from its own data iterator (e.g.
     ``qwen3_vl`` ``get_batch``), so all of them must be rewound to the saved position.
 
-    Restore failure modes are deliberately loud. If the dataloader state directory is absent
-    entirely, the checkpoint predates dataloader-state saving and the dataloader starts fresh. But
-    if the directory exists while the current rank's state file does not, the data-parallel size
-    almost certainly changed since the checkpoint was saved; rather than silently resume with a
-    different data order, this raises.
+    Restore failure modes distinguish checkpoint generations. If the dataloader state root or the
+    selected iteration is absent, that checkpoint predates dataloader-state saving and the
+    dataloader starts fresh. If the selected iteration exists while the current rank's state file
+    does not, the data-parallel size almost certainly changed since the checkpoint was saved;
+    rather than silently resume with a different data order, this raises.
 
     Restoring is only correct when the task encoder is deterministic per sample (Energon replays the
     samples since the last checkpoint by re-running the pipeline) — see
@@ -1843,8 +1860,13 @@ def maybe_load_dataloader_state(
         print_rank_0(f"no dataloader state under {dataloader_load_path}; dataloader starts from the beginning")
         return
 
-    dp_rank = get_pg_rank(pg_collection.dp)
     iter_dir = get_checkpoint_name(dataloader_load_path, iteration)
+    if not is_dir(iter_dir):
+        # This checkpoint generation predates dataloader-state saving. Start from scratch.
+        print_rank_0(f"no dataloader state for iteration {iteration}; dataloader starts from the beginning")
+        return
+
+    dp_rank = get_pg_rank(pg_collection.dp)
     data_state_load_path = join_paths(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
     if not is_file(data_state_load_path):
         raise RuntimeError(
@@ -2758,6 +2780,7 @@ def _load_checkpoint_from_path(
     # Step 2: Initialize scaffolding
     load_kwargs = {}
     ignore_rng_state = False
+    ignore_optimizer_state = False
     ignore_rerun_state = True
     run_config = None  # Initialize for later use
 
@@ -2876,6 +2899,9 @@ def _load_checkpoint_from_path(
         else:
             gen_sd_optim = None
             gen_sd_opt_param_scheduler = None
+            if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
+                ignore_optimizer_state = True
+                print_rank_0("Optimizer state was not saved in the torch-dist checkpoint; using a fresh optimizer")
 
         # Determine if rerun state will be loaded
         if tp_pp_match and not release and not cfg.checkpoint.finetune and "rerun_state_machine" in state_dict:
@@ -2960,9 +2986,13 @@ def _load_checkpoint_from_path(
                     f"(TP, PP) mismatch after resume ({run_tp_pp} vs {ckpt_tp_pp} from checkpoint): "
                     "RNG state will be ignored"
                 )
-            if cfg.checkpoint.load_optim:
+            checkpoint_saved_optimizer = run_config is None or run_config.get("checkpoint", {}).get("save_optim", True)
+            if cfg.checkpoint.load_optim and checkpoint_saved_optimizer:
                 gen_sd_optim = optimizer
                 gen_sd_opt_param_scheduler = opt_param_scheduler
+            elif cfg.checkpoint.load_optim:
+                ignore_optimizer_state = True
+                print_rank_0("Optimizer state was not saved in the FSDP checkpoint; using a fresh optimizer")
 
         optim_sd_kwargs = dict(
             metadata=_build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, cfg.checkpoint),
@@ -3114,7 +3144,7 @@ def _load_checkpoint_from_path(
     print_rank_0(f" checkpoint version {checkpoint_version}")
 
     # Load optimizer and scheduler
-    if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
+    if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim and not ignore_optimizer_state:
         try:
             if (
                 not skip_load_to_model_and_opt
