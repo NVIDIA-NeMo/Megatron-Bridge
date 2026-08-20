@@ -2624,6 +2624,7 @@ def test_nemotron_omni_llava_collate_checks_temporal_model_expansion_before_trun
             sequence_length=512,
             use_temporal_video_embedder=True,
             patch_dim=16,
+            temporal_video_resize_mode="fixed_512",
         )
 
 
