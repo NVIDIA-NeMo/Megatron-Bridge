@@ -2899,6 +2899,9 @@ def _load_checkpoint_from_path(
         else:
             gen_sd_optim = None
             gen_sd_opt_param_scheduler = None
+            if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
+                ignore_optimizer_state = True
+                print_rank_0("Optimizer state was not saved in the torch-dist checkpoint; using a fresh optimizer")
 
         # Determine if rerun state will be loaded
         if tp_pp_match and not release and not cfg.checkpoint.finetune and "rerun_state_machine" in state_dict:
