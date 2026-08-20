@@ -53,11 +53,12 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
         cfg.model.moe_router_padding_for_quantization = True
-        # The receive buffer is sized at capacity_factor x the ideal token count and every MoE
-        # activation saved for backward inherits that padding. These recipes force-balance the
-        # router, so a few percent of headroom is enough; PagedStashRunner replays the step
-        # dropless and grows the budget if a routing ever exceeds the static budget.
-        cfg.model.moe_expert_rank_capacity_factor = 1.05
+        # Matches the HybridEP parent's 1.5 so this arm differs from its baseline in the dispatcher
+        # alone. The receive buffer is capacity_factor x the ideal token count and every MoE
+        # activation saved for backward inherits that padding, so 1.5 costs memory a tighter factor
+        # would not; PagedStashRunner still replays the step dropless and grows the budget if a
+        # routing ever exceeds it.
+        cfg.model.moe_expert_rank_capacity_factor = 1.5
         cfg.model.moe_paged_stash = True
         cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
         cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0

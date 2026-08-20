@@ -92,8 +92,13 @@ def test_gpt_oss_ncclep_fused_grouped_mlp_is_mxfp8_only(
         assert cfg.model.moe_mlp_glu_interleave_size == 32
         assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
         assert cfg.model.moe_router_padding_for_quantization is True
-        # Static shapes: the fused grouped GEMM consumes device-side per-expert counts.
-        assert cfg.model.moe_expert_rank_capacity_factor == 1.05
+        # Static shapes: the fused grouped GEMM consumes device-side per-expert counts. The factor
+        # tracks the HybridEP parent so this arm differs from its baseline in the dispatcher alone.
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+        assert (
+            cfg.model.moe_expert_rank_capacity_factor
+            == _NCCLEP_TO_PARENT[recipe_factory]().model.moe_expert_rank_capacity_factor
+        )
         assert cfg.model.moe_paged_stash is True
         assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.0
         assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
@@ -136,7 +141,7 @@ def test_gpt_oss_ncclep_matches_parent_outside_the_dispatch_stack(
 
 
 def test_gpt_oss_ncclep_recipes_keep_router_force_load_balancing() -> None:
-    """The 1.05 receive-capacity factor assumes the router is balanced by construction."""
+    """The static receive-capacity factor assumes the router is balanced by construction."""
     for recipe_factory in _NCCLEP_RECIPES:
         cfg = recipe_factory()
         assert cfg.model.moe_router_force_load_balancing is True, recipe_factory.__name__
