@@ -21,6 +21,7 @@ import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion import quant_bridge as quant_bridge_module
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -201,6 +202,53 @@ def test_quantized_stream_uses_model_config_for_tied_embeddings(monkeypatch):
 
     assert list(exported) == []
     assert seen_configs == [model_config]
+
+
+def test_quantized_stream_accumulates_grouped_experts(monkeypatch):
+    class GroupedQuantMapping:
+        is_grouped_export = True
+        ep_size = 1
+
+        def megatron_to_hf_quant(self, weight, *_args):
+            return {
+                "model.layers.0.mlp.experts.down_proj": weight,
+                "model.layers.0.mlp.experts.down_proj_scale_inv": weight + 10,
+            }
+
+    model = types.SimpleNamespace(config=types.SimpleNamespace(num_moe_experts=2))
+    bridge = MegatronModelBridge()
+    monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+    monkeypatch.setattr(bridge, "_with_progress_tracking", lambda tasks, *_args: tasks)
+    monkeypatch.setattr(quant_bridge_module, "unwrap_model", lambda _models: [model])
+
+    tasks = [
+        WeightConversionTask(
+            param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
+            global_param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
+            mapping=GroupedQuantMapping(),
+            megatron_module=types.SimpleNamespace(),
+            param_weight=torch.tensor([[float(expert + 1)]]),
+        )
+        for expert in range(2)
+    ]
+
+    exported = list(
+        bridge.stream_weights_megatron_to_hf_quant(
+            model,
+            types.SimpleNamespace(),
+            quantization_checker=lambda _name: True,
+            quant_fn=lambda weight, _block_size: (weight, weight + 10),
+            conversion_tasks=tasks,
+            show_progress=False,
+        )
+    )
+
+    assert [weight.param_name for weight in exported] == [
+        "model.layers.0.mlp.experts.down_proj",
+        "model.layers.0.mlp.experts.down_proj_scale_inv",
+    ]
+    torch.testing.assert_close(exported[0].weight, torch.tensor([[[1.0]], [[2.0]]]))
+    torch.testing.assert_close(exported[1].weight, torch.tensor([[[11.0]], [[12.0]]]))
 
 
 class TestColumnParallelMappingQuant:
