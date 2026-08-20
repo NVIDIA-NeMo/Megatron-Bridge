@@ -165,7 +165,7 @@ items:
         0-31999 are within DSV4 vocab 0-129279; NullTokenizer is used). The run
         completes 100 steps from random initialisation with finite loss, no skipped or
         NaN iterations, and complete checkpoints at steps 50 and 100. Note: set
-        dataset.num_workers=0 to avoid NCCL pipeline timeout during data-loading on Lyris.
+        dataset.num_workers=0 to avoid an NCCL pipeline timeout during data loading.
 
   sft:
     GB200:
@@ -176,7 +176,7 @@ items:
         context_parallel_size: 2
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config
+        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config
         --step-func dsv4_step
         --pretrained_checkpoint work/models/deepseek-v4-flash-megatron
         --save_dir work/model-verification/dsv4-flash/sft-ref
@@ -253,7 +253,7 @@ items:
         context_parallel_size: 2
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config
+        --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config
         --step-func dsv4_step
         --pretrained_checkpoint work/models/deepseek-v4-flash-megatron
         --save_dir work/model-verification/dsv4-flash/sft-ref
