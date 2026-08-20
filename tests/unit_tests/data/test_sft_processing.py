@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import sentencepiece
+from datasets import Dataset, concatenate_datasets
 from megatron.core.tokenizers.megatron_tokenizer import MegatronTokenizer
 
 from megatron.bridge.data.base import DatasetBuildContext
@@ -23,6 +24,7 @@ from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     PromptCompletionSFTPreprocessingConfig,
     normalize_sft_example,
+    normalize_sft_examples,
     tokenize_prompt_completion_example,
 )
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
@@ -189,6 +191,24 @@ def test_chat_preprocessing_promotes_canonical_pair():
         ],
         "id": 7,
     }
+
+
+def test_chat_preprocessing_accepts_nullable_union_columns():
+    paired = Dataset.from_list([{"prompt": "question", "completion": "answer"}])
+    chat = Dataset.from_list([{"conversation": [{"role": "assistant", "content": "response"}]}])
+    rows = adapt_hf_dataset(concatenate_datasets([paired, chat]), adapter_name=None)
+
+    normalized = normalize_sft_examples(rows, ChatSFTPreprocessingConfig())
+
+    assert normalized == [
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        {"conversation": [{"role": "assistant", "content": "response"}]},
+    ]
 
 
 def test_prompt_completion_rejects_structured_conversation():

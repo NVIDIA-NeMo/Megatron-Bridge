@@ -1541,7 +1541,8 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ImportError("megatron.bridge.training is not available.")
 
         # Export ckpt performs on CPU
-        with temporary_distributed_context(backend="gloo"):
+        model_context = nullcontext() if dist.is_initialized() else temporary_distributed_context(backend="gloo")
+        with model_context:
             # Load the Megatron model
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
 
