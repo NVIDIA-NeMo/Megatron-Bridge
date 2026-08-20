@@ -3,12 +3,10 @@
 
 title: nemotron_3_ultra_550b_a55b
 summary: >
-  Nemotron 3 Ultra 550B-A55B has public large-scale BF16 library pretraining
-  recipes for H100 and GB200. They adopt memory-feasible large-scale execution
-  settings while retaining natural routing, numerical checks, and the library
-  training objective. The exact 256-H100 real-data support run is verified;
-  GB200 remains pending its exact real-data run. The model also has public
-  packed full-SFT and packed PEFT recipes. The separately scoped
+  Nemotron 3 Ultra 550B-A55B has public packed full-SFT and packed PEFT recipes.
+  Its large-scale BF16 library pretraining workflows remain unverified because
+  the previously recorded 256-GPU recipe names are not exported on current
+  main. The separately scoped
   pretrain_performance.GB200 and pretrain_performance.GB300 are verified with
   their canonical 256-GPU MXFP8 recipes.
   Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip is
@@ -28,8 +26,7 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [pretrain]
-      unverified: [sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
       unsupported: [sft_long_context]
     GB200:
       unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
@@ -168,72 +165,30 @@ items:
 
   pretrain:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features: {}
-      command: >
-        ./scripts/training/train.sh --nodes 32 --gpus-per-node 8
-        --recipe nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config
-        --mode pretrain --dataset megatron-indexed --max_steps 10 --wait
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-h100
-        tokenizer.tokenizer_type=SentencePieceTokenizer
-        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
-        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
-        scheduler.lr_decay_iters=100
-        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
-        validation.eval_iters=0 validation.eval_interval=0
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        logger.log_interval=1 logger.log_throughput=true
-        logger.log_device_memory_used=true
-        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-h100-resolved.yaml
-        logger.tensorboard_dir=null
-      last_verified: 2026-08-14
+      command: null
+      last_verified: null
       metrics:
-        initial_loss: 11.23305
-        final_loss: 9.966628
-        last_10_steps_step_time_ms_avg: 388228.080
-        last_10_steps_model_tflops_per_gpu_avg: 14.670
-        last_10_steps_tokens_per_second_per_gpu_avg: 42.202
-        peak_allocated_memory_gib: 41.934
-        peak_reserved_memory_gib: 45.188
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        On 2026-08-14 the public 256-H100 BF16 library recipe completed exactly
-        10 bounded real RedPajama2 head_01 optimizer steps at
-        TP4/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192.
-        Megatron-FSDP, natural expert routing, standard all-to-all dispatch,
-        FP32 gradient communication, numerical checks, all-108-layer block
-        recompute, and the library recipe's optimizer and constant-LR schedule
-        remained active. Every keyed step had finite loss, throughput, and
-        gradient norm with zero skipped and zero NaN iterations. Peak allocated
-        and reserved memory remained 41.934 and 45.188 GiB. This verifies
-        bounded functional pretraining support, not full convergence or tuned
-        performance. Checkpoint resume remains a separate unverified item
-        because one Ultra checkpoint exceeds the available verification quota.
+        H100 functional pretraining remains unverified until a currently
+        exported public recipe completes a bounded run with all applicable
+        numerical and artifact checks.
 
     GB200:
       status: unverified
       precision: bf16
       enabled_features:
         moe_dispatcher: hybridep
-      command: >
-        ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
-        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config
-        --mode pretrain --dataset megatron-indexed --max_steps 100 --wait
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200
-        tokenizer.tokenizer_type=SentencePieceTokenizer
-        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
-        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
-        checkpoint.load=null checkpoint.save=null
-        validation.eval_iters=0 validation.eval_interval=0
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        logger.log_interval=1 logger.log_throughput=true
-        logger.log_device_memory_used=true
-        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-resolved.yaml
-        logger.tensorboard_dir=null
+      command: null
       last_verified: null
       metrics:
         initial_loss: null
@@ -242,13 +197,9 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        The public 256-GB200 BF16 library recipe must complete all 100 bounded
-        public RedPajama2 head_01 optimizer steps at TP2/PP4/CP1/EP64/ETP1,
-        GBS/MBS 256/1, and sequence length 8192. HybridEP, natural expert
-        routing, FP32 gradient reduction, targeted fused expert-MLP activation
-        offload, numerical checks, and the library recipe's optimizer and
-        constant-LR schedule must remain active. Loss must remain finite with
-        no skipped or NaN iterations and all five metrics.
+        GB200 functional pretraining remains unverified until a currently
+        exported public recipe completes a bounded run with all applicable
+        numerical and artifact checks.
 
   sft:
     H100:
@@ -556,10 +507,7 @@ items:
       precision: bf16
       enabled_features:
         megatron_fsdp: optim_grads_params
-      command: >
-        ./scripts/training/train.sh --nodes 32 --gpus-per-node 8
-        --recipe nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config
-        --max_steps 50 --wait
+      command: null
       last_verified: null
       metrics:
         initial_loss: null
@@ -570,30 +518,6 @@ items:
         peak_reserved_memory_gib: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        On 256 H100 GPUs, the exact canonical mock-data FSDP recipe must
-        complete all 50 optimizer steps at TP4/PP1/CP1/EP64/ETP1,
-        GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
-        NaN iterations, all five training metrics, and peak allocated and
-        reserved memory. BF16, standard all-to-all MoE dispatch, fine-grained
-        parameter gather, FP32 fused weight-gradient accumulation and FP32
-        gradient communication, and Megatron-FSDP must remain active with
-        full-layer block recompute for all 108 main HybridStack layers
-        (54 Mamba/expert pairs) while leaving MTP on its normal backward
-        path, a one-element FSDP
-        communication unit that disables
-        next-bucket parameter prefetch, and the native expandable-segment
-        allocator. The training MLP path must use sixty-four sequence chunks to
-        bound the grouped-MoE working set, and the Mamba SSD path must use
-        256-token chunks to bound its chunk-state working set. The generic
-        hybrid-stack checkpoint must preserve every MTP latent-projection fused
-        gradient; the unsupported specialized whole-MoE replay path must not be
-        used. TE grouped linears and fused weighted squared-ReLU must remain active
-        through the non-op-fuser path. Eight CUDA device connections must retain
-        Megatron-FSDP stream independence while bounding Hopper driver resources.
-        256-KiB NCCL pair buffers must bound communication workspace, with no CPU
-        activation offload.
-        Gradient and loss NaN checks must remain enabled.
-        Standard all-to-all avoids replaying stateful HybridEP communication;
-        disabling the operation fuser retains the H100-supported TE grouped
-        linears and fused activation outside the SM100-only fused
-        implementation.
+        No canonical public H100 Megatron-FSDP recipe is currently exported;
+        this workflow remains unverified until one is available and completes
+        all applicable verification gates.
