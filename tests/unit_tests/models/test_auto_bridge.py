@@ -2035,6 +2035,42 @@ class TestAutoBridge:
                     strict=False,
                 )
 
+    @pytest.mark.skipif(
+        not torch.distributed.is_available() or not torch.distributed.is_gloo_available(),
+        reason="Gloo is required to exercise caller-owned distributed state",
+    )
+    def test_export_ckpt_preserves_existing_distributed_context(self, tmp_path):
+        """Export reuses distributed state owned by its caller."""
+        bridge = AutoBridge.__new__(AutoBridge)
+        mock_megatron_model = [Mock()]
+
+        assert not torch.distributed.is_initialized()
+        torch.distributed.init_process_group(
+            backend="gloo",
+            init_method=f"file://{tmp_path / 'distributed_init'}",
+            rank=0,
+            world_size=1,
+        )
+        try:
+            with (
+                patch.object(bridge, "load_megatron_model", return_value=mock_megatron_model) as mock_load,
+                patch.object(bridge, "save_hf_pretrained") as mock_save,
+            ):
+                bridge.export_ckpt("./megatron_checkpoint", "./hf_export")
+
+            assert torch.distributed.is_initialized()
+            mock_load.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
+            mock_save.assert_called_once_with(
+                mock_megatron_model,
+                "./hf_export",
+                show_progress=True,
+                source_path=None,
+                strict=False,
+            )
+        finally:
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
+
     def test_export_ckpt_with_kwargs(self):
         """Test export_ckpt with custom kwargs."""
         # Setup mocks
