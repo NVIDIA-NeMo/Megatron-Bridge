@@ -105,6 +105,9 @@ class NemotronOmniEnergonTaskEncoderConfig:
     ``temporal_video_resize_mode="processor"`` is the default and applies the
     public aspect-preserving video grid with exact per-tubelet token counts.
     ``"fixed_512"`` preserves the previous square policy for compatibility.
+    ``temporal_video_prompt_mode="hf_vllm"`` uses source-frame timestamps and
+    does not add an implicit prose prefix; ``"legacy_bridge"`` preserves the
+    former prompt text.
     ``collapse_image_tokens=True`` selects the deprecated LLaVA compatibility
     path and cannot be combined with processor-driven temporal sizing. The
     default ``False`` selects the canonical expanded-sequence path.
@@ -120,6 +123,7 @@ class NemotronOmniEnergonTaskEncoderConfig:
     use_temporal_video_embedder: bool
     patch_dim: int
     temporal_video_resize_mode: Literal["fixed_512", "processor"] = "processor"
+    temporal_video_prompt_mode: Literal["hf_vllm", "legacy_bridge"] = "hf_vllm"
     collapse_image_tokens: bool = False
     trust_remote_code: bool | None = None
 
@@ -135,6 +139,8 @@ class NemotronOmniEnergonTaskEncoderConfig:
             raise ValueError("video_fps must be greater than 0.")
         if self.temporal_video_resize_mode not in ("fixed_512", "processor"):
             raise ValueError("temporal_video_resize_mode must be either 'fixed_512' or 'processor'.")
+        if self.temporal_video_prompt_mode not in ("hf_vllm", "legacy_bridge"):
+            raise ValueError("temporal_video_prompt_mode must be either 'hf_vllm' or 'legacy_bridge'.")
         if self.collapse_image_tokens and self.temporal_video_resize_mode == "processor":
             raise ValueError(
                 "temporal_video_resize_mode='processor' requires the canonical expanded-sequence contract."
@@ -319,6 +325,7 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
         use_temporal_video_embedder=task_config.use_temporal_video_embedder,
         patch_dim=task_config.patch_dim,
         temporal_video_resize_mode=task_config.temporal_video_resize_mode,
+        temporal_video_prompt_mode=task_config.temporal_video_prompt_mode,
         collapse_image_tokens=task_config.collapse_image_tokens,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,

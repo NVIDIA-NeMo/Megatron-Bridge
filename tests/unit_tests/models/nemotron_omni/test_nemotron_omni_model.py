@@ -581,10 +581,9 @@ def test_text_containing_the_placeholder_trains_with_a_caller_mask():
         media_token_validity_mask=torch.tensor([[True, False, True]]),
     )
 
-    # The spared placeholder keeps the language embedding the forward gave it.
-    # That embedding is of token id 0, because the forward masks media tokens
-    # out of the text before embedding regardless of the validity mask.
-    assert torch.equal(output, torch.tensor([[[7.0] * 3], [[0.0] * 3], [[9.0] * 3]]))
+    # The spared placeholder keeps its own language embedding instead of being
+    # zeroed like a position that will receive a projected media feature.
+    assert torch.equal(output, torch.tensor([[[7.0] * 3], [[18.0] * 3], [[9.0] * 3]]))
 
 
 def test_caller_mask_takes_precedence_over_the_derived_one():
