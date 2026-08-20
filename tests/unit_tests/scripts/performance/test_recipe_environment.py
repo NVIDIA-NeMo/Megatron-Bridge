@@ -735,8 +735,8 @@ def test_flat_ncclep_override_removes_hybridep_environment():
         context_parallel_size=None,
         expert_model_parallel_size=None,
         nccl_ub=None,
-        model_family_name="qwen",
-        model_recipe_name="qwen3_30b_a3b",
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_nano",
         task="pretrain",
     )
 
@@ -780,8 +780,8 @@ def test_flat_non_ncclep_backends_keep_hybridep_environment(dispatcher_backend):
         context_parallel_size=None,
         expert_model_parallel_size=None,
         nccl_ub=None,
-        model_family_name="qwen",
-        model_recipe_name="qwen3_30b_a3b",
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_nano",
         task="pretrain",
     )
 
