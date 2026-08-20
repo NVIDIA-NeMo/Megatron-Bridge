@@ -283,7 +283,6 @@ def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatc
             video_nframes=8,
             use_temporal_video_embedder=True,
             patch_dim=16,
-            temporal_video_resize_mode="processor",
         ),
         enable_in_batch_packing=True,
     )

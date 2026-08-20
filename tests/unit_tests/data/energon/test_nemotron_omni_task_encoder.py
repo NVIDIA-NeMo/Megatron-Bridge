@@ -314,6 +314,7 @@ def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
         video_fps=2.0,
         use_temporal_video_embedder=True,
         patch_dim=16,
+        temporal_video_resize_mode="fixed_512",
         pad_to_multiple_of=1,
         collapse_image_tokens=True,
     )
@@ -365,6 +366,7 @@ def test_energon_single_frame_video_uses_temporal_embedder_contract(monkeypatch)
         video_fps=2.0,
         use_temporal_video_embedder=True,
         patch_dim=16,
+        temporal_video_resize_mode="fixed_512",
         pad_to_multiple_of=1,
         collapse_image_tokens=True,
     )
@@ -399,7 +401,37 @@ def test_energon_raw_video_bytes_remain_one_owned_video_per_sample():
     assert encoded.example["videos"] == [raw_video]
 
 
-def test_energon_temporal_video_defaults_to_expanded_contract(monkeypatch):
+def test_energon_temporal_video_defaults_to_processor_mode(monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    processor = _Processor([[1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21, PAD_AND_END_ID]])
+    processor.image_processor = _AspectVideoImageProcessor()
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=512,
+        temporal_patch_size=2,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        pad_to_multiple_of=1,
+    )
+    encoded = encoder.encode_sample(
+        _sample(
+            [{"role": "user", "content": [{"type": "video"}]}],
+            videos=[[Image.new("RGB", (160, 90)), Image.new("RGB", (160, 90))]],
+        )
+    )
+
+    batch = encoder.batch([encoded])
+
+    assert encoder.temporal_video_resize_mode == "processor"
+    assert int((batch.input_ids == IMAGE_TOKEN_ID).sum().item()) == 252
+    assert batch.attention_mask.sum().item() == 257
+    assert batch.imgs_sizes.tolist() == [[384, 672], [384, 672]]
+    assert batch.num_frames.tolist() == [2]
+
+
+def test_energon_temporal_video_fixed_512_compatibility_mode(monkeypatch):
     from PIL import Image
 
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
@@ -415,6 +447,7 @@ def test_energon_temporal_video_defaults_to_expanded_contract(monkeypatch):
         temporal_patch_size=2,
         use_temporal_video_embedder=True,
         patch_dim=16,
+        temporal_video_resize_mode="fixed_512",
         pad_to_multiple_of=1,
     )
     encoded = encoder.encode_sample(
@@ -428,6 +461,7 @@ def test_energon_temporal_video_defaults_to_expanded_contract(monkeypatch):
 
     assert int((batch.input_ids == IMAGE_TOKEN_ID).sum().item()) == 256
     assert batch.attention_mask.sum().item() == 261
+    assert batch.imgs_sizes.tolist() == [[512, 512], [512, 512]]
     assert batch.num_frames.tolist() == [2]
 
 
@@ -607,6 +641,7 @@ def test_energon_llava_multimodal_packing_uses_post_merge_boundaries(monkeypatch
         seq_length=768,
         enable_in_batch_packing=True,
         use_temporal_video_embedder=True,
+        temporal_video_resize_mode="fixed_512",
         in_batch_packing_pad_to_multiple_of=8,
         pad_to_multiple_of=1,
         collapse_image_tokens=True,
@@ -712,6 +747,7 @@ def test_hf_and_energon_packing_are_identical_for_image_video_audio(monkeypatch,
         "in_batch_packing_pad_to_multiple_of": 8,
         "use_temporal_video_embedder": True,
         "temporal_patch_size": 2,
+        "temporal_video_resize_mode": "fixed_512",
         "num_mel_bins": 4,
         "pad_to_multiple_of": 1,
     }
@@ -729,6 +765,7 @@ def test_hf_and_energon_packing_are_identical_for_image_video_audio(monkeypatch,
         in_batch_packing_pad_to_multiple_of=8,
         use_temporal_video_embedder=True,
         temporal_patch_size=2,
+        temporal_video_resize_mode="fixed_512",
         num_mel_bins=4,
         pad_to_multiple_of=1,
         collapse_image_tokens=collapse_image_tokens,
@@ -781,6 +818,7 @@ def test_energon_llava_temporal_video_refuses_unsafe_sequence_truncation(monkeyp
         processor=_Processor([[1, IMG_START_ID, 97, IMG_END_ID, IMG_START_ID, 97, IMG_END_ID, 21, PAD_AND_END_ID]]),
         seq_length=6,
         use_temporal_video_embedder=True,
+        temporal_video_resize_mode="fixed_512",
         pad_to_multiple_of=1,
         collapse_image_tokens=True,
     )

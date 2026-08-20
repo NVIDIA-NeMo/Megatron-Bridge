@@ -129,7 +129,8 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
     are performed by the canonical expanded-sequence collator for both
     Direct-HF and Energon datasets. ``collapse_image_tokens=True`` selects the
     deprecated LLaVA compatibility contract. Processor-driven temporal video
-    resizing is an Energon option and requires the canonical contract.
+    resizing is the default and requires the canonical contract;
+    ``fixed_512`` retains the previous square policy for compatibility.
     """
 
     def __init__(
@@ -144,7 +145,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         video_nframes: int = 8,
         use_temporal_video_embedder: bool = False,
         patch_dim: int = 16,
-        temporal_video_resize_mode: Literal["fixed_512", "processor"] = "fixed_512",
+        temporal_video_resize_mode: Literal["fixed_512", "processor"] = "processor",
         pad_to_max_length: bool = False,
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,

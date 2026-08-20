@@ -877,8 +877,9 @@ def nemotron_omni_collate_fn(
     token sequence, with one image placeholder for every projected feature.
     ``temporal_video_resize_mode="processor"`` uses the image processor's
     aspect-preserving video grid and derives each tubelet's placeholder count
-    from its returned size metadata. The default ``"fixed_512"`` preserves the
-    prior square policy and Direct-HF behavior.
+    from its returned size metadata. Direct collator calls retain the
+    ``"fixed_512"`` default; the Energon task encoder opts into processor mode
+    by default.
     Use :func:`nemotron_omni_llava_collate_fn` for the legacy LLaVA
     collapse/expand contract.
     """

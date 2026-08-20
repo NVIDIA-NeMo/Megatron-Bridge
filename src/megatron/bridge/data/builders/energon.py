@@ -102,9 +102,9 @@ class NemotronOmniEnergonTaskEncoderConfig:
 
     ``visual_keys`` is retained for configuration compatibility, but Omni owns
     its visual input contract and supports only ``("pixel_values",)``.
-    ``temporal_video_resize_mode="processor"`` applies the public
-    aspect-preserving video grid and exact per-tubelet token counts; the
-    ``"fixed_512"`` default preserves the previous square policy.
+    ``temporal_video_resize_mode="processor"`` is the default and applies the
+    public aspect-preserving video grid with exact per-tubelet token counts.
+    ``"fixed_512"`` preserves the previous square policy for compatibility.
     ``collapse_image_tokens=True`` selects the deprecated LLaVA compatibility
     path and cannot be combined with processor-driven temporal sizing. The
     default ``False`` selects the canonical expanded-sequence path.
@@ -119,7 +119,7 @@ class NemotronOmniEnergonTaskEncoderConfig:
     video_nframes: int
     use_temporal_video_embedder: bool
     patch_dim: int
-    temporal_video_resize_mode: Literal["fixed_512", "processor"] = "fixed_512"
+    temporal_video_resize_mode: Literal["fixed_512", "processor"] = "processor"
     collapse_image_tokens: bool = False
     trust_remote_code: bool | None = None
 
