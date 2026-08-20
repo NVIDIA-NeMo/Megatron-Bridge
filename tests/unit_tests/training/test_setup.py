@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -25,6 +26,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.checkpointing import load_checkpoint
@@ -556,8 +558,41 @@ class TestBuildDistributedModel:
 
         result = _build_distributed_model(cfg, pg_collection=MagicMock())
 
+        mock_provider.finalize.assert_called_once_with()
         mock_provider.provide_distributed_model.assert_called_once()
         assert result == mock_dist_model
+
+    def test_finalizes_heterogeneous_provider_before_entering_distributed_model_build(self):
+        """Finalize deferred heterogeneous fields before entering provider model construction."""
+        block = {
+            "attention": {"no_op": False, "replace_with_linear": False, "num_query_groups": 4},
+            "mlp": {"no_op": False, "replace_with_linear": False, "ffn_hidden_size": 256},
+        }
+        provider = LlamaNemotronHeterogeneousProvider(
+            num_layers=1,
+            hidden_size=64,
+            num_attention_heads=4,
+            heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block]}),
+        )
+        expected_model = [MagicMock()]
+
+        def provide_distributed_model(**_kwargs):
+            assert len(provider.per_block_parameters) == 1
+            return expected_model
+
+        provider.provide_distributed_model = Mock(side_effect=provide_distributed_model)
+        cfg = SimpleNamespace(
+            model=provider,
+            ddp=MagicMock(),
+            optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
+            dist=SimpleNamespace(use_megatron_fsdp=False, use_torch_fsdp2=False),
+            rng=SimpleNamespace(data_parallel_random_init=False),
+        )
+
+        result = _build_distributed_model(cfg, pg_collection=MagicMock())
+
+        provider.provide_distributed_model.assert_called_once()
+        assert result == expected_model
 
 
 def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():

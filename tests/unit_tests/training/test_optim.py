@@ -22,6 +22,7 @@ import pytest
 import torch
 from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKey
 
+from megatron.bridge.peft.lora import get_lora_plus_config_overrides
 from megatron.bridge.training.config import OptimizerConfig as BridgeOptimizerConfig
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.optim import (
@@ -761,3 +762,98 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
             synced = sync_hybrid_device_optimizer_fp32_master_copies(distrib_opt)
 
         assert synced is True
+
+
+class TestGetLoraPlusConfigOverrides:
+    """Tests for ``get_lora_plus_config_overrides`` (LoRA+ A/B LR split)."""
+
+    def _make_config(self, lr=3e-5, min_lr=0.0, **kwargs):
+        return OptimizerConfig(optimizer="adam", lr=lr, min_lr=min_lr, bf16=True, **kwargs)
+
+    def _get_override(self, overrides, name):
+        """Find a ParamKey by its ``name`` glob and return its ParamGroupOverride."""
+        for key, val in overrides.items():
+            if (
+                getattr(key, "name", None) == name
+                and not getattr(key, "predicate", None)
+                and not getattr(key, "with_name_predicate", None)
+                and not getattr(key, "attr", None)
+            ):
+                return val
+        return None
+
+    @pytest.mark.parametrize("ratio", [0, -1, -0.5])
+    def test_non_positive_ratio_raises(self, ratio):
+        with pytest.raises(ValueError, match="lora_plus_ratio must be > 0"):
+            get_lora_plus_config_overrides(self._make_config(), ratio)
+
+    def test_a_keeps_base_lr(self):
+        overrides = get_lora_plus_config_overrides(self._make_config(lr=3e-5, min_lr=1e-6), 16.0)
+        a = self._get_override(overrides, "*.linear_in.weight")
+        assert a is not None
+        assert a["max_lr"] == 3e-5
+        assert a["min_lr"] == 1e-6
+
+    def test_b_is_ratio_times_base_lr(self):
+        overrides = get_lora_plus_config_overrides(self._make_config(lr=3e-5, min_lr=1e-6), 16.0)
+        b = self._get_override(overrides, "*.linear_out.weight")
+        assert b is not None
+        assert b["max_lr"] == pytest.approx(3e-5 * 16)
+        assert b["min_lr"] == pytest.approx(1e-6 * 16)
+
+    def test_none_min_lr_defaults_to_zero(self):
+        cfg = OptimizerConfig(optimizer="adam", lr=3e-5, min_lr=None, bf16=True)
+        overrides = get_lora_plus_config_overrides(cfg, 16.0)
+        a = self._get_override(overrides, "*.linear_in.weight")
+        b = self._get_override(overrides, "*.linear_out.weight")
+        assert a["min_lr"] == 0.0
+        assert b["min_lr"] == 0.0
+        assert b["max_lr"] == pytest.approx(3e-5 * 16)
+
+    def test_b_schedule_is_ratio_scaled_copy_of_a(self):
+        """B's max_lr/min_lr are both exactly ratio x A's — the whole schedule scales."""
+        ratio = 8.0
+        overrides = get_lora_plus_config_overrides(self._make_config(lr=5e-5, min_lr=2e-6), ratio)
+        a = self._get_override(overrides, "*.linear_in.weight")
+        b = self._get_override(overrides, "*.linear_out.weight")
+        assert b["max_lr"] / a["max_lr"] == pytest.approx(ratio)
+        assert b["min_lr"] / a["min_lr"] == pytest.approx(ratio)
+
+    def test_ratio_one_keeps_equal_lr(self):
+        """ratio == 1.0 still produces valid overrides with A == B (no-op split)."""
+        overrides = get_lora_plus_config_overrides(self._make_config(lr=3e-5, min_lr=0.0), 1.0)
+        a = self._get_override(overrides, "*.linear_in.weight")
+        b = self._get_override(overrides, "*.linear_out.weight")
+        assert a["max_lr"] == b["max_lr"] == 3e-5
+        assert a["min_lr"] == b["min_lr"] == 0.0
+
+    def test_preserves_standard_bias_wd_override(self):
+        """The standard bias/1-D wd_mult=0.0 override is preserved alongside LoRA+."""
+        overrides = get_lora_plus_config_overrides(self._make_config(), 16.0)
+        wd_skips = [v for v in overrides.values() if v.get("wd_mult") == 0.0]
+        assert wd_skips, "standard wd_mult=0.0 override should be preserved"
+
+    def test_preserves_decoupled_lr_override(self):
+        """A configured decoupled_lr is preserved by get_standard_config_overrides."""
+        cfg = self._make_config(decoupled_lr=1e-4, decoupled_min_lr=1e-5)
+        overrides = get_lora_plus_config_overrides(cfg, 16.0)
+        # The decoupled entry is keyed by attr, not name.
+        decoupled = [v for k, v in overrides.items() if getattr(k, "attr", None)]
+        assert decoupled, "decoupled_lr override should be preserved"
+        assert decoupled[0]["max_lr"] == 1e-4
+
+    def test_returns_param_key_keyed_mapping(self):
+        """Result is keyed by ParamKey; values are dict-like (ParamGroupOverride is a TypedDict)."""
+        overrides = get_lora_plus_config_overrides(self._make_config(), 16.0)
+        assert all(isinstance(k, ParamKey) for k in overrides)
+        assert all(isinstance(v, dict) for v in overrides.values())
+        # Only the LoRA A/B entries carry the LR fields; standard entries may not.
+        assert self._get_override(overrides, "*.linear_in.weight")["max_lr"] is not None
+        assert self._get_override(overrides, "*.linear_out.weight")["max_lr"] is not None
+
+    def test_only_two_lora_name_globs_added(self):
+        """Exactly two name-glob entries are added: linear_in and linear_out."""
+        overrides = get_lora_plus_config_overrides(self._make_config(), 16.0)
+        name_keys = [k for k in overrides if getattr(k, "name", None) and not getattr(k, "attr", None)]
+        names = {k.name for k in name_keys}
+        assert {"*.linear_in.weight", "*.linear_out.weight"}.issubset(names)
