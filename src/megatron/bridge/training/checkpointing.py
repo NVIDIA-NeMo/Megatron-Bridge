@@ -16,6 +16,7 @@
 
 import contextlib
 import gc
+import inspect
 import os
 import random
 import shutil
@@ -822,6 +823,14 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' "
                 f"does not implement the CheckpointManager protocol."
             )
+
+        try:
+            inspect.signature(manager.save).bind(None, None)
+        except (TypeError, ValueError) as err:
+            raise TypeError(
+                f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' save method "
+                "must accept (ctx, callback_manager)."
+            ) from err
 
         return manager
 

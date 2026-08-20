@@ -4555,7 +4555,7 @@ class TestCheckpointManager:
                 self.checkpoint_config = checkpoint_config
                 self.initialized = True
 
-            def save(self, _ctx):
+            def save(self, _ctx, _callback_manager):
                 pass
 
             def load(self, _ctx):
@@ -4576,6 +4576,30 @@ class TestCheckpointManager:
             assert isinstance(manager, CustomTestManager)
             assert manager.checkpoint_config is config
             assert manager.initialized is True
+
+    def test_create_checkpoint_manager_rejects_incompatible_save_signature(self):
+        """Test custom managers must accept the callback manager used by training saves."""
+
+        class CustomTestManager:
+            def __init__(self, _checkpoint_config):
+                pass
+
+            def save(self, _ctx):
+                pass
+
+            def load(self, _ctx):
+                return (0, 0)
+
+            def finalize_async_saves(self, _state, blocking=False, terminate=False):
+                pass
+
+        with patch("importlib.import_module") as mock_import:
+            mock_module = Mock(CustomTestManager=CustomTestManager)
+            mock_import.return_value = mock_module
+            config = CheckpointConfig(custom_manager_class="megatron.bridge.test.CustomTestManager")
+
+            with pytest.raises(TypeError, match="save"):
+                create_checkpoint_manager(config)
 
     def test_default_checkpoint_manager_init(self):
         """Test DefaultCheckpointManager initialization."""
