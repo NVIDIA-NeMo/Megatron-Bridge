@@ -59,8 +59,12 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
         # would not; PagedStashRunner still replays the step dropless and grows the budget if a
         # routing ever exceeds it.
         cfg.model.moe_expert_rank_capacity_factor = 1.5
+        # The stash pool is sized independently of the capacity factor, so it is a variable of its
+        # own. Track the HybridEP parent's 1.2 / 1.0 rather than undersizing the pool here, which
+        # would make this arm look cheaper on memory for a reason that has nothing to do with the
+        # dispatcher.
         cfg.model.moe_paged_stash = True
-        cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
+        cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
         cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     else:
         # BF16 has no CuTe DSL fused grouped MLP. Forcing the op fuser here makes TE reject

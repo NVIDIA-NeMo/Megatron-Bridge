@@ -87,21 +87,26 @@ def test_gpt_oss_ncclep_fused_grouped_mlp_is_mxfp8_only(
     cfg = recipe_factory()
 
     if "fp8mx" in recipe_factory.__name__:
+        parent = _NCCLEP_TO_PARENT[recipe_factory]().model
         assert cfg.model.moe_grouped_gemm is True
         assert cfg.model.use_transformer_engine_op_fuser is True
         assert cfg.model.moe_mlp_glu_interleave_size == 32
         assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
         assert cfg.model.moe_router_padding_for_quantization is True
-        # Static shapes: the fused grouped GEMM consumes device-side per-expert counts. The factor
-        # tracks the HybridEP parent so this arm differs from its baseline in the dispatcher alone.
-        assert cfg.model.moe_expert_rank_capacity_factor == 1.5
-        assert (
-            cfg.model.moe_expert_rank_capacity_factor
-            == _NCCLEP_TO_PARENT[recipe_factory]().model.moe_expert_rank_capacity_factor
-        )
         assert cfg.model.moe_paged_stash is True
-        assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.0
+        # Static shapes: the fused grouped GEMM consumes device-side per-expert counts. Both the
+        # receive budget and the capacity-factor-independent stash pool track the HybridEP parent,
+        # so this arm differs from its baseline in the dispatcher alone. Pinning the literals as
+        # well keeps an accidental change to both sides at once from passing unnoticed.
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+        assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
         assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+        for field in (
+            "moe_expert_rank_capacity_factor",
+            "moe_paged_stash_buffer_size_factor_cuda",
+            "moe_paged_stash_buffer_size_factor_cpu",
+        ):
+            assert getattr(cfg.model, field) == getattr(parent, field), field
     else:
         assert cfg.model.use_transformer_engine_op_fuser is False
         assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
