@@ -219,6 +219,17 @@ def test_prompt_completion_rejects_structured_conversation():
         )
 
 
+def test_prompt_completion_honors_explicit_chat_named_text_column():
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="messages",
+        completion_column="answer",
+    )
+    row = {"messages": "question", "answer": "answer"}
+    adapted = adapt_hf_dataset([row], adapter_name=None)[0]
+
+    assert normalize_sft_example(adapted, preprocessing) == row
+
+
 def test_prompt_completion_tokenizes_separately_and_masks_prompt():
     tokenizer = _Tokenizer()
     preprocessing = PromptCompletionSFTPreprocessingConfig(
