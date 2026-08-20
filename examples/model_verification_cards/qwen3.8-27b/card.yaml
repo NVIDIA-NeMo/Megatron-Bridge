@@ -191,6 +191,7 @@ items:
         final_loss: 5.000320
         last_10_steps_step_time_ms_avg: 39373.700
         last_10_steps_model_tflops_per_gpu_avg: 35.640
+        last_10_steps_tokens_per_second_per_gpu_avg: 208.058
       expected_result: >
         The 16-GB200 projection-only MockVLM pretrain completed exactly 20
         deterministic steps at TP4/PP4, sequence length 4096, and MBS2/GBS32.
@@ -237,6 +238,7 @@ items:
         final_loss: 1.429567
         last_10_steps_step_time_ms_avg: 24160.490
         last_10_steps_model_tflops_per_gpu_avg: 58.010
+        last_10_steps_tokens_per_second_per_gpu_avg: 339.066
       expected_result: >
         The 16-GB200 run completed exactly 100 full-SFT MedPix steps at
         TP4/PP4, MBS4/GBS32, deterministic mode, and one-layer full-uniform
@@ -328,6 +330,7 @@ items:
         final_loss: 1.378064
         last_10_steps_step_time_ms_avg: 8164.790
         last_10_steps_model_tflops_per_gpu_avg: 362.530
+        last_10_steps_tokens_per_second_per_gpu_avg: 2006.665
       expected_result: >
         The 16-GB200 run completed exactly 20 full-SFT steps at
         TP4/PP2/CP2, MBS4/GBS32, 8192 tokens, deferred processor-native
@@ -372,6 +375,7 @@ items:
         final_loss: 1.558339
         last_10_steps_step_time_ms_avg: 74048.550
         last_10_steps_model_tflops_per_gpu_avg: 75.790
+        last_10_steps_tokens_per_second_per_gpu_avg: 442.520
       expected_result: >
         The four-GB200 run completed exactly 100 deterministic MedPix LoRA
         steps at TP4/PP1, MBS4/GBS32, and one-layer full-uniform activation
@@ -412,6 +416,7 @@ items:
         final_loss: 5.000320
         last_10_steps_step_time_ms_avg: 45121.610
         last_10_steps_model_tflops_per_gpu_avg: 35.050
+        last_10_steps_tokens_per_second_per_gpu_avg: 181.554
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
@@ -454,6 +459,7 @@ items:
         final_loss: 5.071018
         last_10_steps_step_time_ms_avg: 1139.500
         last_10_steps_model_tflops_per_gpu_avg: 1230.090
+        last_10_steps_tokens_per_second_per_gpu_avg: 7189.118
         peak_allocated_memory_gib: 173.760
       expected_result: >
         On 16 GB200 GPUs in one NVL72 domain, the exact canonical BF16
