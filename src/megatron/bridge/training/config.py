@@ -126,6 +126,15 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    validate_precision_aware_optimizer_runtime_state: bool = False
+    """Validate that Transformer Engine applies the requested optimizer-state precision.
+
+    Enable this for recipes whose verification contract depends on exact
+    precision-aware Adam state. The default remains disabled because existing
+    recipes may intentionally rely on Transformer Engine normalizing legacy
+    optimizer-state combinations.
+    """
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 

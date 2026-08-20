@@ -3371,6 +3371,15 @@ class TestCheckpointConfig:
         mock_file_exists.assert_called_once_with("/path/to/missing/checkpoint")
 
 
+class TestOptimizerConfig:
+    """Tests for Bridge optimizer configuration."""
+
+    def test_precision_aware_runtime_validation_defaults_off(self):
+        optim_cfg = create_test_optimizer_config()
+
+        assert optim_cfg.validate_precision_aware_optimizer_runtime_state is False
+
+
 class TestMixedPrecisionConsistencyValidation:
     """Tests for _validate_mixed_precision_consistency function.
 

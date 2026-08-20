@@ -145,6 +145,7 @@ def nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.validate_precision_aware_optimizer_runtime_state = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
     cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.store_param_remainders = False
@@ -222,6 +223,7 @@ def nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config() -> ConfigCont
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.validate_precision_aware_optimizer_runtime_state = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
     cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.store_param_remainders = False
@@ -371,6 +373,7 @@ def nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.validate_precision_aware_optimizer_runtime_state = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
     cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.store_param_remainders = False

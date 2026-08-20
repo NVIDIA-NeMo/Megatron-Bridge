@@ -110,7 +110,8 @@ def setup_optimizer(
             pg_collection=pg_collection,
         )
 
-    _validate_precision_aware_optimizer_runtime_state(optimizer, optimizer_config)
+    if getattr(optimizer_config, "validate_precision_aware_optimizer_runtime_state", False):
+        _validate_precision_aware_optimizer_runtime_state(optimizer, optimizer_config)
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
     return optimizer, scheduler

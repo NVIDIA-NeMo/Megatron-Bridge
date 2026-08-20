@@ -22,6 +22,7 @@ import pytest
 import torch
 from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKey
 
+from megatron.bridge.training.config import OptimizerConfig as BridgeOptimizerConfig
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.optim import (
     _validate_precision_aware_optimizer_runtime_state,
@@ -156,6 +157,37 @@ class TestSetupOptimizerMuP:
         )
 
         mock_get_model_config.assert_called_once_with(model1)
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_precision_aware_runtime_validation_is_opt_in(self, enabled: bool):
+        from megatron.bridge.training.optim import setup_optimizer
+
+        model, model_config = self._make_model_mock(use_mup=False)
+        optimizer = MagicMock()
+        optimizer_config = BridgeOptimizerConfig(
+            optimizer="adam",
+            lr=1e-3,
+            min_lr=1e-5,
+            bf16=True,
+            validate_precision_aware_optimizer_runtime_state=enabled,
+        )
+
+        with (
+            patch("megatron.bridge.training.optim.get_model_config", return_value=model_config),
+            patch("megatron.bridge.training.optim.get_megatron_optimizer", return_value=optimizer),
+            patch("megatron.bridge.training.optim._get_scheduler"),
+            patch("megatron.bridge.training.optim._validate_precision_aware_optimizer_runtime_state") as validate,
+        ):
+            setup_optimizer(
+                optimizer_config=optimizer_config,
+                scheduler_config=self._make_scheduler_config(),
+                model=model,
+            )
+
+        if enabled:
+            validate.assert_called_once_with(optimizer, optimizer_config)
+        else:
+            validate.assert_not_called()
 
 
 class _FakeHDO:
