@@ -59,7 +59,6 @@ def _make_nemotron_omni_energon_dataset(
             use_temporal_video_embedder=True,
             patch_dim=16,
             temporal_video_resize_mode="processor",
-            temporal_video_prompt_mode="hf_vllm",
             trust_remote_code=True,
         ),
         enable_in_batch_packing=False,

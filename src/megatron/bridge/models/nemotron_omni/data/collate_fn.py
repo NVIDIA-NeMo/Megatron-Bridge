@@ -218,43 +218,23 @@ def _video_frames(payload: Any, *, video_fps: float, video_nframes: int) -> tupl
     )
 
 
-def _legacy_sampled_fps(metadata: VideoMetadata, *, fallback_fps: float) -> float:
-    """Reconstruct the former effective sampled FPS for prompt compatibility."""
-    source_fps = float(metadata.fps or 0)
-    frame_indices = metadata.frames_indices
-    if source_fps > 0 and frame_indices is not None and len(frame_indices) > 1:
-        sampled_duration = (int(frame_indices[-1]) - int(frame_indices[0])) / source_fps
-        if sampled_duration > 0:
-            return (len(frame_indices) - 1) / sampled_duration
-    return fallback_fps
-
-
 def _temporal_video_frame_labels(
     num_frames: int,
     *,
     temporal_patch_size: int,
     metadata: VideoMetadata,
-    fallback_fps: float,
-    prompt_mode: Literal["hf_vllm", "legacy_bridge"],
 ) -> list[str]:
-    """Build one HF/vLLM-compatible label per temporal tubelet."""
-    if prompt_mode not in ("hf_vllm", "legacy_bridge"):
-        raise ValueError("temporal_video_prompt_mode must be either 'hf_vllm' or 'legacy_bridge'.")
-
+    """Build one source-timestamped label per temporal tubelet."""
     source_fps = float(metadata.fps or 0)
     frame_indices = metadata.frames_indices
     frame_duration_ms = int(1000.0 / source_fps) if source_fps > 0 else None
-    sampled_fps = _legacy_sampled_fps(metadata, fallback_fps=fallback_fps)
     labels: list[str] = []
     for frame_start in range(0, num_frames, temporal_patch_size):
         parts: list[str] = []
         for offset in range(min(temporal_patch_size, num_frames - frame_start)):
             frame_position = frame_start + offset
             prefix = "Frame" if offset == 0 else "frame"
-            if prompt_mode == "legacy_bridge":
-                timestamp = frame_position / sampled_fps
-                parts.append(f"{prefix} {frame_position + 1} sampled at {timestamp:.2f} seconds")
-            elif frame_duration_ms is not None and frame_indices is not None and frame_position < len(frame_indices):
+            if frame_duration_ms is not None and frame_indices is not None and frame_position < len(frame_indices):
                 timestamp = int(frame_indices[frame_position]) * frame_duration_ms / 1000.0
                 parts.append(f"{prefix} {frame_position + 1} sampled at {timestamp:.2f} seconds")
             elif source_fps > 0:
@@ -328,7 +308,6 @@ def _prepare_temporal_rows(
     video_nframes: int,
     patch_dim: int,
     temporal_video_resize_mode: Literal["fixed_512", "processor"],
-    temporal_video_prompt_mode: Literal["hf_vllm", "legacy_bridge"],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], torch.Tensor, list[int]]:
     """Build row-local temporal prompts and one packed all-frame vision tensor."""
     if temporal_patch_size < 1:
@@ -337,11 +316,6 @@ def _prepare_temporal_rows(
         raise ValueError(
             "temporal_video_resize_mode must be either 'fixed_512' or 'processor', "
             f"got {temporal_video_resize_mode!r}."
-        )
-    if temporal_video_prompt_mode not in ("hf_vllm", "legacy_bridge"):
-        raise ValueError(
-            "temporal_video_prompt_mode must be either 'hf_vllm' or 'legacy_bridge', "
-            f"got {temporal_video_prompt_mode!r}."
         )
     frame_height = frame_width = VISION_FRAME_SIZE
     token_rows: list[torch.Tensor] = []
@@ -384,13 +358,11 @@ def _prepare_temporal_rows(
                         )
                         if not frames:
                             raise ValueError("Nemotron Omni temporal video content decoded to zero frames.")
-                        video_lines = ["This is a video:"] if temporal_video_prompt_mode == "legacy_bridge" else []
+                        video_lines: list[str] = []
                         frame_labels = _temporal_video_frame_labels(
                             len(frames),
                             temporal_patch_size=temporal_patch_size,
                             metadata=video_metadata,
-                            fallback_fps=video_fps,
-                            prompt_mode=temporal_video_prompt_mode,
                         )
                         for label in frame_labels:
                             video_lines.append(label + COMPACT_IMAGE_PLACEHOLDER)
@@ -1084,7 +1056,6 @@ def nemotron_omni_collate_fn(
     use_temporal_video_embedder: bool = False,
     patch_dim: int = 16,
     temporal_video_resize_mode: Literal["fixed_512", "processor"] = "fixed_512",
-    temporal_video_prompt_mode: Literal["hf_vllm", "legacy_bridge"] = "hf_vllm",
     collapse_image_tokens: bool = False,
 ) -> dict[str, Any]:
     """Build one model-ready Omni batch from either HF or Energon examples.
@@ -1095,9 +1066,8 @@ def nemotron_omni_collate_fn(
     aspect-preserving video grid and derives each tubelet's placeholder count
     from its returned size metadata. Direct collator calls retain the
     ``"fixed_512"`` default; the Energon task encoder opts into processor mode
-    by default. ``temporal_video_prompt_mode="hf_vllm"`` emits the reference
-    frame labels without an implicit prose prefix; ``"legacy_bridge"`` retains
-    the previous prefix and sampled-ordinal timestamps.
+    by default. Video frame labels use source-frame timestamps and do not add
+    an implicit prose prefix.
     Use :func:`nemotron_omni_llava_collate_fn` for the legacy LLaVA
     collapse/expand contract.
     """
@@ -1139,7 +1109,6 @@ def nemotron_omni_collate_fn(
             video_nframes=video_nframes,
             patch_dim=patch_dim,
             temporal_video_resize_mode=temporal_video_resize_mode,
-            temporal_video_prompt_mode=temporal_video_prompt_mode,
         )
         use_per_image_token_counts = False
     else:

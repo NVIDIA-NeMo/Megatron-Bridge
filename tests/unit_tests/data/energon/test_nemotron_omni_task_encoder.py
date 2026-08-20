@@ -351,19 +351,7 @@ def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize(
-    ("prompt_mode", "expected_timestamps", "has_legacy_prefix"),
-    [
-        ("hf_vllm", ("0.00", "0.53", "1.02"), False),
-        ("legacy_bridge", ("0.00", "0.52", "1.03"), True),
-    ],
-)
-def test_energon_temporal_video_prompt_mode_uses_owned_source_metadata(
-    monkeypatch,
-    prompt_mode,
-    expected_timestamps,
-    has_legacy_prefix,
-):
+def test_energon_temporal_video_prompt_uses_owned_source_metadata(monkeypatch):
     from PIL import Image
 
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
@@ -392,7 +380,6 @@ def test_energon_temporal_video_prompt_mode_uses_owned_source_metadata(
         use_temporal_video_embedder=True,
         patch_dim=16,
         temporal_video_resize_mode="fixed_512",
-        temporal_video_prompt_mode=prompt_mode,
         pad_to_multiple_of=1,
         collapse_image_tokens=True,
     )
@@ -407,18 +394,16 @@ def test_energon_temporal_video_prompt_mode_uses_owned_source_metadata(
         encoder.batch([encoded])
 
     rendered_video = processor.tokenizer.conversations[0][0]["content"]
-    assert ("This is a video:" in rendered_video) is has_legacy_prefix
-    for frame_number, timestamp in enumerate(expected_timestamps, start=1):
+    assert "This is a video:" not in rendered_video
+    for frame_number, timestamp in enumerate(("0.00", "0.53", "1.02"), start=1):
         assert f"{frame_number} sampled at {timestamp} seconds" in rendered_video
 
 
-def test_hf_vllm_video_labels_omit_timestamps_without_metadata():
+def test_video_labels_omit_timestamps_without_metadata():
     labels = omni_collate._temporal_video_frame_labels(
         3,
         temporal_patch_size=2,
         metadata=VideoMetadata(total_num_frames=3, fps=None, duration=None, frames_indices=None),
-        fallback_fps=1.0,
-        prompt_mode="hf_vllm",
     )
 
     assert labels == ["Frame 1 and frame 2: ", "Frame 3: "]
@@ -500,7 +485,6 @@ def test_energon_temporal_video_defaults_to_processor_mode(monkeypatch):
     batch = encoder.batch([encoded])
 
     assert encoder.temporal_video_resize_mode == "processor"
-    assert encoder.temporal_video_prompt_mode == "hf_vllm"
     assert int((batch.input_ids == IMAGE_TOKEN_ID).sum().item()) == 252
     assert batch.attention_mask.sum().item() == 257
     assert batch.imgs_sizes.tolist() == [[384, 672], [384, 672]]

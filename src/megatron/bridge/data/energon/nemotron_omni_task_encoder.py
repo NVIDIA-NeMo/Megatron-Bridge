@@ -155,7 +155,6 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         use_temporal_video_embedder: bool = False,
         patch_dim: int = 16,
         temporal_video_resize_mode: Literal["fixed_512", "processor"] = "processor",
-        temporal_video_prompt_mode: Literal["hf_vllm", "legacy_bridge"] = "hf_vllm",
         pad_to_max_length: bool = False,
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
@@ -182,7 +181,6 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         self.use_temporal_video_embedder = use_temporal_video_embedder
         self.patch_dim = patch_dim
         self.temporal_video_resize_mode = temporal_video_resize_mode
-        self.temporal_video_prompt_mode = temporal_video_prompt_mode
         self.collapse_image_tokens = collapse_image_tokens
 
     def collate_fn(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -204,7 +202,6 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
             use_temporal_video_embedder=self.use_temporal_video_embedder,
             patch_dim=self.patch_dim,
             temporal_video_resize_mode=self.temporal_video_resize_mode,
-            temporal_video_prompt_mode=self.temporal_video_prompt_mode,
         )
 
     def batch(self, samples: list[HFEnergonSample]) -> NemotronOmniTaskBatch:
