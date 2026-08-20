@@ -194,10 +194,12 @@ class _FakeFusedAdam(torch.optim.Optimizer):
         param: torch.nn.Parameter,
         state_name: str,
         skip_unscale: bool = False,
+        *,
+        multiplier: float = 1.0,
     ) -> torch.Tensor:
         del skip_unscale
         self.get_unscaled_state_calls += 1
-        return self.state[param][state_name].float()
+        return self.state[param][state_name].float() * multiplier
 
 
 class _FakeParamRange:
@@ -275,6 +277,43 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
 
         assert inner.get_unscaled_state_calls == 2
 
+    def test_forwards_positional_and_keyword_arguments(self):
+        """The wrapper stays compatible when TE extends its accessor signature."""
+        distributed, inner, param = self._distributed_optimizer()
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True):
+                state = inner.get_unscaled_state(param, "exp_avg", True, multiplier=3.0)
+
+        torch.testing.assert_close(state, torch.full((4,), 3.0))
+
+    def test_rejects_non_tensor_state_and_restores_instance_method(self):
+        """TE return-contract drift fails clearly without leaking the patch."""
+        distributed, inner, param = self._distributed_optimizer()
+        original_instance_method = MagicMock(return_value="not a tensor")
+        inner.get_unscaled_state = original_instance_method
+
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            pytest.raises(TypeError, match="must return a torch.Tensor"),
+        ):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True):
+                inner.get_unscaled_state(param, "exp_avg")
+
+        assert inner.__dict__["get_unscaled_state"] is original_instance_method
+
+    def test_rejects_missing_te_state_accessor(self):
+        """An incompatible TE API fails before checkpoint construction begins."""
+        distributed, inner, _ = self._distributed_optimizer()
+        inner.get_unscaled_state = None
+
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            pytest.raises(RuntimeError, match=r"FusedAdam\.get_unscaled_state\(\).*callable"),
+        ):
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True):
+                pass
+
     @pytest.mark.parametrize("incompatibility", ["fp32", "cpu_offload", "fsdp", "stub"])
     def test_does_not_patch_incompatible_optimizer(self, incompatibility: str):
         state_dtype = torch.float32 if incompatibility == "fp32" else torch.bfloat16
@@ -333,6 +372,59 @@ class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:
         ):
             with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True):
                 raise RuntimeError("save failed")
+
+        assert "get_unscaled_state" not in inner.__dict__
+
+    @pytest.mark.run_only_on("gpu")
+    def test_real_te_fused_adam_stages_state_and_restores_method(self):
+        """The pinned TE precision-aware optimizer returns CPU checkpoint state."""
+        te_optimizers = pytest.importorskip("transformer_engine.pytorch.optimizers")
+        fused_adam_class = te_optimizers.FusedAdam
+        param = torch.nn.Parameter(torch.zeros(4, dtype=torch.bfloat16, device="cuda"))
+        inner = fused_adam_class(
+            [param],
+            master_weights=True,
+            master_weight_dtype=torch.float16,
+            exp_avg_dtype=torch.bfloat16,
+            exp_avg_sq_dtype=torch.bfloat16,
+            use_decoupled_grad=True,
+        )
+        inner.initialize_state(param, store_param_remainders=False)
+        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
+        distributed.config.use_precision_aware_optimizer = True
+
+        assert "get_unscaled_state" not in inner.__dict__
+        with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True) as patched:
+            portable_state = next(iter(inner.state_dict()["state"].values()))
+            assert patched == 1
+            assert portable_state
+            assert all(state.device.type == "cpu" for state in portable_state.values())
+
+        assert "get_unscaled_state" not in inner.__dict__
+        assert inner.get_unscaled_state(param, "exp_avg").device.type == "cuda"
+
+    @pytest.mark.run_only_on("gpu")
+    def test_real_te_fused_adam_all_fp32_state_is_not_patched(self):
+        """The real TE optimizer keeps its native path when no expansion is needed."""
+        te_optimizers = pytest.importorskip("transformer_engine.pytorch.optimizers")
+        fused_adam_class = te_optimizers.FusedAdam
+        param = torch.nn.Parameter(torch.zeros(4, dtype=torch.bfloat16, device="cuda"))
+        inner = fused_adam_class(
+            [param],
+            master_weights=True,
+            master_weight_dtype=torch.float32,
+            exp_avg_dtype=torch.float32,
+            exp_avg_sq_dtype=torch.float32,
+            use_decoupled_grad=True,
+        )
+        inner.initialize_state(param, store_param_remainders=False)
+        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
+        distributed.config.use_precision_aware_optimizer = True
+
+        with memory_efficient_precision_aware_optimizer_state_checkpointing(distributed, enabled=True) as patched:
+            native_state = next(iter(inner.state_dict()["state"].values()))
+            assert patched == 0
+            assert all(state.device.type == "cuda" for state in native_state.values())
 
         assert "get_unscaled_state" not in inner.__dict__
 

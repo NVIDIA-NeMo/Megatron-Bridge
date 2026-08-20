@@ -139,6 +139,23 @@ def _get_te_fused_adam_class() -> type[torch.optim.Optimizer] | None:
     return cast(type[torch.optim.Optimizer], FusedAdam)
 
 
+def _cpu_staging_get_unscaled_state(
+    fallback: Callable[..., object],
+) -> Callable[..., torch.Tensor]:
+    """Wrap a TE state accessor without depending on its call signature."""
+
+    def _get_unscaled_state_on_cpu(*args: object, **kwargs: object) -> torch.Tensor:
+        state = fallback(*args, **kwargs)
+        if not isinstance(state, torch.Tensor):
+            raise TypeError(
+                "Transformer Engine FusedAdam.get_unscaled_state() must return a torch.Tensor "
+                f"for CPU checkpoint staging, but returned {type(state).__name__}."
+            )
+        return state.cpu()
+
+    return _get_unscaled_state_on_cpu
+
+
 @contextmanager
 def memory_efficient_precision_aware_optimizer_state_checkpointing(
     optimizer: MegatronOptimizer | None,
@@ -196,21 +213,15 @@ def memory_efficient_precision_aware_optimizer_state_checkpointing(
             ):
                 continue
 
-            original_get_unscaled_state: Callable[..., torch.Tensor] = inner.get_unscaled_state
-
-            def _get_unscaled_state_on_cpu(
-                fused_adam: torch.optim.Optimizer,
-                param: torch.nn.Parameter,
-                state_name: str,
-                skip_unscale: bool = False,
-                *,
-                _fallback: Callable[..., torch.Tensor] = original_get_unscaled_state,
-            ) -> torch.Tensor:
-                del fused_adam
-                return _fallback(param, state_name, skip_unscale).cpu()
+            original_get_unscaled_state = getattr(inner, "get_unscaled_state", None)
+            if not callable(original_get_unscaled_state):
+                raise RuntimeError(
+                    "CPU checkpoint staging requires Transformer Engine FusedAdam.get_unscaled_state() "
+                    "to be callable. The installed Transformer Engine checkpoint API is incompatible."
+                )
 
             previous_instance_method = inner.__dict__.get("get_unscaled_state", missing_method)
-            setattr(inner, "get_unscaled_state", MethodType(_get_unscaled_state_on_cpu, inner))
+            setattr(inner, "get_unscaled_state", _cpu_staging_get_unscaled_state(original_get_unscaled_state))
             patched.append((inner, previous_instance_method))
 
         if patched:
