@@ -157,7 +157,7 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
 
 
 def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
-    """Return a pre-training config for Qwen3.5-VL 27B (dense)."""
+    """Return language-and-projector pretraining for Qwen3.5-VL 27B (dense)."""
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-27B"
@@ -168,7 +168,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.freeze_language_model = True
+    cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096

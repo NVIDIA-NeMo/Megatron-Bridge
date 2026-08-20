@@ -644,11 +644,11 @@ def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.sequence_parallel is False
     assert cfg.model.calculate_per_token_loss is True
 
-    assert cfg.model.freeze_language_model is True
+    assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is False
     assert cfg.train.global_batch_size == 32
-    assert cfg.train.micro_batch_size == 4
+    assert cfg.train.micro_batch_size == 2
 
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_method is None
@@ -1039,7 +1039,8 @@ def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
-    assert cfg.model.freeze_language_model is True
+    expected_language_freeze = recipe_func is not _qwen35_vl_module.qwen35_vl_27b_pretrain_mock_config
+    assert cfg.model.freeze_language_model is expected_language_freeze
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is False
 
@@ -1090,6 +1091,9 @@ def test_qwen35_vl_27b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.pipeline_dtype is not None
     assert cfg.model.expert_model_parallel_size == 1
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
 
 
 def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):

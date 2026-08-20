@@ -29,7 +29,7 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
-    """Return Qwen3.5-VL 27B projector pretraining for sixteen GB200 GPUs.
+    """Return Qwen3.5-VL 27B language-and-projector pretraining for sixteen GB200 GPUs.
 
     This keeps the dense pretraining objective and trainable-parameter contract
     from the H100 recipe while using the measured GB200 execution layout. In
@@ -40,8 +40,8 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     cfg = qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config()
 
     # TP2 leaves enough memory headroom for cold Gated DeltaNet autotuning
-    # while PP1 removes pipeline bubbles. With DP8 and MBS4, GBS32 executes as
-    # one microbatch per rank; TP1/MBS2 exhausts GB200 memory during autotuning.
+    # while PP1 removes pipeline bubbles. Full language-tower training requires
+    # MBS2; MBS4 exceeds GB200 memory during the first language forward.
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -51,11 +51,10 @@ def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
     cfg.model.calculate_per_token_loss = True
 
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 2
 
-    # The projector-only workload fits comfortably without activation
-    # recompute on GB200. Recompute repeats the expensive Gated DeltaNet
-    # forward kernels and materially reduces sustained throughput.
+    # MBS2 fits full language-tower training without repeating the expensive
+    # GDN recurrence or dense MLP.
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
