@@ -83,6 +83,7 @@ class NemotronOmniTaskBatch(HFEnergonBatch):
     imgs_sizes: torch.Tensor | None = None
     num_frames: torch.Tensor | None = None
     num_image_tiles: torch.Tensor | None = None
+    media_token_validity_mask: torch.Tensor | None = None
 
     def __init__(
         self,
@@ -93,7 +94,15 @@ class NemotronOmniTaskBatch(HFEnergonBatch):
     ) -> None:
         omni_fields = {
             name: kwargs.pop(name, None)
-            for name in ("num_patches", "sound_clips", "sound_length", "imgs_sizes", "num_frames", "num_image_tiles")
+            for name in (
+                "num_patches",
+                "sound_clips",
+                "sound_length",
+                "imgs_sizes",
+                "num_frames",
+                "num_image_tiles",
+                "media_token_validity_mask",
+            )
         }
         if visual_inputs is not None and visual_tensors is not None:
             raise ValueError("Specify only one of visual_inputs or legacy visual_tensors.")
@@ -146,6 +155,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         use_temporal_video_embedder: bool = False,
         patch_dim: int = 16,
         temporal_video_resize_mode: Literal["fixed_512", "processor"] = "processor",
+        temporal_video_prompt_mode: Literal["hf_vllm", "legacy_bridge"] = "hf_vllm",
         pad_to_max_length: bool = False,
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
@@ -172,6 +182,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         self.use_temporal_video_embedder = use_temporal_video_embedder
         self.patch_dim = patch_dim
         self.temporal_video_resize_mode = temporal_video_resize_mode
+        self.temporal_video_prompt_mode = temporal_video_prompt_mode
         self.collapse_image_tokens = collapse_image_tokens
 
     def collate_fn(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -193,6 +204,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
             use_temporal_video_embedder=self.use_temporal_video_embedder,
             patch_dim=self.patch_dim,
             temporal_video_resize_mode=self.temporal_video_resize_mode,
+            temporal_video_prompt_mode=self.temporal_video_prompt_mode,
         )
 
     def batch(self, samples: list[HFEnergonSample]) -> NemotronOmniTaskBatch:
@@ -205,6 +217,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
             imgs_sizes=collated.get("imgs_sizes"),
             num_frames=collated.get("num_frames"),
             num_image_tiles=collated.get("num_image_tiles"),
+            media_token_validity_mask=collated.get("media_token_validity_mask"),
         )
         return NemotronOmniTaskBatch(**batch_kwargs)
 

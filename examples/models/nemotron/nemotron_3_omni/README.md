@@ -261,13 +261,18 @@ does not match the model configuration.
 |----------------------------------------------------|-------------------------------------------|--------------------------------------|
 | `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                               |
 | `dataset.task_encoder.temporal_video_resize_mode`  | N/A                                       | `"processor"`                        |
+| `dataset.task_encoder.temporal_video_prompt_mode`  | N/A                                       | `"hf_vllm"`                          |
 | `model.temporal_patch_dim`                         | `1`                                       | `2`                                  |
 | `model.separate_video_embedder`                    | `False`                                   | `True`                               |
 | `model.temporal_ckpt_compat`                       | `False`                                   | `True`                               |
 
 Note: `dataset.task_encoder.use_temporal_video_embedder` and
-`dataset.task_encoder.temporal_video_resize_mode` apply only to the Energon data
-path.
+the `temporal_video_*_mode` settings apply only to the Energon data path.
+
+The canonical collator owns `<image>` and `<so_embedding>` as media anchors,
+validates their processor-expanded counts, and carries an explicit ownership
+mask through padding and packing. Put media in structured image/video/audio
+fields; raw text containing either reserved placeholder is rejected early.
 
 
 ### Image-Text — CORD-V2
@@ -309,6 +314,12 @@ tubelet placeholder to the number of vision features that grid produces. Frames
 inside one tubelet must share a grid, while different tubelets may have different
 grids and token counts. Use `"fixed_512"` only when reproducing checkpoints or
 runs prepared with the previous square compatibility policy.
+
+They also set `dataset.task_encoder.temporal_video_prompt_mode="hf_vllm"`.
+This matches the public HF processor and vLLM: frame timestamps come from the
+sampled source-frame indices and source FPS, and Bridge does not inject an
+implicit `This is a video:` prefix. Use `"legacy_bridge"` only when continuing
+a run whose prompts used the former prefix and sampled-ordinal timestamps.
 
 Prepare the Energon shards once. For the full walkthrough, see
 [`tutorials/data/valor32k-avqa/data-preparation.md`](../../../../tutorials/data/valor32k-avqa/data-preparation.md).
