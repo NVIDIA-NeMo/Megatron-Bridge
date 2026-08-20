@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.inference.text_generation_controllers.text_generation_controller import TextGenerationController
 
 from megatron.bridge.inference.vlm.vlm_inference_controller import (
     QwenVLTextGenerationController,
@@ -154,6 +155,36 @@ class TestQwenVLTextGenerationController:
 
         with pytest.raises(ValueError, match="processor is required"):
             controller.tokenize_prompt("test", "image")
+
+    def test_sampling_excludes_image_placeholder(self, mock_tokenizer, mock_image_processor):
+        """Keep generated tokens from invalidating the request-owned visual payload."""
+        vision_start_token_id = 200001
+        image_token_id = 200004
+        ordinary_token_id = 7
+        mock_tokenizer.convert_tokens_to_ids.side_effect = {
+            "<|vision_start|>": vision_start_token_id,
+            "<|image_pad|>": image_token_id,
+        }.__getitem__
+
+        with patch.object(VLMTextGenerationController, "__init__", return_value=None):
+            controller = QwenVLTextGenerationController(
+                MagicMock(),
+                mock_tokenizer,
+                mock_image_processor,
+                MagicMock(),
+            )
+
+        logits = torch.full((1, image_token_id + 1), -100.0)
+        logits[0, ordinary_token_id] = 9.0
+        logits[0, image_token_id] = 10.0
+
+        def sample_argmax(_controller, last_token_logits, *_args, **_kwargs):
+            return torch.argmax(last_token_logits, dim=-1)
+
+        with patch.object(TextGenerationController, "sample_from_logits", sample_argmax):
+            sampled = controller.sample_from_logits(logits)
+
+        assert sampled.item() == ordinary_token_id
 
     def test_tokenizer_detokenize_with_special_token_151652(self, controller, mock_tokenizer):
         """Test that token 151652 is followed by 151655 during detokenization."""

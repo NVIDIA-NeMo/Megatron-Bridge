@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import OrderedDict
+from typing import Any, OrderedDict
 
 import torch
 from megatron.core.inference.inference_request import InferenceRequest
+from megatron.core.inference.sampling_params import SamplingParams
 from megatron.core.inference.text_generation_controllers.text_generation_controller import (
     TextGenerationController,
 )
@@ -97,6 +98,7 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
         super().__init__(inference_wrapped_model, tokenizer, image_processor)
         vision_start_token_id = tokenizer.convert_tokens_to_ids("<|vision_start|>")
         image_token_id = tokenizer.convert_tokens_to_ids("<|image_pad|>")
+        self._image_token_id = image_token_id
 
         class QwenVLTokenizer(TokenizerWrapper):
             # pylint: disable=C0115,C0116
@@ -112,6 +114,29 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
 
         self.tokenizer = QwenVLTokenizer(tokenizer)
         self.processor = processor
+
+    def sample_from_logits(
+        self,
+        last_token_logits: torch.Tensor,
+        sampling_params: SamplingParams | None = None,
+        vocab_size: int | None = None,
+        generation_started: torch.Tensor | None = None,
+        top_n_logprobs_dict: dict[int, list[dict[str, float]]] | None = None,
+        logits: torch.Tensor | None = None,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        """Sample while excluding the structural image placeholder token."""
+        sampling_logits = last_token_logits.clone()
+        sampling_logits[..., self._image_token_id] = -torch.inf
+        return super().sample_from_logits(
+            sampling_logits,
+            sampling_params=sampling_params,
+            vocab_size=vocab_size,
+            generation_started=generation_started,
+            top_n_logprobs_dict=top_n_logprobs_dict,
+            logits=logits,
+            **kwargs,
+        )
 
     def tokenize_prompt(self, prompt: str, image):
         """Tokenize with the HF processor (image + text; same idea as hf_to_megatron_generate_vlm)."""
