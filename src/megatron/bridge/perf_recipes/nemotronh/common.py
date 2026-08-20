@@ -20,6 +20,7 @@ import torch
 from megatron.core.quantization.utils import load_quantization_recipe
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_pretrain_16gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
 )
@@ -37,13 +38,6 @@ _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
 # NVLink domain (HSDP), matching ``--num-distributed-optimizer-instances $((nodes/16))``
 # in the reference Megatron-LM launch script.
 _GB300_NVLINK_DOMAIN_GPUS = 64
-
-_HYBRID_EP_ENV_NAMES = {
-    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
-    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
-    "NVLINK_DOMAIN_SIZE",
-    "USE_MNNVL",
-}
 
 
 def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
@@ -103,7 +97,7 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
-    cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in _HYBRID_EP_ENV_NAMES}
+    cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
     cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
     if mxfp8:
         cfg.model.moe_router_padding_for_quantization = True

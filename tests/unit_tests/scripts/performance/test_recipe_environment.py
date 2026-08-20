@@ -99,16 +99,50 @@ def test_target_topology_removes_disabled_hybridep_values():
     config = SimpleNamespace(
         env_vars={
             "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+        },
+        model=SimpleNamespace(moe_flex_dispatcher_backend=None, expert_model_parallel_size=8),
+    )
+
+    utils.apply_target_topology_environment(config, gpu="h100")
+
+    assert not config.env_vars
+
+
+@pytest.mark.parametrize("dispatcher_backend", [None, "deepep"])
+def test_target_topology_keeps_chunk_tuning_outside_ncclep(dispatcher_backend):
+    """Only the derived topology is target-dependent, so other tuning survives every backend."""
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
             "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
             "NVLINK_DOMAIN_SIZE": 8,
             "USE_MNNVL": 0,
+        },
+        model=SimpleNamespace(moe_flex_dispatcher_backend=dispatcher_backend, expert_model_parallel_size=8),
+    )
+
+    utils.apply_target_topology_environment(config, gpu="h100")
+
+    assert config.env_vars == {"NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128}
+
+
+def test_target_topology_removes_every_hybridep_value_for_ncclep():
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+            "MODEL_SPECIFIC": 1,
         },
         model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep", expert_model_parallel_size=8),
     )
 
     utils.apply_target_topology_environment(config, gpu="h100")
 
-    assert not config.env_vars
+    assert config.env_vars == {"MODEL_SPECIFIC": 1}
 
 
 def test_target_topology_rejects_nonpositive_ep_size():
@@ -716,6 +750,51 @@ def test_flat_ncclep_override_removes_hybridep_environment():
     assert recipe.env_vars == {"MODEL_SPECIFIC": 1}
 
 
+@pytest.mark.parametrize("dispatcher_backend", [None, "deepep"])
+def test_flat_non_ncclep_backends_keep_hybridep_environment(dispatcher_backend):
+    """Switching to NCCL EP must not change the environment of any other benchmark."""
+    from utils.overrides import _apply_flat_cli_environment_compatibility
+
+    original_env = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "MODEL_SPECIFIC": 1,
+    }
+    recipe = SimpleNamespace(
+        env_vars=dict(original_env),
+        model=SimpleNamespace(
+            moe_flex_dispatcher_backend=dispatcher_backend,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="gb200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="qwen",
+        model_recipe_name="qwen3_30b_a3b",
+        task="pretrain",
+    )
+
+    _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=dispatcher_backend,
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars == original_env
+
+
 def test_vr200_argparse_overrides_keep_sm100_cuda_connection_count():
     from utils.overrides import _apply_flat_cli_environment_compatibility
 
@@ -952,6 +1031,33 @@ def test_runner_accepts_ncclep_dispatcher_override():
     assert effective_recipe.model.moe_token_dispatcher_type == "flex"
     assert effective_recipe.model.moe_flex_dispatcher_backend == "ncclep"
     assert effective_recipe.model.moe_shared_expert_overlap is False
+
+
+def test_runner_accepts_ncclep_without_capacity_factor():
+    """An unset capacity factor selects NCCL EP eager mode and must not be rejected."""
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=None,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend="ncclep",
+    )
+
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
+
+    assert effective_recipe.model.moe_token_dispatcher_type == "flex"
+    assert effective_recipe.model.moe_flex_dispatcher_backend == "ncclep"
+    assert effective_recipe.model.moe_expert_rank_capacity_factor is None
 
 
 def test_performance_parser_accepts_ncclep_dispatcher():

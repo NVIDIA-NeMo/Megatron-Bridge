@@ -15,17 +15,10 @@
 """Common helpers for gpt_oss performance recipes."""
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.gpt_oss.gpt_oss import gpt_oss_20b_pretrain_config, gpt_oss_120b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-
-
-_HYBRID_EP_ENV_NAMES = {
-    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
-    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
-    "NVLINK_DOMAIN_SIZE",
-    "USE_MNNVL",
-}
 
 
 def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) -> None:
@@ -49,7 +42,7 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
     cfg.comm_overlap.delay_wgrad_compute = False
 
     cfg.model.offload_modules = []
-    cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in _HYBRID_EP_ENV_NAMES}
+    cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
 
     if mxfp8:
         # Static shapes hand the experts the whole receive buffer, so the grouped GEMM has to

@@ -19,6 +19,7 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
@@ -246,13 +247,10 @@ def _apply_flat_cli_environment_compatibility(
     gpu = args.gpu.lower()
     effective_dispatcher_backend = getattr(model, "moe_flex_dispatcher_backend", base_dispatcher_backend)
 
-    if effective_dispatcher_backend != "hybridep":
-        for name in (
-            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
-            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
-            "NVLINK_DOMAIN_SIZE",
-            "USE_MNNVL",
-        ):
+    # Only NCCL EP drops these. DeepEP and the alltoall dispatcher keep whatever the recipe set,
+    # so switching to NCCL EP never changes the environment of an unrelated benchmark.
+    if effective_dispatcher_backend == "ncclep":
+        for name in sorted(HYBRID_EP_ENV_NAMES):
             _remove_recipe_env(recipe, name, protected)
 
     connection_override = any(
