@@ -184,6 +184,34 @@ class TestPretrainProcessGroupOwnership:
         assert cleanup_order == [("async_queue", True), ("process_group", "abort")]
         assert state._async_calls_queue is None
 
+    def test_framework_owned_failure_shuts_down_fault_tolerance_before_process_groups(self):
+        """Test failed setup disconnects fault-tolerance monitoring before distributed cleanup."""
+        state = MagicMock()
+        rank_monitor_client = MagicMock()
+        rank_monitor_client.is_initialized = True
+        cleanup_order = []
+
+        def setup_then_fail(*_args, **_kwargs):
+            state.rank_monitor_client = rank_monitor_client
+            raise RuntimeError("setup failed after fault-tolerance initialization")
+
+        rank_monitor_client.shutdown_workload_monitoring.side_effect = lambda: cleanup_order.append("fault_tolerance")
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch("megatron.bridge.training.pretrain.destroy_global_state"),
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch("megatron.bridge.training.pretrain.setup", side_effect=setup_then_fail),
+        ):
+            mock_dist.is_initialized.side_effect = [False, True, True]
+            mock_dist.distributed_c10d._abort_process_group.side_effect = lambda: cleanup_order.append("process_group")
+
+            with pytest.raises(RuntimeError, match="setup failed after fault-tolerance initialization"):
+                _pretrain(state, MagicMock())
+
+        assert cleanup_order == ["fault_tolerance", "process_group"]
+        assert state.rank_monitor_client is None
+
     def test_caller_owned_process_group_is_preserved_when_setup_raises(self):
         """Test Bridge preserves a process group that existed before setup."""
         state = MagicMock()
