@@ -1439,7 +1439,7 @@ def test_shared_chat_preprocessing_normalizes_sharegpt_roles_before_templating()
     assert tokenized.assistant_mask.any()
 
 
-def test_normalize_chat_conversation_parses_openai_tool_call_arguments_without_mutating_input():
+def test_normalize_chat_conversation_normalizes_openai_tool_calls_without_mutating_input():
     row = {
         "messages": [
             {"role": "user", "content": "Weather?"},
@@ -1459,7 +1459,9 @@ def test_normalize_chat_conversation_parses_openai_tool_call_arguments_without_m
 
     normalized = normalize_chat_conversation(row)
 
+    assert normalized[1]["content"] == ""
     assert normalized[1]["tool_calls"][0]["function"]["arguments"] == {"city": "Seattle"}
+    assert row["messages"][1]["content"] is None
     assert row["messages"][1]["tool_calls"][0]["function"]["arguments"] == '{"city":"Seattle"}'
 
 
