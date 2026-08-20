@@ -4,11 +4,13 @@
 title: qwen3_8_27b
 summary: >
   Performance scope: pretrain_performance.GB200 uses the tuned canonical
-  projector-only MockVLM recipe and records 1,230.090 model TFLOP/s/GPU on 16
-  GB200 GPUs; timing from all functional items remains sanity evidence. All
-  workloads in this card target GB200 hardware. Conversion, deterministic
-  inference, and all required functional training gates are verified. No
-  dense-27B Megatron FSDP recipe is available.
+  language-and-projector MockVLM recipe and records 819.190 corrected model
+  TFLOP/s/GPU on 16 GB200 GPUs; timing from all functional items remains sanity
+  evidence. All workloads in this card target GB200 hardware. Conversion,
+  deterministic inference, pretraining, SFT, long-context SFT, PEFT, and
+  post-SFT export are verified. Full-language checkpoint resume remains
+  unverified because four intermediate losses exceeded the comparison bound.
+  No dense-27B Megatron FSDP recipe is available.
 verification_index:
   model_level:
     verified:
@@ -20,7 +22,8 @@ verification_index:
       - inference
   training:
     GB200:
-      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft]
+      unverified: [checkpoint_resume]
   performance:
     GB200: verified
 model:
@@ -167,6 +170,7 @@ items:
     GB200:
       status: verified
       precision: bf16
+      bridge_commit: 2e945d0734f2f0fb764320dda9c90139d02b792d  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
@@ -185,27 +189,24 @@ items:
         logger.log_throughput=true
         logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain/resolved-config.yaml
         scheduler.lr_decay_iters=20
-      last_verified: 2026-08-14
+      last_verified: 2026-08-20
       metrics:
-        initial_loss: 6.858752
-        final_loss: 5.000320
-        last_10_steps_step_time_ms_avg: 39373.700
-        last_10_steps_model_tflops_per_gpu_avg: 35.640
-        last_10_steps_tokens_per_second_per_gpu_avg: 208.058
+        initial_loss: 6.858159
+        final_loss: 3.955657
+        last_10_steps_step_time_ms_avg: 41391.140
+        last_10_steps_model_tflops_per_gpu_avg: 33.240
+        last_10_steps_tokens_per_second_per_gpu_avg: 197.917
       expected_result: >
-        The 16-GB200 projection-only MockVLM pretrain completed exactly 20
-        deterministic steps at TP4/PP4, sequence length 4096, and MBS2/GBS32.
-        Language and vision weights were frozen while the multimodal projector
-        trained. Loss remained finite from 6.858752 to 5.000320 with zero
-        skipped or NaN iterations. Steps 11-20 averaged 39,373.700 ms and
-        35.640 model TFLOP/s/GPU. Checkpoints at iterations 10 and 20 each
-        contain 20 files totaling 56,110,835,009 bytes, the tracker records
-        iteration 20, and both built-in 32-iteration validation and test passes
-        completed at loss 5.043188. The process exited successfully in 25m45s.
-        The shorter qwen35_vl_27b_pretrain_mock_config alias exists in its
-        family module but is not exported from the recipe package root, so
-        launcher lookup required the fully exported stock recipe named in the
-        command.
+        The 16-GB200 MockVLM pretrain completed exactly 20 deterministic steps
+        at TP4/PP4, sequence length 4096, and MBS2/GBS32. The language model and
+        multimodal vision merger trained while the vision encoder remained
+        frozen. Loss remained finite from 6.858159 to 3.955657 with finite
+        gradients and zero skipped or NaN iterations. Steps 11-20 averaged
+        41,391.140 ms, 33.240 corrected model TFLOP/s/GPU, and 197.917 token
+        slots/s/GPU. Checkpoints at iterations 10 and 20 each contain 20 files
+        totaling 399,257,378,741 bytes, and the tracker records iteration 20.
+        Both built-in 32-iteration validation and test passes completed at loss
+        3.907797. The process exited successfully in 26m31s.
 
   sft:
     GB200:
@@ -391,7 +392,7 @@ items:
 
   checkpoint_resume:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: pretrain
       command: >
@@ -410,40 +411,39 @@ items:
         logger.log_throughput=true
         logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-resume/resolved-config.yaml
         scheduler.lr_decay_iters=20
-      last_verified: 2026-08-14
+      last_verified: null
       metrics:
-        initial_loss: 5.452590
-        final_loss: 5.000320
-        last_10_steps_step_time_ms_avg: 45121.610
-        last_10_steps_model_tflops_per_gpu_avg: 35.050
-        last_10_steps_tokens_per_second_per_gpu_avg: 181.554
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: true
+        sentinels_match: null
       expected_result: >
-        The 16-GB200 run loaded the full iteration-10 distributed checkpoint,
-        including optimizer, scheduler, and RNG state, and explicitly started
-        training at iteration 10. Every reported loss from steps 11 through 20
-        exactly matched the uninterrupted reference at printed precision; the
-        maximum absolute difference was 0.0, including sentinel losses
-        5.452590 at step 11 and 5.000320 at step 20. The resumed steps averaged
-        45,121.610 ms and 35.050 model TFLOP/s/GPU, including first-step
-        compilation. The resulting iteration-20 checkpoint contains 20 files
-        totaling 56,110,835,024 bytes, its tracker records iteration 20, both
-        built-in evaluation passes completed at loss 5.043188, and the process
-        exited successfully in 17m27s.
+        A clean 16-GB200 attempt loaded the full iteration-10 checkpoint with
+        optimizer, scheduler, and RNG state and directly executed steps 11-20.
+        All losses and gradients were finite, the run wrote a complete
+        iteration-20 checkpoint, and the first and final resumed losses stayed
+        within the declared bound. However, steps 15-18 did not: the largest
+        relative difference from the uninterrupted reference was 39.6205% at
+        step 15. The resolved reference and resume configs differ only in the
+        expected checkpoint source, step, and pretrained-checkpoint fallback.
+        This card therefore makes no checkpoint-resume verification claim
+        until the intermediate divergence is understood and a clean rerun
+        matches the reference contract.
 
   pretrain_performance:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: 7f9864c4712f401213ecd3c734a2bf627c306438  # pragma: allowlist secret
+      bridge_commit: 2e945d0734f2f0fb764320dda9c90139d02b792d  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
-        --additional-slurm-params segment=4
         --recipe qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config
         --mode pretrain --pretrained_checkpoint
         work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
@@ -453,27 +453,24 @@ items:
         model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
         logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-performance/resolved-config.yaml
         scheduler.lr_decay_iters=20
-      last_verified: 2026-08-14
+      last_verified: 2026-08-20
       metrics:
-        initial_loss: 6.857419
-        final_loss: 5.071018
-        last_10_steps_step_time_ms_avg: 1139.500
-        last_10_steps_model_tflops_per_gpu_avg: 1230.090
-        last_10_steps_tokens_per_second_per_gpu_avg: 7189.118
-        peak_allocated_memory_gib: 173.760
+        initial_loss: 6.852387
+        final_loss: 3.884668
+        last_10_steps_step_time_ms_avg: 1679.460
+        last_10_steps_model_tflops_per_gpu_avg: 819.190
+        last_10_steps_tokens_per_second_per_gpu_avg: 4877.758
+        peak_allocated_memory_gib: 174.120
       expected_result: >
-        On 16 GB200 GPUs in one NVL72 domain, the exact canonical BF16
-        projector-only MockVLM recipe completes 20 steps at TP2/PP1/CP1,
-        sequence length 4096, and MBS4/GBS32, which is one microbatch per DP
-        rank. Language and vision weights are frozen while the multimodal
-        projector trains. The recipe keeps fused Gated DeltaNet execution
-        enabled, disables unnecessary activation recompute, evaluation, and
-        checkpoint output, and retains NaN loss and gradient checks. Loss
-        remains finite from 6.857419 to 5.071018 with zero skipped or NaN
-        iterations. Excluding first-iteration kernel compilation, steps 11-20
-        average 1,139.500 ms and 1,230.090 model TFLOP/s/GPU; peak allocated
-        memory is 173.760 GiB. The process exits successfully. TP1/PP1 with
-        MBS2 was rejected because cold Gated DeltaNet autotuning exhausted the
-        approximately 185-GiB device memory, while TP2 retains about 11 GiB of
-        allocated-memory headroom. This mock projector-only result is
-        throughput evidence, not full-model convergence evidence.
+        On 16 GB200 GPUs, the exact canonical BF16 language-and-projector
+        MockVLM recipe completes 20 steps at TP2/PP1/CP1, DP8, sequence length
+        4096, and MBS2/GBS32. The language model and multimodal vision merger
+        train while the vision encoder remains frozen. The recipe uses fused
+        Gated DeltaNet execution without activation recompute and disables
+        evaluation and checkpoint output for the bounded run. Loss remains
+        finite from 6.852387 to 3.884668 with finite gradients and zero skipped
+        or NaN iterations. Excluding first-iteration kernel compilation, steps
+        11-20 average 1,679.460 ms, 819.190 corrected model TFLOP/s/GPU, and
+        4,877.758 token slots/s/GPU; peak allocated memory is 174.120 GiB. The
+        process exits successfully. This mock-data result is throughput
+        evidence, not convergence evidence.
