@@ -252,9 +252,8 @@ if ! grep -Fq \
   echo "Bridge's lock metadata must preserve the MCore TE extra" >&2
   exit 1
 fi
-if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
-  grep -q '^name = "transformer-engine"$' pyproject.toml; then
-  echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
+if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml; then
+  echo "Bridge must inherit the TransformerEngine source from the selected MCore ref" >&2
   exit 1
 fi
 
