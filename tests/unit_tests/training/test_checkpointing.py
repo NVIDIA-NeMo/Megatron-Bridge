@@ -1571,6 +1571,63 @@ class TestLoadCheckpoint:
         mock_get_rng_state.assert_not_called()
         assert mock_generate.call_args.kwargs["rng_state"] is None
 
+    def test_fsdp_omitted_optimizer_does_not_materialize_load_state(self, load_checkpoint_fixtures):
+        """An FSDP checkpoint saved without optimizer state must leave the optimizer fresh."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+        cfg.checkpoint.load_rng = False
+        cfg.peft = None
+
+        pg_collection = Mock()
+        reader = Mock()
+        reader.read_metadata.return_value.state_dict_metadata = {"model.weight": Mock()}
+
+        optimizer = load_checkpoint_fixtures["mock_optimizer"]
+        optimizer.is_stub_optimizer = False
+        optimizer.materialized_step = 0
+
+        def materialize_optimizer_state(*_args, **_kwargs):
+            optimizer.materialized_step += 1
+            return {"state": {"step": optimizer.materialized_step}}
+
+        optimizer.sharded_state_dict.side_effect = materialize_optimizer_state
+        load_checkpoint_fixtures["mock_model"][0].state_dict_for_save_checkpoint.return_value = {"weight": Mock()}
+
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch(
+                "megatron.bridge.training.checkpointing.read_run_config",
+                return_value={
+                    "model": {
+                        "tensor_model_parallel_size": 1,
+                        "pipeline_model_parallel_size": 1,
+                    },
+                    "checkpoint": {"save_optim": False},
+                },
+            ),
+            patch("megatron.bridge.training.checkpointing._get_filesystem_reader", return_value=reader),
+            patch(
+                "megatron.bridge.training.checkpointing._load_base_checkpoint",
+                side_effect=[
+                    ({}, "/checkpoints/iter_0000003", False, CheckpointType.FSDP_DTENSOR),
+                    (None, "", False, None),
+                ],
+            ),
+        ):
+            result = _load_checkpoint_from_path(
+                "/checkpoints/iter_0000003",
+                load_checkpoint_fixtures["mock_state"],
+                load_checkpoint_fixtures["mock_model"],
+                optimizer,
+                None,
+                pg_collection=pg_collection,
+            )
+
+        assert result == (0, 0)
+        assert optimizer.materialized_step == 0
+
     @patch("torch.distributed.is_initialized")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
     def test_load_hf_pretrained_checkpoint_initializes_from_hf_source(
