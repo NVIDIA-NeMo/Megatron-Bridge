@@ -23,10 +23,8 @@ import torch
 from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKey
 
 from megatron.bridge.peft.lora import get_lora_plus_config_overrides
-from megatron.bridge.training.config import OptimizerConfig as BridgeOptimizerConfig
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.optim import (
-    _validate_precision_aware_optimizer_runtime_state,
     memory_efficient_fp32_optimizer_state_loading,
     memory_efficient_precision_aware_optimizer_state_checkpointing,
     sync_hybrid_device_optimizer_fp32_master_copies,
@@ -159,37 +157,6 @@ class TestSetupOptimizerMuP:
 
         mock_get_model_config.assert_called_once_with(model1)
 
-    @pytest.mark.parametrize("enabled", [False, True])
-    def test_precision_aware_runtime_validation_is_opt_in(self, enabled: bool):
-        from megatron.bridge.training.optim import setup_optimizer
-
-        model, model_config = self._make_model_mock(use_mup=False)
-        optimizer = MagicMock()
-        optimizer_config = BridgeOptimizerConfig(
-            optimizer="adam",
-            lr=1e-3,
-            min_lr=1e-5,
-            bf16=True,
-            validate_precision_aware_optimizer_runtime_state=enabled,
-        )
-
-        with (
-            patch("megatron.bridge.training.optim.get_model_config", return_value=model_config),
-            patch("megatron.bridge.training.optim.get_megatron_optimizer", return_value=optimizer),
-            patch("megatron.bridge.training.optim._get_scheduler"),
-            patch("megatron.bridge.training.optim._validate_precision_aware_optimizer_runtime_state") as validate,
-        ):
-            setup_optimizer(
-                optimizer_config=optimizer_config,
-                scheduler_config=self._make_scheduler_config(),
-                model=model,
-            )
-
-        if enabled:
-            validate.assert_called_once_with(optimizer, optimizer_config)
-        else:
-            validate.assert_not_called()
-
 
 class _FakeHDO:
     """Stand-in for HybridDeviceOptimizer used to satisfy the isinstance check."""
@@ -274,92 +241,6 @@ class _FakeLayerWiseChildOpt:
 
     def __init__(self, inner: torch.optim.Optimizer) -> None:
         self.optimizer = inner
-
-
-class TestValidatePrecisionAwareOptimizerRuntimeState:
-    """Tests for validation of effective Transformer Engine Adam state."""
-
-    @staticmethod
-    def _config() -> SimpleNamespace:
-        return SimpleNamespace(
-            use_precision_aware_optimizer=True,
-            use_precision_aware_optimizer_no_fp8_or_ds_fp8=True,
-            main_params_dtype=torch.float16,
-            main_grads_dtype=torch.bfloat16,
-            exp_avg_dtype=torch.bfloat16,
-            exp_avg_sq_dtype=torch.bfloat16,
-            store_param_remainders=False,
-        )
-
-    def test_accepts_matching_effective_state(self):
-        param = torch.zeros(4, dtype=torch.bfloat16)
-        inner = _FakeFusedAdam(
-            param,
-            master_weights=True,
-            master_weight_dtype=torch.float16,
-            exp_avg_dtype=torch.bfloat16,
-            store_param_remainders=False,
-        )
-        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
-
-        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
-            assert _validate_precision_aware_optimizer_runtime_state(distributed, self._config()) == 1
-
-    def test_rejects_silently_disabled_param_remainders(self):
-        param = torch.zeros(4, dtype=torch.bfloat16)
-        inner = _FakeFusedAdam(
-            param,
-            master_weights=True,
-            master_weight_dtype=torch.float16,
-            exp_avg_dtype=torch.bfloat16,
-            store_param_remainders=False,
-        )
-        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
-        config = self._config()
-        config.store_param_remainders = True
-
-        with (
-            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
-            pytest.raises(RuntimeError, match="param_remainders: requested=True, effective=False"),
-        ):
-            _validate_precision_aware_optimizer_runtime_state(distributed, config)
-
-    def test_ignores_te_master_state_when_mcore_owns_master_params(self):
-        param = torch.zeros(4, dtype=torch.bfloat16)
-        inner = _FakeFusedAdam(
-            param,
-            master_weights=False,
-            master_weight_dtype=torch.float16,
-            exp_avg_dtype=torch.bfloat16,
-            store_param_remainders=False,
-        )
-        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
-        config = self._config()
-        config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = False
-        config.main_params_dtype = torch.float32
-        config.store_param_remainders = True
-
-        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
-            assert _validate_precision_aware_optimizer_runtime_state(distributed, config) == 1
-
-    @pytest.mark.parametrize("state_name", ["exp_avg_dtype", "exp_avg_sq_dtype"])
-    def test_rejects_moment_mismatch_when_mcore_owns_master_params(self, state_name: str):
-        param = torch.zeros(4, dtype=torch.bfloat16)
-        moment_dtypes = {
-            "exp_avg_dtype": torch.bfloat16,
-            "exp_avg_sq_dtype": torch.bfloat16,
-        }
-        moment_dtypes[state_name] = torch.float32
-        inner = _FakeFusedAdam(param, master_weights=False, **moment_dtypes)
-        distributed = _FakeDistribOpt(model_param=param, shard_main_param=param, inner=inner)
-        config = self._config()
-        config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = False
-
-        with (
-            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
-            pytest.raises(RuntimeError, match=state_name),
-        ):
-            _validate_precision_aware_optimizer_runtime_state(distributed, config)
 
 
 class TestMemoryEfficientPrecisionAwareOptimizerStateCheckpointing:

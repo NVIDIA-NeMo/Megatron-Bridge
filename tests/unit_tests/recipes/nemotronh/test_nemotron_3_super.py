@@ -128,7 +128,6 @@ class TestNemotron3SuperPretrain:
         assert config.optimizer.lr == 4.5e-4
         assert config.optimizer.weight_decay == 0.1
         assert config.optimizer.min_lr == 4.5e-6
-        assert config.optimizer.validate_precision_aware_optimizer_runtime_state is False
         assert config.scheduler.lr_warmup_iters == 40
 
     def test_pretrain_config_checkpoint_settings(self):

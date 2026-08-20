@@ -128,7 +128,6 @@ def _assert_common_config(cfg: ConfigContainer):
     assert cfg.validation.eval_iters == 0
     assert cfg.optimizer.main_grads_dtype == torch.float32
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.validate_precision_aware_optimizer_runtime_state is False
     assert cfg.ddp.use_distributed_optimizer is True
     assert cfg.ddp.overlap_grad_reduce is False
     assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
@@ -209,7 +208,6 @@ def test_cord_v2_8gpu_recipes_use_natural_routing_hybridep(
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.validate_precision_aware_optimizer_runtime_state is True
     assert cfg.optimizer.main_grads_dtype == torch.bfloat16
     assert cfg.optimizer.main_params_dtype == torch.float16
     assert cfg.optimizer.store_param_remainders is False
@@ -262,7 +260,6 @@ def test_cord_v2_8gpu_recipes_use_lower_precision_optimizer_state(
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.validate_precision_aware_optimizer_runtime_state is True
     assert cfg.optimizer.main_grads_dtype == torch.bfloat16
     assert cfg.optimizer.main_params_dtype == torch.float16
     assert cfg.optimizer.store_param_remainders is False

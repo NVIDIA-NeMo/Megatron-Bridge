@@ -110,8 +110,6 @@ def setup_optimizer(
             pg_collection=pg_collection,
         )
 
-    if getattr(optimizer_config, "validate_precision_aware_optimizer_runtime_state", False):
-        _validate_precision_aware_optimizer_runtime_state(optimizer, optimizer_config)
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
     return optimizer, scheduler
@@ -139,71 +137,6 @@ def _get_te_fused_adam_class() -> type[torch.optim.Optimizer] | None:
     except ImportError:
         return None
     return cast(type[torch.optim.Optimizer], FusedAdam)
-
-
-def _validate_precision_aware_optimizer_runtime_state(
-    optimizer: MegatronOptimizer,
-    config: OptimizerConfig,
-) -> int:
-    """Validate the effective Transformer Engine precision-aware Adam state.
-
-    Transformer Engine may constrain or normalize requested optimizer-state
-    options. Fail closed when the constructed optimizer does not match the
-    Bridge config so recipes cannot silently claim a precision contract that
-    the runtime did not apply.
-
-    Args:
-        optimizer: Constructed Megatron optimizer.
-        config: Requested optimizer configuration.
-
-    Returns:
-        Number of Transformer Engine FusedAdam instances validated.
-    """
-    if not config.use_precision_aware_optimizer:
-        return 0
-
-    fused_adam_class = _get_te_fused_adam_class()
-    if fused_adam_class is None:
-        return 0
-
-    chained_optimizers = getattr(optimizer, "chained_optimizers", None)
-    sub_optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
-    validated = 0
-    expected = {
-        "exp_avg_dtype": config.exp_avg_dtype,
-        "exp_avg_sq_dtype": config.exp_avg_sq_dtype,
-    }
-    if config.use_precision_aware_optimizer_no_fp8_or_ds_fp8:
-        expected.update(
-            {
-                "master_weight_dtype": config.main_params_dtype,
-                "store_param_remainders": config.store_param_remainders,
-            }
-        )
-    for distributed_optimizer in sub_optimizers:
-        inner = getattr(distributed_optimizer, "optimizer", None)
-        if not isinstance(inner, fused_adam_class):
-            continue
-        mismatches = {
-            name: (requested, getattr(inner, name, None))
-            for name, requested in expected.items()
-            if getattr(inner, name, None) != requested
-        }
-        if mismatches:
-            details = ", ".join(
-                f"{name}: requested={requested}, effective={effective}"
-                for name, (requested, effective) in mismatches.items()
-            )
-            raise RuntimeError(f"Transformer Engine precision-aware Adam state does not match config ({details})")
-        validated += 1
-
-    if validated:
-        G_LOGGER.info(
-            "Validated effective precision-aware Adam state for %d Transformer Engine FusedAdam instance(s): %s.",
-            validated,
-            ", ".join(f"{name}={value}" for name, value in expected.items()),
-        )
-    return validated
 
 
 @contextmanager
