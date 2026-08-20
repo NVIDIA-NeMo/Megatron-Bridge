@@ -32,7 +32,11 @@ class _FakeProcessGroup:
 def _make_gdn(cp_size: int) -> GatedDeltaNet:
     gdn = GatedDeltaNet.__new__(GatedDeltaNet)
     torch.nn.Module.__init__(gdn)
-    gdn.config = SimpleNamespace(context_parallel_size=cp_size, deterministic_mode=False)
+    gdn.config = SimpleNamespace(
+        context_parallel_size=cp_size,
+        deterministic_mode=False,
+        gdn_pre_gated_delta_rule_fusion=False,
+    )
     gdn.pg_collection = SimpleNamespace(cp=_FakeProcessGroup(cp_size))
     gdn.cp_size = cp_size
     gdn.tp_size = 1
