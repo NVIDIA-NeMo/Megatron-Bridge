@@ -3,8 +3,8 @@
 
 title: deepseek_v4_flash
 summary: >
-  Performance scope: pretrain_performance.GB200 uses the tuned canonical
-  128-GPU MXFP8 recipe, and pretrain_performance.GB300 is being verified.
+  Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300
+  use their tuned canonical 128-GPU MXFP8 recipes.
   Timing and throughput metrics from functional training items are sanity
   checks rather than optimized performance results.
 
@@ -40,7 +40,7 @@ verification_index:
       unsupported: [peft]
   performance:
     GB200: verified
-    GB300: unverified
+    GB300: verified
 
 model:
   hf_id: deepseek-ai/DeepSeek-V4-Flash
@@ -379,21 +379,25 @@ items:
         domains for MNNVL communication.
 
     GB300:
-      status: unverified
+      status: verified
       precision: fp8_mx
+      bridge_commit: c93251151adeeadbae3ff2a2bf5ee7a1c34cff01  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --wait --nodes 32 --gpus-per-node 4
         --recipe deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config
         --mode pretrain --max_steps 50 --seq_length 4096
         logger.save_config_filepath=work/model-verification/deepseek-v4-flash/gb300-performance/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-13
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 12.59616
+        final_loss: 3.160061
+        last_10_steps_step_time_ms_avg: 7840.320
+        last_10_steps_model_tflops_per_gpu_avg: 759.280
+        last_10_steps_tokens_per_second_per_gpu_avg: 8358.842
       expected_result: >
-        The canonical 128-GPU GB300 MXFP8 recipe must complete exactly 50
-        optimizer steps with finite loss, no skipped or NaN iterations, all
-        five metrics, and a persisted resolved configuration.
+        On exactly 128 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 2048/1,
+        and sequence length 4096. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.59616 to 3.160061; the
+        final ten steps average 7840.320 ms, 759.280 TFLOP/s/GPU, and 8358.842
+        tokens/s/GPU. The resolved configuration persists.
