@@ -16,6 +16,16 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
+RUN install -d -m 0755 /etc/apt/keyrings \
+    && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | gpg --dearmor --batch --yes -o /etc/apt/keyrings/google-cloud.gpg \
+    && chmod 0644 /etc/apt/keyrings/google-cloud.gpg \
+    && echo 'deb [signed-by=/etc/apt/keyrings/google-cloud.gpg] https://packages.cloud.google.com/apt gpudirect-gib-apt main' \
+        > /etc/apt/sources.list.d/nccl-gib.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nccl-gib-plugins=1.1.2-1 \
+    && ldconfig /usr/local/nvidia/lib64 \
+    && rm -rf /var/lib/apt/lists/*
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
     TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
     patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
@@ -141,3 +151,5 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
 COPY --chmod=644 . /opt/Megatron-Bridge
+
+ENV NCCL_NET_PLUGIN=none
