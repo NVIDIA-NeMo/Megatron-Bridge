@@ -1,216 +1,198 @@
 # DeepSeek V4
 
-End-to-end conversion and inference scripts for the DeepSeek V4 family on Megatron Bridge.
+Megatron Bridge supports checkpoint conversion and training for the DeepSeek V4
+family. See the
+[DeepSeek-V4-Flash verification card](../../model_verification_cards/deepseek-v4-flash/card.yaml)
+for the exact commands, revisions, metrics, and current verification status.
 
-The bridge supports four published variants out of the same code path. The on-disk quantisation differs between post-trained (Flash, Pro) and pretrained-only (Flash-Base, Pro-Base) models — see [`docs/models/deepseek/deepseek-v4.md`](../../../docs/models/deepseek/deepseek-v4.md) for the per-variant scheme.
+## Supported Variants
 
-## MCore Checkout
+All variants use the same bridge. Import dequantizes the published checkpoint to
+the requested Megatron training dtype.
 
-DeepSeek V4 pretraining requires Megatron-LM `dev`; the Megatron-LM copy
-pinned by the current Megatron Bridge `main` branch is not supported. Stateless
-grouped-FP8 checkpoint saves additionally require the empty extra-state fix from
-Megatron-LM PR [#5997](https://github.com/NVIDIA/Megatron-LM/pull/5997),
-including saves from the existing MXFP8 recipes. The fix is available on
-Megatron-LM `main`; until it reaches `dev`, apply the equivalent signed commit
-`d05cb07ff618` from [#6509](https://github.com/NVIDIA/Megatron-LM/pull/6509) to
-a compatible `dev` checkout. Earlier pretraining verification used Megatron-LM
-`dev` commit `35f36c7c9dba` plus PR
-[#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839).
+| Variant | Hugging Face model | Published weight format |
+|---------|--------------------|-------------------------|
+| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attention and MXFP4 experts |
+| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | FP8 with float32 scales |
+| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attention and MXFP4 experts |
+| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | FP8 with float32 scales |
 
-The NeMo Framework container uses one shared `/opt/venv` for several source
-projects. A plain `uv sync` is exact by default and removes packages that are
-not in the Megatron Bridge dependency graph, including container-provided
-packages such as NeMo Run. When switching MCore in this container, preserve
-those packages and then restore the aggregate container pins:
+## Runtime Requirements
+
+DeepSeek V4 training requires a compatible Megatron-LM `dev` revision; the
+Megatron-LM revision pinned for the Megatron Bridge `main` branch is not a
+supported training runtime. Switch the submodule before syncing the environment:
 
 ```bash
 ./scripts/switch_mcore.sh dev
-uv sync --inexact
-(cd /opt/NeMo-FW && uv sync --locked --all-groups --inexact)
-export UV_NO_SYNC=1
+uv sync
 ```
 
-Keep `UV_NO_SYNC=1` set while running the examples. It makes `uv run` calls,
-including those inside the example wrapper scripts, skip the implicit exact
-sync. The unlocked dev sync updates `uv.lock`; do not commit that generated
-change. From a clean checkout, return to the pinned main-branch submodule with:
+Grouped-FP8 checkpoint saves also require the stateless grouped extra-state fix
+merged in Megatron-LM
+[#5997](https://github.com/NVIDIA/Megatron-LM/pull/5997). If the selected `dev`
+revision does not contain that fix yet, apply the equivalent signed commit
+`d05cb07ff618` from
+[#6509](https://github.com/NVIDIA/Megatron-LM/pull/6509) to the compatible `dev`
+checkout before enabling checkpoint saves.
+
+`fast-hadamard-transform` is required by DSA and is installed from the pinned
+source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
+Bridge container; see the
+[repository installation instructions](../../../README.md#-installation).
+
+The Slurm launchers require an account, partition, and container image. Set
+them before running any `--executor slurm` conversion or `train.sh` command:
 
 ```bash
-./scripts/switch_mcore.sh main
-git restore uv.lock
-uv sync --locked --inexact
-(cd /opt/NeMo-FW && uv sync --locked --all-groups --inexact)
-export UV_NO_SYNC=1
+export SLURM_ACCOUNT=your-account
+export SLURM_PARTITION=your-partition
+export CONTAINER_IMAGE=your-container-image
 ```
 
-In a standalone Megatron Bridge environment with its own virtual environment,
-exact sync is appropriate: use `uv sync` after switching to dev and restore the
-tracked lock file followed by `uv sync --locked` when switching back to main.
+Pass `--mount HOST` or `--mount HOST:CONTAINER` for each dataset, checkpoint,
+or output path that is not already visible inside the container.
 
-The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` performance
-recipe preserves the stack validated by Megatron Bridge PR
-[#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824):
-`nvcr.io/nvidia/nemo:26.06.01` with Megatron-LM dev commit
-`9d46c924dce3818f2b5f894f7380712c780d1801` and the capability-check patch
-documented in that PR. The Megatron-LM commit pinned by the current
-Megatron Bridge `main` branch does not provide the required DeepSeek V4
-performance features, so it is not a supported runtime for that recipe.
+## Conversion
 
-| Variant | HF path | Quant scheme | Validation |
-|---------|---------|--------------|------------|
-| DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | Verified on GB200, last-token logit cosine 0.96-0.99 (short prompts ~0.98, long prompts >1024 tokens ~0.96-0.99) vs official inference |
-| DeepSeek-V4-Flash-Base | `deepseek-ai/DeepSeek-V4-Flash-Base` | uniform FP8 (F32 scales) | Verified on GB200, last-real-token logit cosine 0.9866-0.9930, mean 0.9907 vs official inference |
-| DeepSeek-V4-Pro | `deepseek-ai/DeepSeek-V4-Pro` | FP8 attn + MXFP4 experts | Import, export, inference verified on GB200 (PP=4 EP=8) and H100 (PP=16 EP=8) |
-| DeepSeek-V4-Pro-Base | `deepseek-ai/DeepSeek-V4-Pro-Base` | uniform FP8 (F32 scales) | Same bridge code as Pro; end-to-end untested |
+The shared conversion CLI performs dtype-aware FP8/MXFP4 dequantization during
+import; no preprocessing script is required. A DeepSeek-V4-Flash GPU import is:
 
-## Examples
+```bash
+./scripts/conversion/convert.sh import \
+  --executor local --device gpu --gpus-per-node 4 \
+  --hf-model deepseek-ai/DeepSeek-V4-Flash \
+  --megatron-path work/models/deepseek-v4-flash \
+  --tp 1 --pp 1 --ep 4 \
+  --torch-dtype bfloat16 --trust-remote-code
+```
 
-- `conversion.sh` imports HF weights into Megatron Bridge and exports Megatron checkpoints back to HF format.
-- `inference.sh` runs text generation against an HF or Megatron checkpoint.
-- `slurm_pretrain.sh` runs the legacy 32-GPU DeepSeek-V4-Flash pretraining recipes.
-- `slurm_sft.sh` runs DeepSeek-V4-Flash full SFT end to end (import, then fine-tune) on Hopper or Blackwell, with MTP on or off.
+Export accepts a different parallel layout because distributed checkpoints can
+be resharded while loading:
 
-Bridge-created DeepSeek-V4 providers default to the `flex`/HybridEP MoE
-dispatcher with 16 dispatcher SMs and unfused HybridEP permutation. Native
-Megatron checkpoints retain the dispatcher configuration with which they were
-saved, so older checkpoints may still use `alltoall`. HybridEP requires a
-runtime containing the HybridEP package. It auto-detects accessible ranks and
-fabric support when its topology environment variables are unset. To override
-detection, set
-`NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN`, `NVLINK_DOMAIN_SIZE`, and
-`USE_MNNVL` to values that describe the actual deployment. Hardware recipes
-retain their independently qualified dispatcher overrides.
+```bash
+./scripts/conversion/convert.sh export \
+  --executor slurm --device gpu --nodes 8 --gpus-per-node 4 \
+  --hf-model deepseek-ai/DeepSeek-V4-Flash \
+  --megatron-path work/models/deepseek-v4-flash/iter_0000000 \
+  --hf-path work/models/deepseek-v4-flash-hf \
+  --tp 1 --pp 4 --ep 8 \
+  --torch-dtype bfloat16 --export-weight-dtype bfloat16 \
+  --trust-remote-code
+```
 
-Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected environment variables and `#SBATCH` directives to edit before submitting.
+GPU import is verified. GPU export, CPU conversion, and manual HF/Megatron
+forward correlation remain unverified at the revision recorded in the card.
+Do not infer verification from the presence of a command.
 
-## Pretraining Recipes
+[`conversion.sh`](conversion.sh) is a convenience wrapper for import, export,
+and optional round-trip checks. Set `MODEL_VARIANT`, `WORKSPACE`, and the
+parallelism and executor variables documented in its header before running it.
 
-See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the legacy 32-GPU Slurm launcher. Hardware-specific recipe definitions live in the [`gb200`](../../../src/megatron/bridge/recipes/deepseek/gb200/deepseek_v4.py) and [`gb300`](../../../src/megatron/bridge/recipes/deepseek/gb300/deepseek_v4.py) modules.
+## Pretraining
 
-Available Blackwell pretraining recipes:
+Use the public [`scripts/training/train.sh`](../../../scripts/training/train.sh)
+launcher. Hardware-qualified library recipes are defined under
+[`recipes/deepseek`](../../../src/megatron/bridge/recipes/deepseek):
 
-- `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
-- `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
-- `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config`: 128-GPU GB200
-  Adam MXFP8 with PP1/EP64/dense-DP128/expert-DP2/HybridEP, selective recompute,
-  grouped GEMM, attention activation offload, and MXFP8 parameter gather/buffer reuse
-- `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config`: 256-GPU GB300
-  performance configuration (requires the PR #4824 container and dev-MCore
-  stack described above)
+| Hardware | Recipe | Precision and optimizer |
+|----------|--------|-------------------------|
+| H100, 32 GPUs | `deepseek_v4_flash_pretrain_32gpu_h100_bf16_config` | BF16 Adam |
+| H100, 32 GPUs | `deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config` | MXFP8 Adam |
+| H100, 32 GPUs | `deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config` | BF16 Muon |
+| GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config` | BF16 Adam |
+| GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config` | MXFP8 Adam |
+| GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config` | BF16 Muon |
+| GB200, 128 GPUs | `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config` | MXFP8 Adam |
+| GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config` | BF16 Adam |
+| GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config` | MXFP8 Adam |
 
-The `_library_config` suffix keeps the real-training GB200 definition distinct
-from the corresponding benchmark recipe. It retains natural routing, the
-convergence batch size, correctness checks, and checkpoint behavior.
+For example, a short generated-data run of the 128-GPU GB200 library recipe is:
 
-The hardware-count-specific recipes are intentionally not accepted by
-`slurm_pretrain.sh`: that legacy launcher overwrites the recipe's batch and
-TP/PP/EP/CP settings. Launch them through a site multi-node runner that invokes
-`scripts/training/run_recipe.py --recipe <recipe-name> --mode pretrain` with
-128 ranks for GB200 Flash. Keep the topology and global batch size owned by the
-recipe; pass only dataset, run-length, logging, and checkpoint overrides.
+```bash
+./scripts/training/train.sh --nodes 32 --gpus-per-node 4 \
+  --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config \
+  --mode pretrain --dataset mock --max_steps 10
+```
 
-The GB200 Flash library base enables its supported DSA and Transformer Engine
-fused grouped-MLP paths. The new hardware-count-specific variant additionally
-enables GLU interleaving; the existing recipe identities retain their checkpoint
-tensor layout. The library recipe retains unlimited natural-routing capacity.
-All variants retain their precision-specific
-training policies: full-iteration CUDA graphs, FP8 parameter gather/buffer
-reuse, and reduced-precision gradient reduction remain disabled except for the
-provisional FP8 parameter gather/buffer reuse in the high-scale GB200 recipe;
-that PP1 configuration has completed 100 finite steps, grouped-MXFP8 checkpoint
-save, and model/optimizer/RNG reload through step 105.
+That recipe owns its TP/PP/EP/CP topology, global batch size, natural-routing
+semantics, recompute, offload, and checkpoint settings. Keep those defaults for
+the qualified configuration and override only the dataset, run length, logging,
+and output paths. Its 100-step real-data validation and checkpoint evidence are
+recorded in the verification card.
 
-`slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
+Compatibility aliases such as `deepseek_v4_flash_pretrain_mxfp8_config` remain
+exported, but new launches should use the hardware-qualified names above.
+Canonical benchmark recipes under `src/megatron/bridge/perf_recipes/` are
+performance references, not substitutes for the library recipes.
 
-Before submitting, set `CONTAINER_IMAGE`. For DCLM, also set `DCLM_DATA_DIR` and `DCLM_CACHE`. Use `CONTAINER_MOUNTS` and `EXTRA_PYTHONPATH` for cluster-specific data, checkouts, and Python dependencies.
+## Supervised Fine-Tuning
 
-The bridge's `maybe_modify_loaded_hf_weight` hook dispatches dequantisation by tensor dtype:
+DeepSeek-V4-Flash provides BF16 Adam full-parameter SFT recipes:
 
-- `int8` -> MXFP4 packed nibbles -> `bfloat16` via the E2M1 lookup table and per-row 16-K-tile E8M0 scales
-- `float8_e4m3fn` with companion `.scale` -> `bfloat16` via 128x128 block-scale expansion, handling both E8M0 and F32 scale dtypes
+| Recipe | Sequence format | MTP | Target |
+|--------|-----------------|-----|--------|
+| `deepseek_v4_flash_sft_config` | Unpacked SBHD | On | Hopper or Blackwell |
+| `deepseek_v4_flash_no_mtp_sft_config` | Unpacked SBHD | Off | Hopper or Blackwell |
+| `deepseek_v4_flash_sft_openmath_thinking_packed_config` | Offline-packed THD | On | Portable base |
+| `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | Offline-packed THD | On | 32-GPU GB200 |
 
-No external dequantisation script is required.
+The recipes select fused mHC only when the runtime supports the Blackwell
+kernel; Hopper uses the unfused fallback. The GB200 packed recipe additionally
+enables HybridEP, uneven-dispatch padding, DSA fusion, grouped GEMM, selective
+recompute, and attention activation offload.
 
-## SFT Recipes
+Launch the verified GB200 packed recipe from an imported BF16 checkpoint:
 
-Full-parameter SFT of DeepSeek-V4-Flash. See [`slurm_sft.sh`](slurm_sft.sh) for the end-to-end launcher and [`deepseek_v4.py`](../../../src/megatron/bridge/recipes/deepseek/deepseek_v4.py) for the recipe definitions.
+```bash
+./scripts/training/train.sh --nodes 8 --gpus-per-node 4 \
+  --recipe deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config \
+  --mode sft --step-func dsv4_step \
+  --pretrained_checkpoint work/models/deepseek-v4-flash \
+  --save_dir work/results/deepseek-v4-flash-sft \
+  --save_interval 100 --max_steps 100 --seq_length 1024 \
+  dist.distributed_timeout_minutes=180
+```
 
-| Recipe | MTP | mHC kernel | Hardware |
-|--------|-----|------------|----------|
-| `deepseek_v4_flash_sft_config` | on | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
-| `deepseek_v4_flash_no_mtp_sft_config` | off | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
-| `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | on | fused (cuTile, sm_100) | GB200 (32 GPUs; offline-packed OpenMath) |
+The card records 100 finite steps and a fresh-process checkpoint reload for
+this configuration at CP=1. Long-context and CP=2 SFT, post-SFT export and HF
+inference, and PEFT remain unverified or unsupported as indicated there. MXFP8
+and Muon SFT recipes are intentionally not shipped because full-model tests did
+not establish a stable supported configuration.
 
-All three recipes enable fused mHC and fused rope (`use_fused_mhc=True`, `apply_rope_fusion=True`), matching the pretrain recipes. The historical "fused-kernel SFT NaN" reports are both resolved: the fused-mHC report was a confound, and the fused-rope NaN was a bridge config-mapping bug (`partial_rotary_factor` double-applied) fixed by `rotary_percent=1.0` in #4271 — with that fix, full-model (43-layer, real weights) SFT with rope fusion on 8×GB300 matches the unfused control's loss trajectory. The fused mHC cuTile kernel is **sm_100 (Blackwell)**; on Hopper set `use_fused_mhc=False`. The `no_mtp` variant drops the MTP layer and trims `csa_compress_ratios` back to `num_layers` (the bridge appends an MTP-layer ratio that `transformer_config` would otherwise reject).
+## Legacy Slurm Templates
 
-> There are intentionally **no MXFP8 or Muon SFT recipes**: both were prototyped (mirroring the pretrain recipes) but fail in full-model DSv4-Flash SFT — see Blockers. SFT ships **Adam/bf16**; the pretrain MXFP8/Muon recipes are unaffected.
+[`slurm_pretrain.sh`](slurm_pretrain.sh) and
+[`slurm_sft.sh`](slurm_sft.sh) are customizable 32-GPU site templates retained
+for compatibility. They call the lower-level `run_recipe.py` entry point and
+do not reproduce the current hardware-qualified validation commands.
+`slurm_sft.sh` uses the unpacked SFT recipes; it does not launch the GB200 packed
+recipe. Prefer `scripts/training/train.sh` for new runs.
 
-`slurm_sft.sh` selects one of the legacy unpacked recipes from `MTP` (`on`|`off`); `HARDWARE` (`blackwell`|`hopper`) sets the node topology (on Hopper, also set `use_fused_mhc=False` — the fused mHC kernel is Blackwell-only). It runs the model at `TP=1, PP=4, EP=8` (32 GPUs), and:
+## Storage
 
-1. Imports `deepseek-ai/DeepSeek-V4-Flash` into a Megatron checkpoint (skipped if already present).
-2. Runs full SFT from that checkpoint via `scripts/training/run_recipe.py`.
+DeepSeek-V4-Flash materializes approximately 570 GB of BF16 model weights.
+Plan persistent storage before importing or saving checkpoints:
 
-GPUs per node differ by hardware, so 32 GPUs means a different node count:
+| Artifact | Approximate size |
+|----------|------------------|
+| Quantized Hugging Face cache | 150-200 GB |
+| Imported BF16 Megatron checkpoint | 570 GB |
+| Each BF16 model-only SFT checkpoint | 570 GB |
 
-| Hardware | GPUs/node | Nodes for 32 GPUs | `#SBATCH` |
-|----------|-----------|-------------------|-----------|
-| GB200 NVL | 4 | 8 | `--nodes=8 --gpus-per-node=4` (default) |
-| H100/H200 | 8 | 4 | `--nodes=4 --gpus-per-node=8` |
-
-The legacy `slurm_sft.sh` recipes use unpacked SBHD sequences. The separate GB200 packed recipe is launched through `scripts/training/run_recipe.py`; it uses the Megatron-LM development branch's THD support, offline-packed OpenMath data, fixed shapes with padded `cu_seqlens`, HybridEP uneven padding, and grouped GEMM. It completed 100 finite steps plus a fresh checkpoint reload at sequence length 1024 and CP=1. Long-context and CP=2 remain unverified.
-
-**Eval sizing.** Each evaluation draws `validation.eval_iters × global_batch_size` samples; if that exceeds your validation/test split the eval hangs trying to form a batch. `slurm_sft.sh` defaults to a small `EVAL_ITERS=2` and `DO_TEST=false` (the end-of-run test eval is the usual culprit on small test sets) — raise them only when your splits are large enough.
-
-## SFT Status, TODO & Blockers
-
-Validated end to end on **8× GB300 (32 GPU, TP1/PP4/EP8)** with real DeepSeek-V4-Flash weights: HF→Megatron import (FP8/MXFP4→bf16) + full SFT, **MTP on and off**, `lm loss` decreasing with no NaN — at SBHD / bf16 / Adam / 4K. (Those end-to-end runs used `use_fused_mhc=False`; the recipes now default `use_fused_mhc=True`, verified clean by an isolated GB300 re-run and confirmed by a reviewer on GB200.) Current SFT capability status and remaining upstream blockers are tracked below (verified against the code and PRs as of 2026-06-02; tracking: [NVIDIA/Megatron-LM#4468](https://github.com/NVIDIA/Megatron-LM/issues/4468)):
-
-| Capability | Status | Gating | Notes |
-|------------|--------|--------|-------|
-| Packed sequence (**THD**) for DSv4 attention | Supported by the GB200 packed SFT recipe | Megatron-LM development branch | Verified for 100 finite steps and a fresh checkpoint reload at sequence length 1024 and CP=1; long-context and CP=2 remain separate. |
-| CUDA Graphs for DSv4 THD | TODO | (no PR) | Follows THD. |
-| Context parallel / long-context (≥64K) | TODO | draft PR #5087 (depends on #5011) | SFT runs CP=1; this is the Phase-3 long-context target. |
-| MXFP8 / Muon **SFT** | **Fails (upstream); no SFT recipe shipped** | fp8 numerics; Muon + expert-parallel | Both prototyped (mirroring the pretrain recipes) and tested at full scale on 8×GB300 with `use_fused_mhc=False`: **MXFP8 NaNs at iter-2** (fp8 × hash-MoE/ClampedSwiGLU numerics) and **Muon hits an iter-2 `AssertionError`** (Muon + EP-MoE grad bookkeeping not yet supported upstream). Removed from the shipped recipe set; the **pretrain** MXFP8/Muon recipes remain. SFT ships **Adam/bf16**. |
-| Full SFT on **H100-80GB** | needs **≥64 GPU** | hardware | At 32 GPU (TP1/PP4/EP8 ⇒ DP=1) the fp32 master-param buffer can't shard and OOMs. Use **≥64 H100** (PP8 ⇒ DP≥2), or H200-140GB / Blackwell, or PEFT/LoRA. |
-
-Already incorporated in the pinned mcore (no action): dense-loss + per-layer rope-type fix (#5018), CSA/HCA (#4458), Hash MoE/ClampedSwiGLU (#4481), MTP+mHC (#4518), fusion kernels (#4894).
-
-## Container Image
-
-Run inside a container that has the DSv4 prerequisites: Megatron-Bridge on a **`main2dev`** Megatron-LM commit (validated on `ed6b1f65502aec7f2fe27e14a1245c29e435c2a6`; has both `safe_get_world_size` and the DSv4 `csa.py`/`dsa.py`), the DSA dependency `fast_hadamard_transform`, and a pre-built `helpers_cpp`. The [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo) — or an image built from `docker/Dockerfile.ci` with the submodule checked out to a `main2dev` commit — provides this. Set `slurm_sft.sh`'s `CONTAINER_IMAGE` to the resulting `.sqsh`.
-
-The first import downloads ~285B of HF weights, so point `HF_HOME` at shared scratch (e.g. `/home/scratch.<user>/HF_HOME`) before submitting so the download persists across jobs, and set `HF_TOKEN` if the repo is gated.
-
-### Disk footprint
-
-The full bf16 model is ~570 GB, so plan storage before submitting:
-
-| Artifact | Size | Notes |
-|----------|------|-------|
-| HF download cache (`HF_HOME`) | ~150–200 GB | quantized (FP8/MXFP4) |
-| Imported Megatron checkpoint (loaded by SFT) | ~570 GB | bf16, `${MEGATRON_DIR}/iter_0000000` |
-| Each saved SFT checkpoint | ~570 GB | bf16 model only |
-
-`slurm_sft.sh` does **not** save checkpoints by default (`SAVE_CKPT=0`) — to get training running you only need the base weights *loaded*, not written back — so the whole run fits in ~750 GB (cache + base). Never save optimizer state: distributed Adam for a 285B model is multi-TB (`save_optim=false` is fixed in the script). For a real fine-tune, set `SAVE_CKPT=1` (saving is capped to `KEEP_CKPTS=1` latest checkpoint) and put `HF_HOME` + `MEGATRON_DIR` on shared/project storage so a small (e.g. 2 TB) personal scratch only holds the output.
-
-## Parallelism Configurations
-
-DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported alongside the DSv4 hybrid attention path. Scale via expert and pipeline parallelism instead.
-
-| Model | TP | PP | EP | GPUs | GPU | Verified |
-|-------|---:|---:|---:|-----:|-----|----------|
-| DeepSeek-V4-Flash | 1 | 1 | 4 | 4 | GB200 192GB | Import, export, inference |
-| DeepSeek-V4-Flash | 1 | 1 | 16 | 16 | H100 80GB | Import, export, inference |
-| DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 | GB200 192GB | Import, export, inference |
-| DeepSeek-V4-Pro | 1 | 4 | 8 | 32 | GB200 192GB | Import, export, inference |
-| DeepSeek-V4-Pro | 1 | 16 | 8 | 128 | H100 80GB | Import, export, inference |
+Optimizer state can add multiple terabytes. Disable optimizer-state saves only
+when the workflow does not require resumable training; otherwise provision the
+required storage and validate checkpoint resume explicitly.
 
 ## Known Limitations
 
-- **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end and loaded into the Megatron model.
-
-- **Fused mHC requires sm_100.** The Blackwell recipes use the fused cuTile kernel. Set `use_fused_mhc=False` on Hopper; the unfused path remains the portable fallback.
-
-- **`fast_hadamard_transform` is required by the DSA attention variant.** `csa.py` and `dsa.py` import `hadamard_transform` from this package and hard-assert availability — there is no in-tree PyTorch fallback. It is a required Megatron Bridge dependency, pinned to the complete Dao-AILab git source because the PyPI source distribution is incomplete, and is installed by the `uv sync` commands above.
-
-- **Logit parity is verified for Flash and Flash-Base** against the official inference stack at last-real-token logits. The remaining gap is structural, from different attention/HC kernel decompositions and accumulation precisions between MCore and official inference.
+- DeepSeek V4 currently uses TP=1 with hybrid attention; scale with PP, EP, and
+  DP. Use only recipe-qualified topology changes.
+- Standard Megatron KV-cache autoregressive inference is unsupported because
+  the hybrid-attention path does not accept an inference context. The
+  [`inference.sh`](inference.sh) example uses legacy full-prefix generation and
+  is not a verified KV-cache path. HF-native inference is the target after a
+  verified Megatron-to-HF export.
+- Fused mHC requires Blackwell (`sm_100`). Hopper uses the unfused path.
+- CPU import and export require enough RAM for the full BF16 model plus
+  conversion workspace and remain unverified in the current card.
