@@ -150,27 +150,18 @@ override-dependencies = [
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 
-# These VCS dependencies build CUDA extensions while preparing metadata. Declare their
-# shared metadata here so lock generation stays source-only for both supported MCore refs.
-[[tool.uv.dependency-metadata]]
-name = "flash-mla"
-version = "1.0.0+9edee0c"
-requires-dist = []
-
+# flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
+# resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
 [[tool.uv.dependency-metadata]]
 name = "flash-mla"
 version = "1.0.0+b7643bd"
 requires-dist = []
 
+# Lane-specific metadata for VCS packages that otherwise compile CUDA extensions during lock.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
 version = "2.17.1+4329ff84"
 requires-dist = ["pydantic<2.14", "importlib-metadata>=1.0", "packaging", "torch>=2.1", "einops", "onnxscript", "onnx", "nvdlfw-inspect"]
-
-[[tool.uv.dependency-metadata]]
-name = "transformer-engine"
-version = "2.14.0+f031cf87"
-requires-dist = ["einops", "importlib-metadata", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic", "torch"]
 
 [[tool.uv.dependency-metadata]]
 name = "fast-hadamard-transform"
