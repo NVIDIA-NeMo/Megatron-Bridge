@@ -252,9 +252,36 @@ if ! grep -Fq \
   echo "Bridge's lock metadata must preserve the MCore TE extra" >&2
   exit 1
 fi
-if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
-  grep -q '^name = "transformer-engine"$' pyproject.toml; then
-  echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
+if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml; then
+  echo "Bridge must inherit the TransformerEngine source from the selected MCore ref" >&2
+  exit 1
+fi
+
+if ! python3 - <<'PY'
+import tomllib
+
+with open("pyproject.toml", "rb") as file:
+    bridge = tomllib.load(file)
+with open("3rdparty/Megatron-LM/pyproject.toml", "rb") as file:
+    mcore = tomllib.load(file)
+
+metadata = bridge["tool"]["uv"]["dependency-metadata"]
+for package in ("flash-mla", "transformer-engine", "fast-hadamard-transform"):
+    records = [record for record in metadata if record["name"] == package]
+    assert len(records) == 1, f"expected one static metadata record for {package}, found {len(records)}"
+    assert records[0].get("version"), f"direct Git metadata for {package} requires a version"
+
+te_metadata = next(record for record in metadata if record["name"] == "transformer-engine")
+te_source = mcore["tool"]["uv"]["sources"]["transformer-engine"]
+assert isinstance(te_source, dict), "expected one TransformerEngine source in MCore"
+te_revision = te_source["rev"]
+assert len(te_revision) == 40, "expected MCore to pin TransformerEngine to a full commit"
+assert te_metadata["version"].endswith(f"+{te_revision[:8]}"), (
+    f"TransformerEngine metadata {te_metadata['version']} does not match MCore source {te_revision}"
+)
+PY
+then
+  echo "Bridge's static VCS metadata must match the selected MCore ref" >&2
   exit 1
 fi
 
