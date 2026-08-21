@@ -44,11 +44,9 @@ In a standalone Megatron Bridge environment with its own virtual environment,
 exact sync is appropriate: use `uv sync` after switching to dev and restore the
 tracked lock file followed by `uv sync --locked` when switching back to main.
 
-The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config`
-library recipe and its corresponding performance recipe require the stack
-validated by Megatron Bridge PR
-[#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824). The performance
-definition preserves its exact benchmark stack:
+The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` performance
+recipe preserves the stack validated by Megatron Bridge PR
+[#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824):
 `nvcr.io/nvidia/nemo:26.06.01` with Megatron-LM dev commit
 `9d46c924dce3818f2b5f894f7380712c780d1801` and the capability-check patch
 documented in that PR. The Megatron-LM commit pinned by the current
@@ -73,44 +71,39 @@ Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each
 
 ## Pretraining Recipes
 
-See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the legacy 32-GPU Slurm launcher. Hardware-specific recipe definitions live in the [`b200`](../../../src/megatron/bridge/recipes/deepseek/b200/deepseek_v4.py), [`gb200`](../../../src/megatron/bridge/recipes/deepseek/gb200/deepseek_v4.py), and [`gb300`](../../../src/megatron/bridge/recipes/deepseek/gb300/deepseek_v4.py) modules.
+See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the legacy 32-GPU Slurm launcher. Hardware-specific recipe definitions live in the [`gb200`](../../../src/megatron/bridge/recipes/deepseek/gb200/deepseek_v4.py) and [`gb300`](../../../src/megatron/bridge/recipes/deepseek/gb300/deepseek_v4.py) modules.
 
 Available Blackwell pretraining recipes:
 
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
-- `deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config`: 64-GPU B200
-  Adam MXFP8 with PP8/VPP2/EP8, all-to-all dispatch, selective recompute, and
-  attention activation offload plus MXFP8 parameter gather/buffer reuse
 - `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config`: 128-GPU GB200
   Adam MXFP8 with PP1/EP64/dense-DP128/expert-DP2/HybridEP, selective recompute,
   attention activation offload, and MXFP8 parameter gather/buffer reuse
-- `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config`: 256-GPU GB300
-  Adam MXFP8 with PP4/VPP4/EP64/HybridEP (requires the PR #4824 container and
-  dev-MCore stack described above)
+- `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config`: 256-GPU GB300
+  performance configuration (requires the PR #4824 container and dev-MCore
+  stack described above)
 
-The `_library_config` suffix keeps these real-training definitions distinct
-from the corresponding benchmark recipe families. They retain natural routing,
-convergence batch sizes, correctness checks, and checkpoint behavior.
+The `_library_config` suffix keeps the real-training GB200 definition distinct
+from the corresponding benchmark recipe. It retains natural routing, the
+convergence batch size, correctness checks, and checkpoint behavior.
 
 The hardware-count-specific recipes are intentionally not accepted by
 `slurm_pretrain.sh`: that legacy launcher overwrites the recipe's batch and
 TP/PP/EP/CP settings. Launch them through a site multi-node runner that invokes
 `scripts/training/run_recipe.py --recipe <recipe-name> --mode pretrain` with
-64 ranks for B200 Flash, 128 ranks for GB200 Flash, or 256 ranks for GB300 Pro.
-Keep the topology and global batch size owned by the recipe; pass only dataset,
-run-length, logging, and checkpoint overrides.
+128 ranks for GB200 Flash. Keep the topology and global batch size owned by the
+recipe; pass only dataset, run-length, logging, and checkpoint overrides.
 
-The GB200 Flash and GB300 Pro library bases enable their supported DSA and
-Transformer Engine fused grouped-MLP paths. The new hardware-count-specific
-variants additionally enable GLU interleaving; the existing recipe identities
-retain their checkpoint tensor layout. The library recipes retain unlimited
-natural-routing capacity. All variants retain their precision-specific
+The GB200 Flash library base enables its supported DSA and Transformer Engine
+fused grouped-MLP paths. The new hardware-count-specific variant additionally
+enables GLU interleaving; the existing recipe identities retain their checkpoint
+tensor layout. The library recipe retains unlimited natural-routing capacity.
+All variants retain their precision-specific
 training policies: full-iteration CUDA graphs, FP8 parameter gather/buffer
 reuse, and reduced-precision gradient reduction remain disabled except for the
-provisional FP8 parameter gather/buffer reuse in the high-scale B200 and GB200
-Flash recipes; both configurations still require 100-step checkpoint and resume
-validation.
+provisional FP8 parameter gather/buffer reuse in the high-scale GB200 recipe;
+that PP1 configuration still requires 100-step checkpoint and resume validation.
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 

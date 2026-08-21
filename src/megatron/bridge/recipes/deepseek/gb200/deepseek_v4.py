@@ -218,7 +218,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigCont
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
-    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.use_transformer_engine_op_fuser = True
@@ -292,8 +293,8 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config() -> ConfigContainer
 def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigContainer:
     """Return the GB200-optimized offline-packed OpenMath SFT config.
 
-    This variant adds HybridEP dispatch, safe uneven-input padding, DSA indexer
-    training, static packed-sequence shapes, and grouped expert GEMMs to the
+    This variant adds HybridEP dispatch, safe uneven-input padding, fused DSA
+    execution, static packed-sequence shapes, and grouped expert GEMMs to the
     hardware-agnostic packed SFT recipe.
     """
     from megatron.bridge.recipes.deepseek.deepseek_v4 import (
@@ -303,12 +304,10 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
     cfg = deepseek_v4_flash_sft_openmath_thinking_packed_config()
 
     cfg.model.apply_dsa_kernel_fusion = True
-    cfg.model.dsa_indexer_loss_coeff = 0.01
-    cfg.model.dsa_indexer_use_sparse_loss = True
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_flex_dispatcher_num_sms = 16
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
     cfg.model.moe_grouped_gemm = True

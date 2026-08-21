@@ -5,10 +5,10 @@ title: deepseek_v4_flash
 summary: >
   Performance disclaimer: timing and throughput metrics from functional training items
   are sanity checks, not optimized performance results. pretrain_performance.GB200 uses
-  the current 128-GPU GB200 library recipe and remains unverified for natural routing.
+  the canonical 128-GPU GB200 benchmark recipe and remains unverified.
 
-  DeepSeek-V4-Flash verification covers GPU conversion and GB200 SFT at the item-pinned
-  Bridge revision. The current 128-GPU GB200 MXFP8 library pretraining recipe uses
+  DeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision.
+  The current 128-GPU GB200 MXFP8 library pretraining recipe uses
   PP1/EP64 with natural routing, selective recompute, attention activation offload, and
   MXFP8 parameter gather and gradient-buffer reuse. It has completed an eight-step
   screen, but full pretraining and direct checkpoint resume remain unverified until the
@@ -21,26 +21,24 @@ summary: >
   the HF-native path after export.
 
   The GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes,
-  selective whole-MoE recompute, and attention activation offload. It completed
-  100 steps at 39.740 TFLOP/s/GPU over steps 91-100, saved and reloaded its
-  step-100 checkpoint, and exported a complete BF16 checkpoint whose two strict
-  HF reloads produced identical deterministic output.
+  selective whole-MoE recompute, and attention activation offload while preserving
+  the base SFT objective. Its final objective-preserving configuration and public
+  post-export inference workflow remain unverified.
 
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
-      - megatron_to_hf_gpu
     unsupported:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - inference
     unverified:
       - manual_forward_pass
+      - megatron_to_hf_gpu
   training:
     GB200:
-      verified: [sft, sft_export_inference]
-      unverified: [pretrain, sft_long_context, checkpoint_resume]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
       unsupported: [peft]
   performance:
     GB200: unverified
@@ -91,9 +89,8 @@ items:
       tensor merging; nodes consistently OOM before the export completes.
 
   megatron_to_hf_gpu:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: 3ecb452af619bef88083e10a7738362df8f5d0bf  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 2 --gpus-per-node 4 --ep 8 --pp 4
@@ -101,11 +98,11 @@ items:
       --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000
       --hf-path work/model-verification/dsv4-flash/export-gpu
       --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code
-    last_verified: 2026-08-05
+    last_verified: null
     expected_result: >
-      The command exits successfully and writes 46 BF16 safetensors shards covering
-      all transformer-layer parameters. The export completes 4176/4176 weight
-      conversions with zero errors.
+      Verification requires rerunning the model-level export on the fixed indexer
+      mapping and proving exact non-scale source-key coverage, all expected BF16
+      shards, and a strict Hugging Face reload. The historical run predates that fix.
 
   manual_forward_pass:
     status: unverified
@@ -176,9 +173,8 @@ items:
 
   sft:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 829aa18ef1159aef63880ea0f7018c8597684bc6  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
@@ -204,21 +200,20 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-20
+      last_verified: null
       metrics:
-        initial_loss: 0.9435847
-        final_loss: 0.2834085
-        last_10_steps_step_time_ms_avg: 9124.730
-        last_10_steps_model_tflops_per_gpu_avg: 39.740
-        peak_allocated_memory_gib: 184.96
-        peak_reserved_memory_gib: 187.67
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
         On 32 GB200 (8 nodes x 4 GPUs), TP1/PP4/EP8/CP1 with dense DP8 and expert
         DP1, GBS/MBS 128/1. OpenMathInstruct-2 thinking data uses offline packing
         at seq_length=1024 with fixed token and cumulative-boundary shapes. The
         GB200 recipe uses selective recompute over moe, mhc, mla_up_proj, and
         layernorm, attention activation offload, HybridEP dispatch, and DSA kernel
-        fusion. The run completes 100 steps with finite LM and MTP losses, no skipped
+        fusion without enabling the optional DSA indexer loss. Verification requires
+        100 steps with finite LM and MTP losses, no skipped
         or NaN iterations, and a complete model checkpoint at step 100 that reloads
         successfully for finite step 101. moe_grouped_gemm=True and native fused cross
         entropy are recipe defaults.
@@ -227,7 +222,7 @@ items:
 
   sft_export_inference:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: sft
       commands:
@@ -245,16 +240,12 @@ items:
           --hf-model work/model-verification/dsv4-flash/sft-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template --disable-thinking
-      last_verified: 2026-08-20
+      last_verified: null
       expected_result: >
-        The grouped-GEMM SFT step-100 checkpoint exports 35,020 BF16 weight tensors
-        covering every non-scale source key across 46 safetensors shards. Two independent
-        strict GPU-only DeepseekV4ForCausalLM reloads have no missing, unexpected, or
-        mismatched weights and produced exactly 30 generated tokens before stopping at
-        EOS within the configured 32-token maximum. Both deterministic greedy runs had
-        identical token IDs and this literal completion: "Paris is important to France
-        because it is the country's capital, a major economic and cultural center, and a
-        symbol of French history and identity."
+        Verification requires exact non-scale source-key coverage across all BF16
+        shards, two independent strict GPU-only reloads, and identical bounded greedy
+        output. The maintained verifier must first support sharding this 285B model and
+        its BF16 autocast requirement; the current single-device command is insufficient.
 
   sft_long_context:
     GB200:
@@ -338,19 +329,8 @@ items:
       precision: fp8_mx
       command: >
         ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
-        --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config
-        --mode pretrain --dataset megatron-indexed --max_steps 100
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/rp2 dataset.num_workers=0
-        dataset.random_seed=1234 rng.seed=1234
-        scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
-        validation.eval_interval=0 validation.eval_iters=0
-        checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null
-        checkpoint.save=null
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-        dist.distributed_timeout_minutes=120
+        --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config
+        --mode pretrain --max_steps 50
       last_verified: null
       metrics:
         initial_loss: null
@@ -358,10 +338,8 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        On 128 GB200 (32 nodes x 4 GPUs) with contiguous NVLink-domain placement,
-        TP1/PP1/EP64/CP1 with dense DP128 and expert DP2, GBS/MBS 256/1, FP8-MX,
-        natural routing, selective recompute, and attention activation offload. The
-        100-step run must complete with finite losses, no skipped or NaN iterations,
-        and all four metrics recorded over the final ten steps. The separate
-        capacity-1.5 screen in the summary is not accepted for this item because it
-        drops substantial expert assignments and routing probability mass.
+        On 128 GB200, the exact mock-data benchmark recipe completes 50 steps with
+        finite losses and throughput. This benchmark uses forced routing, a static
+        expert-rank capacity, paged stash, full-iteration CUDA graphs, and a different
+        batch/objective contract, so its metrics must not be compared with natural-routing
+        library pretraining as convergence evidence.

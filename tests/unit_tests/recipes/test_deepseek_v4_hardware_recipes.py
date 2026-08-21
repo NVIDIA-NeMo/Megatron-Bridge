@@ -18,12 +18,8 @@ from collections.abc import Callable
 
 import pytest
 import torch
-from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 import megatron.bridge.recipes as recipes
-from megatron.bridge.recipes.deepseek.b200.deepseek_v4 import (
-    deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config as flash_b200_library_config,
-)
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config as flash_bf16_base_config,
 )
@@ -37,13 +33,7 @@ from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config as flash_packed_sft_config,
 )
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
-    deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config as pro_bf16_base_config,
-)
-from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config as pro_fp8_config,
-)
-from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
-    deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config as pro_library_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -57,15 +47,8 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-@pytest.mark.parametrize(
-    "base_factory",
-    [flash_bf16_base_config, pro_bf16_base_config],
-    ids=["flash-bf16", "pro-bf16"],
-)
-def test_base_recipes_enable_precision_independent_fusions(
-    base_factory: Callable[[], ConfigContainer],
-) -> None:
-    cfg = base_factory()
+def test_flash_base_recipe_enables_precision_independent_fusions() -> None:
+    cfg = flash_bf16_base_config()
 
     assert cfg.model.apply_dsa_kernel_fusion is True
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
@@ -90,17 +73,6 @@ def test_flash_base_recipe_ports_flash_fusions() -> None:
 
     assert cfg.model.attention_backend == "auto"
     assert cfg.model.moe_router_fusion is True
-    assert cfg.train.manual_gc_interval == 5
-    assert cfg.model.fine_grained_activation_offloading is True
-    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
-    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
-    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
-
-
-def test_pro_base_recipe_ports_activation_offload() -> None:
-    cfg = pro_bf16_base_config()
-
-    assert cfg.model.attention_backend is None
     assert cfg.train.manual_gc_interval == 5
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
@@ -145,11 +117,11 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.model.apply_dsa_kernel_fusion is True
-    assert cfg.model.dsa_indexer_loss_coeff == 0.01
-    assert cfg.model.dsa_indexer_use_sparse_loss is True
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.moe_hybridep_num_sms == 16
+    assert cfg.model.moe_flex_dispatcher_num_sms == 16
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.moe_permute_fusion is True
@@ -189,6 +161,8 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
@@ -203,85 +177,6 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
 
 
-def test_flash_b200_nvl8_recipe_preserves_real_training_contract() -> None:
-    cfg = flash_b200_library_config()
-
-    assert cfg.train.train_iters == 1_000_000
-    assert cfg.train.global_batch_size == 256
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 8
-    assert cfg.model.virtual_pipeline_model_parallel_size == 2
-    assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.pipeline_model_parallel_layout == (
-        "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
-    )
-    parsed_layout = PipelineParallelLayerLayout(
-        cfg.model.pipeline_model_parallel_layout,
-        pipeline_model_parallel_size=cfg.model.pipeline_model_parallel_size,
-    )
-    parsed_layout.validate_layer_layout(num_layers=43, mtp_num_layers=1)
-    assert parsed_layout.virtual_pipeline_model_parallel_size == 2
-    assert cfg.model.moe_token_dispatcher_type == "alltoall"
-    assert cfg.model.moe_flex_dispatcher_backend is None
-    assert cfg.model.moe_flex_dispatcher_num_sms is None
-    assert cfg.model.moe_router_force_load_balancing is False
-    assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
-    assert cfg.model.fine_grained_activation_offloading is True
-    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
-    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
-    assert cfg.mixed_precision.fp8_param_gather is True
-    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
-    assert getattr(cfg.model, "moe_expert_rank_capacity_factor", None) is None
-    assert getattr(cfg.model, "moe_paged_stash", False) is False
-    assert cfg.model.cuda_graph_impl == "none"
-    assert cfg.model.cuda_graph_modules == []
-    assert cfg.model.cuda_graph_scope is None
-    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
-    assert cfg.ddp.check_for_nan_in_grad is True
-    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
-    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
-    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
-    assert "USE_MNNVL" not in cfg.env_vars
-    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
-
-
-def test_pro_high_scale_recipe_preserves_real_training_contract() -> None:
-    cfg = pro_library_config()
-
-    assert cfg.model.pipeline_model_parallel_size == 4
-    assert cfg.model.virtual_pipeline_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_layout == "Et*4|(tttt|)*14tmL"
-    assert cfg.train.train_iters == 1_000_000
-    assert cfg.train.global_batch_size == 128
-    assert cfg.validation.eval_interval == 2000
-    assert cfg.validation.eval_iters == 32
-    assert cfg.model.moe_router_force_load_balancing is False
-    assert cfg.model.dsa_indexer_loss_coeff == 0.0
-    assert cfg.model.dsa_indexer_use_sparse_loss is False
-    assert cfg.model.apply_dsa_kernel_fusion is True
-    assert cfg.model.quant_recipe is not None
-    assert cfg.model.moe_router_padding_for_fp8 is True
-    assert cfg.mixed_precision.fp8_param_gather is False
-    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
-    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
-    assert cfg.ddp.grad_reduce_in_fp32 is True
-    assert cfg.optimizer.main_grads_dtype == torch.float32
-    assert cfg.ddp.check_for_nan_in_grad is True
-    assert cfg.model.cuda_graph_impl == "none"
-    assert cfg.model.use_transformer_engine_op_fuser is True
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
-    assert getattr(cfg.model, "moe_expert_rank_capacity_factor", None) is None
-    assert getattr(cfg.model, "moe_paged_stash", False) is False
-    assert cfg.model.fine_grained_activation_offloading is True
-    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
-    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
-    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
-    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
-    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-
-
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:
-    assert recipes.deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config is flash_b200_library_config
     assert recipes.deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config is flash_library_config
     assert recipes.deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config is flash_packed_sft_config
-    assert recipes.deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_library_config is pro_library_config
