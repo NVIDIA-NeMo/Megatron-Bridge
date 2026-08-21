@@ -55,4 +55,8 @@ from megatron.bridge.perf_recipes.deepseek.vr200.deepseek_v3 import (
     deepseek_v3_pretrain_256gpu_vr200_fp8cs_config,
     deepseek_v3_pretrain_256gpu_vr200_fp8mx_config,
     deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
+    deepseek_v3_pretrain_512gpu_vr200_fp8mx_config,
+    deepseek_v3_pretrain_512gpu_vr200_nvfp4_config,
+    deepseek_v3_pretrain_1024gpu_vr200_fp8mx_config,
+    deepseek_v3_pretrain_1024gpu_vr200_nvfp4_config,
 )
