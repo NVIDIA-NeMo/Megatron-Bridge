@@ -3,18 +3,18 @@
 
 title: nemotron_3_ultra_550b_a55b
 summary: >
-  Nemotron 3 Ultra 550B-A55B has public large-scale BF16 library pretraining
-  recipes for H100 and GB200. They adopt memory-feasible large-scale execution
+  Nemotron 3 Ultra 550B-A55B has public large-scale BF16 H100 and MXFP8 GB200
+  library pretraining recipes. They adopt memory-feasible large-scale execution
   settings while retaining natural routing, numerical checks, and the library
   training objective. The exact 256-H100 real-data support run is verified;
-  GB200 remains pending its exact real-data run. The model also has public
-  packed full-SFT and packed PEFT recipes. The separately scoped
-  pretrain_performance.GB200 measurement remains unverified.
+  the 256-GB200 MXFP8 Megatron-FSDP real-data support run remains pending. The
+  model also has public packed full-SFT and packed PEFT recipes. The separately
+  scoped BF16 pretrain_performance.GB200 measurement remains unverified.
   Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip is
   verified. CPU conversion, portable manual-forward and deterministic-inference
   reruns, remaining functional training, checkpoint resume, and the separately
-  scoped GB200 and H100 FSDP workloads still require completed verification
-  runs before those support claims are promoted.
+  scoped GB200 MXFP8 and H100 BF16 FSDP workloads still require completed
+  verification runs before those support claims are promoted.
 verification_index:
   model_level:
     verified:
@@ -211,19 +211,19 @@ items:
 
     GB200:
       status: unverified
-      precision: bf16
+      precision: fp8_mx
       enabled_features:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
-        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config
         --mode pretrain --dataset megatron-indexed --max_steps 100 --wait
         'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
         dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200
         tokenizer.tokenizer_type=SentencePieceTokenizer
         tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
         dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
-        checkpoint.load=null checkpoint.save=null
+        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
@@ -238,13 +238,16 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The public 256-GB200 BF16 library recipe must complete all 100 bounded
-        public RedPajama2 head_01 optimizer steps at TP2/PP4/CP1/EP64/ETP1,
+        The public 256-GB200 MXFP8 Megatron-FSDP library recipe must complete
+        all 100 bounded
+        public RedPajama2 head_01 optimizer steps at TP2/PP1/CP1/EP64/ETP1,
         GBS/MBS 256/1, and sequence length 8192. HybridEP, natural expert
-        routing, FP32 gradient reduction, targeted fused expert-MLP activation
-        offload, numerical checks, and the library recipe's optimizer and
-        constant-LR schedule must remain active. Loss must remain finite with
-        no skipped or NaN iterations and all four metrics.
+        routing, quantization padding, BF16 gradient communication,
+        optim-grads-params sharding, targeted fused expert-MLP activation
+        offload, selective moe_act recompute, numerical checks, and the library
+        recipe's optimizer and constant-LR schedule must remain active. Loss
+        must remain finite with no skipped or NaN iterations and all four
+        metrics. No checkpoint save or resume behavior is claimed by this run.
 
   sft:
     H100:
@@ -495,11 +498,27 @@ items:
   pretrain_fsdp:
     GB200:
       status: unverified
-      precision: bf16
+      precision: fp8_mx
       enabled_features:
         moe_dispatcher: hybridep
         megatron_fsdp: optim_grads_params
-      command: null
+      command: >
+        ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config
+        --mode pretrain --dataset megatron-indexed --max_steps 100 --wait
+        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
+        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
+        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
+        validation.eval_iters=0 validation.eval_interval=0
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-resolved.yaml
+        logger.tensorboard_dir=null
       last_verified: null
       metrics:
         initial_loss: null
@@ -509,10 +528,15 @@ items:
         peak_allocated_memory_gib: null
         peak_reserved_memory_gib: null
       expected_result: >
-        No BF16 GB200 Megatron-FSDP library recipe is claimed by this PR. The
-        distributed-optimizer GB200 pretraining path is verified first; FSDP
-        remains unverified until a convergence-safe library configuration
-        completes independently.
+        The same exact 256-GB200 real-data workload used by pretrain.GB200 must
+        complete all 100 optimizer steps with the MXFP8 Megatron-FSDP library
+        recipe at TP2/PP1/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length
+        8192. HybridEP, natural routing, quantization padding, BF16 gradient
+        communication, optim-grads-params sharding, targeted fused expert-MLP
+        activation offload, selective moe_act recompute, and all numerical
+        checks must remain active. Every keyed step must have finite loss,
+        timing, throughput, and memory values with no skipped or NaN
+        iterations. No checkpoint save or resume behavior is claimed.
 
     H100:
       status: unverified

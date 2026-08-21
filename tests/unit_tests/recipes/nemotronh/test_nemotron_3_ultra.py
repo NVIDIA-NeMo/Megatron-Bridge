@@ -117,7 +117,7 @@ def test_h100_large_scale_pretrain_adopts_execution_config_without_benchmark_pol
 
     assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
-    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is True
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert cfg.ddp.num_distributed_optimizer_instances == 1
     assert cfg.ddp.outer_dp_sharding_strategy == "no_shard"
