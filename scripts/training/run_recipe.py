@@ -106,7 +106,6 @@ from recipe_metadata import (  # noqa: E402
 from recipe_runner import (  # noqa: E402
     apply_cli_overrides,
     apply_determinism,
-    apply_runtime_environment,
     bootstrap_recipe_environment,
     load_forward_step,
     load_recipe,
@@ -496,17 +495,16 @@ def main(argv: list[str] | None = None) -> None:
             world_size=benchmark_world_size,
         )
     configuration_mode = _train_mode(args.mode)
+    recipe = bootstrap_recipe_environment(
+        recipe,
+        script_path=str(Path(__file__).resolve()),
+        argv=list(argv) if argv is not None else sys.argv[1:],
+    )
 
     if benchmark_metadata is not None:
-        recipe = bootstrap_recipe_environment(
-            recipe,
-            script_path=str(Path(__file__).resolve()),
-            argv=list(argv) if argv is not None else sys.argv[1:],
-        )
         execution_mode = "pretrain"
         step_mode = benchmark_metadata.task
     else:
-        recipe = apply_runtime_environment(recipe)
         execution_mode = configuration_mode
         step_mode = configuration_mode
 
