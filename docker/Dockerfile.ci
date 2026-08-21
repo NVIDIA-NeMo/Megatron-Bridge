@@ -151,3 +151,5 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
 COPY --chmod=644 . /opt/Megatron-Bridge
+
+ENV NCCL_NET_PLUGIN=none
