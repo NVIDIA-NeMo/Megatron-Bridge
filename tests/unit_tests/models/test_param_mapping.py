@@ -340,6 +340,52 @@ class TestAutoMapping:
         finally:
             AutoMapping._MODULE_TYPE_REGISTRY["column"].discard("Linear")
 
+    def test_megatron_to_hf_skips_param_no_pp_rank_owns(self, mock_distributed_env):
+        """A parameter whose module is absent from every PP rank exports as no weights."""
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=1)
+        mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
+
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [False, False]
+        )
+
+        result = mapping.megatron_to_hf(None, None)
+
+        assert result == {}, f"expected an empty export for an unowned parameter, got {result}"
+        assert mock_dist.broadcast_object_list.call_count == 0, "nothing should be broadcast when no rank owns it"
+
+    def test_megatron_to_hf_uses_type_broadcast_by_owning_pp_rank(self, mock_distributed_env):
+        """Regression: a non-owning rank still receives the parallelism type from the owner."""
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=1)
+        mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
+
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [True, False]
+        )
+        mock_dist.broadcast_object_list.side_effect = lambda obj_list, src, group: obj_list.__setitem__(
+            0, "replicated"
+        )
+
+        with patch.object(AutoMapping, "_get_or_create_mapping") as mock_get_mapping:
+            mock_get_mapping.return_value.megatron_to_hf.return_value = {"hf.weight": torch.zeros(2)}
+            result = mapping.megatron_to_hf(None, None)
+
+        assert mapping._detected_type == "replicated"
+        assert mock_get_mapping.call_args[0][0] == "replicated"
+        assert set(result) == {"hf.weight"}
+
+    def test_broadcast_obj_from_pp_rank_raises_when_unowned_by_default(self, mock_distributed_env):
+        """Without allow_missing, an object owned by no PP rank is still an error."""
+        _, mock_dist = mock_distributed_env(pp_size=2, pp_rank=1)
+        mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
+
+        mock_dist.all_gather_object.side_effect = lambda output, obj, group: output.__setitem__(
+            slice(None), [False, False]
+        )
+
+        with pytest.raises(ValueError, match="Object must exist on at least one PP rank"):
+            mapping.broadcast_obj_from_pp_rank(None, "detected_type")
+
 
 class TestHelperFunctions:
     def test_qkv_merge_split(self, transformer_config):
