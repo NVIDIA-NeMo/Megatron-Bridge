@@ -497,6 +497,16 @@ class TrainingConfig(MTrainTrainingConfig):
 class CheckpointConfig(MTrainCheckpointConfig):
     """Configuration settings for model checkpointing (saving and loading)."""
 
+    stage_precision_aware_optimizer_state_on_cpu: bool = False
+    """Stage expanded precision-aware Transformer Engine optimizer state on CPU.
+
+    Enable this when reduced-precision Adam state fits during training but its
+    portable FP32 checkpoint representation would exceed available GPU memory.
+    The checkpoint values and dtypes are unchanged; only their device during
+    state-dict construction is affected. Supported only for ``torch_dist``
+    checkpoints.
+    """
+
     pretrained_checkpoint: Optional[str] = None
     """Directory containing a pretrained model checkpoint for finetuning.
 
@@ -597,6 +607,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
 
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
+
+        if self.stage_precision_aware_optimizer_state_on_cpu and self.ckpt_format != "torch_dist":
+            raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
 
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
