@@ -320,6 +320,7 @@ class TestDataLoaders:
                 dataset_root="/tmp/dataset",
                 seq_length=512,
                 seed=4321,
+                train_shuffle=False,
                 num_workers=0,
                 persistent_workers=False,
             )
@@ -355,11 +356,14 @@ class TestDataLoaders:
         assert train_call.kwargs["seed"] == expected_seed
         assert valid_call.kwargs["seed"] == expected_seed
         assert test_call.kwargs["seed"] == expected_seed
+        assert train_call.kwargs["shuffle"] is cfg.dataset.train_shuffle
+        assert valid_call.kwargs["shuffle"] is False
+        assert test_call.kwargs["shuffle"] is False
 
     @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size", return_value=1)
     @mock.patch("torch.distributed.get_rank", return_value=0)
-    def test_gpt_sft_batch_eval_preserves_split_smaller_than_global_batch(
+    def test_gpt_sft_batch_eval_is_unshuffled_and_preserves_split_smaller_than_global_batch(
         self, _mock_rank, _mock_world_size, _mock_broadcast
     ):
         class PaddingAwareDataset:
@@ -400,8 +404,8 @@ class TestDataLoaders:
         test_batch = next(iter(test_dataloader))
         assert valid_batch.shape == (cfg.validation.eval_global_batch_size,)
         assert test_batch.shape == (cfg.validation.eval_global_batch_size,)
-        assert -1 in valid_batch
-        assert -1 in test_batch
+        assert valid_batch.tolist() == [0, 1, 2, -1]
+        assert test_batch.tolist() == [0, 1, 2, -1]
 
     @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size", return_value=1)
