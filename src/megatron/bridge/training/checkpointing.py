@@ -16,6 +16,7 @@
 
 import contextlib
 import gc
+import inspect
 import os
 import random
 import shutil
@@ -822,6 +823,14 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' "
                 f"does not implement the CheckpointManager protocol."
             )
+
+        try:
+            inspect.signature(manager.save).bind(None, None)
+        except (TypeError, ValueError) as err:
+            raise TypeError(
+                f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' save method "
+                "must accept (ctx, callback_manager)."
+            ) from err
 
         return manager
 
@@ -2890,6 +2899,9 @@ def _load_checkpoint_from_path(
         else:
             gen_sd_optim = None
             gen_sd_opt_param_scheduler = None
+            if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
+                ignore_optimizer_state = True
+                print_rank_0("Optimizer state was not saved in the torch-dist checkpoint; using a fresh optimizer")
 
         # Determine if rerun state will be loaded
         if tp_pp_match and not release and not cfg.checkpoint.finetune and "rerun_state_machine" in state_dict:
