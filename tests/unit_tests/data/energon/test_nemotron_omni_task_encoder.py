@@ -27,6 +27,7 @@ from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
     NemotronOmniTaskSample,
 )
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
+from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import temporal_video_frame_labels
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -400,10 +401,11 @@ def test_energon_temporal_video_prompt_uses_owned_source_metadata(monkeypatch):
 
 
 def test_video_labels_omit_timestamps_without_metadata():
-    labels = omni_collate._temporal_video_frame_labels(
+    labels = temporal_video_frame_labels(
         3,
         temporal_patch_size=2,
-        metadata=VideoMetadata(total_num_frames=3, fps=None, duration=None, frames_indices=None),
+        source_fps=None,
+        frame_indices=None,
     )
 
     assert labels == ["Frame 1 and frame 2: ", "Frame 3: "]

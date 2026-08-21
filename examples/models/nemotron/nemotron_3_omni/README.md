@@ -250,9 +250,10 @@ mode:
 - Video inputs → temporal video embedder: Frames are resized with the public
   processor's aspect-preserving video policy and fused in consecutive pairs
   (`temporal_patch_dim=2`, `separate_video_embedder=True`). The resulting token
-  count is derived independently for each frame pair. Videos are supported on
-  the **Energon path only**; the fixed 512×512 policy remains available as an
-  explicit compatibility mode.
+  count is derived independently for each frame pair. Video training is
+  supported on the **Energon path only**; the shipped temporal inference scripts
+  use the same processor-owned grids and per-pair counts. The fixed 512×512
+  training policy remains available as an explicit compatibility mode.
 
 Set the fields below as a matched column; a mismatched set produces input that
 does not match the model configuration.
