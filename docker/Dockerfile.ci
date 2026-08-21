@@ -12,21 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+ARG NCCL_GIB_IMAGE="us-docker.pkg.dev/gce-ai-infra/gpudirect-gib/nccl-plugin-gib@sha256:b71627dcf88862cd0e64434dfd0224441960db58f2022f94b5f56123659c207e"
+
+FROM ${NCCL_GIB_IMAGE} AS nccl_gib
+
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
-RUN NCCL_GIB_PLUGINS_URL='https://packages.cloud.google.com/apt/pool/gpudirect-gib-apt/nccl-gib-plugins_1.1.2-1_amd64_b5ba8e7c31e7d40a1a03d06f29275763.deb' && \
-    NCCL_GIB_PLUGINS_SHA256='964e48ebbae0279918a495d157b3ef77ed7546c9443246977ec9bd8f6d0dae29' && \
-    curl --fail --location --proto '=https' --tlsv1.2 \
-        --output /tmp/nccl-gib-plugins.deb "${NCCL_GIB_PLUGINS_URL}" && \
-    echo "${NCCL_GIB_PLUGINS_SHA256}  /tmp/nccl-gib-plugins.deb" | sha256sum --check --strict - && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends /tmp/nccl-gib-plugins.deb && \
-    ldconfig /usr/local/nvidia/lib64 && \
-    rm -f /tmp/nccl-gib-plugins.deb && \
-    rm -rf /var/lib/apt/lists/*
-
+COPY --from=nccl_gib /usr/local/gib /usr/local/gib
+RUN echo "/usr/local/gib/lib64" > /etc/ld.so.conf.d/nccl-gib.conf && ldconfig
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
     TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
     patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
