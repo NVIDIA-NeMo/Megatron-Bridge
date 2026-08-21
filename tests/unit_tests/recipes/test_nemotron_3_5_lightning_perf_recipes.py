@@ -249,7 +249,7 @@ def test_gb_mxfp8_enables_cutedsl_fusion(recipe_factory: Callable[[], ConfigCont
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
     assert cfg.model.use_transformer_engine_op_fuser is True
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.model.moe_mlp_glu_interleave_size is None
     assert cfg.model.high_priority_a2a_comm_stream is False
     assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
     assert cfg.mixed_precision.fp8_dot_product_attention is True
