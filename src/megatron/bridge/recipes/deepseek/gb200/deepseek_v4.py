@@ -229,3 +229,42 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config() -> ConfigContainer
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = True
     return cfg
+
+
+def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigContainer:
+    """DSv4 Flash offline-packed SFT on GB200 with HybridEP dispatcher and DSA fusion.
+
+    Extends the hardware-agnostic deepseek_v4_flash_sft_openmath_thinking_packed_config
+    with GB200-specific optimizations validated on GB200 NVL72:
+    - HybridEP flex dispatcher (higher MoE throughput vs alltoall)
+    - DSA kernel fusion and DSA indexer sparse loss (trains the attention indexer)
+    - MoE permute + router fusion
+
+    moe_grouped_gemm=False is preserved for SFT-checkpoint export compatibility.
+    moe_hybridep_pad_variable_tokens=True guards against NaN with offline-packed
+    variable-length sequences and uneven token dispatch.
+    """
+    from megatron.bridge.recipes.deepseek.deepseek_v4 import (
+        deepseek_v4_flash_sft_openmath_thinking_packed_config,
+    )
+
+    cfg = deepseek_v4_flash_sft_openmath_thinking_packed_config()
+
+    # GB200: DSA kernel fusion + DSA indexer loss (trains the attention indexer)
+    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_indexer_loss_coeff = 0.01
+    cfg.model.dsa_indexer_use_sparse_loss = True
+
+    # GB200: HybridEP dispatcher (NVLink-optimized MoE dispatch)
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_pad_variable_tokens = True  # guard NaN with packed data
+
+    # MoE fusions
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_router_fusion = True
+
+    return cfg
+
