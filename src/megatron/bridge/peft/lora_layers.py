@@ -35,6 +35,19 @@ class LoRALinear(AdapterWrapper):
     @property
     def weight(self) -> torch.Tensor:
         """Return the effective base weight, including the LoRA delta when enabled."""
+        from megatron.bridge.peft.utils import GroupedExpertLinearAdapter, SharedOuterGroupedExpertAdapter
+
+        if isinstance(self.adapter, (GroupedExpertLinearAdapter, SharedOuterGroupedExpertAdapter)):
+            # Grouped bases expose weight0..N (no single 2D to_wrap.weight), and these
+            # adapters carry 3D per-expert weights with no `tp_group` attribute — the
+            # group-less merge below would silently merge only the local shard. The
+            # merge path for grouped adapters is the export-side materializer
+            # (models/conversion/peft_bridge.py), not this property.
+            raise NotImplementedError(
+                f"LoRALinear.weight is not supported for grouped expert adapters "
+                f"({type(self.adapter).__name__} on {self.adapter.base_linear_name}); "
+                "use the checkpoint/export merge path instead."
+            )
         base_weight = self.to_wrap.weight
         if not self._adapter_enabled:
             return base_weight
