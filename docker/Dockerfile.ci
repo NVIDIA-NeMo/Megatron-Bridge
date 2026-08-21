@@ -12,16 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG NCCL_GIB_IMAGE="us-docker.pkg.dev/gce-ai-infra/gpudirect-gib/nccl-plugin-gib@sha256:b71627dcf88862cd0e64434dfd0224441960db58f2022f94b5f56123659c207e"
-
-FROM ${NCCL_GIB_IMAGE} AS nccl_gib
-
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
-COPY --from=nccl_gib /usr/local/gib /usr/local/gib
-RUN echo "/usr/local/gib/lib64" > /etc/ld.so.conf.d/nccl-gib.conf && ldconfig
+RUN NCCL_GIB_LAYER_URL='https://us-docker.pkg.dev/v2/gce-ai-infra/gpudirect-gib/nccl-plugin-gib/blobs/sha256:5571c2a01c6bf05e08b6da25f6f4faa0b0b277036d18df7593ea838628074770' && \
+    NCCL_GIB_LAYER_SHA256='5571c2a01c6bf05e08b6da25f6f4faa0b0b277036d18df7593ea838628074770' && \
+    curl --fail --location --proto '=https' --tlsv1.2 \
+        --output /tmp/nccl-gib-layer.tar.gz "${NCCL_GIB_LAYER_URL}" && \
+    echo "${NCCL_GIB_LAYER_SHA256}  /tmp/nccl-gib-layer.tar.gz" | sha256sum --check --strict - && \
+    tar --extract --gzip --file /tmp/nccl-gib-layer.tar.gz --directory / \
+        usr/local/gib/configs usr/local/gib/lib64 usr/local/gib/scripts && \
+    rm /tmp/nccl-gib-layer.tar.gz && \
+    echo "/usr/local/gib/lib64" > /etc/ld.so.conf.d/nccl-gib.conf && \
+    ldconfig
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
     TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
     patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
