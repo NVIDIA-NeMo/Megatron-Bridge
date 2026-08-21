@@ -72,18 +72,20 @@ be resharded while loading:
 
 ```bash
 ./scripts/conversion/convert.sh export \
-  --executor slurm --device gpu --nodes 8 --gpus-per-node 4 \
+  --executor slurm --device gpu --nodes 2 --gpus-per-node 4 \
   --hf-model deepseek-ai/DeepSeek-V4-Flash \
   --megatron-path work/models/deepseek-v4-flash/iter_0000000 \
   --hf-path work/models/deepseek-v4-flash-hf \
-  --tp 1 --pp 4 --ep 8 \
+  --tp 1 --pp 1 --ep 8 \
   --torch-dtype bfloat16 --export-weight-dtype bfloat16 \
-  --trust-remote-code
+  --trust-remote-code --not-strict
 ```
 
-GPU import is verified. GPU export, CPU conversion, and manual HF/Megatron
-forward correlation remain unverified at the revision recorded in the card.
-Do not infer verification from the presence of a command.
+BF16 export intentionally omits the source checkpoint's quantization-scale
+companions, so it uses `--not-strict`. The verification card pairs that option
+with exact key, shard, dtype, integer-routing-table, and strict HF reload checks.
+GPU import and GPU export are verified. CPU conversion and manual HF/Megatron
+forward correlation remain unverified at the revisions recorded in the card.
 
 [`conversion.sh`](conversion.sh) is a convenience wrapper for import, export,
 and optional round-trip checks. Set `MODEL_VARIANT`, `WORKSPACE`, and the
@@ -154,11 +156,11 @@ Launch the verified GB200 packed recipe from an imported BF16 checkpoint:
   dist.distributed_timeout_minutes=180
 ```
 
-The card records 100 finite steps and a fresh-process checkpoint reload for
-this configuration at CP=1. Long-context and CP=2 SFT, post-SFT export and HF
-inference, and PEFT remain unverified or unsupported as indicated there. MXFP8
-and Muon SFT recipes are intentionally not shipped because full-model tests did
-not establish a stable supported configuration.
+The card records 100 finite steps, a fresh-process checkpoint reload, and
+post-SFT GPU export with deterministic HF inference for this configuration at
+CP=1. Long-context and CP=2 SFT remain unverified, and PEFT remains unsupported.
+MXFP8 and Muon SFT recipes are intentionally not shipped because full-model
+tests did not establish a stable supported configuration.
 
 ## Legacy Slurm Templates
 
@@ -179,6 +181,7 @@ Plan persistent storage before importing or saving checkpoints:
 | Quantized Hugging Face cache | 150-200 GB |
 | Imported BF16 Megatron checkpoint | 570 GB |
 | Each BF16 model-only SFT checkpoint | 570 GB |
+| Each exported BF16 HF checkpoint | 570 GB |
 
 Optimizer state can add multiple terabytes. Disable optimizer-state saves only
 when the workflow does not require resumable training; otherwise provision the

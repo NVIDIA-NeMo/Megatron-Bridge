@@ -24,24 +24,26 @@ summary: >
   The GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes,
   selective whole-MoE recompute, and attention activation offload while preserving
   the base SFT objective. Its final objective-preserving configuration completed
-  100 finite steps and a fresh-process checkpoint reload. The public post-export
-  inference workflow remains unverified.
+  100 finite steps and a fresh-process checkpoint reload. GPU export of both the
+  imported model and the step-100 SFT checkpoint produced exact BF16 inventories
+  and passed independent strict GPU-only HF reloads. The public post-SFT workflow
+  also produced identical bounded greedy completions from two independent reloads.
 
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_gpu
     unsupported:
       - inference
     unverified:
       - hf_to_megatron_cpu
       - manual_forward_pass
       - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
   training:
     GB200:
-      verified: [pretrain, sft]
-      unverified: [sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference]
+      unverified: [sft_long_context, checkpoint_resume]
       unsupported: [peft]
   performance:
     GB200: unverified
@@ -103,20 +105,28 @@ items:
       weight set and tensor-merging workspace, followed by strict Hugging Face reload.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 2859a3ee0f02743c54b390de91fee878c6de8909  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 8 --gpus-per-node 4 --ep 8 --pp 4
+      --nodes 2 --gpus-per-node 4 --tp 1 --pp 1 --ep 8 --etp 1
       --hf-model deepseek-ai/DeepSeek-V4-Flash
       --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000
       --hf-path work/model-verification/dsv4-flash/export-gpu
       --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code
-    last_verified: null
+      --not-strict
+    last_verified: 2026-08-21
     expected_result: >
-      Verification requires rerunning the model-level export on the fixed indexer
-      mapping and proving exact non-scale source-key coverage, all expected BF16
-      shards, and a strict Hugging Face reload. The historical run predates that fix.
+      Two GB200 nodes produced 46 complete safetensors shards containing all 35,020
+      expected non-scale source keys. BF16 export intentionally omitted 34,167
+      quantization-scale companions; 35,017 exported tensors are BF16 and the three
+      I32 tid2eid routing tables exactly match their source values after the expected
+      integer cast. Two independent Transformers processes each strictly reloaded all
+      1,500 model modules across four GPUs with no CPU or disk placement and produced
+      the same bounded greedy token. --not-strict permits only the intentional scale
+      omission; exact key, shard, dtype, routing-table value, and reload checks remain
+      required correctness gates.
 
   manual_forward_pass:
     status: unverified
@@ -239,8 +249,9 @@ items:
 
   sft_export_inference:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 2859a3ee0f02743c54b390de91fee878c6de8909  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -252,17 +263,24 @@ items:
           --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code
           --not-strict
         - >
-          uv run python
-          skills/create-model-verification-card/scripts/verify_hf_inference.py
+          ./scripts/inference/infer.sh --task hf-inference
+          --nodes 2 --gpus-per-node 4 --tasks-per-node 1
           --hf-model work/model-verification/dsv4-flash/sft-export
           --prompt "In one short sentence, explain why Paris is important to France."
-          --max-new-tokens 32 --chat-template --disable-thinking
-      last_verified: null
+          --max-new-tokens 32 --chat-template --disable-thinking --trust-remote-code
+          --dtype bfloat16 --device-map auto --autocast --require-gpu-only
+      last_verified: 2026-08-21
       expected_result: >
-        Verification requires exact non-scale source-key coverage across all BF16
-        shards, two independent strict GPU-only reloads, and identical bounded greedy
-        output. The maintained verifier must first support sharding this 285B model and
-        its BF16 autocast requirement; the current single-device command is insufficient.
+        The objective-preserving step-100 SFT checkpoint exported successfully on two
+        GB200 nodes. Its 46 complete safetensors shards contain all 35,020 expected
+        non-scale source keys: 35,017 BF16 tensors and three value-matched I32 tid2eid
+        routing tables, with 34,167 quantization-scale companions intentionally omitted
+        for BF16. Two maintained-verifier processes independently reloaded all 1,500 model
+        modules across four GPUs each, reported no missing, unexpected, mismatched, or
+        error loading entries, used no CPU or disk placement, and generated exactly 32
+        new tokens at the 32-token maximum with identical output. The literal completion was: "Paris is
+        important to France because it is the country's capital, a major economic and
+        cultural center, and a symbol of French history, art, and architecture."
 
   sft_long_context:
     GB200:
