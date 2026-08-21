@@ -8,11 +8,14 @@ summary: >
   Timing and throughput metrics from functional training items are sanity
   checks rather than optimized performance results.
 
-  DeepSeek-V4-Flash support verification covers GPU conversion, training, and checkpoint
-  resume on GB200. CPU conversion is unsupported (285B model exceeds node CPU RAM).
-  Standard Megatron KV-cache inference is unsupported (DSv4HybridAttention assertion);
-  inference uses HF native path. SFT export requires nemo_26.08.rc4 or later (TE 2.18)
-  and Bridge fix for stream_weights_megatron_to_hf None-task handling (PR #5270 pipeline).
+  DeepSeek-V4-Flash support verification covers GPU conversion, training, and
+  checkpoint resume on GB200. CPU conversion remains unverified because full
+  BF16 materialization requires a high-memory CPU node. Optimized Megatron
+  KV-cache inference is unavailable for DSv4HybridAttention, while the
+  maintained non-cached full-prefix compatibility path remains unverified for
+  this model. PEFT also remains unverified because no exact model recipe is
+  currently exported. SFT export requires nemo_26.08.rc4 or later (TE 2.18)
+  and the Bridge fix for stream_weights_megatron_to_hf None-task handling.
 
   Known issues tracked for follow-up PRs:
   - DSv4ExpertGatedMLPMapping: moe_grouped_gemm=True export produces malformed expert
@@ -27,17 +30,15 @@ verification_index:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
-    unsupported:
+    unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - inference
-    unverified:
       - manual_forward_pass
   training:
     GB200:
       verified: [pretrain, sft, sft_long_context, sft_export_inference, checkpoint_resume]
-      
-      unsupported: [peft]
+      unverified: [peft]
   performance:
     GB200: verified
     GB300: verified
@@ -54,14 +55,21 @@ verification_environment:
 
 items:
   hf_to_megatron_cpu:
-    status: unsupported
-    precision: null
-    command: null
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1 --hf-model deepseek-ai/DeepSeek-V4-Flash
+      --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1
+      --megatron-path work/model-verification/dsv4-flash/import-cpu
+      --torch-dtype bfloat16 --trust-remote-code
     last_verified: null
     expected_result: >
-      CPU import requires approximately 570 GB of CPU RAM for the full BF16 weight
-      materialisation (285B parameters x 2 bytes). Standard compute nodes do not
-      provide this headroom; the import consistently exits with OOM before completing.
+      CPU import requires approximately 570 GB merely for the full BF16 weight
+      materialization, plus conversion overhead. Prior attempts exhausted the
+      available node memory, but that resource limit does not establish a
+      product-level lack of support. A high-memory-node run must complete and
+      produce a reloadable checkpoint before this item is promoted.
 
   hf_to_megatron_gpu:
     status: verified
@@ -78,13 +86,22 @@ items:
       is reloadable and paired GPU export produces correct HF weights.
 
   megatron_to_hf_cpu:
-    status: unsupported
-    precision: null
-    command: null
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model deepseek-ai/DeepSeek-V4-Flash
+      --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1
+      --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000
+      --hf-path work/model-verification/dsv4-flash/export-cpu
+      --torch-dtype bfloat16 --trust-remote-code
     last_verified: null
     expected_result: >
-      CPU export requires the full 570 GB BF16 weight set to reside in CPU RAM during
-      tensor merging; nodes consistently OOM before the export completes.
+      CPU export requires approximately 570 GB merely for the full BF16 weight
+      set, plus tensor-merging overhead. Prior attempts exhausted the available
+      node memory, but that resource limit does not establish a product-level
+      lack of support. A high-memory-node run must complete and produce a
+      reloadable Hugging Face checkpoint before this item is promoted.
 
   megatron_to_hf_gpu:
     status: verified
@@ -120,16 +137,24 @@ items:
       285 B parameter model. Requires 8 or more nodes for side-by-side comparison.
 
   inference:
-    status: unsupported
-    precision: null
-    command: null
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 4
+      --task legacy-full-prefix-generation --legacy-full-prefix
+      --hf_model_path deepseek-ai/DeepSeek-V4-Flash
+      --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1
+      --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000
+      --prompt "The capital of France is" --max_new_tokens 32
+      --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code
     last_verified: null
     expected_result: >
-      Standard Megatron KV-cache autoregressive inference is blocked by an assertion
-      in DSv4HybridAttention.forward (inference_context must be None). DSV4 hybrid
-      attention with CSA/DSA indexers requires a dedicated inference path with
-      MLA-specific KV caching. Inference is supported through HF native pipeline
-      (deepseek-ai/DeepSeek-V4-Flash) after Megatron-to-HF export.
+      Optimized KV-cache autoregressive inference currently conflicts with
+      DSv4HybridAttention's requirement that inference_context be None. The
+      maintained legacy full-prefix task intentionally disables that context
+      and is therefore a plausible non-cached compatibility path, but no exact
+      DeepSeek V4 run has completed. The command must finish one synchronous
+      deterministic greedy generation before this item is promoted.
 
   pretrain:
     GB200:
@@ -289,9 +314,9 @@ items:
         and no skipped or NaN iterations.
 
   peft:
-    all:
-      status: unsupported
-      precision: null
+    GB200:
+      status: unverified
+      precision: bf16
       command: null
       last_verified: null
       enabled_features: {}
@@ -302,7 +327,9 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        No LoRA / PEFT recipe exists for DeepSeek-V4 in the current recipe set.
+        No exact DeepSeek V4 PEFT recipe is currently exported. Recipe absence
+        does not establish an architectural lack of support; this item remains
+        unverified until a public recipe and bounded run pass the PEFT gates.
 
   checkpoint_resume:
     GB200:
