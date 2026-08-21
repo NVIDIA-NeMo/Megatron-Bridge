@@ -70,6 +70,7 @@ from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
     llama3_70b_sft_32gpu_gb200_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.llama.gb200.llama31 import (
+    llama31_8b_pretrain_8gpu_gb200_nvfp4_config,
     llama31_405b_pretrain_128gpu_gb200_bf16_config,
     llama31_405b_pretrain_128gpu_gb200_fp8cs_config,
     llama31_405b_pretrain_128gpu_gb200_fp8mx_config,
