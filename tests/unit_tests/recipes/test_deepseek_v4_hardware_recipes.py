@@ -154,7 +154,7 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.moe_permute_fusion is True
     assert cfg.model.moe_router_fusion is True
-    assert cfg.model.moe_grouped_gemm is False
+    assert cfg.model.moe_grouped_gemm is True
     assert cfg.model.cross_entropy_fusion_impl == "native"
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]

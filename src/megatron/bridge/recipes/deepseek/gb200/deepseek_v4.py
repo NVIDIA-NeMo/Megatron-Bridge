@@ -293,9 +293,8 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
     """Return the GB200-optimized offline-packed OpenMath SFT config.
 
     This variant adds HybridEP dispatch, safe uneven-input padding, DSA indexer
-    training, static packed-sequence shapes, and MoE fusions to the
-    hardware-agnostic packed SFT recipe. It preserves non-grouped expert GEMMs
-    for checkpoint export compatibility.
+    training, static packed-sequence shapes, and grouped expert GEMMs to the
+    hardware-agnostic packed SFT recipe.
     """
     from megatron.bridge.recipes.deepseek.deepseek_v4 import (
         deepseek_v4_flash_sft_openmath_thinking_packed_config,
@@ -312,7 +311,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
     cfg.model.moe_hybridep_num_sms = 16
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
-    cfg.model.moe_grouped_gemm = False
+    cfg.model.moe_grouped_gemm = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_router_fusion = True
 
