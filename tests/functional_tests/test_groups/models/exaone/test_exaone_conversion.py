@@ -100,7 +100,11 @@ _EXAONE_MOE_CONFIG = {
     "norm_topk_prob": True,
     "routed_scaling_factor": 2.5,
     "scoring_func": "sigmoid",
-    "num_nextn_predict_layers": 1,
+    # No MTP here. `ExaoneMoeForCausalLM` declares `_keys_to_ignore_on_load_unexpected =
+    # [r"mtp.*"]`, so released checkpoints carry MTP weights but the modelling class does
+    # not build them. A toy constructed from the class therefore saves nothing for the MTP
+    # mappings the bridge registers off `num_nextn_predict_layers`, while the provider still
+    # builds MTP layers, and the roundtrip would compare layers that were never loaded.
 }
 
 
