@@ -42,6 +42,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     processor_patchify_temporal_frames,
     temporal_model_frames,
     temporal_tubelet_feature_counts,
+    temporal_video_frame_labels,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -218,34 +219,6 @@ def _video_frames(payload: Any, *, video_fps: float, video_nframes: int) -> tupl
     )
 
 
-def _temporal_video_frame_labels(
-    num_frames: int,
-    *,
-    temporal_patch_size: int,
-    metadata: VideoMetadata,
-) -> list[str]:
-    """Build one source-timestamped label per temporal tubelet."""
-    source_fps = float(metadata.fps or 0)
-    frame_indices = metadata.frames_indices
-    frame_duration_ms = int(1000.0 / source_fps) if source_fps > 0 else None
-    labels: list[str] = []
-    for frame_start in range(0, num_frames, temporal_patch_size):
-        parts: list[str] = []
-        for offset in range(min(temporal_patch_size, num_frames - frame_start)):
-            frame_position = frame_start + offset
-            prefix = "Frame" if offset == 0 else "frame"
-            if frame_duration_ms is not None and frame_indices is not None and frame_position < len(frame_indices):
-                timestamp = int(frame_indices[frame_position]) * frame_duration_ms / 1000.0
-                parts.append(f"{prefix} {frame_position + 1} sampled at {timestamp:.2f} seconds")
-            elif source_fps > 0:
-                timestamp = frame_position / source_fps
-                parts.append(f"{prefix} {frame_position + 1} sampled at {timestamp:.2f} seconds")
-            else:
-                parts.append(f"{prefix} {frame_position + 1}")
-        labels.append(" and ".join(parts) + ": ")
-    return labels
-
-
 def _patchify_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> torch.Tensor:
     """Apply the public normalization kernel on MCore's square temporal canvas.
 
@@ -359,10 +332,11 @@ def _prepare_temporal_rows(
                         if not frames:
                             raise ValueError("Nemotron Omni temporal video content decoded to zero frames.")
                         video_lines: list[str] = []
-                        frame_labels = _temporal_video_frame_labels(
+                        frame_labels = temporal_video_frame_labels(
                             len(frames),
                             temporal_patch_size=temporal_patch_size,
-                            metadata=video_metadata,
+                            source_fps=video_metadata.fps,
+                            frame_indices=video_metadata.frames_indices,
                         )
                         for label in frame_labels:
                             video_lines.append(label + COMPACT_IMAGE_PLACEHOLDER)

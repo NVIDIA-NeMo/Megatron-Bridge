@@ -89,6 +89,49 @@ def temporal_model_frames(frames: Sequence[_FrameT], temporal_patch_size: int) -
     return model_frames
 
 
+def temporal_video_frame_labels(
+    num_frames: int,
+    *,
+    temporal_patch_size: int,
+    source_fps: float | None,
+    frame_indices: Sequence[int] | None,
+) -> list[str]:
+    """Build one source-timestamped label per temporal tubelet.
+
+    Args:
+        num_frames: Number of sampled frames represented in the prompt.
+        temporal_patch_size: Number of consecutive frames per tubelet.
+        source_fps: Source-video frame rate, when available.
+        frame_indices: Source-frame index for every sampled frame, when available.
+
+    Returns:
+        Frame-label prefixes aligned one-to-one with temporal tubelets.
+    """
+    if num_frames < 0:
+        raise ValueError("num_frames must be non-negative.")
+    if temporal_patch_size <= 0:
+        raise ValueError("temporal_patch_size must be greater than 0.")
+
+    fps = float(source_fps or 0)
+    frame_duration_ms = int(1000.0 / fps) if fps > 0 else None
+    labels: list[str] = []
+    for frame_start in range(0, num_frames, temporal_patch_size):
+        parts: list[str] = []
+        for offset in range(min(temporal_patch_size, num_frames - frame_start)):
+            frame_position = frame_start + offset
+            prefix = "Frame" if offset == 0 else "frame"
+            if frame_duration_ms is not None and frame_indices is not None and frame_position < len(frame_indices):
+                timestamp = int(frame_indices[frame_position]) * frame_duration_ms / 1000.0
+                parts.append(f"{prefix} {frame_position + 1} sampled at {timestamp:.2f} seconds")
+            elif fps > 0:
+                timestamp = frame_position / fps
+                parts.append(f"{prefix} {frame_position + 1} sampled at {timestamp:.2f} seconds")
+            else:
+                parts.append(f"{prefix} {frame_position + 1}")
+        labels.append(" and ".join(parts) + ": ")
+    return labels
+
+
 def processor_patchify_temporal_frames(
     frames: Sequence[Any],
     *,
