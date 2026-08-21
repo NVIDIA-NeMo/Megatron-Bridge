@@ -177,6 +177,7 @@ items:
         final_loss: 6.385243
         last_10_steps_step_time_ms_avg: 31204.920
         last_10_steps_model_tflops_per_gpu_avg: 54.595
+        last_10_steps_tokens_per_second_per_gpu_avg: 190.926
       expected_result: >
         The uninterrupted 352-H100 TP1/PP11/CP1/EP32/ETP1 run completed 100
         real-data steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss
@@ -216,6 +217,7 @@ items:
         final_loss: 6.523522
         last_10_steps_step_time_ms_avg: 64786.540
         last_10_steps_model_tflops_per_gpu_avg: 102.520
+        last_10_steps_tokens_per_second_per_gpu_avg: 337.189
       expected_result: >
         The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100
         RP2 head_01 pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse
@@ -254,6 +256,7 @@ items:
         final_loss: 0.6634203
         last_10_steps_step_time_ms_avg: 4436.290
         last_10_steps_model_tflops_per_gpu_avg: 10.154
+        last_10_steps_tokens_per_second_per_gpu_avg: 35.511
       expected_result: >
         The immutable-revision 416-H100 run completes exactly 100 full-SFT
         steps at TP1/PP13/CP2/EP32/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse
@@ -286,6 +289,7 @@ items:
         final_loss: 0.3682597
         last_10_steps_step_time_ms_avg: 8593.990
         last_10_steps_model_tflops_per_gpu_avg: 12.446
+        last_10_steps_tokens_per_second_per_gpu_avg: 39.718
       expected_result: >
         The immutable-revision 192-GB200 run completed exactly 100 full-SFT
         steps at TP1/PP6/CP4/EP32/ETP1, DP8, and GBS/MBS 8/1 without gradient
@@ -363,6 +367,7 @@ items:
         final_loss: 2.557671
         last_10_steps_step_time_ms_avg: 36603.370
         last_10_steps_model_tflops_per_gpu_avg: 39.648
+        last_10_steps_tokens_per_second_per_gpu_avg: 116.828
       expected_result: >
         The 608-H100 TP1/PP19/CP32/EP32/ETP1 run completed exactly 20 optimizer
         steps over 200,000-token packed rows with cuDNN DSA, sparse indexer loss
@@ -394,6 +399,7 @@ items:
         final_loss: 0.000511673
         last_10_steps_step_time_ms_avg: 143248.820
         last_10_steps_model_tflops_per_gpu_avg: 88.848
+        last_10_steps_tokens_per_second_per_gpu_avg: 266.874
       expected_result: >
         The immutable-revision 192-GB200 run completed exactly 20 optimizer
         steps at TP1/PP6/CP32/EP32/ETP1, DP1, and GBS/MBS 56/1 with cuDNN DSA,
@@ -427,6 +433,7 @@ items:
         final_loss: 0.8835775
         last_10_steps_step_time_ms_avg: 4638.550
         last_10_steps_model_tflops_per_gpu_avg: 19.423
+        last_10_steps_tokens_per_second_per_gpu_avg: 67.926
       expected_result: >
         The immutable-revision 208-H100 run completes exactly 100 LoRA steps at
         TP1/PP13/CP1/EP16/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse indexer
@@ -455,6 +462,7 @@ items:
         final_loss: 0.8957523
         last_10_steps_step_time_ms_avg: 68588.270
         last_10_steps_model_tflops_per_gpu_avg: 1.423
+        last_10_steps_tokens_per_second_per_gpu_avg: 4.977
       expected_result: >
         The immutable-revision 192-GB200 run completed exactly 100 LoRA steps
         at TP1/PP6/CP1/EP32/ETP1, GBS/MBS 32/1, with offline-packed Tulu 3
@@ -491,6 +499,7 @@ items:
         final_loss: 6.372624
         last_10_steps_step_time_ms_avg: 32002.290
         last_10_steps_model_tflops_per_gpu_avg: 53.235
+        last_10_steps_tokens_per_second_per_gpu_avg: 186.168
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -536,6 +545,7 @@ items:
         final_loss: 6.503141
         last_10_steps_step_time_ms_avg: 60079.390
         last_10_steps_model_tflops_per_gpu_avg: 110.552
+        last_10_steps_tokens_per_second_per_gpu_avg: 363.608
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]

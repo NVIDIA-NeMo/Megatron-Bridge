@@ -67,7 +67,7 @@ env:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@c1a0837f362a1a696e647238ab1cf916b2a7cf4a # v1.8.6
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
@@ -567,6 +567,10 @@ jobs:
               --skip-file /opt/import-check/import_check_skip.txt
 
   cicd-unit-tests-core:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard-id: [0, 1, 2]
     if: |
       (
         success()
@@ -579,7 +583,7 @@ jobs:
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, configure, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
-    name: Launch_Unit_Tests_Core
+    name: Launch_Unit_Tests_Core_${{ matrix.shard-id }}
     env:
       TRANSFORMERS_OFFLINE: "1"
       HF_HUB_OFFLINE: "1"
@@ -601,8 +605,10 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests_Core
-          timeout: 18
+          timeout: 30
           is_unit_test: "true"
+          shard-id: ${{ matrix.shard-id }}
+          num-shards: 3
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
@@ -687,7 +693,7 @@ jobs:
             local gpu_count
             gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
             if [ -n "$gpu_count" ]; then
-              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-${gpu_count}/"
+              echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-x${gpu_count}/"
             else
               echo "${RUNNER_PREFIX}"
             fi

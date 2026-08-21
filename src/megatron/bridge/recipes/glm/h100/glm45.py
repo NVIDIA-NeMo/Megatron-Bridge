@@ -48,6 +48,8 @@ def glm45_355b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.num_layers_in_first_pipeline_stage = 10
+    cfg.model.num_layers_in_last_pipeline_stage = 10
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -179,6 +181,8 @@ def glm45_air_106b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.num_layers_in_first_pipeline_stage = 11
+    cfg.model.num_layers_in_last_pipeline_stage = 11
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -314,6 +318,8 @@ def glm45_355b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.num_layers_in_first_pipeline_stage = 10
+    cfg.model.num_layers_in_last_pipeline_stage = 10
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -449,6 +455,8 @@ def glm45_air_106b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.num_layers_in_first_pipeline_stage = 11
+    cfg.model.num_layers_in_last_pipeline_stage = 11
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1

@@ -1,9 +1,11 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for LLaVA MegatronMIMO Provider."""
 
+import inspect
 from unittest.mock import Mock
 
 import pytest
+import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
@@ -31,6 +33,7 @@ class TestLlavaMegatronMIMOProvider:
         assert provider.language_model_spec.params["vocab_size"] == 32256
         assert provider.language_model_spec.params["max_sequence_length"] == 4096
         assert provider.language_model_spec.params["position_embedding_type"] == "rope"
+        assert "logit_dtype" not in provider.language_model_spec.params
 
         # Check modality submodules spec was created
         assert "images" in provider.modality_submodules_spec
@@ -41,6 +44,29 @@ class TestLlavaMegatronMIMOProvider:
 
         # Check special token IDs
         assert provider.special_token_ids == {"images": 32000}
+
+    @pytest.mark.skipif(
+        "logit_dtype" not in inspect.signature(GPTModel).parameters,
+        reason="Installed MCore predates logit_dtype",
+    )
+    def test_requested_logit_dtype_is_added_to_language_spec(self):
+        provider = LlavaMegatronMIMOProvider(
+            vision_encoder_module=Mock,
+            logit_dtype=torch.float32,
+        )
+
+        assert provider.language_model_spec.params["logit_dtype"] is torch.float32
+
+    @pytest.mark.skipif(
+        "logit_dtype" in inspect.signature(GPTModel).parameters,
+        reason="Installed MCore supports logit_dtype",
+    )
+    def test_requested_logit_dtype_fails_clearly_on_old_mcore(self):
+        with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
+            LlavaMegatronMIMOProvider(
+                vision_encoder_module=Mock,
+                logit_dtype=torch.float32,
+            )
 
     def test_error_when_vision_encoder_missing(self):
         """Test ValueError raised when vision_encoder_module is None."""

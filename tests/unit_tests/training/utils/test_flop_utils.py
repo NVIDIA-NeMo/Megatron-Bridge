@@ -700,7 +700,7 @@ class TestGDNLayerFlops:
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
             gated_linear_unit=True,
-            experimental_attention_variant="gated_delta_net",
+            experimental_attention_variant="gdn",
             linear_attention_freq=4,
             linear_conv_kernel_dim=4,
             linear_key_head_dim=128,
@@ -720,6 +720,28 @@ class TestGDNLayerFlops:
         baseline_flops = num_floating_point_operations(baseline_cfg, batch_size=batch_size)
         assert gdn_flops != baseline_flops, "GDN FLOPs should differ from pure-attention FLOPs"
         assert gdn_flops > 0
+
+    def test_gdn_canonical_and_deprecated_alias_match(self):
+        """Canonical GDN and its deprecated alias should produce identical FLOPs."""
+        canonical_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn"))
+        deprecated_cfg = MockConfigContainer(
+            model=self._qwen35_27b_config(experimental_attention_variant="gated_delta_net")
+        )
+
+        canonical_flops = num_floating_point_operations(canonical_cfg, batch_size=1)
+        deprecated_flops = num_floating_point_operations(deprecated_cfg, batch_size=1)
+
+        assert canonical_flops == deprecated_flops
+
+    def test_gdn2_accounts_for_its_larger_input_projection(self):
+        """GDN2 should include its additional channel-wise input projections."""
+        gdn_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn"))
+        gdn2_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn2"))
+
+        gdn_flops = num_floating_point_operations(gdn_cfg, batch_size=1)
+        gdn2_flops = num_floating_point_operations(gdn2_cfg, batch_size=1)
+
+        assert gdn2_flops > gdn_flops
 
     def test_gdn_only_layers(self):
         """With linear_attention_freq=1 (no standard attn), self_attn_term should be pure GDN."""
@@ -1056,6 +1078,97 @@ class TestDeepSeekV4HybridFlops:
         actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
 
         assert actual_flops == expected_flops
+
+    def test_dsv4_hybrid_packed_flops_match_mcore_split(self):
+        """Packed DSv4 FLOPs split token-linear work from quadratic sparse work."""
+        batch_size = 2
+        seq_len = 256
+        hidden_size = 512
+        num_layers = 4
+        num_heads = 8
+        v_head_dim = 64
+        q_lora_rank = 128
+        o_lora_rank = 64
+        o_groups = 2
+        window = 64
+        idx_n_heads = 4
+        idx_head_dim = 32
+        idx_topk = 16
+        ffn_hidden_size = 2048
+        vocab_size = 1024
+        compress_ratios = [0, 4, 128, 128]
+        packed_lengths = [64, 64, 128, 256]
+        seqlen_sum = sum(packed_lengths)
+        seqlen_squared_sum = sum(length**2 for length in packed_lengths)
+
+        model_cfg = MockModelConfig(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_len,
+            ffn_hidden_size=ffn_hidden_size,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=q_lora_rank,
+            qk_head_dim=32,
+            qk_pos_emb_head_dim=32,
+            v_head_dim=v_head_dim,
+            o_lora_rank=o_lora_rank,
+            o_groups=o_groups,
+            csa_compress_ratios=compress_ratios,
+            csa_window_size=window,
+            dsa_indexer_n_heads=idx_n_heads,
+            dsa_indexer_head_dim=idx_head_dim,
+            dsa_indexer_topk=idx_topk,
+            gated_linear_unit=False,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+
+        q_term = q_lora_rank * (hidden_size + num_heads * v_head_dim + 1)
+        kv_term = hidden_size * v_head_dim + v_head_dim
+        o_term = num_heads * v_head_dim * o_lora_rank + o_groups * o_lora_rank * hidden_size
+        projection_term = 3 * 2 * num_layers * (q_term + kv_term + o_term)
+
+        n_layers_r0 = compress_ratios.count(0)
+        n_layers_r4 = compress_ratios.count(4)
+        n_layers_r128 = compress_ratios.count(128)
+        sparse_attn_r0 = n_layers_r0 * num_heads * window * v_head_dim * 2
+        sparse_attn_r128_window = n_layers_r128 * num_heads * window * v_head_dim * 2
+        effective_topk = min(idx_topk, seq_len // 4)
+        avg_comp_4 = effective_topk * (1 - effective_topk * 4 / (2 * seq_len))
+        sparse_attn_r4 = n_layers_r4 * num_heads * (window + avg_comp_4) * v_head_dim * 2
+        main_compressor_term = (
+            n_layers_r4 * hidden_size * (2 * v_head_dim) * 2 + n_layers_r128 * hidden_size * v_head_dim * 2
+        )
+        indexer_token_term = (
+            n_layers_r4 * hidden_size * (2 * idx_head_dim) * 2
+            + n_layers_r4 * q_lora_rank * idx_n_heads * idx_head_dim
+            + n_layers_r4 * hidden_size * idx_n_heads
+        )
+        self_attn_token_term = projection_term + 3 * 2 * (
+            sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128_window + main_compressor_term + indexer_token_term
+        )
+        self_attn_core_term = (
+            3 * 2 * (n_layers_r128 * num_heads * v_head_dim / 128 + n_layers_r4 * idx_n_heads * idx_head_dim / 4)
+        )
+
+        mlp_term = 3 * 2 * hidden_size * (ffn_hidden_size * 2 * num_layers)
+        logit_term = 3 * 2 * hidden_size * vocab_size
+        expected_flops = (
+            seqlen_sum * (mlp_term + self_attn_token_term + logit_term) + seqlen_squared_sum * self_attn_core_term
+        )
+
+        actual_flops = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+        bshd_flops = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        assert actual_flops == expected_flops
+        assert actual_flops < bshd_flops
 
     def test_dsv4_hybrid_validates_compress_ratio_length(self):
         """CSA compress-ratio count must match decoder plus MTP layer count."""

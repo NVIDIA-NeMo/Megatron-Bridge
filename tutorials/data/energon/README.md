@@ -148,6 +148,10 @@ The unpacked baseline leaves both packing modes at their defaults. After it pass
 
 ## 5. Prepare production shards
 
+For a pinned real-dataset example that downloads only one small, self-contained subset, converts the source JSONL and
+separate media tar, and launches Qwen3-VL through `scripts/training/train.sh`, see
+[Nemotron Image Training v3](nemotron-image-v3.md).
+
 For your own dataset, write one or more media members plus one conversation member per sample key. Use
 split-prefixed tar names, then index them through Bridge's compatibility helper:
 
