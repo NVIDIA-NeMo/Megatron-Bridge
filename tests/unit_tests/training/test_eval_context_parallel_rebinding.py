@@ -62,7 +62,10 @@ def test_eval_cp_context_refreshes_gdn_runtime_shape_metadata(monkeypatch: pytes
     with eval_cp_context(gdn, eval_pgs, train_pgs):
         assert gdn.cp_size == 2
         live_feature_width = sum(gdn.in_proj_split_sections) // gdn.cp_size
-        torch.split(torch.empty(live_feature_width), gdn.feat_dim_split)
+        split_sizes = getattr(gdn, "feat_dim_split", None)
+        if split_sizes is None:
+            split_sizes = gdn._get_feat_dim_split(gdn.cp_size)
+        torch.split(torch.empty(live_feature_width), split_sizes)
 
     assert gdn.cp_size == 1
     assert gdn.config.context_parallel_size == 1
