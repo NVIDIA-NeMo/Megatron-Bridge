@@ -257,6 +257,16 @@ if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine
   exit 1
 fi
 
+if ! grep -Fq '    NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD=1 \' "$dockerfile"; then
+  echo "CI builds must disable TransformerEngine's recursive build-time submodule fetch" >&2
+  exit 1
+fi
+if grep -R -qE 'git submodule update.*--recursive|git submodule update --init --recursive' \
+  "$dockerfile" docker .github/actions; then
+  echo "CI build surfaces must not fetch recursive submodules at build time" >&2
+  exit 1
+fi
+
 lock_package_field() {
   local lock_file="$1"
   local package="$2"

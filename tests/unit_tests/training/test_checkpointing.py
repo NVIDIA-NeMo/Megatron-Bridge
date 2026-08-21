@@ -1628,6 +1628,77 @@ class TestLoadCheckpoint:
         assert result == (0, 0)
         assert optimizer.materialized_step == 0
 
+    def test_torch_dist_omitted_optimizer_keeps_load_state_fresh(self, load_checkpoint_fixtures):
+        """A torch-dist checkpoint without optimizer state must leave load state fresh."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.ckpt_format = "torch_dist"
+        cfg.checkpoint.load_rng = False
+        cfg.peft = None
+
+        state = load_checkpoint_fixtures["mock_state"]
+        state.train_state.step = 0
+        state.train_state.floating_point_operations_so_far = 0
+
+        optimizer = load_checkpoint_fixtures["mock_optimizer"]
+        optimizer.is_stub_optimizer = False
+        scheduler = load_checkpoint_fixtures["mock_scheduler"]
+        pg_collection = Mock()
+
+        checkpoint_without_optimizer = {"model": {}, "checkpoint_version": 3.0}
+        run_config = {
+            "model": {
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+            },
+            "checkpoint": {
+                "save_optim": False,
+                "save_rng": False,
+                "fully_parallel_save": False,
+            },
+        }
+
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
+            patch("megatron.bridge.training.checkpointing.read_train_state", return_value=state.train_state),
+            patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch("megatron.bridge.training.checkpointing._load_model_state_dict"),
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
+            patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}),
+            patch("megatron.bridge.training.checkpointing.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache"),
+            patch("megatron.bridge.training.checkpointing.wandb_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing.mlflow_utils.on_load_checkpoint_success"),
+            patch("megatron.bridge.training.checkpointing.comet_utils.on_load_checkpoint_success"),
+            patch(
+                "megatron.bridge.training.checkpointing._load_base_checkpoint",
+                side_effect=[
+                    ({}, "/checkpoints/iter_0000003", False, CheckpointType.GLOBAL),
+                    (
+                        checkpoint_without_optimizer,
+                        "/checkpoints/iter_0000003",
+                        False,
+                        CheckpointType.GLOBAL,
+                    ),
+                ],
+            ),
+        ):
+            result = _load_checkpoint_from_path(
+                "/checkpoints/iter_0000003",
+                state,
+                load_checkpoint_fixtures["mock_model"],
+                optimizer,
+                scheduler,
+                pg_collection=pg_collection,
+            )
+
+        assert result == (0, 0)
+        optimizer.load_state_dict.assert_not_called()
+        scheduler.load_state_dict.assert_not_called()
+
     @patch("torch.distributed.is_initialized")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
     def test_load_hf_pretrained_checkpoint_initializes_from_hf_source(
@@ -4555,7 +4626,7 @@ class TestCheckpointManager:
                 self.checkpoint_config = checkpoint_config
                 self.initialized = True
 
-            def save(self, _ctx):
+            def save(self, _ctx, _callback_manager):
                 pass
 
             def load(self, _ctx):
@@ -4576,6 +4647,30 @@ class TestCheckpointManager:
             assert isinstance(manager, CustomTestManager)
             assert manager.checkpoint_config is config
             assert manager.initialized is True
+
+    def test_create_checkpoint_manager_rejects_incompatible_save_signature(self):
+        """Test custom managers must accept the callback manager used by training saves."""
+
+        class CustomTestManager:
+            def __init__(self, _checkpoint_config):
+                pass
+
+            def save(self, _ctx):
+                pass
+
+            def load(self, _ctx):
+                return (0, 0)
+
+            def finalize_async_saves(self, _state, blocking=False, terminate=False):
+                pass
+
+        with patch("importlib.import_module") as mock_import:
+            mock_module = Mock(CustomTestManager=CustomTestManager)
+            mock_import.return_value = mock_module
+            config = CheckpointConfig(custom_manager_class="megatron.bridge.test.CustomTestManager")
+
+            with pytest.raises(TypeError, match="save"):
+                create_checkpoint_manager(config)
 
     def test_default_checkpoint_manager_init(self):
         """Test DefaultCheckpointManager initialization."""
