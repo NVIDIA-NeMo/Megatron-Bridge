@@ -303,6 +303,7 @@ def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatc
     assert encoder_cls.call_args.kwargs["processor"] is processor
     assert encoder_cls.call_args.kwargs["max_audio_duration"] == 10.0
     assert encoder_cls.call_args.kwargs["use_temporal_video_embedder"] is True
+    assert encoder_cls.call_args.kwargs["temporal_video_resize_mode"] == "processor"
     assert encoder_cls.call_args.kwargs["collapse_image_tokens"] is False
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True
 
@@ -321,6 +322,35 @@ def test_nemotron_config_rejects_unsupported_visual_keys():
     )
 
     with pytest.raises(ValueError, match=r"visual_keys must be exactly \('pixel_values',\)"):
+        config.validate()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"temporal_video_resize_mode": "unknown"}, "temporal_video_resize_mode"),
+        (
+            {"temporal_video_resize_mode": "processor", "collapse_image_tokens": True},
+            "canonical expanded-sequence",
+        ),
+    ],
+)
+def test_nemotron_config_rejects_invalid_temporal_video_resize_settings(overrides, match):
+    kwargs = {
+        "hf_processor_path": "nvidia/model",
+        "max_audio_duration": 10.0,
+        "num_mel_bins": 128,
+        "visual_keys": ("pixel_values",),
+        "temporal_patch_size": 2,
+        "video_fps": 1.0,
+        "video_nframes": 8,
+        "use_temporal_video_embedder": True,
+        "patch_dim": 16,
+        **overrides,
+    }
+    config = NemotronOmniEnergonTaskEncoderConfig(**kwargs)
+
+    with pytest.raises(ValueError, match=match):
         config.validate()
 
 

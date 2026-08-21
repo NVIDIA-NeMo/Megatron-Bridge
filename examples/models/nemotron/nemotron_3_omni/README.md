@@ -247,21 +247,33 @@ mode:
   image's native H×W and produces a variable per-image token count
   (`temporal_patch_dim=1`, no temporal fusion). Images are supported on **both** the
   HF (`DirectHFSFTDatasetConfig`) path and the Energon path.
-- Video inputs → temporal video embedder (non-dynamic resolution): Frames are resized onto a fixed 512×512 canvas and fused in consecutive
-  pairs (`temporal_patch_dim=2`, `separate_video_embedder=True`), so every
-  video contributes a constant number of tokens per frame-pair. Videos are supported
-  on the **Energon path only**.
+- Video inputs → temporal video embedder: Frames are resized with the public
+  processor's aspect-preserving video policy and fused in consecutive pairs
+  (`temporal_patch_dim=2`, `separate_video_embedder=True`). The resulting token
+  count is derived independently for each frame pair. Video training is
+  supported on the **Energon path only**; the shipped temporal inference scripts
+  use the same processor-owned grids and per-pair counts. The fixed 512×512
+  training policy remains available as an explicit compatibility mode.
 
-Set the four flags below as a matched column — a mismatched set produces incorrect model's expected input.
+Set the fields below as a matched column; a mismatched set produces input that
+does not match the model configuration.
 
-| Field                                              | Dynamic resolution (images, variable H×W) | Temporal video (videos, fused pairs, 512²) |
-|----------------------------------------------------|-------------------------------------------|--------------------------------------------|
-| `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                                     |
-| `model.temporal_patchrecipe_dim`                         | `1`                                       | `2`                                        |
-| `model.separate_video_embedder`                    | `False`                                   | `True`                                     |
-| `model.temporal_ckpt_compat`                       | `False`                                   | `True`                                     |
+| Field                                              | Dynamic resolution (images, variable H×W) | Temporal video (videos, fused pairs) |
+|----------------------------------------------------|-------------------------------------------|--------------------------------------|
+| `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                               |
+| `dataset.task_encoder.temporal_video_resize_mode`  | N/A                                       | `"processor"`                        |
+| `model.temporal_patch_dim`                         | `1`                                       | `2`                                  |
+| `model.separate_video_embedder`                    | `False`                                   | `True`                               |
+| `model.temporal_ckpt_compat`                       | `False`                                   | `True`                               |
 
-Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.
+Note: `dataset.task_encoder.use_temporal_video_embedder` and
+`dataset.task_encoder.temporal_video_resize_mode` apply only to the Energon data
+path.
+
+The canonical collator owns `<image>` and `<so_embedding>` as media anchors,
+validates their processor-expanded counts, and carries an explicit ownership
+mask through padding and packing. Put media in structured image/video/audio
+fields; raw text containing either reserved placeholder is rejected early.
 
 
 ### Image-Text — CORD-V2
@@ -296,13 +308,17 @@ embedder: frames are fused in pairs (`temporal_patch_dim=2`,
 `separate_video_embedder=True`) and audio is fed through the Parakeet
 encoder. Recipe base: `nemotron_omni_valor32k_*_config`.
 
-The public processor uses aspect-preserving dynamic sizes for video inference.
-Pinned MCore does not yet support ragged non-square temporal tubelets, so the
-Bridge training path uses an antialiased bicubic 512×512 compatibility canvas.
-Temporal mode uses that canvas for every visual item in the batch, including
-standalone images. Non-temporal image recipes use the public dynamic-resolution
-sizes. Supporting the public non-square video layout requires MCore to
-pixel-shuffle each temporal chunk with its own spatial grid.
+The shipped VALOR32K Energon recipes set
+`dataset.task_encoder.temporal_video_resize_mode="processor"`. Bridge therefore
+uses the public processor's aspect-preserving video grids and expands each
+tubelet placeholder to the number of vision features that grid produces. Frames
+inside one tubelet must share a grid, while different tubelets may have different
+grids and token counts. Use `"fixed_512"` only when reproducing checkpoints or
+runs prepared with the previous square compatibility policy.
+
+Video frame timestamps come from the sampled source-frame indices and source
+FPS, matching the public HF processor and vLLM. Bridge does not inject an
+implicit `This is a video:` prefix.
 
 Prepare the Energon shards once. For the full walkthrough, see
 [`tutorials/data/valor32k-avqa/data-preparation.md`](../../../../tutorials/data/valor32k-avqa/data-preparation.md).
