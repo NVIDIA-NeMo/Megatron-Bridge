@@ -16,10 +16,15 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
-RUN echo 'deb https://packages.cloud.google.com/apt gpudirect-gib-apt main' > /etc/apt/sources.list.d/nccl-gib.list && \
+RUN NCCL_GIB_PLUGINS_URL='https://packages.cloud.google.com/apt/pool/gpudirect-gib-apt/nccl-gib-plugins_1.1.2-1_amd64_b5ba8e7c31e7d40a1a03d06f29275763.deb' && \
+    NCCL_GIB_PLUGINS_SHA256='964e48ebbae0279918a495d157b3ef77ed7546c9443246977ec9bd8f6d0dae29' && \
+    curl --fail --location --proto '=https' --tlsv1.2 \
+        --output /tmp/nccl-gib-plugins.deb "${NCCL_GIB_PLUGINS_URL}" && \
+    echo "${NCCL_GIB_PLUGINS_SHA256}  /tmp/nccl-gib-plugins.deb" | sha256sum --check --strict - && \
     apt-get update && \
-    apt-get install -y --no-install-recommends nccl-gib-plugins && \
+    apt-get install -y --no-install-recommends /tmp/nccl-gib-plugins.deb && \
     ldconfig /usr/local/nvidia/lib64 && \
+    rm -f /tmp/nccl-gib-plugins.deb && \
     rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
