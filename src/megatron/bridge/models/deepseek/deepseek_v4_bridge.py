@@ -941,11 +941,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     ) -> Dict[str, torch.Tensor]:
         """Recreate DSv4 quantized weight/scale pairs expected by the source shard index.
 
+        Legacy indexer scorer names are restored before selecting the export dtype.
         When ``task.weight_dtype`` is set, skip requantization and return the weights
         unchanged — the generic export path casts the dtype.
         """
-        if task.weight_dtype is not None:
-            return converted_weights_dict
         native_scorer_key = next(
             (
                 key
@@ -959,6 +958,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             if legacy_key in hf_state_dict:
                 converted_weights_dict = dict(converted_weights_dict)
                 converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
+        if task.weight_dtype is not None:
+            return converted_weights_dict
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,
