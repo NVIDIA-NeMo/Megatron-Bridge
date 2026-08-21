@@ -543,7 +543,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
 
 def _build_nemotron_3_5_lightning_gb300_mxfp8() -> ConfigContainer:
-    cfg = _build_nemotron_3_nano_gb300_mxfp8()
+    cfg = nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config()
     cfg.model.moe_hybridep_num_sms = 16
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"

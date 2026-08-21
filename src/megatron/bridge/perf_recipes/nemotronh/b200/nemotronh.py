@@ -391,9 +391,41 @@ def nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_bf16_config())
 
 
+def _build_nemotron_3_5_lightning_b200_mxfp8() -> ConfigContainer:
+    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config())
+
+
 def nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× B200, MXFP8."""
-    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config())
+    return _build_nemotron_3_5_lightning_b200_mxfp8()
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_fsdp_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B200, MXFP8, Megatron FSDP."""
+    cfg = _build_nemotron_3_5_lightning_b200_mxfp8()
+
+    # Megatron FSDP registers module hooks that Transformer Engine CUDA graph
+    # capture rejects.
+    cfg.train.global_batch_size = 384
+    cfg.train.micro_batch_size = 3
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+
+    cfg.model.init_model_with_meta_device = True
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    cfg.checkpoint.load = None
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    return cfg
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
