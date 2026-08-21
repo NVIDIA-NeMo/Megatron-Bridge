@@ -41,9 +41,10 @@ from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8
 def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """DeepSeek-V4-Flash BF16 pre-training on 64-GPU GB200 (PP=8, EP=8).
 
-    All features validated in 1k-step convergence runs on OCI GB200 NVL72:
-    fused DSA indexer, DSA indexer loss, HybridEP dispatcher, GroupedGEMM,
-    permute fusion, selective recompute with mla_up_proj.
+    The core 64-GPU topology completed 1k-step convergence runs with fused DSA
+    indexer and loss, HybridEP, grouped GEMM, permute fusion, and selective
+    recompute. The current router fusion, native cross entropy, and activation
+    offload settings were exercised by the derived 128-GPU recipe's 100-step run.
 
     Note: set checkpoint.save_optim=False when using HybridEP.
     """
@@ -197,11 +198,11 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigContainer:
     """Return the real-training DeepSeek V4 Flash config for 128 GB200 GPUs.
 
-    This variant uses PP1 with two 64-rank expert/data-parallel replicas. A
-    matched PP1 screen completed eight finite steps and reduced peak allocated
-    memory by 25.51 GiB with attention activation offload plus MXFP8 parameter
-    gather/storage. Expert capacity, paged stash, and CUDA graphs remain
-    disabled to preserve natural-routing training semantics.
+    This variant uses PP1 with dense DP128, EP64, and expert DP2. Its natural-routing
+    validation completed 100 finite steps, saved a grouped-MXFP8 checkpoint, and
+    restored model, optimizer, and RNG state through step 105. Expert capacity,
+    paged stash, and CUDA graphs remain disabled to preserve natural-routing
+    training semantics.
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
@@ -220,7 +221,6 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigCont
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_num_sms = 32
-    cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.use_transformer_engine_op_fuser = True

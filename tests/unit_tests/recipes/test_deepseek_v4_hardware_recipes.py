@@ -162,7 +162,6 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.moe_mlp_glu_interleave_size == 32
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
-    assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]

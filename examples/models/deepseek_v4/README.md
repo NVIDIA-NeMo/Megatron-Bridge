@@ -139,12 +139,13 @@ Full-parameter SFT of DeepSeek-V4-Flash. See [`slurm_sft.sh`](slurm_sft.sh) for 
 |--------|-----|------------|----------|
 | `deepseek_v4_flash_sft_config` | on | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
 | `deepseek_v4_flash_no_mtp_sft_config` | off | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
+| `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | on | fused (cuTile, sm_100) | GB200 (32 GPUs; offline-packed OpenMath) |
 
-Both recipes enable fused mHC and fused rope (`use_fused_mhc=True`, `apply_rope_fusion=True`), matching the pretrain recipes. The historical "fused-kernel SFT NaN" reports are both resolved: the fused-mHC report was a confound, and the fused-rope NaN was a bridge config-mapping bug (`partial_rotary_factor` double-applied) fixed by `rotary_percent=1.0` in #4271 — with that fix, full-model (43-layer, real weights) SFT with rope fusion on 8×GB300 matches the unfused control's loss trajectory. The fused mHC cuTile kernel is **sm_100 (Blackwell)**; on Hopper set `use_fused_mhc=False`. The `no_mtp` variant drops the MTP layer and trims `csa_compress_ratios` back to `num_layers` (the bridge appends an MTP-layer ratio that `transformer_config` would otherwise reject).
+All three recipes enable fused mHC and fused rope (`use_fused_mhc=True`, `apply_rope_fusion=True`), matching the pretrain recipes. The historical "fused-kernel SFT NaN" reports are both resolved: the fused-mHC report was a confound, and the fused-rope NaN was a bridge config-mapping bug (`partial_rotary_factor` double-applied) fixed by `rotary_percent=1.0` in #4271 — with that fix, full-model (43-layer, real weights) SFT with rope fusion on 8×GB300 matches the unfused control's loss trajectory. The fused mHC cuTile kernel is **sm_100 (Blackwell)**; on Hopper set `use_fused_mhc=False`. The `no_mtp` variant drops the MTP layer and trims `csa_compress_ratios` back to `num_layers` (the bridge appends an MTP-layer ratio that `transformer_config` would otherwise reject).
 
 > There are intentionally **no MXFP8 or Muon SFT recipes**: both were prototyped (mirroring the pretrain recipes) but fail in full-model DSv4-Flash SFT — see Blockers. SFT ships **Adam/bf16**; the pretrain MXFP8/Muon recipes are unaffected.
 
-`slurm_sft.sh` selects the recipe from `MTP` (`on`|`off`); `HARDWARE` (`blackwell`|`hopper`) sets the node topology (on Hopper, also set `use_fused_mhc=False` — the fused mHC kernel is Blackwell-only). It runs the model at `TP=1, PP=4, EP=8` (32 GPUs), and:
+`slurm_sft.sh` selects one of the legacy unpacked recipes from `MTP` (`on`|`off`); `HARDWARE` (`blackwell`|`hopper`) sets the node topology (on Hopper, also set `use_fused_mhc=False` — the fused mHC kernel is Blackwell-only). It runs the model at `TP=1, PP=4, EP=8` (32 GPUs), and:
 
 1. Imports `deepseek-ai/DeepSeek-V4-Flash` into a Megatron checkpoint (skipped if already present).
 2. Runs full SFT from that checkpoint via `scripts/training/run_recipe.py`.
@@ -156,17 +157,17 @@ GPUs per node differ by hardware, so 32 GPUs means a different node count:
 | GB200 NVL | 4 | 8 | `--nodes=8 --gpus-per-node=4` (default) |
 | H100/H200 | 8 | 4 | `--nodes=4 --gpus-per-node=8` |
 
-**Sequences are unpacked (SBHD).** The CSA/DSA indexer asserts `packed_seq_params is None` (`csa.py`), so packed/THD sequences are not yet supported on the sparse layers. The recipes ship an unpacked SQuAD config; do not set `dataset.enable_offline_packing=true`. Select another built-in source with `--dataset gsm8k` or use `--dataset local-jsonl dataset.dataset_root=<path>` for JSONL data — both stay unpacked by default.
+The legacy `slurm_sft.sh` recipes use unpacked SBHD sequences. The separate GB200 packed recipe is launched through `scripts/training/run_recipe.py`; it uses the Megatron-LM development branch's THD support, offline-packed OpenMath data, fixed shapes with padded `cu_seqlens`, HybridEP uneven padding, and grouped GEMM. It completed 100 finite steps plus a fresh checkpoint reload at sequence length 1024 and CP=1. Long-context and CP=2 remain unverified.
 
 **Eval sizing.** Each evaluation draws `validation.eval_iters × global_batch_size` samples; if that exceeds your validation/test split the eval hangs trying to form a batch. `slurm_sft.sh` defaults to a small `EVAL_ITERS=2` and `DO_TEST=false` (the end-of-run test eval is the usual culprit on small test sets) — raise them only when your splits are large enough.
 
 ## SFT Status, TODO & Blockers
 
-Validated end to end on **8× GB300 (32 GPU, TP1/PP4/EP8)** with real DeepSeek-V4-Flash weights: HF→Megatron import (FP8/MXFP4→bf16) + full SFT, **MTP on and off**, `lm loss` decreasing with no NaN — at SBHD / bf16 / Adam / 4K. (Those end-to-end runs used `use_fused_mhc=False`; the recipes now default `use_fused_mhc=True`, verified clean by an isolated GB300 re-run and confirmed by a reviewer on GB200.) The items below are **not** implemented and are gated on upstream Megatron-Core (verified against the code and PRs as of 2026-06-02; tracking: [NVIDIA/Megatron-LM#4468](https://github.com/NVIDIA/Megatron-LM/issues/4468)):
+Validated end to end on **8× GB300 (32 GPU, TP1/PP4/EP8)** with real DeepSeek-V4-Flash weights: HF→Megatron import (FP8/MXFP4→bf16) + full SFT, **MTP on and off**, `lm loss` decreasing with no NaN — at SBHD / bf16 / Adam / 4K. (Those end-to-end runs used `use_fused_mhc=False`; the recipes now default `use_fused_mhc=True`, verified clean by an isolated GB300 re-run and confirmed by a reviewer on GB200.) Current SFT capability status and remaining upstream blockers are tracked below (verified against the code and PRs as of 2026-06-02; tracking: [NVIDIA/Megatron-LM#4468](https://github.com/NVIDIA/Megatron-LM/issues/4468)):
 
 | Capability | Status | Gating | Notes |
 |------------|--------|--------|-------|
-| Packed sequence (**THD**) for DSv4 attention | **Experimental** (unmerged) | mcore PR #5011 (open) | THD *is implemented* in #5011 — it removes the `packed_seq_params is None` asserts in `csa.py`/`dsa.py` and adds the THD index/topk + `cu_seqlens` path. It **grafts cleanly onto our pinned mcore** (0-conflict 3-way merge of #5011) and needs `nvidia-cudnn-frontend[cutedsl]>=1.24.0` installed **`--no-deps`** for the DSA THD kernels (the stock 26.04 container ships an older FE; a full install shadows the container CUDA and breaks TE). The shipped/supported path stays **SBHD**, but an experimental THD (packed-seq) SFT is now **self-validated on 8×GB300** (10-iter, `lm loss` 4.46→1.48, `mtp_1` 13.5→2.70, no NaN) — ahead of #5011 merging. Merged dispatcher-THD #4816 is MoE-side only and does not lift the attention block. |
+| Packed sequence (**THD**) for DSv4 attention | Supported by the GB200 packed SFT recipe | Megatron-LM development branch | Verified for 100 finite steps and a fresh checkpoint reload at sequence length 1024 and CP=1; long-context and CP=2 remain separate. |
 | CUDA Graphs for DSv4 THD | TODO | (no PR) | Follows THD. |
 | Context parallel / long-context (≥64K) | TODO | draft PR #5087 (depends on #5011) | SFT runs CP=1; this is the Phase-3 long-context target. |
 | MXFP8 / Muon **SFT** | **Fails (upstream); no SFT recipe shipped** | fp8 numerics; Muon + expert-parallel | Both prototyped (mirroring the pretrain recipes) and tested at full scale on 8×GB300 with `use_fused_mhc=False`: **MXFP8 NaNs at iter-2** (fp8 × hash-MoE/ClampedSwiGLU numerics) and **Muon hits an iter-2 `AssertionError`** (Muon + EP-MoE grad bookkeeping not yet supported upstream). Removed from the shipped recipe set; the **pretrain** MXFP8/Muon recipes remain. SFT ships **Adam/bf16**. |
@@ -208,7 +209,7 @@ DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported
 
 - **MTP is disabled for inference** via `disable_mtp_for_inference()`. MTP weights are mapped end-to-end and loaded into the Megatron model.
 
-- **Fused mHC: use the unfused path for SFT.** The fused cuTile mHC kernel needs sm_100 (not H100) and is on by default in the bridge config; it works for import/inference on Blackwell, but **NaNs in SFT training** (see SFT Blockers). The SFT recipes therefore force `use_fused_mhc=False` — the validated unfused/reference path, which also runs on Hopper.
+- **Fused mHC requires sm_100.** The Blackwell recipes use the fused cuTile kernel. Set `use_fused_mhc=False` on Hopper; the unfused path remains the portable fallback.
 
 - **`fast_hadamard_transform` is required by the DSA attention variant.** `csa.py` and `dsa.py` import `hadamard_transform` from this package and hard-assert availability — there is no in-tree PyTorch fallback. It is a required Megatron Bridge dependency, pinned to the complete Dao-AILab git source because the PyPI source distribution is incomplete, and is installed by the `uv sync` commands above.
 

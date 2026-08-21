@@ -17,7 +17,7 @@ summary: >
   performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert
   assignments and 64.23% of routing probability mass; that result is benchmark-only and
   is excluded from the natural-routing library recipe and verification metrics. CPU
-  conversion is unsupported because the 285B model exceeds node CPU RAM. Standard
+  conversion remains unverified because the available nodes lacked sufficient RAM. Standard
   Megatron KV-cache inference is unsupported for DSV4 hybrid attention; inference uses
   the HF-native path after export.
 
@@ -32,11 +32,11 @@ verification_index:
     verified:
       - hf_to_megatron_gpu
     unsupported:
-      - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
       - inference
     unverified:
+      - hf_to_megatron_cpu
       - manual_forward_pass
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
   training:
     GB200:
@@ -58,14 +58,19 @@ verification_environment:
 
 items:
   hf_to_megatron_cpu:
-    status: unsupported
-    precision: null
-    command: null
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1
+      --hf-model deepseek-ai/DeepSeek-V4-Flash
+      --megatron-path work/model-verification/dsv4-flash/import-cpu
+      --torch-dtype bfloat16 --trust-remote-code
     last_verified: null
     expected_result: >
       CPU import requires approximately 570 GB of CPU RAM for the full BF16 weight
-      materialisation (285B parameters x 2 bytes). Standard compute nodes do not
-      provide this headroom; the import consistently exits with OOM before completing.
+      materialisation (285B parameters x 2 bytes). Verification requires a high-memory
+      node with enough additional headroom for conversion workspace and strict checkpoint reload.
 
   hf_to_megatron_gpu:
     status: verified
@@ -83,20 +88,26 @@ items:
       Megatron checkpoint.
 
   megatron_to_hf_cpu:
-    status: unsupported
-    precision: null
-    command: null
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1
+      --hf-model deepseek-ai/DeepSeek-V4-Flash
+      --megatron-path work/model-verification/dsv4-flash/import-cpu/iter_0000000
+      --hf-path work/model-verification/dsv4-flash/export-cpu
+      --torch-dtype bfloat16 --trust-remote-code
     last_verified: null
     expected_result: >
-      CPU export requires the full 570 GB BF16 weight set to reside in CPU RAM during
-      tensor merging; nodes consistently OOM before the export completes.
+      CPU export requires a high-memory node with enough headroom for the full BF16
+      weight set and tensor-merging workspace, followed by strict Hugging Face reload.
 
   megatron_to_hf_gpu:
     status: unverified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 2 --gpus-per-node 4 --ep 8 --pp 4
+      --nodes 8 --gpus-per-node 4 --ep 8 --pp 4
       --hf-model deepseek-ai/DeepSeek-V4-Flash
       --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000
       --hf-path work/model-verification/dsv4-flash/export-gpu
@@ -269,10 +280,10 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        The imported seq_length=1024 SFT run verifies offline packing and CP=2 plumbing,
-        but it is not a long-context result. Verification requires a separately sized
-        long-context run with finite loss, no skipped or NaN iterations, and all four
-        metrics recorded over at least 100 optimizer steps.
+        The verified seq_length=1024 SFT run established offline packing only and used
+        CP=1; it is not a long-context or context-parallel result. Verification requires
+        a separately sized CP=2 long-context run with finite loss, no skipped or NaN
+        iterations, and all four metrics recorded over at least 100 optimizer steps.
 
   peft:
     all:
@@ -295,23 +306,7 @@ items:
       status: unverified
       precision: fp8_mx
       depends_on: pretrain
-      command: >
-        ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
-        --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config
-        --mode pretrain --dataset megatron-indexed --max_steps 100
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/rp2 dataset.num_workers=0
-        dataset.random_seed=1234 rng.seed=1234
-        scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
-        validation.eval_interval=0 validation.eval_iters=0
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        checkpoint.exit_on_missing_checkpoint=false
-        --load_dir work/model-verification/dsv4-flash/pretrain-ref
-        --save_dir work/model-verification/dsv4-flash/pretrain-resumed
-        --save_interval 50 checkpoint.ckpt_step=50
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-        dist.distributed_timeout_minutes=120
+      command: null
       last_verified: null
       metrics:
         initial_loss: null
@@ -326,11 +321,11 @@ items:
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: false
       expected_result: >
-        Verification requires restoring optimizer, scheduler, data-order, and RNG state
-        from the current recipe's step-50 reference checkpoint, then running steps 51-100
-        in a separate output root. Step-51 and step-100 losses must match the uninterrupted
-        reference within the declared 1% relative and 1e-6 absolute tolerances, and all
-        four metrics must be recorded.
+        Verification requires a new uninterrupted reference run that saves a step-50
+        checkpoint, followed by a fresh process that restores optimizer, scheduler,
+        data-order, and RNG state and runs steps 51-100 in a separate output root.
+        Step-51 and step-100 losses must match the uninterrupted reference within the
+        declared 1% relative and 1e-6 absolute tolerances, and all four metrics must be recorded.
 
   pretrain_performance:
     GB200:
