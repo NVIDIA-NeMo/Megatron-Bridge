@@ -16,16 +16,16 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
-RUN NCCL_GIB_LAYER_URL='https://us-docker.pkg.dev/v2/gce-ai-infra/gpudirect-gib/nccl-plugin-gib/blobs/sha256:5571c2a01c6bf05e08b6da25f6f4faa0b0b277036d18df7593ea838628074770' && \
-    NCCL_GIB_LAYER_SHA256='5571c2a01c6bf05e08b6da25f6f4faa0b0b277036d18df7593ea838628074770' && \
-    curl --fail --location --proto '=https' --tlsv1.2 \
-        --output /tmp/nccl-gib-layer.tar.gz "${NCCL_GIB_LAYER_URL}" && \
-    echo "${NCCL_GIB_LAYER_SHA256}  /tmp/nccl-gib-layer.tar.gz" | sha256sum --check --strict - && \
-    tar --extract --gzip --file /tmp/nccl-gib-layer.tar.gz --directory / \
-        usr/local/gib/configs usr/local/gib/lib64 usr/local/gib/scripts && \
-    rm /tmp/nccl-gib-layer.tar.gz && \
-    echo "/usr/local/gib/lib64" > /etc/ld.so.conf.d/nccl-gib.conf && \
-    ldconfig
+RUN install -d -m 0755 /etc/apt/keyrings \
+    && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | gpg --dearmor --batch --yes -o /etc/apt/keyrings/google-cloud.gpg \
+    && chmod 0644 /etc/apt/keyrings/google-cloud.gpg \
+    && echo 'deb [signed-by=/etc/apt/keyrings/google-cloud.gpg] https://packages.cloud.google.com/apt gpudirect-gib-apt main' \
+        > /etc/apt/sources.list.d/nccl-gib.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nccl-gib-plugins=1.1.2-1 \
+    && ldconfig /usr/local/nvidia/lib64 \
+    && rm -rf /var/lib/apt/lists/*
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
     TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
     patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
