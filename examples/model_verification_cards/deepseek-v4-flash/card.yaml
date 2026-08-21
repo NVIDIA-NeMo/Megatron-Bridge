@@ -10,10 +10,11 @@ summary: >
   DeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision.
   The current 128-GPU GB200 MXFP8 library pretraining recipe uses
   PP1/EP64 with natural routing, selective recompute, attention activation offload, and
-  MXFP8 parameter gather and gradient-buffer reuse. It has completed an eight-step
-  screen, but full pretraining and direct checkpoint resume remain unverified until the
-  bounded 100-step runs described below complete. A separate capacity-1.5 performance
-  screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert
+  MXFP8 parameter gather and gradient-buffer reuse. It completed 100 finite steps,
+  saved a grouped-MXFP8 checkpoint, then restored model, optimizer, and RNG state in a
+  fresh process for finite steps 101-105. Formal checkpoint-resume verification remains
+  separate because it requires the step-50 sentinel comparison below. A capacity-1.5
+  performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert
   assignments and 64.23% of routing probability mass; that result is benchmark-only and
   is excluded from the natural-routing library recipe and verification metrics. CPU
   conversion is unsupported because the 285B model exceeds node CPU RAM. Standard
@@ -22,8 +23,9 @@ summary: >
 
   The GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes,
   selective whole-MoE recompute, and attention activation offload while preserving
-  the base SFT objective. Its final objective-preserving configuration and public
-  post-export inference workflow remain unverified.
+  the base SFT objective. Its final objective-preserving configuration completed
+  100 finite steps and a fresh-process checkpoint reload. The public post-export
+  inference workflow remains unverified.
 
 verification_index:
   model_level:
@@ -38,7 +40,8 @@ verification_index:
       - megatron_to_hf_gpu
   training:
     GB200:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft]
+      unverified: [sft_export_inference, sft_long_context, checkpoint_resume]
       unsupported: [peft]
   performance:
     GB200: unverified
@@ -51,7 +54,7 @@ model:
 
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08.rc5
-  bridge_commit: 758bb98965d0b98883604173e4ba7cdb6851734b  # pragma: allowlist secret
+  bridge_commit: 07c5cc30d0510d437bfbbe7b12d9d98387295d89  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -76,8 +79,8 @@ items:
       --torch-dtype bfloat16 --trust-remote-code
     last_verified: 2026-08-04
     expected_result: >
-      The command exits successfully and creates iter_0000000. The checkpoint
-      is reloadable and paired GPU export produces correct HF weights.
+      The command exits successfully and creates a reloadable iter_0000000
+      Megatron checkpoint.
 
   megatron_to_hf_cpu:
     status: unsupported
@@ -135,7 +138,7 @@ items:
 
   pretrain:
     GB200:
-      status: unverified
+      status: verified
       precision: fp8_mx
       enabled_features:
         moe_dispatcher: hybridep
@@ -152,28 +155,28 @@ items:
         rerun_state_machine.check_for_nan_in_loss=true
         checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null
         --save_dir work/model-verification/dsv4-flash/pretrain-ref
-        --save_interval 50
+        --save_interval 100
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=120
-      last_verified: null
+      last_verified: 2026-08-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 12.59201
+        final_loss: 5.960634
+        last_10_steps_step_time_ms_avg: 5713.47
+        last_10_steps_model_tflops_per_gpu_avg: 131.36
+        last_10_steps_tokens_per_second_per_gpu_avg: 1433.804676
       expected_result: >
         The current library recipe resolves to TP1/PP1/EP64/CP1 with dense DP128,
         expert DP2, and GBS/MBS 256/1. It uses HybridEP natural routing, native fused
         cross entropy, selective recompute over moe, mhc, mla_up_proj, and layernorm,
         attention activation offload, and MXFP8 parameter gather and gradient-buffer
         reuse. Expert capacity, paged stash, and CUDA graphs remain disabled.
-        Verification requires 100 finite steps with no skipped or NaN iterations and
-        complete checkpoints at steps 50 and 100; the existing eight-step screen is
-        insufficient for verified status.
+        The run completed 100 finite LM/MTP-loss steps with no skipped or NaN
+        iterations and wrote a complete grouped-MXFP8 checkpoint at step 100.
 
   sft:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -200,22 +203,25 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: null
+      last_verified: 2026-08-20
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 0.9435847
+        final_loss: 0.2834835
+        last_10_steps_step_time_ms_avg: 8575.85
+        last_10_steps_model_tflops_per_gpu_avg: 42.18
+        last_10_steps_tokens_per_second_per_gpu_avg: 477.620294
+        peak_allocated_memory_gib: 184.96
+        peak_reserved_memory_gib: 187.04
       expected_result: >
         On 32 GB200 (8 nodes x 4 GPUs), TP1/PP4/EP8/CP1 with dense DP8 and expert
         DP1, GBS/MBS 128/1. OpenMathInstruct-2 thinking data uses offline packing
         at seq_length=1024 with fixed token and cumulative-boundary shapes. The
         GB200 recipe uses selective recompute over moe, mhc, mla_up_proj, and
         layernorm, attention activation offload, HybridEP dispatch, and DSA kernel
-        fusion without enabling the optional DSA indexer loss. Verification requires
-        100 steps with finite LM and MTP losses, no skipped
-        or NaN iterations, and a complete model checkpoint at step 100 that reloads
-        successfully for finite step 101. moe_grouped_gemm=True and native fused cross
+        fusion without enabling the optional DSA indexer loss. The run completed
+        100 steps with finite LM and MTP losses, no skipped or NaN iterations, and a
+        complete model checkpoint at step 100. A fresh process reloaded that checkpoint
+        and completed finite step 101. moe_grouped_gemm=True and native fused cross
         entropy are recipe defaults.
         dist.distributed_timeout_minutes must be 180 or above to allow offline data
         packing (approximately 63 minutes) before training begins.
@@ -261,6 +267,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The imported seq_length=1024 SFT run verifies offline packing and CP=2 plumbing,
         but it is not a long-context result. Verification requires a separately sized
@@ -279,6 +286,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         No LoRA / PEFT recipe exists for DeepSeek-V4 in the current recipe set.
 
@@ -310,6 +318,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -337,6 +346,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         On 128 GB200, the exact mock-data benchmark recipe completes 50 steps with
         finite losses and throughput. This benchmark uses forced routing, a static

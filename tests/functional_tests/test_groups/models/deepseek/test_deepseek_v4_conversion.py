@@ -273,11 +273,9 @@ class TestDeepSeekV4Conversion:
             reload_cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
         )
 
-        if reload_result.returncode != 0:
-            print(f"RELOAD STDOUT: {reload_result.stdout}")
-            print(f"RELOAD STDERR: {reload_result.stderr}")
         assert reload_result.returncode == 0, (
-            f"DeepSeek V4 checkpoint reload conversion failed with {reload_result.returncode}"
+            f"DeepSeek V4 checkpoint reload conversion failed with {reload_result.returncode}\n"
+            f"STDOUT:\n{reload_result.stdout}\nSTDERR:\n{reload_result.stderr}"
         )
 
         converted_dir = test_output_dir / Path(deepseek_v4_toy_model_path).name

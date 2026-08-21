@@ -8,10 +8,13 @@ The bridge supports four published variants out of the same code path. The on-di
 
 DeepSeek V4 pretraining requires Megatron-LM `dev`; the Megatron-LM copy
 pinned by the current Megatron Bridge `main` branch is not supported. Stateless
-grouped-FP8 checkpoint saves additionally require Megatron-LM PR
-[#6509](https://github.com/NVIDIA/Megatron-LM/pull/6509) until that fix merges,
-including saves from the existing MXFP8 recipes. Earlier pretraining
-verification used Megatron-LM `dev` commit `35f36c7c9dba` plus PR
+grouped-FP8 checkpoint saves additionally require the empty extra-state fix from
+Megatron-LM PR [#5997](https://github.com/NVIDIA/Megatron-LM/pull/5997),
+including saves from the existing MXFP8 recipes. The fix is available on
+Megatron-LM `main`; until it reaches `dev`, apply the equivalent signed commit
+`d05cb07ff618` from [#6509](https://github.com/NVIDIA/Megatron-LM/pull/6509) to
+a compatible `dev` checkout. Earlier pretraining verification used Megatron-LM
+`dev` commit `35f36c7c9dba` plus PR
 [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839).
 
 The NeMo Framework container uses one shared `/opt/venv` for several source
@@ -79,7 +82,7 @@ Available Blackwell pretraining recipes:
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
 - `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config`: 128-GPU GB200
   Adam MXFP8 with PP1/EP64/dense-DP128/expert-DP2/HybridEP, selective recompute,
-  attention activation offload, and MXFP8 parameter gather/buffer reuse
+  grouped GEMM, attention activation offload, and MXFP8 parameter gather/buffer reuse
 - `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config`: 256-GPU GB300
   performance configuration (requires the PR #4824 container and dev-MCore
   stack described above)
@@ -103,7 +106,8 @@ All variants retain their precision-specific
 training policies: full-iteration CUDA graphs, FP8 parameter gather/buffer
 reuse, and reduced-precision gradient reduction remain disabled except for the
 provisional FP8 parameter gather/buffer reuse in the high-scale GB200 recipe;
-that PP1 configuration still requires 100-step checkpoint and resume validation.
+that PP1 configuration has completed 100 finite steps, grouped-MXFP8 checkpoint
+save, and model/optimizer/RNG reload through step 105.
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 
