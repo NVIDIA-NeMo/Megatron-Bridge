@@ -2013,7 +2013,22 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
         if isinstance(cfg.mixed_precision, str):
             cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
         cfg.mixed_precision.finalize()
+        explicit_precision_values: list[tuple[object, str, object]] = []
+        for path in getattr(cfg, "_explicit_cli_override_paths", ()):
+            config_name, separator, field_name = path.partition(".")
+            if (
+                separator
+                and "." not in field_name
+                and config_name in {"model", "optimizer", "ddp"}
+                and hasattr(cfg.mixed_precision, field_name)
+            ):
+                target_config = getattr(cfg, config_name)
+                if hasattr(target_config, field_name):
+                    explicit_precision_values.append((target_config, field_name, getattr(target_config, field_name)))
+
         cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
+        for target_config, field_name, value in explicit_precision_values:
+            setattr(target_config, field_name, value)
 
     # Calculate data parallel size (needed for comm overlap methods)
     cfg.set_data_parallel_size()
