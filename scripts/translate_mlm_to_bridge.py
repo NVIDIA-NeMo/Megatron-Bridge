@@ -95,7 +95,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "num-attention-heads":               ("model.num_attention_heads",            None),
     "num-query-groups":                  ("model.num_query_groups",               None),
     "kv-channels":                       ("model.kv_channels",                    None),
-    "max-position-embeddings":           ("model.max_position_embeddings",        None),
+    "max-position-embeddings":           (None,                                   "max_position_embeddings"),
     "position-embedding-type":           ("model.position_embedding_type",        None),
     "rotary-base":                       ("model.rotary_base",                    None),
     "rotary-percent":                    ("model.rotary_percent",                 None),
@@ -541,6 +541,18 @@ def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool
         elif transform == "seq_length":
             result.add_override("dataset.seq_length", arg_val)
             result.add_override("model.seq_length", arg_val)
+        elif transform == "max_position_embeddings":
+            # Bridge providers have no max_position_embeddings field; seq_length is the equivalent.
+            seq_length_arg = args.get("seq-length")
+            if seq_length_arg is None:
+                result.add_override("dataset.seq_length", arg_val)
+                result.add_override("model.seq_length", arg_val)
+            elif seq_length_arg != arg_val:
+                result.skipped.append((arg_name, arg_val))
+                result.add_note(
+                    f"max-position-embeddings ({arg_val}) differs from seq-length ({seq_length_arg}); "
+                    "Bridge has no separate field, review model.seq_length manually"
+                )
         elif transform == "vpp_from_layers":
             layers_per_vpp_stage = int(arg_val)
             num_layers = int(args.get("num-layers", 0))
