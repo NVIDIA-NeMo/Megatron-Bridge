@@ -79,7 +79,16 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
     validate_output_path(path, source_paths=source_paths)
     if torch.distributed.get_rank() == 0:
         prepare_output_directory(path, overwrite=overwrite, source_paths=source_paths)
-    torch.distributed.barrier()
+    # Without device_ids, torch guesses the barrier's device as
+    # rank % local_gpu_count. Slurm assigns SLURM_PROCID cyclically across
+    # nodes (RANK = num_nodes * local_rank + node_id, not block-wise), so
+    # that guess collides across ranks on the same node once more than one
+    # node is used, and NCCL aborts with "Multiple ranks detected using the
+    # same GPU on this node." Passing the real device (already set via
+    # torch.cuda.set_device in _ensure_distributed_initialized) avoids the
+    # guess, matching the pattern used by training/initialize.py's own
+    # first post-init barrier.
+    torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:

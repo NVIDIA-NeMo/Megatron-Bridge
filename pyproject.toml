@@ -83,7 +83,7 @@ dependencies = [
     "tensorboard>=2.19.0",
     "typing-extensions",
     "rich",
-    "wandb==0.27.2",
+    "wandb>=0.25.0",
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
@@ -130,6 +130,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "wandb==0.27.2",
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",

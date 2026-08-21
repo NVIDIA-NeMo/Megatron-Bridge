@@ -26,6 +26,7 @@ overrides = [
     { name = "torchvision", marker = "sys_platform == 'never'" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
+    { name = "wandb", specifier = "==0.27.2" },
 ]
 
 [[manifest.dependency-metadata]]
@@ -2147,7 +2148,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = "<=5.15.0,>=5.15" },
     { name = "typing-extensions" },
-    { name = "wandb", specifier = "==0.27.2" },
+    { name = "wandb", specifier = ">=0.25.0" },
 ]
 provides-extras = ["recipes", "parquet", "tensor-inspect", "te", "ssm", "audio"]
 
