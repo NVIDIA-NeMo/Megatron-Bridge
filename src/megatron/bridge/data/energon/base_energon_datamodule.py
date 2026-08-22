@@ -16,7 +16,7 @@ import logging
 from typing import Any, Literal, Optional
 
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.energon import WorkerConfig, get_savable_loader, get_train_dataset
+from megatron.energon import WorkerConfig, get_savable_loader, get_train_dataset, get_val_dataset
 
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ class EnergonMultiModalDataModule:
         and batching samples for validation. Defaults to None and will be the same as task_encoder.
         pg_collection (ProcessGroupCollection, optional): Process group collection for distributed training.
         If provided, used instead of the global parallel_state. Defaults to None.
-        **kwargs: Additional keyword arguments. Will be passed to get_train_dataset() of Energon
+        **kwargs: Additional keyword arguments passed to the selected Energon dataset builder.
         """
 
         super().__init__()
@@ -171,23 +171,28 @@ class EnergonMultiModalDataModule:
             raise ValueError("Invalid value for split. Allowed values are 'train' or 'val'.")
 
         if split == "train":
-            task_encoder = self.task_encoder
-        else:
-            task_encoder = self.validation_task_encoder
+            return get_train_dataset(
+                self.path,
+                batch_size=self.micro_batch_size,
+                task_encoder=self.task_encoder,
+                worker_config=worker_config,
+                packing_buffer_size=self.packing_buffer_size,
+                split_part="train",
+                shuffle_buffer_size=self.shuffle_buffer_size,
+                max_samples_per_sequence=self.max_samples_per_sequence,
+                **self.kwargs,
+            )
 
-        _dataset = get_train_dataset(
+        return get_val_dataset(
             self.path,
             batch_size=self.micro_batch_size,
-            task_encoder=task_encoder,
+            task_encoder=self.validation_task_encoder,
             worker_config=worker_config,
             packing_buffer_size=self.packing_buffer_size,
-            split_part=split,
-            shuffle_buffer_size=self.shuffle_buffer_size,
+            split_part="val",
             max_samples_per_sequence=self.max_samples_per_sequence,
             **self.kwargs,
         )
-
-        return _dataset
 
     def build(self):
         return self.train_dataloader(), self.val_dataloader()
