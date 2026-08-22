@@ -4,12 +4,13 @@
 title: nemotron_3_super_120b_a12b
 summary: >
   Performance scope: pretrain_performance.H100 and pretrain_performance.GB200
-  track tuned canonical 64-GPU performance recipes. Timing and throughput from
+  and pretrain_performance.GB300 track tuned canonical 64-GPU performance
+  recipes, with NVFP4 on GB300. Timing and throughput from
   functional H100 and GB200 training are support-verification sanity checks
   rather than optimized performance results. Hardware evidence is scoped
   strictly by accelerator. Nemotron 3 Super 120B-A12B verification covers
   conversion, inference, bounded real-data training, checkpoint resume, and
-  canonical H100 and GB200 benchmarks.
+  canonical H100, GB200, and GB300 benchmarks.
 verification_index:
   model_level:
     verified:
@@ -30,6 +31,7 @@ verification_index:
   performance:
     H100: verified
     GB200: verified
+    GB300: verified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
   hf_revision: d51eab0d1f979ebc26b546e634a04f450d99158e  # pragma: allowlist secret
@@ -702,4 +704,30 @@ items:
         11000 ms and at least 500 TFLOP/s/GPU, and the resolved configuration
         is persisted. Mock data and forced routing make the loss a finiteness
         check rather than convergence evidence. These numbers are GB200-only
-        evidence and make no GB300 performance claim.
+        evidence.
+
+    GB300:
+      status: verified
+      precision: nvfp4
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
+        --recipe nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config
+        --mode pretrain --max_steps 50 --seq_length 8192
+        logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-18
+      metrics:
+        initial_loss: 12.17656
+        final_loss: 0.01398012
+        last_10_steps_step_time_ms_avg: 6357.940
+        last_10_steps_model_tflops_per_gpu_avg: 873.330
+        last_10_steps_tokens_per_second_per_gpu_avg: 10307.741
+      expected_result: >
+        On exactly 64 GB300s, the canonical NVFP4 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 512/1,
+        and sequence length 8192. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.17656 to 0.01398012; the
+        final ten steps average 6357.940 ms, 873.330 TFLOP/s/GPU, and
+        10307.741 tokens/s/GPU. The resolved configuration persists. Mock data
+        and forced routing make the loss a finiteness check rather than
+        convergence evidence.
