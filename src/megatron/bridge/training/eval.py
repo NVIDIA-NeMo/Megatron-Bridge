@@ -64,6 +64,7 @@ def evaluate(
     pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
+    valid_set_index: int | None = None,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
     """Evaluation function.
 
@@ -85,6 +86,11 @@ def evaluate(
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
+        valid_set_index (int | None, optional): Index of the validation set being evaluated when
+            ``multiple_validation_sets`` is enabled. Selects the per-set ``consumed_valid_samples``
+            counter to advance in addition to the aggregate ``consumed_valid_samples`` (which always
+            advances); the caller must have sized ``train_state.consumed_valid_samples_per_set``
+            to cover this index. Defaults to None (no per-set counter).
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -308,7 +314,11 @@ def evaluate(
                     else:
                         raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
 
+            # The aggregate always advances so it keeps its meaning (total validation
+            # samples consumed across all sets) regardless of multiple_validation_sets.
             state.train_state.consumed_valid_samples += eval_batch_size
+            if valid_set_index is not None:
+                state.train_state.consumed_valid_samples_per_set[valid_set_index] += eval_batch_size
 
             if state.cfg.train.exit_duration_in_mins:
                 train_time = (time.time() - state.start_time) / 60.0
@@ -403,7 +413,7 @@ def evaluate_and_print_results(
     pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
-) -> Optional[dict[str, torch.Tensor]]:
+) -> Optional[Union[dict[str, torch.Tensor], dict[str, dict[str, torch.Tensor]]]]:
     """Helper function to evaluate and dump results on screen.
 
     Args:
@@ -411,6 +421,9 @@ def evaluate_and_print_results(
         prefix (str): Prefix for logging evaluation results.
         forward_step_func (Callable): The function that performs a forward step.
         data_iterator (Optional[Union[RerunDataIterator, list[RerunDataIterator]]]): Iterator over evaluation data.
+            With ``ValidationConfig.multiple_validation_sets``, a list with one iterator per validation set;
+            each set is evaluated independently and logged with a ``-<name>`` (from
+            ``ValidationConfig.validation_set_names``) or ``-<index>`` suffix.
         model (list[MegatronModule]): list of model chunks.
         config (ConfigContainer): Configuration container (potentially redundant).
         verbose (bool, optional): Whether to print evaluation progress. Defaults to False.
@@ -426,8 +439,11 @@ def evaluate_and_print_results(
             Controls which callback events are fired (on_test_* vs on_eval_*).
 
     Returns:
-        Optional[dict[str, torch.Tensor]]: The averaged evaluation loss dictionary, or
-        None if evaluation exited early due to a configured time limit.
+        The averaged evaluation loss dictionary, or, when ``multiple_validation_sets`` is set,
+        a dictionary mapping each set's name (or index as a string) to its loss dictionary.
+        None if evaluation exited early due to a configured time limit; in that case sets
+        evaluated before the abort have already advanced their per-set consumed-sample
+        counters while the remaining sets have not, so per-set resume offsets may differ.
     """
     if write_to_tensorboard:
         writer = state.tensorboard_logger
@@ -438,71 +454,108 @@ def evaluate_and_print_results(
     mlflow_writer = state.mlflow_logger
     comet_logger = state.comet_logger
 
-    total_loss_dict, collected_non_loss_data, timelimit = evaluate(
-        state,
-        forward_step_func,
-        data_iterator,
-        model,
-        process_non_loss_data_func,
-        config,
-        verbose,
-        non_loss_data_func,
-        p2p_communicator=p2p_communicator,
-        pg_collection=pg_collection,
-        callback_manager=callback_manager,
-        is_test=is_test,
-    )
+    # A list here can be ambiguous when pipeline parallelism is used, so we branch based on the
+    # flag, not on the type of data_iterator.
+    val_config = state.cfg.validation
+    multi_set = val_config.multiple_validation_sets and not is_test
+    if multi_set and not isinstance(data_iterator, list):
+        # Rejects only the scalar misuse; a single VPP iterator is itself a list.
+        raise ValueError(
+            "multiple_validation_sets is set but data_iterator is not a list; pass one iterator per validation set."
+        )
+    data_iterators = data_iterator if multi_set else [data_iterator]
 
-    # Timelimit hit during evaluation
-    if timelimit:
-        return None
-    if total_loss_dict is None:
-        return None
+    set_loss_dict = None
+    per_set_loss_dicts = {}
+    for index, set_data_iterator in enumerate(data_iterators):
+        suffix = ""
+        valid_set_index = None
+        if multi_set:
+            valid_set_index = index
+            if val_config.validation_set_names:
+                set_name = val_config.validation_set_names[index]
+            else:
+                set_name = str(index)
+            suffix = f"-{set_name}"
 
-    string = f" validation loss at {prefix} | "
-    for key in total_loss_dict:
-        string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
-        ppl = math.exp(min(20, total_loss_dict[key].item()))
-        string += "{} PPL: {:.6E} | ".format(key, ppl)
-        if writer:
-            writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
-            writer.add_scalar(
-                "{} validation vs samples".format(key),
-                total_loss_dict[key].item(),
-                state.train_state.consumed_train_samples,
-            )
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                writer.add_scalar("{} validation ppl".format(key), ppl, state.train_state.step)
+        set_loss_dict, collected_non_loss_data, timelimit = evaluate(
+            state,
+            forward_step_func,
+            set_data_iterator,
+            model,
+            process_non_loss_data_func,
+            config,
+            verbose,
+            non_loss_data_func,
+            p2p_communicator=p2p_communicator,
+            pg_collection=pg_collection,
+            callback_manager=callback_manager,
+            is_test=is_test,
+            valid_set_index=valid_set_index,
+        )
+
+        # Timelimit hit during evaluation
+        if timelimit:
+            return None
+        if set_loss_dict is None:
+            return None
+
+        string = f" validation{suffix} loss at {prefix} | "
+        for key in set_loss_dict:
+            string += "{} value: {:.6E} | ".format(key, set_loss_dict[key].item())
+            ppl = math.exp(min(20, set_loss_dict[key].item()))
+            string += "{} PPL: {:.6E} | ".format(key, ppl)
+            if writer:
                 writer.add_scalar(
-                    "{} validation ppl vs samples".format(key), ppl, state.train_state.consumed_train_samples
+                    "{} validation{}".format(key, suffix), set_loss_dict[key].item(), state.train_state.step
                 )
+                writer.add_scalar(
+                    "{} validation{} vs samples".format(key, suffix),
+                    set_loss_dict[key].item(),
+                    state.train_state.consumed_train_samples,
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    writer.add_scalar("{} validation{} ppl".format(key, suffix), ppl, state.train_state.step)
+                    writer.add_scalar(
+                        "{} validation{} ppl vs samples".format(key, suffix),
+                        ppl,
+                        state.train_state.consumed_train_samples,
+                    )
 
-        if wandb_writer and is_last_rank():
-            wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
+            if wandb_writer and is_last_rank():
+                wandb_writer.log(
+                    {"{} validation{}".format(key, suffix): set_loss_dict[key].item()}, state.train_state.step
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    wandb_writer.log({"{} validation{} ppl".format(key, suffix): ppl}, state.train_state.step)
 
-        if mlflow_writer and is_last_rank():
-            mlflow_writer.log_metrics(
-                _sanitize_mlflow_metrics({f"val/{key}": total_loss_dict[key].item()}), step=state.train_state.step
-            )
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+            if mlflow_writer and is_last_rank():
                 mlflow_writer.log_metrics(
-                    _sanitize_mlflow_metrics({f"val/{key} ppl": ppl}), step=state.train_state.step
+                    _sanitize_mlflow_metrics({f"val/{key}{suffix}": set_loss_dict[key].item()}),
+                    step=state.train_state.step,
                 )
-        if comet_logger and is_last_rank():
-            comet_logger.log_metrics(
-                {"{} validation".format(key): total_loss_dict[key].item()}, step=state.train_state.step
-            )
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                comet_logger.log_metrics({"{} validation ppl".format(key): ppl}, step=state.train_state.step)
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    mlflow_writer.log_metrics(
+                        _sanitize_mlflow_metrics({f"val/{key}{suffix} ppl": ppl}), step=state.train_state.step
+                    )
+            if comet_logger and is_last_rank():
+                comet_logger.log_metrics(
+                    {"{} validation{}".format(key, suffix): set_loss_dict[key].item()}, step=state.train_state.step
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    comet_logger.log_metrics(
+                        {"{} validation{} ppl".format(key, suffix): ppl}, step=state.train_state.step
+                    )
 
-    if process_non_loss_data_func is not None and writer and is_last_rank():
-        process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
+        if process_non_loss_data_func is not None and writer and is_last_rank():
+            process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
 
-    length = len(string) + 1
-    print_rank_last("-" * length)
-    print_rank_last(string)
-    print_rank_last("-" * length)
+        length = len(string) + 1
+        print_rank_last("-" * length)
+        print_rank_last(string)
+        print_rank_last("-" * length)
 
-    return total_loss_dict
+        if multi_set:
+            per_set_loss_dicts[set_name] = set_loss_dict
+
+    return per_set_loss_dicts if multi_set else set_loss_dict

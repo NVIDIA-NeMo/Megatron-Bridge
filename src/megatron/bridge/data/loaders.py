@@ -130,6 +130,11 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
     else:
         eval_iters = 0
+    # Budget the eval passes outside the eval_interval schedule: the step-zero pass,
+    # plus the post-training pass in _pretrain() when eval_interval is unset.
+    if cfg.validation.eval_at_step_zero and cfg.validation.eval_iters:
+        extra_eval_passes = 1 if cfg.validation.eval_interval else 2
+        eval_iters += extra_eval_passes * cfg.validation.eval_iters
     test_iters = cfg.validation.eval_iters
 
     eval_gbs = (
@@ -268,6 +273,45 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
+    if isinstance(valid_ds, list) and not cfg.validation.multiple_validation_sets:
+        raise ValueError(
+            "The dataset provider returned multiple validation datasets but "
+            "ValidationConfig.multiple_validation_sets is not set."
+        )
+    if isinstance(test_ds, list):
+        raise ValueError(
+            "The dataset provider returned a list of test datasets; multiple evaluation sets are "
+            "only supported for the validation split."
+        )
+    if cfg.validation.multiple_validation_sets and valid_ds is not None and not isinstance(valid_ds, list):
+        valid_ds = [valid_ds]
+
+    if cfg.validation.multiple_validation_sets:
+        num_sets = len(valid_ds) if valid_ds is not None else 0
+        if torch.distributed.is_initialized():
+            # A rank with fewer sets would run fewer evaluate() calls (each one runs
+            # collectives) and deadlock the others; fail loudly on every rank instead.
+            counts = torch.tensor(
+                [num_sets, -num_sets], dtype=torch.long, device="cuda" if torch.cuda.is_available() else "cpu"
+            )
+            torch.distributed.all_reduce(counts, op=torch.distributed.ReduceOp.MAX)
+            max_sets, min_sets = counts[0].item(), -counts[1].item()
+            if max_sets != min_sets:
+                raise RuntimeError(
+                    f"multiple_validation_sets: ranks disagree on the number of validation sets "
+                    f"(min {min_sets}, max {max_sets}; this rank has {num_sets}). The dataset "
+                    "provider must return the same number of validation sets on every rank."
+                )
+        if (
+            valid_ds is not None
+            and cfg.validation.validation_set_names is not None
+            and len(cfg.validation.validation_set_names) != num_sets
+        ):
+            raise ValueError(
+                f"Number of validation_set_names ({len(cfg.validation.validation_set_names)}) must match "
+                f"the number of validation datasets ({num_sets})"
+            )
+
     drop_last = False if cfg.train.num_epochs is not None else cfg.dataset.drop_last
     if (
         train_ds is not None
@@ -345,62 +389,84 @@ def build_train_valid_test_data_loaders(
         if cfg.validation.eval_micro_batch_size is not None
         else cfg.train.micro_batch_size
     )
-    if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
-        valid_dataloader = build_pretraining_data_loader(
-            valid_ds,
-            0,
-            cfg.dataset.dataloader_type,
+
+    def _build_eval_test_dataloaders(
+        ds: Any, consumed_samples: int | list[int], dataloader_type: str
+    ) -> DataLoader | list[DataLoader] | None:
+        """Build the dataloader(s) for a validation or test dataset slot.
+
+        Args:
+            ds: A single evaluation dataset, or a list with one dataset per
+                validation set when ``multiple_validation_sets`` is enabled.
+            consumed_samples: Sample offset the sampler resumes from. A single
+                int is applied to every dataset; a list supplies one offset per
+                dataset (per-set validation resume bookkeeping).
+            dataloader_type: Sampler style, passed through to
+                ``build_pretraining_data_loader``.
+
+        Returns:
+            One dataloader per input dataset (a list for a list input), or
+            None when ``ds`` is None.
+        """
+        if isinstance(ds, list):
+            offsets = consumed_samples if isinstance(consumed_samples, list) else [consumed_samples] * len(ds)
+            return [_build_eval_test_dataloaders(d, off, dataloader_type) for d, off in zip(ds, offsets)]
+        return build_pretraining_data_loader(
+            ds,
+            consumed_samples,
+            dataloader_type,
             eval_mbs,
             cfg.dataset.num_workers,
             cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
-            collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
+            collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
-            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and cfg.dataset.dataloader_type == "batch"),
-            seed=sampler_seed,
-        )
-    elif cfg.validation.eval_iters > 0:
-        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
-        valid_dataloader = build_pretraining_data_loader(
-            valid_ds,
-            train_state.consumed_valid_samples,
-            val_dataloader_type,
-            eval_mbs,
-            cfg.dataset.num_workers,
-            cfg.dataset.data_sharding,
-            worker_init_fn=maybe_worker_init_fn,
-            collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
-            pin_memory=cfg.dataset.pin_memory,
-            persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=eval_dp_rank,
-            data_parallel_size=eval_dp_size,
-            global_batch_size=eval_gbs,
-            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and val_dataloader_type == "batch"),
+            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and dataloader_type == "batch"),
             seed=sampler_seed,
         )
 
+    # Single sizing authority for the per-set counters; reset + warn on a set-count change across
+    # resume (dataset identity is not tracked).
+    if cfg.validation.multiple_validation_sets and cfg.validation.eval_iters > 0 and isinstance(valid_ds, list):
+        num_sets = len(valid_ds)
+        restored = train_state.consumed_valid_samples_per_set
+        count_changed = len(restored) != num_sets
+        if count_changed and restored:
+            print_rank_0(
+                f"WARNING: number of validation sets changed from {len(restored)} to {num_sets} "
+                "since the checkpoint; resetting per-set consumed-sample counters."
+            )
+        if count_changed:
+            train_state.consumed_valid_samples_per_set = [0] * num_sets
+
+    if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
+        valid_dataloader = _build_eval_test_dataloaders(valid_ds, 0, cfg.dataset.dataloader_type)
+    elif cfg.validation.eval_iters > 0:
+        val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
+        if cfg.validation.multiple_validation_sets:
+            # Resume each validation set from its own consumed-samples offset.
+            valid_consumed_samples = train_state.consumed_valid_samples_per_set
+        else:
+            if train_state.consumed_valid_samples_per_set:
+                # The aggregate counter spans the former sets, so no offset is valid for a single
+                # dataset. Restart from zero, as on a set-count change. Clear the counters so
+                # later checkpoints are self-consistent single-set state (one-time reset).
+                print_rank_0(
+                    "WARNING: checkpoint contains per-set validation counters but "
+                    "multiple_validation_sets is disabled; the aggregate offset is not valid for a "
+                    "single validation dataset. Restarting validation sampling from offset 0."
+                )
+                train_state.consumed_valid_samples_per_set = []
+                train_state.consumed_valid_samples = 0
+            valid_consumed_samples = train_state.consumed_valid_samples
+        valid_dataloader = _build_eval_test_dataloaders(valid_ds, valid_consumed_samples, val_dataloader_type)
+
     if cfg.validation.eval_iters > 0:
-        test_dataloader = build_pretraining_data_loader(
-            test_ds,
-            0,
-            cfg.dataset.dataloader_type,
-            eval_mbs,
-            cfg.dataset.num_workers,
-            cfg.dataset.data_sharding,
-            worker_init_fn=maybe_worker_init_fn,
-            collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
-            pin_memory=cfg.dataset.pin_memory,
-            persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=eval_dp_rank,
-            data_parallel_size=eval_dp_size,
-            global_batch_size=eval_gbs,
-            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and cfg.dataset.dataloader_type == "batch"),
-            seed=sampler_seed,
-        )
+        test_dataloader = _build_eval_test_dataloaders(test_ds, 0, cfg.dataset.dataloader_type)
 
     # Flags to know if we need to do training/validation/testing.
     do_train = train_dataloader is not None and cfg.train.train_iters > 0
@@ -478,7 +544,10 @@ def build_train_valid_test_data_iterators(
 
     if valid_dataloader is not None:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
-        valid_data_iterator = _get_iterator(val_dataloader_type, valid_dataloader)
+        if isinstance(valid_dataloader, list):
+            valid_data_iterator = [_get_iterator(val_dataloader_type, dl) for dl in valid_dataloader]
+        else:
+            valid_data_iterator = _get_iterator(val_dataloader_type, valid_dataloader)
     else:
         valid_data_iterator = None
 

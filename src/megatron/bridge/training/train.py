@@ -135,6 +135,7 @@ def train(
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
     callback_manager: CallbackManager | None = None,
+    is_inprocess_restart_retry: bool = False,
 ) -> None:
     """Main training loop.
 
@@ -153,6 +154,9 @@ def train(
         process_non_loss_data_func: Optional function to process non-loss data during evaluation.
         non_loss_data_func: Optional function to compute non-loss data during evaluation.
         callback_manager: Optional CallbackManager for custom callback execution.
+        is_inprocess_restart_retry: True when this call is an in-process restart
+            retry re-entering ``train()`` mid-run. Used to suppress the ``eval_at_step_zero`` pass on
+            recovery re-entries.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
@@ -372,6 +376,62 @@ def train(
             pre_hook_enabled = False
         else:
             pre_hook_enabled = True
+
+    def _run_validation(prefix: str, toggle_pre_hook: bool) -> None:
+        """Run one validation pass with the training-loop bookkeeping applied.
+
+        Args:
+            prefix: Label for the printed results, e.g. ``"iteration N"``.
+            toggle_pre_hook: Disable the forward pre-hook for the duration of
+                the eval and re-enable it afterwards. True for the in-loop
+                eval; False for the pre-train pass, where the hook is not yet
+                enabled.
+        """
+        nonlocal pre_hook_enabled
+        if energy_monitor is not None:
+            energy_monitor.pause()
+        timers("interval-time").stop()
+        if toggle_pre_hook and should_toggle_forward_pre_hook:
+            disable_forward_pre_hook(model, optimizer=optimizer)
+            pre_hook_enabled = False
+        if train_config.manual_gc and train_config.manual_gc_eval:
+            gc.collect()
+        timers("eval-time", log_level=0).start(barrier=True)
+        evaluate_and_print_results(
+            global_state,
+            prefix,
+            forward_step_func,
+            valid_data_iterator,
+            model,
+            model_config,
+            verbose=False,
+            write_to_tensorboard=True,
+            process_non_loss_data_func=process_non_loss_data_func,
+            non_loss_data_func=non_loss_data_func,
+            callback_manager=callback_manager,
+        )
+        timers("eval-time").stop()
+        if train_config.manual_gc and train_config.manual_gc_eval:
+            gc.collect(generation=0)
+        if toggle_pre_hook and should_toggle_forward_pre_hook:
+            enable_forward_pre_hook(model)
+            pre_hook_enabled = True
+        timers("interval-time", log_level=0).start(barrier=True)
+        if energy_monitor is not None:
+            energy_monitor.resume()
+
+    # Skip the pre-train validation pass if this is an in-process restart retry or it's a resumed
+    # run (step > 0)
+    if (
+        val_config.eval_at_step_zero
+        and global_state.train_state.step == 0
+        and global_state.train_state.do_valid
+        and not is_inprocess_restart_retry
+    ):
+        _run_validation(
+            f"iteration {global_state.train_state.step} (pre-train validation)",
+            toggle_pre_hook=False,
+        )
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -672,41 +732,7 @@ def train(
             )
             and global_state.train_state.step % val_config.eval_interval == 0
         ):
-            if energy_monitor is not None:
-                energy_monitor.pause()
-            timers("interval-time").stop()
-            if should_toggle_forward_pre_hook:
-                disable_forward_pre_hook(model, optimizer=optimizer)
-                pre_hook_enabled = False
-            if train_config.manual_gc and train_config.manual_gc_eval:
-                # Collect all objects.
-                gc.collect()
-            prefix = f"iteration {global_state.train_state.step}"
-            timers("eval-time", log_level=0).start(barrier=True)
-            evaluate_and_print_results(
-                global_state,
-                prefix,
-                forward_step_func,
-                valid_data_iterator,
-                model,
-                model_config,
-                verbose=False,
-                write_to_tensorboard=True,
-                process_non_loss_data_func=process_non_loss_data_func,
-                non_loss_data_func=non_loss_data_func,
-                callback_manager=callback_manager,
-            )
-            timers("eval-time").stop()
-
-            if train_config.manual_gc and train_config.manual_gc_eval:
-                # Collect only the objects created and used in evaluation.
-                gc.collect(generation=0)
-            if should_toggle_forward_pre_hook:
-                enable_forward_pre_hook(model)
-                pre_hook_enabled = True
-            timers("interval-time", log_level=0).start(barrier=True)
-            if energy_monitor is not None:
-                energy_monitor.resume()
+            _run_validation(f"iteration {global_state.train_state.step}", toggle_pre_hook=True)
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
