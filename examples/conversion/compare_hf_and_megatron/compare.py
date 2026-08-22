@@ -279,6 +279,7 @@ class SingleBatchIterator:
         pixel_values=None,
         image_grid_thw=None,
         inference_context=None,
+        mm_token_type_ids=None,
     ):
         self.batch = dict(
             tokens=input_ids,
@@ -292,6 +293,8 @@ class SingleBatchIterator:
             self.batch["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             self.batch["image_grid_thw"] = image_grid_thw
+        if mm_token_type_ids is not None:
+            self.batch["mm_token_type_ids"] = mm_token_type_ids
 
         self._yielded = False
 
@@ -332,6 +335,8 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         forward_args["pixel_values"] = batch["pixel_values"]
     if "image_grid_thw" in batch:
         forward_args["image_grid_thw"] = batch["image_grid_thw"]
+    if "mm_token_type_ids" in batch:
+        forward_args["mm_token_type_ids"] = batch["mm_token_type_ids"]
 
     def loss_func(x, **kwargs):
         return x
@@ -441,7 +446,8 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         tp_size: Tensor parallel size for padding sequence length
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, token_type_ids)
+        Tuple of (input_ids, pixel_values, image_grid_thw, token_type_ids,
+        mm_token_type_ids)
     """
     if is_vl_model and image_path:
         messages = [
@@ -465,11 +471,15 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         token_type_ids = inputs.get("token_type_ids")
         if token_type_ids is not None:
             token_type_ids = pad_input_ids_to_tp_multiple(token_type_ids, tp_size, 0)
+        mm_token_type_ids = inputs.get("mm_token_type_ids")
+        if mm_token_type_ids is not None:
+            mm_token_type_ids = pad_input_ids_to_tp_multiple(mm_token_type_ids, tp_size, 0)
         return (
             input_ids,
             inputs.get("pixel_values"),
             inputs.get("image_grid_thw"),
             token_type_ids,
+            mm_token_type_ids,
         )
     else:
         # Text-only processing for both VL models without images and regular LLMs
@@ -480,7 +490,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, None, None, None
+        return input_ids, None, None, None, None
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -573,7 +583,16 @@ def _get_hf_forward_model(hf_model, pixel_values):
     return hf_model
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, *, token_type_ids=None):
+def _run_hf_inference(
+    hf_model,
+    input_ids,
+    pixel_values,
+    image_grid_thw,
+    tokenizer,
+    *,
+    token_type_ids=None,
+    mm_token_type_ids=None,
+):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -582,7 +601,8 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
-        token_type_ids: Multimodal token type IDs (optional).
+        token_type_ids: Legacy multimodal token type IDs (optional).
+        mm_token_type_ids: Multimodal token type IDs used for M-RoPE (optional).
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -613,6 +633,8 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             hf_inputs["image_grid_thw"] = image_grid_thw.to(hf_device)
         if token_type_ids is not None:
             hf_inputs["token_type_ids"] = token_type_ids.to(hf_device)
+        if mm_token_type_ids is not None:
+            hf_inputs["mm_token_type_ids"] = mm_token_type_ids.to(hf_device)
 
         hf_output = hf_forward_model(**hf_inputs)
 
@@ -848,7 +870,7 @@ def compare_models_one_step(args) -> None:
 
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
-    input_ids, pixel_values, image_grid_thw, token_type_ids = process_inputs(
+    input_ids, pixel_values, image_grid_thw, token_type_ids, mm_token_type_ids = process_inputs(
         tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
 
@@ -860,6 +882,8 @@ def compare_models_one_step(args) -> None:
         image_grid_thw = image_grid_thw.cuda()
     if token_type_ids is not None:
         token_type_ids = token_type_ids.cuda()
+    if mm_token_type_ids is not None:
+        mm_token_type_ids = mm_token_type_ids.cuda()
 
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
@@ -877,6 +901,7 @@ def compare_models_one_step(args) -> None:
             image_grid_thw,
             tokenizer,
             token_type_ids=token_type_ids,
+            mm_token_type_ids=mm_token_type_ids,
         )
 
     del hf_model
@@ -922,6 +947,7 @@ def compare_models_one_step(args) -> None:
                 attention_mask,
                 pixel_values,
                 image_grid_thw,
+                mm_token_type_ids=mm_token_type_ids,
             )
             megatron_output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,
