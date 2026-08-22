@@ -205,6 +205,27 @@ class TestApplyDeepEP:
 class TestFlexDispatcherFallback:
     """Test unsupported flex backends stay disabled after config finalization."""
 
+    @patch("torch.cuda.get_device_properties")
+    def test_none_backend_override_falls_back_to_alltoall(self, mock_get_device_properties):
+        """Test that clearing a configured flex backend restores the standard dispatcher."""
+        mock_properties = MagicMock()
+        mock_properties.major = 9
+        mock_properties.name = "NVIDIA H100"
+        mock_get_device_properties.return_value = mock_properties
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="deepep")
+        config.moe_flex_dispatcher_backend = None
+        validate_flex_dispatcher_backend(config)
+
+        assert config.moe_token_dispatcher_type == "alltoall"
+        assert config.moe_flex_dispatcher_backend is None
+
     @pytest.mark.parametrize(
         ("backend", "major", "device_name"),
         [

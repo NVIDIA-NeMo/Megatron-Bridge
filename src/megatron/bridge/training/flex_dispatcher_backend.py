@@ -88,6 +88,10 @@ def apply_flex_dispatcher_backend(
 def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
     """Validate DeepEP or HybridEP is supported for the current GPU architecture."""
     if model_config.moe_token_dispatcher_type == "flex":
+        if model_config.moe_flex_dispatcher_backend is None:
+            _fallback_to_alltoall(model_config)
+            return
+
         device_properties = torch.cuda.get_device_properties(0)
         if model_config.moe_flex_dispatcher_backend == "deepep":
             if not (
