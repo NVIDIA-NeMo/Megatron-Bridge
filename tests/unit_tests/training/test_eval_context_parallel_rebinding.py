@@ -17,7 +17,12 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from megatron.core.ssm.gated_delta_net import GatedDeltaNet, GatedDeltaNet2
+from megatron.core.ssm.gated_delta_net import GatedDeltaNet
+
+try:
+    from megatron.core.ssm.gated_delta_net import GatedDeltaNet2
+except (ImportError, AttributeError):
+    GatedDeltaNet2 = None
 
 from megatron.bridge.training.eval_context_parallel_rebinding import eval_cp_context
 
@@ -49,7 +54,9 @@ def _make_gdn(cp_size: int) -> GatedDeltaNet:
     return gdn
 
 
-def _make_gdn2(cp_size: int) -> GatedDeltaNet2:
+def _make_gdn2(cp_size: int) -> torch.nn.Module:
+    if GatedDeltaNet2 is None:
+        pytest.skip("GatedDeltaNet2 is not available in this MCore revision")
     gdn = GatedDeltaNet2.__new__(GatedDeltaNet2)
     torch.nn.Module.__init__(gdn)
     gdn.config = SimpleNamespace(context_parallel_size=cp_size, deterministic_mode=True)
