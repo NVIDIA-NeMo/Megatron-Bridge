@@ -721,6 +721,16 @@ class TestGDNLayerFlops:
         assert gdn_flops != baseline_flops, "GDN FLOPs should differ from pure-attention FLOPs"
         assert gdn_flops > 0
 
+    def test_gdn_canonical_and_deprecated_alias_match(self):
+        """Canonical GDN and the deprecated alias should produce identical FLOPs."""
+        deprecated_cfg = MockConfigContainer(model=self._qwen35_27b_config())
+        canonical_cfg = MockConfigContainer(
+            model=self._qwen35_27b_config(experimental_attention_variant="gdn")
+        )
+        assert num_floating_point_operations(canonical_cfg, batch_size=1) == (
+            num_floating_point_operations(deprecated_cfg, batch_size=1)
+        )
+
     def test_gdn_only_layers(self):
         """With linear_attention_freq=1 (no standard attn), self_attn_term should be pure GDN."""
         batch_size = 1
