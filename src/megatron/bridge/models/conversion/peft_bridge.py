@@ -853,6 +853,7 @@ class MegatronPeftBridge:
         cpu: bool = True,
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
+        expand_shared_outer: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream only adapter weights without merging them into base tensors.
 
@@ -895,6 +896,7 @@ class MegatronPeftBridge:
                     linear_out_tensor,
                     num_moe_experts,
                     cpu,
+                    expand_shared_outer=expand_shared_outer,
                 )
                 continue
 
@@ -1034,14 +1036,15 @@ class MegatronPeftBridge:
         linear_out_tensor: torch.Tensor,
         num_moe_experts: int,
         cpu: bool,
+        expand_shared_outer: bool,
     ) -> Iterable["HFWeightTuple"]:
         """Stream a shared-outer grouped-expert LoRA adapter (SGLang PR #21466).
 
-        One side is a 2D LoRA matrix replicated across local experts; the other
-        is a per-expert 3D pack. The shared side is emitted once as a ``[1, ...]``
-        tensor under the expert-agnostic HF name (so the serving loader takes its
-        3D-shared branch); the per-expert side is gathered across EP ranks and
-        emitted once per global expert.
+        One side is a 2D LoRA matrix shared across experts; the other is a
+        per-expert 3D pack. By default the shared side is emitted once as a
+        ``[1, ...]`` tensor under the expert-agnostic HF name. With
+        ``expand_shared_outer``, it is replicated under per-expert 2D names
+        (vLLM 2D ``pack_moe`` contract); the training-side parameter stays shared.
         """
 
         from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
@@ -1051,7 +1054,7 @@ class MegatronPeftBridge:
             (linear_in_tensor, ".linear_in.weight"),
             (linear_out_tensor, ".linear_out.weight"),
         ):
-            if side_tensor.ndim == 2:
+            if side_tensor.ndim == 2 and not expand_shared_outer:
                 # Shared side: emit one [1, out, in] tensor. A shared linear_in
                 # feeding a fused gate/up FC1 maps to two HF names, so the same
                 # tensor is emitted for each projection.
@@ -1064,6 +1067,24 @@ class MegatronPeftBridge:
                 for base_name in base_hf_weight_names:
                     hf_name = self._make_lora_param_name(self._strip_hf_expert_index(base_name), side_suffix)
                     yield HFWeightTuple(hf_name, current)
+                continue
+
+            if side_tensor.ndim == 2 and expand_shared_outer:
+                # Expand the shared factor under per-expert 2D names (vLLM pack_moe).
+                # The tensor is reused across experts, not cloned.
+                shared_current = side_tensor.cpu() if cpu else side_tensor
+                for expert_idx in range(num_moe_experts):
+                    base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
+                        mapping_registry,
+                        adapter_task.global_base_prefix,
+                        adapter_task.adapter_key,
+                        f".weight{expert_idx}",
+                    )
+                    for base_name in base_hf_weight_names:
+                        hf_name = self._make_lora_param_name(base_name, side_suffix)
+                        if hf_name is None:
+                            continue
+                        yield HFWeightTuple(hf_name, shared_current)
                 continue
 
             # Per-expert side: emit one slice per global expert. A fused FC1

@@ -511,6 +511,41 @@ class TestQwen3VLUtils:
         not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
         reason="Requires at least 2 GPUs",
     )
+    def test_preprocess_packed_seqs_row_shorter_than_alignment(self):
+        """A row whose valid length is below the alignment padding must not raise.
+
+        Chunk indices come from the alignment-padded length while ``d`` holds only the
+        valid tokens, so on the higher CP ranks the first-chunk slice can start past the
+        end of ``d``. Assigning that empty slice used to raise::
+
+            RuntimeError: The expanded size of the tensor (1) must match the existing
+            size (0) at non-singleton dimension 0
+
+        With tp=1/cp=2 the alignment is 4, so a single-token row is the smallest case
+        that reaches the out-of-range slice on cp_rank 1.
+        """
+        tp_size = 1
+        cp_size = 2
+        self._setup_parallel_state(tp_size=tp_size, cp_size=cp_size)
+
+        batch_size, seq_len = 2, 8
+        input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+        attention_mask = torch.zeros(batch_size, seq_len, dtype=torch.bool)
+        attention_mask[0, :] = True  # a full-length row
+        attention_mask[1, 0] = True  # a single valid token
+
+        ids_out, packed = preprocess_packed_seqs(input_ids, attention_mask, pre_process=True)
+        assert packed.max_seqlen_q == packed.max_seqlen_kv
+        assert ids_out.shape[0] == 1
+        # 8 valid tokens need no padding; the 1-token row is padded to align_size = 4.
+        assert ids_out.shape[1] == (8 + 4) // cp_size
+
+        self.destroy_parallel_state()
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
+        reason="Requires at least 2 GPUs",
+    )
     def test_allgather_vision_embeddings(self):
         """Test AllGatherVisionEmbeddings forward/backward."""
         tp_size = 1
