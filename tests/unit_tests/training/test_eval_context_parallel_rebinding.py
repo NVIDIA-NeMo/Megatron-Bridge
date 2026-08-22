@@ -19,6 +19,7 @@ import pytest
 import torch
 from megatron.core.ssm.gated_delta_net import GatedDeltaNet
 
+
 try:
     from megatron.core.ssm.gated_delta_net import GatedDeltaNet2
 except (ImportError, AttributeError):
