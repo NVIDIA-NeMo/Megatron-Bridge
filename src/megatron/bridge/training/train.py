@@ -385,6 +385,9 @@ def train(
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
 
+        nvtx_step = global_state.train_state.step
+        nvtx_range_push(suffix=f"training_step_{nvtx_step}")
+
         fault_tolerance.on_checkpointing_start(global_state)
         checkpoint_manager.finalize_async_saves(state=global_state, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
@@ -424,6 +427,7 @@ def train(
 
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
+            nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
             continue
 
         # Capture CUDA Graphs after warmup.
@@ -531,6 +535,7 @@ def train(
                 callback_manager=callback_manager,
             )
         if should_exit:
+            nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
             break
 
         # Enable forward pre-hooks after first set of forward and backward passes.
@@ -720,6 +725,7 @@ def train(
             global_state.train_state.step,
             should_toggle_forward_pre_hook,
         )
+        nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
         handle_profiling_stop(
             config.profiling,
             global_state.train_state.step,

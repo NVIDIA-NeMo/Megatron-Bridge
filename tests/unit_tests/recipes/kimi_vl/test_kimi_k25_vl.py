@@ -35,6 +35,7 @@ from megatron.bridge.recipes.kimi_vl.kimi_k25_vl import (
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
 class _FakeKimiK25VLProvider:
@@ -183,6 +184,23 @@ class TestKimiK25VLSftConfig:
         cfg = kimi_k25_vl_sft_config()
 
         assert cfg.model.pipeline_model_parallel_layout == _get_kimi_k25_vl_pipeline_layout(16, 1)
+
+    def test_sft_config_pipeline_layout_tracks_supported_runner_override(self):
+        """Recipe-owned layouts must follow supported public pipeline overrides."""
+        cfg = kimi_k25_vl_sft_config()
+        recipe_runner, _ = _load_recipe_runner_module()
+
+        cfg.model.pipeline_model_parallel_size = 4
+        cfg.model.virtual_pipeline_model_parallel_size = 1
+        recipe_runner.sync_model_pipeline_layout(
+            cfg,
+            cli_overrides=[
+                "model.pipeline_model_parallel_size=4",
+                "model.virtual_pipeline_model_parallel_size=1",
+            ],
+        )
+
+        assert cfg.model.pipeline_model_parallel_layout == _get_kimi_k25_vl_pipeline_layout(4, 1)
 
     def test_sft_config_ddp_settings_for_muon(self):
         """DDP settings respect Muon's constraints (no dist optimizer, no param overlap)."""

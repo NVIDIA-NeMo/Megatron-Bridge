@@ -34,6 +34,11 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
+# Public Nemotron 3.5 Lightning checkpoint used by the Lightning recipe API.
+_NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
+
+
 def nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 64× GB300, FP8 current-scaling."""
     cfg = nemotronh_56b_pretrain_config()
@@ -115,8 +120,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
+def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
@@ -139,6 +143,15 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
+
+
+def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
+    cfg = _build_nemotron_3_super_gb300_mxfp8()
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -156,7 +169,9 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
@@ -359,8 +374,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× GB300, MXFP8."""
+def _build_nemotron_3_nano_gb300_mxfp8() -> ConfigContainer:
     cfg = nemotron_3_nano_pretrain_config()
     _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("fp8_mx")
@@ -384,6 +398,15 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_hybridep_num_sms = 16
+    return cfg
+
+
+def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Nano pretrain: 8× GB300, MXFP8."""
+    cfg = _build_nemotron_3_nano_gb300_mxfp8()
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -401,7 +424,9 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -502,5 +527,153 @@ def nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB300, BF16."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb300_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def _build_nemotron_3_5_lightning_gb300_mxfp8() -> ConfigContainer:
+    cfg = _build_nemotron_3_nano_gb300_mxfp8()
+    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB300, MXFP8."""
+    cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB300, MXFP8, Megatron FSDP."""
+    cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
+
+    # Megatron FSDP registers module hooks that Transformer Engine CUDA graph
+    # capture rejects.
+    cfg.train.global_batch_size = 384
+    cfg.train.micro_batch_size = 3
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+
+    cfg.model.init_model_with_meta_device = True
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    cfg.checkpoint.load = None
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB300, NVFP4."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_USE_FAST_MATH": 1,
     }
     return cfg

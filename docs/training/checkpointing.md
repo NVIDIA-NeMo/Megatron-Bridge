@@ -407,6 +407,7 @@ from megatron.bridge.training.checkpointing import (
     load_checkpoint,
     init_checkpointing_context,
 )
+from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.config import CheckpointConfig
 from megatron.bridge.training.state import GlobalState
 
@@ -419,7 +420,7 @@ class MyCheckpointManager:
         # Initialize internal context for caching strategies
         self._context = init_checkpointing_context(checkpoint_config)
 
-    def save(self, ctx: CheckpointSaveContext) -> None:
+    def save(self, ctx: CheckpointSaveContext, callback_manager: CallbackManager | None) -> None:
         """Save a checkpoint with custom logic."""
         # Option 1: Completely custom implementation
         # my_custom_save(ctx.state, ctx.model, ...)
@@ -434,6 +435,7 @@ class MyCheckpointManager:
             checkpointing_context=self._context,
             non_persistent_ckpt=ctx.non_persistent_ckpt,
             train_data_iterator=ctx.train_data_iterator,
+            callback_manager=callback_manager,
         )
         # Add custom post-processing (e.g., upload to cloud)
         upload_to_s3(ctx.state.cfg.checkpoint.save)

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
+    qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config,
     qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config,
     qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config,
 )
@@ -25,6 +26,90 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+
+
+def qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config() -> ConfigContainer:
+    """Return Qwen3.5-VL 27B language-and-projector pretraining for sixteen GB200 GPUs.
+
+    This keeps the dense pretraining objective and trainable-parameter contract
+    from the H100 recipe while using the measured GB200 execution layout. In
+    particular, deterministic mode must remain opt-in: Qwen3.5's Gated DeltaNet
+    replaces its fused FLA kernels with a torch-native reference path when
+    deterministic mode is enabled.
+    """
+    cfg = qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config()
+
+    # TP2 leaves enough memory headroom for cold Gated DeltaNet autotuning
+    # while PP1 removes pipeline bubbles. Full language-tower training requires
+    # MBS2; MBS4 exceeds GB200 memory during the first language forward.
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.calculate_per_token_loss = True
+
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 2
+
+    # MBS2 fits full language-tower training without repeating the expensive
+    # GDN recurrence or dense MLP.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
+
+    # Qwen-VL's multimodal inputs are not yet a safe full-iteration graph
+    # target, and its mRoPE path is incompatible with fused RoPE.
+    cfg.model.apply_rope_fusion = False
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+
+    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+
+    cfg.dataset.do_validation = False
+    cfg.dataset.pad_to_max_length = True
+    cfg.train.eval_interval = 0
+    cfg.train.eval_iters = 0
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
+    cfg.checkpoint.load = None
+    cfg.checkpoint.save = None
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
+    cfg.logger.tensorboard_dir = None
+    cfg.dist.distributed_timeout_minutes = 30
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_param_gather_with_optimizer_step=False,
+        overlap_moe_expert_parallel_comm=False,
+        delay_wgrad_compute=False,
+    )
+
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
 
 
 def _apply_qwen35_vl_35b_a3b_gb200_functional_defaults(cfg: ConfigContainer) -> None:
@@ -133,6 +218,7 @@ def qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config() -> ConfigContaine
 
 
 __all__ = [
+    "qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config",
     "qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config",
     "qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config",
 ]

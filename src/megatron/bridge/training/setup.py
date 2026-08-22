@@ -596,6 +596,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
         )
     else:
+        model_config.finalize()
         return model_config.provide_distributed_model(
             ddp_config=cfg.ddp,
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,

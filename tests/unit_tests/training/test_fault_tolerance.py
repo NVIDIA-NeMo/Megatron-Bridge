@@ -595,8 +595,9 @@ class TestPrivateFunctions:
             # Should not attempt to load
             mock_rank_monitor_client.load_state_dict.assert_not_called()
 
-    def test_update_timeouts(self):
+    def test_update_timeouts(self, tmp_path):
         """Test _update_timeouts function."""
+        state_path = tmp_path / "ft_state.json"
         mock_global_state = MagicMock(spec=GlobalState)
         mock_rank_monitor_client = MagicMock()
         mock_rank_monitor_client.state_dict.return_value = {"timeouts": "data"}
@@ -604,14 +605,12 @@ class TestPrivateFunctions:
         mock_global_state.rank_monitor_client = mock_rank_monitor_client
 
         mock_ft_state = MagicMock(spec=FaultToleranceState)
-        mock_ft_state.ft_state_path = "/tmp/ft_state.json"
+        mock_ft_state.ft_state_path = str(state_path)
         mock_global_state.fault_tolerance_state = mock_ft_state
 
         with (
             patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
             patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=0),
-            patch("builtins.open", mock_open()) as mock_file,
-            patch("json.dump") as mock_json_dump,
         ):
             fault_tolerance._update_timeouts(
                 selected_sections=["setup", "step"], calc_out_of_section=True, global_state=mock_global_state
@@ -620,7 +619,44 @@ class TestPrivateFunctions:
             mock_rank_monitor_client.calculate_and_set_section_timeouts.assert_called_once_with(
                 selected_sections=["setup", "step"], calc_out_of_section=True
             )
-            mock_json_dump.assert_called_once_with({"timeouts": "data"}, mock_file())
+            assert json.loads(state_path.read_text()) == {"timeouts": "data"}
+
+    def test_update_timeouts_preserves_previous_state_if_write_is_interrupted(self, tmp_path):
+        """A failed timeout-state write must not corrupt the state used by a restart."""
+        state_path = tmp_path / "ft_state.json"
+        previous_state = {"section_timeouts": {"setup": 600, "step": 180}}
+        state_path.write_text(json.dumps(previous_state))
+
+        mock_global_state = MagicMock(spec=GlobalState)
+        mock_rank_monitor_client = MagicMock()
+        mock_rank_monitor_client.state_dict.return_value = {"section_timeouts": {"setup": 300, "step": 90}}
+        mock_rank_monitor_client.section_timeouts = {"setup": 300, "step": 90}
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock(spec=FaultToleranceState)
+        mock_ft_state.ft_state_path = str(state_path)
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        def interrupt_dump(state, output_file):
+            output_file.write("{")
+            output_file.flush()
+            raise OSError("simulated interrupted write")
+
+        with (
+            patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
+            patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.fault_tolerance.json.dump", side_effect=interrupt_dump),
+            pytest.raises(OSError, match="simulated interrupted write"),
+        ):
+            fault_tolerance._update_timeouts(
+                selected_sections=["setup", "step"], calc_out_of_section=True, global_state=mock_global_state
+            )
+
+        restart_client = MagicMock()
+        mock_global_state.rank_monitor_client = restart_client
+        fault_tolerance._load_state_if_exists(mock_global_state)
+
+        restart_client.load_state_dict.assert_called_once_with(previous_state)
 
 
 class TestMaybeUpdateTimeouts:

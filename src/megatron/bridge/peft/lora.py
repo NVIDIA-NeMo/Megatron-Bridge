@@ -14,11 +14,13 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 import torch
 import torch.nn as nn
 from megatron.core import parallel_state
+from megatron.core.optimizer import OptimizerConfig, ParamKey, get_standard_config_overrides
+from megatron.core.optimizer_param_scheduler import ParamGroupOverride
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 
@@ -44,6 +46,46 @@ from megatron.bridge.peft.utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_lora_plus_config_overrides(
+    config: OptimizerConfig,
+    lora_plus_ratio: float,
+) -> Dict[ParamKey, ParamGroupOverride]:
+    """Build Megatron-Core optimizer ``config_overrides`` for LoRA+.
+
+    LoRA+ (https://arxiv.org/abs/2402.12354) trains ``B`` (``linear_out``) at
+    ``lora_plus_ratio`` times the LR of ``A`` (``linear_in``); the ratio is fixed
+    and only the base LR is tuned. Standard overrides (bias/1-D ``wd_mult=0.0``,
+    decoupled LR) are preserved as the starting point.
+
+    Args:
+        config: base optimizer config; ``lr`` / ``min_lr`` are A's learning rates.
+        lora_plus_ratio: ``lr_B / lr_A`` (e.g. 16.0). Must be > 0.
+
+    Returns:
+        Per-group overrides ready for ``get_megatron_optimizer(config_overrides=...)``.
+    """
+    if lora_plus_ratio <= 0:
+        raise ValueError(f"lora_plus_ratio must be > 0, got {lora_plus_ratio}")
+
+    config_overrides = get_standard_config_overrides(config)
+
+    base_lr = config.lr
+    base_min_lr = config.min_lr if config.min_lr is not None else 0.0
+
+    config_overrides[ParamKey(name="*.linear_in.weight")] = ParamGroupOverride(max_lr=base_lr, min_lr=base_min_lr)
+    config_overrides[ParamKey(name="*.linear_out.weight")] = ParamGroupOverride(
+        max_lr=base_lr * lora_plus_ratio, min_lr=base_min_lr * lora_plus_ratio
+    )
+
+    logger.info(
+        "LoRA+ enabled: lora_plus_ratio=%s (linear_in/A max_lr=%s, linear_out/B max_lr=%s)",
+        lora_plus_ratio,
+        base_lr,
+        base_lr * lora_plus_ratio,
+    )
+    return config_overrides
 
 
 @dataclass

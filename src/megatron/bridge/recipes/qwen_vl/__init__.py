@@ -14,6 +14,7 @@
 
 # Qwen3.5/Qwen3.6-VL GB200 models
 from .gb200.qwen35_vl import (
+    qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config,
     qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config,
     qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config,
 )
@@ -73,6 +74,7 @@ from .qwen35_vl import (
 __all__ = [
     # Qwen3.5-VL pretrain configs
     "qwen35_vl_9b_pretrain_mock_config",
+    "qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config",
     "qwen35_vl_35b_a3b_pretrain_mock_config",
     "qwen35_vl_122b_a10b_pretrain_mock_config",
     "qwen35_vl_397b_a17b_pretrain_mock_config",

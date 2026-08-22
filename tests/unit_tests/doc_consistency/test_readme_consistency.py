@@ -259,6 +259,135 @@ def test_rl_integration_get_model_calls_supply_required_keyword_only_arguments()
     assert not missing, f"RL integration get_model calls omit required keyword-only arguments: {missing}"
 
 
+def test_rl_integration_builds_a_finalized_config_with_runtime_objects():
+    """RL integration builders must return an initialization-ready config."""
+
+    class Config:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class LoggerConfig(Config):
+        def finalize(self):
+            self.finalized = True
+
+    class Provider(Config):
+        def apply_overrides_and_finalize(self, dtype, overrides):
+            self.params_dtype = dtype
+            self.fp16 = dtype == "float16"
+            self.bf16 = dtype == "bfloat16"
+            for name, value in overrides.items():
+                if not hasattr(self, name):
+                    raise AttributeError(name)
+                setattr(self, name, value)
+            self.pipeline_dtype = dtype if self.pipeline_model_parallel_size > 1 else None
+            self.finalized = True
+            return self
+
+    class AutoBridge:
+        calls = []
+
+        @classmethod
+        def from_hf_pretrained(cls, model_name):
+            cls.calls.append(model_name)
+
+            class Bridge:
+                def to_megatron_provider(self, *, load_weights):
+                    assert load_weights is False
+                    return Provider(
+                        tensor_model_parallel_size=1,
+                        pipeline_model_parallel_size=1,
+                        context_parallel_size=1,
+                        expert_model_parallel_size=1,
+                        expert_tensor_parallel_size=1,
+                        sequence_parallel=False,
+                        recompute_granularity=None,
+                        recompute_method=None,
+                        recompute_num_layers=None,
+                    )
+
+            return Bridge()
+
+    class ConfigContainer(Config):
+        def validate(self):
+            assert isinstance(self.model, Provider)
+            assert self.model.finalized
+            assert isinstance(self.logger, LoggerConfig)
+            self.logger.finalize()
+            model_parallel_size = (
+                self.model.tensor_model_parallel_size
+                * self.model.pipeline_model_parallel_size
+                * self.model.context_parallel_size
+            )
+            assert 4 % model_parallel_size == 0
+            self.data_parallel_size = 4 // model_parallel_size
+            self.validated = True
+
+    rl_cfg = {
+        "model_name": "example/model",
+        "precision": "bfloat16",
+        "train_ckpt_dir": "/tmp/checkpoints",
+        "train_micro_batch_size": 1,
+        "train_global_batch_size": 4,
+        "megatron_cfg": {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 2,
+            "context_parallel_size": 1,
+            "expert_model_parallel_size": 1,
+            "expert_tensor_parallel_size": 1,
+            "sequence_parallel": True,
+            "recompute_granularity": "selective",
+            "recompute_method": "uniform",
+            "recompute_num_layers": 1,
+            "train_iters": 10,
+            "distributed_data_parallel_config": {
+                "grad_reduce_in_fp32": True,
+                "overlap_grad_reduce": False,
+                "overlap_param_gather": False,
+                "average_in_collective": False,
+                "data_parallel_sharding_strategy": "no_shard",
+            },
+            "optimizer": {"lr": 1.0e-4, "use_distributed_optimizer": False},
+            "scheduler": {},
+        },
+    }
+
+    for path in RL_INTEGRATION_DOCS:
+        text = _read(path)
+        code = next(
+            match.group("code")
+            for match in re.finditer(r"```python\n(?P<code>.*?)```", text, re.DOTALL)
+            if "def build_megatron_config" in match.group("code")
+        )
+        tree = ast.parse(code, filename=str(path))
+        builder = next(
+            node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "build_megatron_config"
+        )
+        namespace = {
+            "AutoBridge": AutoBridge,
+            "CheckpointConfig": Config,
+            "ConfigContainer": ConfigContainer,
+            "DistributedDataParallelConfig": Config,
+            "LoggerConfig": LoggerConfig,
+            "OptimizerConfig": Config,
+            "PolicyConfig": dict,
+            "SchedulerConfig": Config,
+            "TokenizerConfig": Config,
+            "TrainingConfig": Config,
+            "torch": type("Torch", (), {"float32": "float32", "bfloat16": "bfloat16", "float16": "float16"}),
+        }
+        exec(compile(ast.Module(body=[builder], type_ignores=[]), str(path), "exec"), namespace)
+        config = namespace["build_megatron_config"](rl_cfg, "/tmp/pretrained")
+
+        assert AutoBridge.calls and AutoBridge.calls[-1] == rl_cfg["model_name"]
+        assert config.validated
+        assert config.data_parallel_size == 1
+        assert config.logger.finalized
+        assert config.model.params_dtype == "bfloat16"
+        assert config.model.pipeline_dtype == "bfloat16"
+        assert config.model.sequence_parallel is True
+        assert config.model.recompute_granularity == "selective"
+
+
 def test_model_examples_use_current_run_recipe_arguments():
     """Model examples that call run_recipe.py must not advertise removed arguments."""
     offenders: dict[str, list[str]] = {}

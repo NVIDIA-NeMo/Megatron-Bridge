@@ -1669,7 +1669,35 @@ class TestAutoBridge:
                         cpu=False,
                         show_progress=False,
                         exclude_adapter_base_prefixes=None,
+                        expand_shared_outer=False,
                     )
+
+    def test_export_adapter_weights_forwards_expand_shared_outer(self):
+        """A non-default expand_shared_outer must reach the model bridge."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config.auto_map = None
+
+        mock_megatron_model = [object()]
+
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge = Mock()
+            mock_model_bridge.stream_adapter_weights_megatron_to_hf.return_value = iter([])
+            mock_model_bridge_prop.return_value = mock_model_bridge
+
+            with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+                mock_arch_class = Mock()
+                mock_transformers.LlamaForCausalLM = mock_arch_class
+
+                bridge = AutoBridge(mock_hf_model)
+
+                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
+                    mock_prop.return_value = mock_arch_class
+                    list(bridge.export_adapter_weights(mock_megatron_model, expand_shared_outer=True))
+
+        call_kwargs = mock_model_bridge.stream_adapter_weights_megatron_to_hf.call_args.kwargs
+        assert call_kwargs["expand_shared_outer"] is True
 
     def test_get_causal_lm_architecture(self):
         """Test getting the CausalLM architecture class."""
@@ -2034,6 +2062,42 @@ class TestAutoBridge:
                     source_path=None,
                     strict=False,
                 )
+
+    @pytest.mark.skipif(
+        not torch.distributed.is_available() or not torch.distributed.is_gloo_available(),
+        reason="Gloo is required to exercise caller-owned distributed state",
+    )
+    def test_export_ckpt_preserves_existing_distributed_context(self, tmp_path):
+        """Export reuses distributed state owned by its caller."""
+        bridge = AutoBridge.__new__(AutoBridge)
+        mock_megatron_model = [Mock()]
+
+        assert not torch.distributed.is_initialized()
+        torch.distributed.init_process_group(
+            backend="gloo",
+            init_method=f"file://{tmp_path / 'distributed_init'}",
+            rank=0,
+            world_size=1,
+        )
+        try:
+            with (
+                patch.object(bridge, "load_megatron_model", return_value=mock_megatron_model) as mock_load,
+                patch.object(bridge, "save_hf_pretrained") as mock_save,
+            ):
+                bridge.export_ckpt("./megatron_checkpoint", "./hf_export")
+
+            assert torch.distributed.is_initialized()
+            mock_load.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
+            mock_save.assert_called_once_with(
+                mock_megatron_model,
+                "./hf_export",
+                show_progress=True,
+                source_path=None,
+                strict=False,
+            )
+        finally:
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
 
     def test_export_ckpt_with_kwargs(self):
         """Test export_ckpt with custom kwargs."""
