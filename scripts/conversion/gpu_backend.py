@@ -176,6 +176,30 @@ def _configure_model_provider(
     model_provider.params_dtype = dtype
 
 
+def _uses_model_builder(bridge: AutoBridge) -> bool:
+    """Return whether the selected bridge supports native builder construction."""
+    return getattr(bridge._model_bridge, "MODEL_CONFIG_CLASS", None) is not None
+
+
+def _configure_model_config(
+    model_config,
+    *,
+    tp: int,
+    pp: int,
+    ep: int,
+    etp: int,
+    dtype: torch.dtype,
+) -> None:
+    """Apply distributed parallelism and dtype settings to a builder config."""
+    transformer = model_config.transformer
+    transformer.tensor_model_parallel_size = tp
+    transformer.pipeline_model_parallel_size = pp
+    transformer.expert_model_parallel_size = ep
+    transformer.expert_tensor_parallel_size = etp
+    transformer.pipeline_dtype = dtype
+    transformer.params_dtype = dtype
+
+
 def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
     """Build tokenizer metadata for a saved Megatron checkpoint."""
     tokenizer_kwargs: dict[str, object] = {}
@@ -313,12 +337,22 @@ def import_checkpoint(
         torch_dtype=dtype,
         **revision_kwargs,
     )
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-    _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    if _uses_model_builder(bridge):
+        model_config = bridge.get_model_config()
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_config, pp)
+        megatron_model = bridge.get_model(
+            model_config,
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
+        )
+    else:
+        model_provider = bridge.to_megatron_provider(load_weights=True)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_provider, pp)
+        model_provider.finalize()
+        model_provider.initialize_model_parallel(seed=0)
+        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     bridge.save_megatron_model(
         megatron_model,
@@ -392,12 +426,20 @@ def export_checkpoint(
     # Preserve the reference wrapper's streaming state source and shard map while
     # exporting the checkpoint-derived architecture and vocabulary configuration.
     bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-    _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
-    resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    if _uses_model_builder(bridge):
+        model_config = bridge.get_model_config()
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_restore_pipeline_layout(bridge, model_config, megatron_path, pp)
+        resolved_pipeline_layout = model_config.pipeline_model_parallel_layout
+        model_config.finalize()
+        bridge._get_or_initialize_pg_collection(model_config.transformer)
+    else:
+        model_provider = bridge.to_megatron_provider(load_weights=False)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
+        resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
+        model_provider.finalize()
+        model_provider.initialize_model_parallel(seed=0)
 
     model_parallel_overrides: dict[str, object] = {
         "tensor_model_parallel_size": tp,
@@ -466,11 +508,21 @@ def roundtrip_checkpoint(
         torch_dtype=dtype,
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-    _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    if _uses_model_builder(bridge):
+        model_config = bridge.get_model_config()
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_config, pp)
+        megatron_model = bridge.get_model(
+            model_config,
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
+        )
+    else:
+        model_provider = bridge.to_megatron_provider(load_weights=True)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_provider, pp)
+        model_provider.finalize()
+        model_provider.initialize_model_parallel(seed=0)
+        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
     _verify_roundtrip_weights(bridge, megatron_model)
     print_rank_0("GPU round-trip validation complete")

@@ -37,6 +37,7 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
 )
 
 import torch
@@ -51,6 +52,7 @@ from torch.distributed._tensor import DTensor
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
+from megatron.bridge.models.common import ModelConfigOverrideMixin
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
@@ -433,11 +435,11 @@ class MegatronModelBridge(
     # provider, such as one implementing MLA.
     PROVIDER_CLASS = None
 
-    # Builder-backed construction is rolling out incrementally by model family. Override these
-    # when the standard GPT or Transformer config cannot represent the model, and set
-    # MODEL_CONFIG_CLASS to None for families that have not yet migrated.
+    # Builder-backed construction is rolling out incrementally by model family. Override this
+    # when the standard GPT model config cannot represent the model, and set it to None for
+    # families that have not yet migrated. The selected model config owns its nested
+    # transformer config class.
     MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
-    TRANSFORMER_CONFIG_CLASS: ClassVar[type[BridgeTransformerConfig]] = BridgeTransformerConfig
 
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
@@ -723,12 +725,23 @@ class MegatronModelBridge(
             )
 
         config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        if not issubclass(model_config_class, ModelConfigOverrideMixin):
+            raise TypeError(f"{model_config_class.__name__} must inherit {ModelConfigOverrideMixin.__name__}.")
+        model_config_with_overrides = cast(type[ModelConfigOverrideMixin], model_config_class)
+        transformer_config_class = model_config_with_overrides.transformer_config_class
+        if not isinstance(transformer_config_class, type) or not issubclass(
+            transformer_config_class, BridgeTransformerConfig
+        ):
+            raise TypeError(
+                f"{model_config_class.__name__}.transformer_config_class must be a "
+                f"{BridgeTransformerConfig.__name__} subclass."
+            )
         model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(
             config_kwargs,
             model_config_class,
-            self.TRANSFORMER_CONFIG_CLASS,
+            transformer_config_class,
         )
-        transformer_config = self.TRANSFORMER_CONFIG_CLASS(**transformer_kwargs)
+        transformer_config = transformer_config_class(**transformer_kwargs)
         return model_config_class(transformer=transformer_config, **model_kwargs)
 
     # Set by @register_bridge decorator

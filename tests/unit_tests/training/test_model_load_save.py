@@ -21,6 +21,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -945,7 +946,45 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=None,
             callback_manager=None,
+        )
+
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_megatron_model_accepts_builder_config(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+    ):
+        """Builder-backed checkpoints serialize the complete outer model config."""
+        mock_model = Mock()
+        model_config = Mock(spec=ModelConfig)
+        model_config.transformer = SimpleNamespace(use_cpu_initialization=True)
+        mock_model.model_config = model_config
+        mock_state = Mock()
+        mock_global_state.return_value = mock_state
+
+        save_megatron_model([mock_model], "/checkpoint", low_memory_save=False)
+
+        mock_get_model_config.assert_not_called()
+        assert mock_config_container.call_args.kwargs["model"] is model_config
+        save_kwargs = mock_save_checkpoint.call_args.kwargs
+        assert save_kwargs["state"] is mock_state
+        assert save_kwargs["model"] == [mock_model]
+        assert isinstance(
+            save_kwargs["checkpointing_context"]["save_strategy"],
+            model_load_save._CpuTorchDistSaveShardedStrategy,
         )
 
     @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
@@ -1026,6 +1065,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=None,
             callback_manager=None,
         )
 
@@ -1096,6 +1136,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=None,
             callback_manager=None,
         )
 
