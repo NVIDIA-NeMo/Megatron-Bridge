@@ -61,6 +61,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3-super-120b-a12b", "peft", "GB200"): (8192, 16, 16),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "H100"): (4096, 1280, 64),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB200"): (4096, 512, 64),
+    ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB300"): (8192, 512, 64),
     ("nemotron-3.5-lightning", "pretrain", "H100"): (8192, 512, 16),
     ("nemotron-3.5-lightning", "pretrain", "GB200"): (8192, 512, 8),
     ("nemotron-3.5-lightning", "pretrain_fsdp", "GB200", "bf16"): (8192, 512, 8),
@@ -102,6 +103,11 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.6-35b-a3b", "checkpoint_resume", "H100"): (4096, 512, 8),
     ("qwen3.6-35b-a3b", "pretrain_performance", "H100"): (4096, 512, 16),
     ("qwen3.6-35b-a3b", "pretrain_performance", "GB200"): (4096, 480, 8),
+    ("qwen3.8-27b", "pretrain", "GB200"): (4096, 32, 16),
+    ("qwen3.8-27b", "sft", "GB200"): (4096, 32, 16),
+    ("qwen3.8-27b", "sft_long_context", "GB200"): (8192, 32, 16),
+    ("qwen3.8-27b", "peft", "GB200"): (4096, 32, 4),
+    ("qwen3.8-27b", "pretrain_performance", "GB200"): (4096, 32, 16),
 }
 
 
