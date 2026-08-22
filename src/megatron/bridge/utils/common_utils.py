@@ -22,7 +22,7 @@ from pathlib import Path
 import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
-from megatron.core._rank_utils import safe_get_rank as get_rank_safe  # noqa: F401
+from megatron.core._rank_utils import safe_get_rank as _get_rank_safe
 from megatron.core._rank_utils import safe_get_world_size as get_world_size_safe  # noqa: F401
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_batch_on_this_cp_rank
@@ -41,6 +41,14 @@ try:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, Float16Module)
 except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
+
+
+def get_rank_safe() -> int:
+    """Get the distributed rank, falling back to zero for malformed launcher state."""
+    try:
+        return _get_rank_safe()
+    except (TypeError, ValueError):
+        return 0
 
 
 def get_last_rank() -> int:

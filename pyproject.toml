@@ -158,6 +158,17 @@ name = "flash-mla"
 version = "1.0.0+b7643bd"
 requires-dist = []
 
+# Lane-specific metadata for VCS packages that otherwise compile CUDA extensions during lock.
+[[tool.uv.dependency-metadata]]
+name = "transformer-engine"
+version = "2.14.0+f031cf87"
+requires-dist = ["einops", "importlib-metadata", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic", "torch"]
+
+[[tool.uv.dependency-metadata]]
+name = "fast-hadamard-transform"
+version = "1.0.4.post1"
+requires-dist = ["torch", "packaging", "ninja"]
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
