@@ -46,6 +46,11 @@ class HFTokenizerAdapter:
     ) -> None:
         self._tokenizer = tokenizer
         self._force_skip_special_tokens = force_skip_special_tokens
+        # MCore's incremental detokenizer treats ``_tokenizer`` as its Hugging Face wrapper.
+        if not hasattr(tokenizer, "tokenizer"):
+            tokenizer.tokenizer = tokenizer
+        if not hasattr(tokenizer, "include_special_tokens"):
+            tokenizer.include_special_tokens = force_skip_special_tokens is False
         if set_pad_token and tokenizer.pad_token is None and tokenizer.eos_token is not None:
             tokenizer.pad_token = tokenizer.eos_token
         self.eod = tokenizer.eos_token_id
