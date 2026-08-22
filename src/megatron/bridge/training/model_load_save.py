@@ -778,10 +778,8 @@ def save_megatron_model(
 
     # Save tokenizer files separately if tokenizer config is provided
     if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import (
-            get_checkpoint_name,
-            save_tokenizer_assets,
-        )
+        from megatron.bridge.training.checkpointing import get_checkpoint_name
+        from megatron.training.checkpointing import save_tokenizer_assets
 
         # Build the tokenizer
         tokenizer = build_tokenizer(tokenizer_config)
