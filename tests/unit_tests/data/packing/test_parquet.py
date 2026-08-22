@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 
@@ -31,7 +32,11 @@ import pytest
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
-from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetDataset, write_packed_parquet
+from megatron.bridge.data.packing.parquet import (
+    GPTSFTPackedParquetBlendDataset,
+    GPTSFTPackedParquetDataset,
+    write_packed_parquet,
+)
 from megatron.bridge.data.packing.paths import (
     _resolve_parquet_paths,
     is_packed_parquet_file,
@@ -271,6 +276,97 @@ class TestPackedParquetDatasetMultiFile:
         assert file_idx_4 == 0
         assert file_idx_5 == 1
         assert file_idx_15 == 2
+
+
+class TestPackedParquetBlendDataset:
+    """Tests for weighted blending across logical Parquet sources."""
+
+    @pytest.fixture()
+    def source_datasets(self, tmp_path):
+        datasets = []
+        for source_id, row_count in enumerate((4, 5)):
+            rows = [_make_packed_row(n_tokens=16, n_seqs=1) for _ in range(row_count)]
+            for row in rows:
+                row["input_ids"] = [source_id + 1] * 16
+            path = tmp_path / f"source_{source_id}.idx.parquet"
+            _write_parquet(path, rows, row_group_size=2)
+            datasets.append(_make_dataset(path))
+        return datasets
+
+    def test_weighted_source_counts_and_samples(self, source_datasets):
+        dataset = GPTSFTPackedParquetBlendDataset(source_datasets, [3.0, 1.0], size=12, seed=42)
+
+        assert len(dataset) == 12
+        assert np.bincount(dataset.dataset_index, minlength=2).tolist() == [9, 3]
+        for index in range(len(dataset)):
+            expected_token = int(dataset.dataset_index[index]) + 1
+            assert dataset[index]["input_ids"][0] == expected_token
+
+    def test_default_size_and_deterministic_mapping(self, source_datasets):
+        first = GPTSFTPackedParquetBlendDataset(source_datasets, [0.5, 0.5], seed=17)
+        second = GPTSFTPackedParquetBlendDataset(source_datasets, [5.0, 5.0], seed=17)
+
+        assert len(first) == sum(len(dataset) for dataset in source_datasets)
+        np.testing.assert_array_equal(first.dataset_index, second.dataset_index)
+        np.testing.assert_array_equal(first.dataset_sample_index, second.dataset_sample_index)
+
+    def test_oversampling_wraps_each_source(self, source_datasets):
+        dataset = GPTSFTPackedParquetBlendDataset(source_datasets, [1.0, 1.0], size=24, seed=42)
+
+        assert dataset.dataset_sample_index.max() < max(len(source) for source in source_datasets)
+        for index in range(len(dataset)):
+            dataset[index]
+
+    def test_negative_index_zeroes_loss_mask(self, source_datasets):
+        dataset = GPTSFTPackedParquetBlendDataset(source_datasets, [1.0, 1.0], size=8)
+
+        sample = dataset[-1]
+
+        assert all(value == 0 for value in sample["loss_mask"])
+
+    def test_collate_delegates_to_packed_sft_collator(self, source_datasets):
+        dataset = GPTSFTPackedParquetBlendDataset(source_datasets, [1.0, 1.0], size=8)
+
+        batch = dataset.collate_fn([dataset[0]])
+
+        assert set(("tokens", "labels", "loss_mask", "position_ids", "cu_seqlens")) <= batch.keys()
+
+
+def test_gpt_sft_builder_builds_weighted_parquet_blend(tmp_path):
+    from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder, GPTSFTDatasetConfig
+    from megatron.bridge.data.packing import PackedSequenceSpecs
+
+    source_paths = []
+    for source_id in range(2):
+        rows = [_make_packed_row(n_tokens=16, n_seqs=1) for _ in range(4)]
+        for row in rows:
+            row["input_ids"] = [source_id + 1] * 16
+        source_path = tmp_path / f"builder_source_{source_id}.idx.parquet"
+        _write_parquet(source_path, rows)
+        source_paths.append(str(source_path))
+
+    config = GPTSFTDatasetConfig(
+        seq_length=16,
+        max_train_samples=12,
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
+            packed_sequence_size=16,
+            packed_train_data_blend=(source_paths, [0.75, 0.25]),
+        ),
+        do_validation=False,
+        do_test=False,
+    )
+
+    train_dataset, valid_dataset, test_dataset = GPTSFTDatasetBuilder(
+        config=config,
+        tokenizer=_make_tokenizer_mock(),
+    ).build()
+
+    assert isinstance(train_dataset, GPTSFTPackedParquetBlendDataset)
+    assert len(train_dataset) == 12
+    assert np.bincount(train_dataset.dataset_index, minlength=2).tolist() == [9, 3]
+    assert valid_dataset is None
+    assert test_dataset is None
 
 
 class TestPackedParquetDatasetRowGroupCache:
