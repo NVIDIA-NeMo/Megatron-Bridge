@@ -700,7 +700,7 @@ class TestGDNLayerFlops:
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
             gated_linear_unit=True,
-            experimental_attention_variant="gated_delta_net",
+            experimental_attention_variant="gdn",
             linear_attention_freq=4,
             linear_conv_kernel_dim=4,
             linear_key_head_dim=128,
@@ -722,14 +722,26 @@ class TestGDNLayerFlops:
         assert gdn_flops > 0
 
     def test_gdn_canonical_and_deprecated_alias_match(self):
-        """Canonical GDN and the deprecated alias should produce identical FLOPs."""
-        deprecated_cfg = MockConfigContainer(model=self._qwen35_27b_config())
-        canonical_cfg = MockConfigContainer(
-            model=self._qwen35_27b_config(experimental_attention_variant="gdn")
+        """Canonical GDN and its deprecated alias should produce identical FLOPs."""
+        canonical_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn"))
+        deprecated_cfg = MockConfigContainer(
+            model=self._qwen35_27b_config(experimental_attention_variant="gated_delta_net")
         )
-        assert num_floating_point_operations(canonical_cfg, batch_size=1) == (
-            num_floating_point_operations(deprecated_cfg, batch_size=1)
-        )
+
+        canonical_flops = num_floating_point_operations(canonical_cfg, batch_size=1)
+        deprecated_flops = num_floating_point_operations(deprecated_cfg, batch_size=1)
+
+        assert canonical_flops == deprecated_flops
+
+    def test_gdn2_accounts_for_its_larger_input_projection(self):
+        """GDN2 should include its additional channel-wise input projections."""
+        gdn_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn"))
+        gdn2_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn2"))
+
+        gdn_flops = num_floating_point_operations(gdn_cfg, batch_size=1)
+        gdn2_flops = num_floating_point_operations(gdn2_cfg, batch_size=1)
+
+        assert gdn2_flops > gdn_flops
 
     def test_gdn_only_layers(self):
         """With linear_attention_freq=1 (no standard attn), self_attn_term should be pure GDN."""
