@@ -234,6 +234,17 @@ class TestDataUtils:
             index_fn = _index_fn("data.jsonl", f"msc://default{temp_dir}/index_mapping_dir")
             assert index_fn == f"msc://default{temp_dir}/index_mapping_dir/data.jsonl.idx"
 
+            # Test case 7: object-store DATA file with a local index_mapping_dir. The scheme must
+            # not survive into the local path — an embedded "://" makes the writer and the parent
+            # mkdir normalize differently, so the sidecar rename fails with ENOENT.
+            index_fn = _index_fn("msc://bucket/prefix/data.jsonl", "mapping_dir")
+            assert index_fn == "mapping_dir/msc/bucket/prefix/data.jsonl.idx"
+            assert "://" not in index_fn
+
+            # Test case 8: same for the other object-store schemes.
+            assert _index_fn("gs://bucket/data.jsonl", "mapping_dir") == "mapping_dir/gs/bucket/data.jsonl.idx"
+            assert _index_fn("s3://bucket/data.jsonl", "mapping_dir") == "mapping_dir/s3/bucket/data.jsonl.idx"
+
     def test_jsonl_memmap_dataset(self):
         jsonl_example = '{"input": "John von Neumann Von Neumann made fundamental contributions ... Q: What did the math of artificial viscosity do?", "output": "smoothed the shock transition without sacrificing basic physics"}\n'
 
