@@ -92,6 +92,8 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 32): (4096, 2048, 32),
     ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 128): (4096, 8192, 128),
     ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 256): (4096, 16384, 256),
+    ("qwen3-235b-a22b", "pretrain_performance", "GB300"): (4096, 8192, 256),
+    ("qwen3-235b-a22b", "pretrain_performance", "GB200"): (4096, 8192, 256),
     ("qwen3-8b", "pretrain", "H100"): (4096, 1024, 16),
     ("qwen3-8b", "sft", "H100"): (2048, 32, 4),
     ("qwen3-8b", "sft_long_context", "H100"): (32768, 8, 8),
