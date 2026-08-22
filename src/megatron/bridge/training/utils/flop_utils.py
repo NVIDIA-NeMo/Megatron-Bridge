@@ -1404,16 +1404,16 @@ def num_floating_point_operations(
                 full_core = query_projection_size * core_attn_seq_factor / 2 * 2
                 self_attn_term = 3 * 2 * num_layers * (proj_per_layer + full_core)
 
-        # Handle GDN (Gated DeltaNet) hybrid attention variant.
-        # When experimental_attention_variant is "gated_delta_net", a fraction of the
+        # Handle GDN (Gated DeltaNet) hybrid attention variants.
+        # The selected MCore pins use the deprecated and canonical spellings. A fraction of the
         # layers use GDN instead of standard attention. Override self_attn_term with a
         # weighted sum of GDN and standard-attention per-layer costs.
-        if experimental_attention_variant == "gated_delta_net":
+        if experimental_attention_variant in {"gated_delta_net", "gdn"}:
             linear_attention_freq = cfg.model.linear_attention_freq
             decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
                 raise ValueError(
-                    "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
+                    "linear_attention_freq must be set for GDN experimental attention variants"
                 )
             if isinstance(linear_attention_freq, int):
                 linear_attention_pattern = [
