@@ -508,22 +508,43 @@ class TestRegisterPreWrapHook:
 class TestBuildDistributedModel:
     """Test cases for the _build_distributed_model function."""
 
-    def _make_cfg_with_model_config(self):
+    def _make_cfg_with_model_config(
+        self,
+        *,
+        use_layer_wise_distributed_optimizer: bool,
+        use_layer_wise_param_layout: bool,
+    ):
         """Create a mock cfg whose .model is a real GPTModelConfig."""
         model_cfg = _make_gpt_model_config()
         cfg = MagicMock()
         cfg.model = model_cfg
         cfg.ddp = MagicMock()
-        cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        cfg.optimizer = SimpleNamespace(
+            overlap_param_gather_with_optimizer_step=False,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
+        )
         cfg.dist.use_megatron_fsdp = False
         cfg.dist.use_torch_fsdp2 = False
         cfg.rng.data_parallel_random_init = False
         return cfg, model_cfg
 
+    @pytest.mark.parametrize(
+        ("use_layer_wise_distributed_optimizer", "use_layer_wise_param_layout"),
+        [(True, True), (True, False), (False, True)],
+    )
     @patch("megatron.bridge.training.setup.GPTModelConfig")
-    def test_build_with_model_config(self, _mock_gpt_cls):
-        """Test that builder.build_distributed_models is called for ModelConfig."""
-        cfg, model_cfg = self._make_cfg_with_model_config()
+    def test_build_with_model_config(
+        self,
+        _mock_gpt_cls,
+        use_layer_wise_distributed_optimizer,
+        use_layer_wise_param_layout,
+    ):
+        """Test that ModelBuilder receives the exact LayerWise configuration."""
+        cfg, model_cfg = self._make_cfg_with_model_config(
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
+        )
         assert not hasattr(model_cfg, "provide_distributed_model")
 
         mock_builder_cls = MagicMock()
@@ -533,14 +554,32 @@ class TestBuildDistributedModel:
         mock_dist_model = [MagicMock()]
         mock_builder.build_distributed_models.return_value = mock_dist_model
 
+        pg_collection = MagicMock()
         with patch.object(type(model_cfg), "get_builder_cls", return_value=mock_builder_cls):
-            result = _build_distributed_model(cfg, pg_collection=MagicMock())
+            result = _build_distributed_model(cfg, pg_collection=pg_collection)
 
-        mock_builder.build_distributed_models.assert_called_once()
+        mock_builder.build_distributed_models.assert_called_once_with(
+            pg_collection=pg_collection,
+            ddp_config=cfg.ddp,
+            overlap_param_gather_with_optimizer_step=False,
+            use_megatron_fsdp=False,
+            use_torch_fsdp2=False,
+            data_parallel_random_init=False,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
+        )
         assert result == mock_dist_model
 
-    def test_build_with_provider(self):
-        """Test that provide_distributed_model is called for providers."""
+    @pytest.mark.parametrize(
+        ("use_layer_wise_distributed_optimizer", "use_layer_wise_param_layout"),
+        [(True, True), (True, False), (False, True)],
+    )
+    def test_build_with_provider(
+        self,
+        use_layer_wise_distributed_optimizer,
+        use_layer_wise_param_layout,
+    ):
+        """Test that the legacy provider receives the exact LayerWise configuration."""
         mock_provider = MagicMock()
         # Ensure isinstance(mock_provider, ModelConfig) is False
         mock_provider.__class__ = type("FakeProvider", (), {})
@@ -551,15 +590,29 @@ class TestBuildDistributedModel:
         cfg = MagicMock()
         cfg.model = mock_provider
         cfg.ddp = MagicMock()
-        cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+        cfg.optimizer = SimpleNamespace(
+            overlap_param_gather_with_optimizer_step=False,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
+        )
         cfg.dist.use_megatron_fsdp = False
         cfg.dist.use_torch_fsdp2 = False
         cfg.rng.data_parallel_random_init = False
 
-        result = _build_distributed_model(cfg, pg_collection=MagicMock())
+        pg_collection = MagicMock()
+        result = _build_distributed_model(cfg, pg_collection=pg_collection)
 
         mock_provider.finalize.assert_called_once_with()
-        mock_provider.provide_distributed_model.assert_called_once()
+        mock_provider.provide_distributed_model.assert_called_once_with(
+            ddp_config=cfg.ddp,
+            use_megatron_fsdp=False,
+            use_torch_fsdp2=False,
+            overlap_param_gather_with_optimizer_step=False,
+            data_parallel_random_init=False,
+            pg_collection=pg_collection,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
+            use_layer_wise_param_layout=use_layer_wise_param_layout,
+        )
         assert result == mock_dist_model
 
     def test_finalizes_heterogeneous_provider_before_entering_distributed_model_build(self):
@@ -584,7 +637,11 @@ class TestBuildDistributedModel:
         cfg = SimpleNamespace(
             model=provider,
             ddp=MagicMock(),
-            optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
+            optimizer=SimpleNamespace(
+                overlap_param_gather_with_optimizer_step=False,
+                use_layer_wise_distributed_optimizer=False,
+                use_layer_wise_param_layout=True,
+            ),
             dist=SimpleNamespace(use_megatron_fsdp=False, use_torch_fsdp2=False),
             rng=SimpleNamespace(data_parallel_random_init=False),
         )
