@@ -80,7 +80,7 @@ jobs:
     secrets: inherit  # pragma: allowlist secret
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@f7af92c4d1caea5a58577ce4ac5314f7de1bc5d4 # v1.4.3
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@dd5b4dcb2201e6db8f3656a3ac1e8490356e02c0 # PR NVIDIA-NeMo/FW-CI-templates#554
     needs: [pre-flight]
     if: |
       !cancelled() && !failure()
@@ -104,6 +104,7 @@ jobs:
       no-build-isolation: true
       app-id: ${{ vars.BOT_ID }}
       publish-docs: ${{ inputs.publish-docs || true }}
+      prepare-release-docs: true
       docs-target-path: nemo/megatron-bridge
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
