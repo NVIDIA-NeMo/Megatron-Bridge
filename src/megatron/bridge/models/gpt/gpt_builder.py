@@ -22,10 +22,10 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
-from megatron.training.models.gpt import GPTModelBuilder as MCoreGPTModelBuilder
-from megatron.training.models.gpt import GPTModelConfig as MCoreGPTModelConfig
-from megatron.training.models.gpt import mtp_block_spec
 
+from megatron.bridge.compat.mcore_gpt import GPTModelBuilder as MCoreGPTModelBuilder
+from megatron.bridge.compat.mcore_gpt import GPTModelConfig as MCoreGPTModelConfig
+from megatron.bridge.compat.mcore_gpt import mtp_block_spec
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.transformer_config import TransformerConfig
 
