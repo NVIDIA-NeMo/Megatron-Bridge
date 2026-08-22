@@ -137,8 +137,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
@@ -156,6 +156,11 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=True)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
+
+    # cfg.model.moe_expert_rank_capacity_factor = 4
+    # cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+    cfg.model.moe_router_force_load_balancing = False
+
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
