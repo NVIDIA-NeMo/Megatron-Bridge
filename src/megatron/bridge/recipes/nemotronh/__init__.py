@@ -21,6 +21,8 @@ from megatron.bridge.recipes.nemotronh.gb200 import (
     nemotron_3_nano_gb200_pretrain_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_5_lightning_peft_config,
@@ -116,6 +118,8 @@ __all__ = [
     "nemotron_3_nano_4b_peft_config",
     # Nemotron 3 Super models
     "nemotron_3_super_pretrain_64gpu_gb200_bf16_config",
+    "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config",
+    "nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config",
     "nemotron_3_super_pretrain_config",
     "nemotron_3_super_sft_config",
     "nemotron_3_super_peft_config",
