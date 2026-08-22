@@ -258,6 +258,12 @@ if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine
   exit 1
 fi
 
+if ! grep -A3 '^name = "fast-hadamard-transform"$' pyproject.toml | \
+  grep -Fxq 'requires-dist = ["torch", "packaging", "ninja"]'; then
+  echo "Bridge must provide static metadata for its fast-hadamard-transform git source" >&2
+  exit 1
+fi
+
 lock_package_field() {
   local lock_file="$1"
   local package="$2"
