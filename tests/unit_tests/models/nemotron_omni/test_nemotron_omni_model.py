@@ -30,6 +30,7 @@ from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
+    _pad_patch_grid_to_even,
     _pixel_shuffle_dynamic_resolution,
 )
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
@@ -296,6 +297,72 @@ def test_dynamic_resolution_pixel_shuffle_groups_spatial_2x2_blocks():
             dtype=torch.float32,
         ),
     )
+
+
+def test_even_patch_grid_is_returned_unchanged():
+    features = torch.randn(1, 32 * 32, 8)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=32, width=32)
+
+    assert padded is features
+    assert (height, width) == (32, 32)
+
+
+def test_odd_patch_grid_is_zero_padded_so_pixel_shuffle_accepts_it():
+    # The CP vision split injects 1x1-patch placeholder images to keep every
+    # rank non-empty; pixel shuffle rejects odd grids outright.
+    features = torch.arange(8, dtype=torch.float32).reshape(1, 1, 8)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=1, width=1)
+
+    assert (height, width) == (2, 2)
+    assert torch.equal(padded[0, 0], features[0, 0])
+    assert padded[0, 1:].abs().sum() == 0
+    assert _pixel_shuffle_dynamic_resolution(padded, height=height, width=width).shape == (1, 1, 32)
+
+
+def test_odd_patch_grid_padding_keeps_real_patches_differentiable():
+    features = torch.randn(1, 3 * 5, 8, requires_grad=True)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=3, width=5)
+    _pixel_shuffle_dynamic_resolution(padded, height=height, width=width).sum().backward()
+
+    assert (height, width) == (4, 6)
+    assert torch.count_nonzero(features.grad) == features.numel()
+
+
+def test_vision_context_parallel_rejects_process_group_mismatch():
+    # The MCore splitter resolves the CP group from the global parallel state,
+    # so a pg_collection that disagrees with the config would shard against the
+    # wrong ranks instead of failing.
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.context_parallel_lm = 2
+    model.patch_dim = 16
+    model.config = SimpleNamespace(fp8_recipe=None)
+    model.pg_collection = SimpleNamespace(cp=SimpleNamespace(size=lambda: 1))
+
+    with pytest.raises(ValueError, match="config=2, group=1"):
+        model._split_images_across_context_parallel_ranks(
+            torch.zeros(1, 3, 32, 32),
+            torch.tensor([[32, 32]], dtype=torch.int32),
+            None,
+            num_frames=None,
+            temporal_patch_size=1,
+        )
+
+
+@pytest.mark.gpu
+def test_vision_context_parallel_is_disabled_when_cp_is_one(single_rank_model_parallel):
+    # Sharding images over a one-rank CP group is a no-op wrapped in two
+    # collectives, so the model must ignore the request rather than pay for it.
+    provider = _TinyOmniProvider(vision_context_parallel=True)
+    provider.finalize()
+
+    model = provider.provide()
+
+    assert provider.vision_context_parallel is True
+    assert model.vision_context_parallel is False
 
 
 def test_image_forward_replaces_expanded_placeholders_without_changing_length():
