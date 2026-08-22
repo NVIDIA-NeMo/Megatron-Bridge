@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .gpt3_175b import gpt3_175b_pretrain_config
 from .vanilla_gpt import vanilla_gpt_pretrain_config
 
 
 __all__ = [
+    "gpt3_175b_pretrain_config",
     "vanilla_gpt_pretrain_config",
 ]
