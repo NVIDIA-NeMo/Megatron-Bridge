@@ -664,6 +664,7 @@ class GPTSFTDataset(Dataset):
             sequence_length=self.max_seq_length,
             pad_token_id=self.tokenizer.eos_id,
             pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+            emit_padding_mask=self.in_batch_packing_pad_to_multiple_of > 1,
         )
         processed_batch["metadata"] = [item["metadata"] for item in batch]
         processed_batch["token_count"] = [int(item.get("token_count", len(item["input_ids"]))) for item in batch]
