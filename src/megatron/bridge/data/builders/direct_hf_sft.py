@@ -317,6 +317,10 @@ def build_direct_hf_sft_split(
                 resolve_model_collate(collate_key),
                 loss_mode=config.preprocessing.loss_mode,
             )
+        elif config.preprocessing.loss_mode != "assistant":
+            raise ValueError(
+                f"Processor type '{type(processor).__name__}' currently supports only assistant chat loss."
+            )
         else:
             selected_collate = None
     else:

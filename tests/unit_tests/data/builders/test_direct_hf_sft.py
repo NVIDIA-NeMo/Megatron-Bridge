@@ -160,6 +160,22 @@ def test_builder_keeps_text_shaped_nemotron_omni_data_on_model_collator(monkeypa
     assert captured["collate_impl"] is None
 
 
+def test_builder_rejects_full_loss_for_nemotron_omni(monkeypatch):
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor_type = type("NemotronH_Nano_Omni_Reasoning_V3Processor", (_Tokenizer,), {})
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        preprocessing=ChatSFTPreprocessingConfig(loss_mode="full"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    with pytest.raises(ValueError, match="only assistant chat loss"):
+        build_direct_hf_sft_split(config, config.source, 1, processor_type())
+
+
 @pytest.mark.parametrize("loss_mode", ["last_turn", "full"])
 def test_builder_forwards_chat_loss_mode_to_model_collator(monkeypatch, loss_mode):
     row = {"conversation": [{"role": "user", "content": "question"}]}
