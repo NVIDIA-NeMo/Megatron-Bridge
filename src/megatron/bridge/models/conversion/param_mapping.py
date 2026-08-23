@@ -824,7 +824,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         megatron_module: Optional[MegatronModule],
         hf_param_name: Optional[str],
     ) -> Dict[str, torch.Tensor]:
-        """The difference from gather_from_ep_ranks is that we add an extra unsqueeze before we return a tensor.
+        """Gather expert scale tensors using the same staging path as expert weights.
+
+        Only the leading dimension added while grouping gathered tensors is removed,
+        so singleton dimensions belonging to the scale's block grid are preserved.
 
         Args:
             megatron_weights (Optional[torch.Tensor]): The local expert weight tensor
