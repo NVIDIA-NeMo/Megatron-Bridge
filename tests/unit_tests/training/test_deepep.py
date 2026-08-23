@@ -442,3 +442,77 @@ class TestValidateHybridEP:
 
         # Verify get_device_properties was called
         mock_get_device_properties.assert_called_once_with(0)
+
+
+class TestApplyFlexDispatcherBackendWithoutCuda:
+    """Test apply_flex_dispatcher_backend on a host with no CUDA device."""
+
+    @pytest.mark.parametrize("backend", [None, "not-a-backend"])
+    @patch("torch.cuda.get_device_properties", side_effect=RuntimeError("No CUDA GPUs are available"))
+    @patch("megatron.bridge.training.flex_dispatcher_backend.logger")
+    def test_unrecognized_backend_skips_device_probe(
+        self,
+        mock_logger,
+        mock_get_device_properties,
+        backend,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Test that an MoE config requesting no usable backend is left alone without probing a device."""
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend=backend)
+
+        mock_get_device_properties.assert_not_called()
+        assert config.moe_token_dispatcher_type == "alltoall"
+        assert config.moe_flex_dispatcher_backend is None
+        assert config.moe_shared_expert_overlap is True
+        mock_logger.warning.assert_called_once()
+        assert "Not a valid flex dispatcher backend" in mock_logger.warning.call_args[0][0]
+
+    @pytest.mark.parametrize("backend", ["deepep", "hybridep"])
+    @patch("torch.cuda.get_device_properties", side_effect=RuntimeError("No CUDA GPUs are available"))
+    def test_supported_backend_still_selects_flex_without_cuda(
+        self,
+        mock_get_device_properties,
+        backend,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Test that a supported backend still configures the flex dispatcher when CUDA is unavailable."""
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend=backend)
+
+        mock_get_device_properties.assert_not_called()
+        assert config.moe_token_dispatcher_type == "flex"
+        assert config.moe_flex_dispatcher_backend == backend
+        assert config.moe_shared_expert_overlap is False
+
+    @patch("torch.cuda.get_device_properties")
+    @patch("megatron.bridge.training.flex_dispatcher_backend.logger")
+    def test_unrecognized_backend_skips_device_probe_on_gpu_host(self, mock_logger, mock_get_device_properties):
+        """Test that the unrecognized-backend path also avoids the device probe when CUDA is available."""
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend=None)
+
+        mock_get_device_properties.assert_not_called()
+        assert config.moe_token_dispatcher_type == "alltoall"
+        assert config.moe_flex_dispatcher_backend is None
+        assert "Not a valid flex dispatcher backend" in mock_logger.warning.call_args[0][0]
