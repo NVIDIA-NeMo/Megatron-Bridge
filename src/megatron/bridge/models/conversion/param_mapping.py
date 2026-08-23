@@ -877,7 +877,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             else:
                 weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
         for param_name in weights_dict:
-            weights_dict[param_name] = weights_dict[param_name].squeeze().unsqueeze(dim=-1)
+            weights_dict[param_name] = weights_dict[param_name].squeeze(0)
         return weights_dict
 
     def maybe_dequantize(self, tensor: torch.Tensor) -> torch.Tensor:
