@@ -1878,7 +1878,7 @@ class MegatronModelBridge(
         hf_pretrained: HFPreTrained,
         megatron_model: List[MegatronModel],
         weight_dtype: Optional[torch.dtype] = None,
-    ) -> List[None | WeightConversionTask]:
+    ) -> List[WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
 
         Args:
@@ -1886,9 +1886,9 @@ class MegatronModelBridge(
 
         The algorithm walks over every parameter of every destination model,
         asks the :class:`MegatronMappingRegistry` whether it has a mapping for that
-        parameter, and – if the corresponding HF weights actually exist – yields
-        an :class:`_HFLoadTask` describing exactly how that parameter will be
-        populated.
+        parameter and returns a concrete task describing exactly how that
+        parameter will be populated. Missing mappings or source weights are
+        conversion errors, not empty task slots.
         """
 
         has_hf_state = hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")
@@ -1915,9 +1915,15 @@ class MegatronModelBridge(
                 name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
             ]
 
+        mappings_by_global_name = self._validate_conversion_mappings(
+            mapping_registry,
+            sorted_global_param_names_all_pp_ranks,
+            hf_keys,
+        )
+
         global_names_index_dict = {name: idx for idx, name in enumerate(sorted_global_param_names_all_pp_ranks)}
 
-        tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
+        pending_tasks: list[WeightConversionTask | None] = [None] * len(sorted_global_param_names_all_pp_ranks)
         for vp_stage, model in enumerate(megatron_model):
             # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
@@ -1931,26 +1937,7 @@ class MegatronModelBridge(
                     print_rank_0(f"WARNING: {global_name} not in global_names_index_dict")
                     continue
                 global_name_idx = global_names_index_dict[global_name]
-                mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
-
-                if not mapping:
-                    logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
-                    continue
-                # Ensure hf weights exist (skip for config-only export where hf_keys is None)
-                if hf_keys is not None and not mapping.allow_hf_name_mismatch:
-                    if isinstance(mapping.hf_param, str):
-                        if mapping.hf_param not in hf_keys:
-                            logger.warning(f"WARNING: Can't find {mapping.hf_param} in hf_keys")
-                            continue
-                    else:
-                        missing_params = [
-                            hf_param for hf_param in mapping.hf_param.values() if hf_param not in hf_keys
-                        ]
-                        if missing_params:
-                            logger.warning(
-                                f"WARNING: Can't find the following HF parameters in hf_keys: {missing_params}"
-                            )
-                            continue
+                mapping = mappings_by_global_name[global_name]
 
                 local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
                 if local_module is not None and not hasattr(local_module, "config"):
@@ -1958,7 +1945,7 @@ class MegatronModelBridge(
                     # to get the config from the model
                     setattr(local_module, "config", model_config)
 
-                tasks[global_name_idx] = WeightConversionTask(
+                pending_tasks[global_name_idx] = WeightConversionTask(
                     pp_rank=pp_rank,
                     vp_stage=vp_stage,
                     param_name=local_name,
@@ -1971,15 +1958,12 @@ class MegatronModelBridge(
 
         # Fill the remaining ones for pp communications
         for idx, global_name in enumerate(sorted_global_param_names_all_pp_ranks):
-            if tasks[idx] is None:
-                mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
-                # Skip tasks with no mapping found
-                if mapping is None:
-                    continue
+            if pending_tasks[idx] is None:
+                mapping = mappings_by_global_name[global_name]
                 # This is an exception here we pass in global name
                 # we are not using global_name to extract module and weights
                 # only use it for param mapping auto dispatch checks
-                tasks[idx] = WeightConversionTask(
+                pending_tasks[idx] = WeightConversionTask(
                     pp_rank=pp_rank,
                     vp_stage=None,
                     param_name=global_name,
@@ -1990,6 +1974,68 @@ class MegatronModelBridge(
                     weight_dtype=weight_dtype,
                 )
 
+        return self._require_concrete_tasks(pending_tasks)
+
+    def _validate_conversion_mappings(
+        self,
+        mapping_registry: MegatronMappingRegistry,
+        global_param_names: Iterable[str],
+        hf_keys: Iterable[str] | None = None,
+    ) -> dict[str, MegatronParamMapping]:
+        """Resolve and validate mappings for the full cross-PP parameter list."""
+        mappings_by_global_name: dict[str, MegatronParamMapping] = {}
+        missing_mappings: list[str] = []
+        missing_hf_weights: list[tuple[str, str]] = []
+        hf_key_set = set(hf_keys) if hf_keys is not None else None
+
+        for global_name in global_param_names:
+            mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
+            if mapping is None:
+                missing_mappings.append(global_name)
+                continue
+
+            mappings_by_global_name[global_name] = mapping
+            if hf_key_set is None or mapping.allow_hf_name_mismatch:
+                continue
+
+            expected_hf_names = (
+                [mapping.hf_param] if isinstance(mapping.hf_param, str) else list(mapping.hf_param.values())
+            )
+            missing_hf_weights.extend(
+                (global_name, hf_name) for hf_name in expected_hf_names if hf_name not in hf_key_set
+            )
+
+        if missing_mappings:
+            missing_names = "\n  ".join(missing_mappings)
+            raise ValueError(
+                "No mapping found for the following Megatron parameter(s):\n"
+                f"  {missing_names}\n"
+                "Every global Megatron parameter must have a concrete mapping so import and export remain strict."
+            )
+
+        if missing_hf_weights:
+            missing_names = "\n  ".join(f"{global_name} -> {hf_name}" for global_name, hf_name in missing_hf_weights)
+            raise ValueError(
+                "Hugging Face checkpoint is missing mapped parameter(s):\n"
+                f"  {missing_names}\n"
+                "If the HF config determines whether the weight exists, register the mapping "
+                "conditionally on that config instead. If it does not, and the name is synthesized "
+                "or the weight is absent on only some layers, set allow_hf_name_mismatch on the "
+                "mapping."
+            )
+
+        return mappings_by_global_name
+
+    @staticmethod
+    def _require_concrete_tasks(
+        pending_tasks: Iterable[WeightConversionTask | None],
+    ) -> list[WeightConversionTask]:
+        """Return tasks after enforcing the internal no-empty-slot invariant."""
+        tasks: list[WeightConversionTask] = []
+        for task in pending_tasks:
+            if task is None:
+                raise RuntimeError("Internal error: conversion task construction left an empty slot")
+            tasks.append(task)
         return tasks
 
     def _detect_fp8_params(
@@ -2084,7 +2130,7 @@ class MegatronModelBridge(
         *,
         scale_inv_suffix: str = "_scale_inv",
         fp8_scale_inv_attr: str = "_rowwise_scale_inv",
-    ) -> List[None | WeightConversionTask]:
+    ) -> List[WeightConversionTask]:
         """
         Build Megatron→(export) conversion tasks, inserting extra *scale_inv* tasks for blockwise FP8 params.
         """
@@ -2108,6 +2154,11 @@ class MegatronModelBridge(
             sorted_global_param_names_all_pp_ranks = [
                 name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
             ]
+
+        mappings_by_global_name = self._validate_conversion_mappings(
+            mapping_registry,
+            sorted_global_param_names_all_pp_ranks,
+        )
 
         # 1) Determine which global params are blockwise FP8 and gather flags across PP ranks
         global_fp8_flags = self._detect_fp8_params(
@@ -2141,10 +2192,7 @@ class MegatronModelBridge(
                 if global_name not in global_names_index_dict:
                     continue
 
-                mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
-                if not mapping:
-                    logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
-                    continue
+                mapping = mappings_by_global_name[global_name]
                 local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
                 if local_module is not None and not hasattr(local_module, "config"):
                     setattr(local_module, "config", model_config)
@@ -2202,22 +2250,16 @@ class MegatronModelBridge(
             # For scale_inv entries, reuse the base param's mapping type.
             if global_name.endswith(scale_inv_suffix):
                 base_global_name = global_name[: -len(scale_inv_suffix)]
-                base_mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(base_global_name))
-                if base_mapping is not None:
-                    # clone mapping instance to avoid sharing state across tasks.
-                    base_mapping_for_scale = mapping_registry.resolve_mapping(base_mapping, ())
-                    mapping = _HFNameSuffixMapping(
-                        base_mapping_for_scale,
-                        scale_inv_suffix,
-                        self._fp8_scale_block_size(global_fp8_flags.get(base_global_name)),
-                    )
-                else:
-                    mapping = None
+                base_mapping = mappings_by_global_name[base_global_name]
+                # clone mapping instance to avoid sharing state across tasks.
+                base_mapping_for_scale = mapping_registry.resolve_mapping(base_mapping, ())
+                mapping = _HFNameSuffixMapping(
+                    base_mapping_for_scale,
+                    scale_inv_suffix,
+                    self._fp8_scale_block_size(global_fp8_flags.get(base_global_name)),
+                )
             else:
-                mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
-            if mapping is None:
-                logger.warning(f"No mapping found for global_name: {global_name}")
-                continue
+                mapping = mappings_by_global_name[global_name]
 
             tasks[idx] = WeightConversionTask(
                 pp_rank=pp_rank,
@@ -2229,7 +2271,7 @@ class MegatronModelBridge(
                 mapping=mapping,
             )
 
-        return tasks
+        return self._require_concrete_tasks(tasks)
 
     @staticmethod
     def _fp8_scale_block_size(fp8_flag: bool | int | None) -> int | None:
@@ -2370,6 +2412,7 @@ def stream_adapter_weights_megatron_to_hf(
     cpu: bool = True,
     show_progress: bool = True,
     exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
+    expand_shared_outer: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge only adapter weights from Megatron to HuggingFace format."""
     ...
@@ -2462,6 +2505,7 @@ def register_bridge_implementation(
         cpu: bool = True,
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
+        expand_shared_outer: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
         return bridge.stream_adapter_weights_megatron_to_hf(
@@ -2469,6 +2513,7 @@ def register_bridge_implementation(
             cpu=cpu,
             show_progress=show_progress,
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+            expand_shared_outer=expand_shared_outer,
         )
 
     # Set meaningful names for debugging

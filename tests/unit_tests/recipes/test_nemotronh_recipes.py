@@ -54,6 +54,8 @@ class _FakeModelProvider:
 
     def __init__(self) -> None:
         self.vocab_size = 256
+        self.high_priority_a2a_comm_stream = False
+        self.moe_hybridep_num_sms_preprocessing = 108
 
     def finalize(self) -> None:
         return None
@@ -160,6 +162,71 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     cfg = _nemotronh_module.nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
 
     assert cfg.model.vocab_size is None
+
+
+@pytest.mark.parametrize(
+    ("module_name", "factory_name", "has_comm_overlap"),
+    [
+        pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+            "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config",
+            True,
+            id="nano-gb200",
+        ),
+        pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+            "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config",
+            True,
+            id="nano-gb300",
+        ),
+        pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
+            "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
+            True,
+            id="nano-vr200",
+        ),
+        pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+            "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config",
+            False,
+            id="super-gb200",
+        ),
+        pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
+            "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config",
+            False,
+            id="super-gb300",
+        ),
+        pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
+            "nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config",
+            False,
+            id="super-vr200",
+        ),
+    ],
+)
+def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
+    module_name: str,
+    factory_name: str,
+    has_comm_overlap: bool,
+) -> None:
+    """Selected MXFP8 recipes match the measured CutDSL and MoE overlap settings."""
+    module = importlib.import_module(module_name)
+    cfg = getattr(module, factory_name)()
+
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.model.high_priority_a2a_comm_stream is False
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    if has_comm_overlap:
+        assert cfg.comm_overlap is not None
+        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+        assert cfg.comm_overlap.delay_wgrad_compute is False
+    else:
+        assert cfg.comm_overlap is None
 
 
 def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration():
