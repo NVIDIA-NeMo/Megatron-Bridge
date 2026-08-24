@@ -111,6 +111,7 @@ _DISALLOWED_TARGETS: set[str] = {
 _DISALLOWED_CANONICAL_TARGETS: set[str] = {
     "numpy.load",
     "torch.serialization.load",
+    "transformers.dynamic_module_utils.get_class_in_module",
     "transformers.dynamic_module_utils.get_class_from_dynamic_module",
 }
 
@@ -201,6 +202,8 @@ def _resolve_target(
                 f"Instantiation of '{target}' is not allowed because it resolves to the unsafe target "
                 f"'{canonical_target}'." + (f"\nfull_key: {full_key}" if full_key else "")
             )
+        if canonical_target is not None:
+            _validate_target_prefix(target=canonical_target, full_key=full_key)
     return resolved_target
 
 

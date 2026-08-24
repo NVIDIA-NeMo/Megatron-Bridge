@@ -262,12 +262,7 @@ class _TorchTensorRestrictedUnpickler(_RestrictedUnpickler):
             ("torch.storage", "_load_from_bytes"),
         }:
             return _safe_torch_load_from_bytes
-        if module in self._SAFE_MODULES and name in self._SAFE_MODULES[module]:
-            return pickle.Unpickler.find_class(self, module, name)
-        raise pickle.UnpicklingError(
-            f"Restricted unpickler refused to load '{module}.{name}'. "
-            "Only safe built-in types and plain torch tensors are allowed."
-        )
+        return super().find_class(module, name)
 
 
 class _NumpyRestrictedUnpickler(pickle.Unpickler):

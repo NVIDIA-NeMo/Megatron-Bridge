@@ -32,11 +32,12 @@ class _WriteMarkerPayload:
 
 
 @pytest.mark.parametrize("extension", ["pickle", "pkl", "pyd"])
-def test_safe_decoder_loads_plain_tensor_pickles(extension):
+@pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+def test_safe_decoder_loads_plain_tensor_pickles(extension, protocol):
     decoder = SafeDiffusionSampleDecoder()
     value = {"embedding": torch.arange(4, dtype=torch.float32), "shape": [1, 4]}
 
-    restored = decoder.decode(f"sample.{extension}", pickle.dumps(value))
+    restored = decoder.decode(f"sample.{extension}", pickle.dumps(value, protocol=protocol))
 
     assert restored["shape"] == value["shape"]
     assert torch.equal(restored["embedding"], value["embedding"])
@@ -54,20 +55,27 @@ def test_safe_decoder_loads_weights_only_pth():
     assert torch.equal(restored["embedding"], value["embedding"])
 
 
-@pytest.mark.parametrize("extension", ["pickle", "pth"])
-def test_safe_decoder_rejects_executable_payloads(extension, tmp_path):
+@pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+def test_safe_decoder_rejects_pickle_payloads_for_all_protocols(protocol, tmp_path):
     decoder = SafeDiffusionSampleDecoder()
-    marker = tmp_path / f"{extension}-executed"
+    marker = tmp_path / f"pickle-{protocol}-executed"
     payload = _WriteMarkerPayload(str(marker))
-    if extension == "pickle":
-        data = pickle.dumps(payload)
-    else:
-        buffer = io.BytesIO()
-        torch.save(payload, buffer)
-        data = buffer.getvalue()
 
     with pytest.raises(DecodingError) as error:
-        decoder.decode(f"sample.{extension}", data)
+        decoder.decode("sample.pickle", pickle.dumps(payload, protocol=protocol))
+
+    assert isinstance(error.value.__cause__, pickle.UnpicklingError)
+    assert not marker.exists()
+
+
+def test_safe_decoder_rejects_executable_pth_payload(tmp_path):
+    decoder = SafeDiffusionSampleDecoder()
+    marker = tmp_path / "pth-executed"
+    buffer = io.BytesIO()
+    torch.save(_WriteMarkerPayload(str(marker)), buffer)
+
+    with pytest.raises(DecodingError) as error:
+        decoder.decode("sample.pth", buffer.getvalue())
 
     assert isinstance(error.value.__cause__, pickle.UnpicklingError)
     assert not marker.exists()
