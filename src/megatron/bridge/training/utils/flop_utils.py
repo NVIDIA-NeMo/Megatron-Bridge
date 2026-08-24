@@ -16,9 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    is_gated_delta_net_variant,
-)
 from megatron.core.models.hybrid.hybrid_layer_allocation import (
     Symbols,
     get_hybrid_layer_counts,
@@ -1409,7 +1406,7 @@ def num_floating_point_operations(
 
         # Handle GDN (Gated DeltaNet) hybrid attention variants. MCore normalizes
         # the deprecated "gated_delta_net" alias to "gdn" during config finalization.
-        if is_gated_delta_net_variant(experimental_attention_variant):
+        if experimental_attention_variant in {"gated_delta_net", "gdn", "gdn2"}:
             linear_attention_freq = cfg.model.linear_attention_freq
             decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
