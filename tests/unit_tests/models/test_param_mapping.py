@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -107,6 +108,82 @@ class MockModule(torch.nn.Module):
         if has_bias:
             self.bias = torch.nn.Parameter(torch.randn(weight_shape[0], device=device))
         self.config = config
+
+
+def test_ep_gather_preserves_expert_scale_singleton_dimensions(mock_distributed_env):
+    """EP gathering must remove only its own staging dimension."""
+    mock_mpu, mock_dist = mock_distributed_env()
+    mapping = FusedExpertMapping(
+        "decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        "model.layers.0.mlp.experts.down_proj",
+    )
+
+    class _MockGroup:
+        def size(self):
+            return 2
+
+        def rank(self):
+            return 0
+
+    mapping.ep_group = _MockGroup()
+    mock_mpu.get_expert_model_parallel_group.return_value = mapping.ep_group
+
+    def fake_all_gather(output, tensor, group):
+        assert group is mapping.ep_group
+        output[0].copy_(tensor)
+        output[1].copy_(tensor + 10)
+
+    mock_dist.all_gather.side_effect = fake_all_gather
+    local_scale = torch.tensor([[1.0], [2.0]])
+
+    result = mapping.gather_from_ep_ranks(
+        local_scale,
+        SimpleNamespace(config=SimpleNamespace(num_moe_experts=4)),
+        "model.layers.0.mlp.experts.down_proj",
+    )
+
+    gathered_scale = result["model.layers.0.mlp.experts.down_proj"]
+    assert gathered_scale.shape == (2, 2, 1)
+    torch.testing.assert_close(gathered_scale[0], local_scale)
+    torch.testing.assert_close(gathered_scale[1], local_scale + 10)
+
+
+def test_ep_scale_gather_preserves_singleton_block_grid_dimensions(mock_distributed_env):
+    """Scale gathering must remove only its own staging dimension."""
+    mock_mpu, mock_dist = mock_distributed_env()
+    mapping = FusedExpertMapping(
+        "decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        "model.layers.0.mlp.experts.down_proj",
+    )
+
+    class _MockGroup:
+        def size(self):
+            return 2
+
+        def rank(self):
+            return 0
+
+    mapping.ep_group = _MockGroup()
+    mock_mpu.get_expert_model_parallel_group.return_value = mapping.ep_group
+
+    def fake_all_gather(output, tensor, group):
+        assert group is mapping.ep_group
+        output[0].copy_(tensor)
+        output[1].copy_(tensor + 10)
+
+    mock_dist.all_gather.side_effect = fake_all_gather
+    local_scale = torch.tensor([[[1.0], [2.0]]])
+
+    result = mapping.gather_from_ep_ranks_scale(
+        local_scale,
+        SimpleNamespace(config=SimpleNamespace(num_moe_experts=4)),
+        "model.layers.0.mlp.experts.down_proj",
+    )
+
+    gathered_scale = result["model.layers.0.mlp.experts.down_proj"]
+    assert gathered_scale.shape == (2, 1, 2, 1)
+    torch.testing.assert_close(gathered_scale[0], local_scale)
+    torch.testing.assert_close(gathered_scale[1], local_scale + 10)
 
 
 class TestDirectMapping:
