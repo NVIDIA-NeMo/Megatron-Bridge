@@ -54,6 +54,7 @@ from transformers.modeling_utils import PreTrainedModel
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
+    QKVMapping,
 )
 from megatron.bridge.models.conversion.peft_bridge import (
     AdapterWeight,
@@ -2117,6 +2118,21 @@ class MegatronModelBridge(
             pp_group,
             fp8_scale_inv_attr,
         )
+
+        for global_name, fp8_flag in global_fp8_flags.items():
+            block_size = self._fp8_scale_block_size(fp8_flag)
+            if block_size is None:
+                continue
+            mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(global_name))
+            if not isinstance(mapping, QKVMapping):
+                continue
+            head_size = model_config.kv_channels or (model_config.hidden_size // model_config.num_attention_heads)
+            if head_size % block_size != 0:
+                raise ValueError(
+                    f"Cannot export blockwise FP8 QKV scales: QKV head size {head_size} "
+                    f"is not divisible by FP8 block size {block_size}. Scale blocks that cross "
+                    "QKV head boundaries cannot be split into separate HF projections."
+                )
 
         # 2) Expand the global name list with `*.scale_inv` entries.
         #    This defines the final deterministic task ordering.

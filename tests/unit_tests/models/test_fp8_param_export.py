@@ -30,7 +30,7 @@ from megatron.bridge.models.conversion.model_bridge import (
     WeightConversionTask,
     _HFNameSuffixMapping,
 )
-from megatron.bridge.models.conversion.param_mapping import split_qkv_weights
+from megatron.bridge.models.conversion.param_mapping import QKVMapping, split_qkv_weights
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -160,6 +160,31 @@ class TestHFNameSuffixMapping:
 
 
 class TestFp8ParamExport:
+    def test_build_export_fp8_tasks_rejects_unaligned_qkv_scale_blocks(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_qkv.weight"
+        mapping = QKVMapping(global_name, "hf.q.weight", "hf.k.weight", "hf.v.weight")
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            global_name,
+            registry_factory=lambda: MegatronMappingRegistry(mapping),
+            detect_fp8=lambda *_a, **_k: {global_name: 128},
+        )
+        model = SimpleNamespace(
+            config=SimpleNamespace(
+                num_attention_heads=64,
+                num_query_groups=8,
+                hidden_size=2880,
+                kv_channels=64,
+                share_embeddings_and_output_weights=False,
+            ),
+            named_parameters=lambda: [],
+        )
+
+        with pytest.raises(ValueError, match="QKV head size 64.*FP8 block size 128"):
+            bridge.build_export_fp8_tasks(SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model])
+
     @pytest.mark.parametrize(
         "export_weight_dtype, expect_unquantized",
         [("fp8", True), ("bf16", False)],
