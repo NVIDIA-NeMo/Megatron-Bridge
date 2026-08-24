@@ -843,6 +843,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
             to the corresponding expert tensors gathered from each EP rank.
         """
+        if self.ep_size == 1:
+            return {str(hf_param_name): megatron_weights}
+
         if megatron_module is None:
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
         else:
