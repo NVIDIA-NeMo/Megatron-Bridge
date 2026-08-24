@@ -246,7 +246,7 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
 def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB300)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()
-    cfg.model.cuda_graph_scope = ["attn"]
+    cfg.model.cuda_graph_scope = ["attn", "moe_router"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -255,7 +255,7 @@ def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:False",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
