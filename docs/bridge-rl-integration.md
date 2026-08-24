@@ -372,6 +372,52 @@ Mappings that require transpose, permutation, interleaving, or grouped-export tr
 
 This contract is not BF16-only. For MXFP8 refit, a transport may materialize canonical logical views from quantized training storage and requantize persistent MXFP8 inference destinations in place. Direct transfer of packed MXFP8 data and scales is a different optimization and is valid only when the source and destination storage layouts, quantization backends, and topology are explicitly compatible.
 
+**Version and verify the exported tensor inventory:** Record metadata during the existing one-shot
+`export_hf_weights()` stream, then send a transport-neutral manifest as the stream trailer. The recorder retains only
+names, shapes, and dtypes, so it does not buffer tensor payloads or repeat the export. On the consumer, record metadata
+while staging each tensor and validate the trailer before making `target_version` visible to rollout workers.
+
+```python
+from megatron.bridge.models.conversion import WeightUpdateManifest, WeightUpdateRecorder
+
+# Producer: tensor frames and their metadata are produced in the same pass.
+sent_inventory = WeightUpdateRecorder()
+for name, tensor in sent_inventory.track(bridge.export_hf_weights([model], show_progress=False)):
+    send_tensor(name, tensor)
+
+manifest = sent_inventory.build_manifest(
+    model_id="meta-llama/Llama-3.2-1B",
+    model_config_id="hf-config-revision-or-digest",
+    update_mode="full",
+    base_version="step-99",
+    target_version="step-100",
+)
+send_manifest(manifest.to_json())  # trailer after the final tensor frame
+
+# Consumer: stage frames and retain only their metadata until the trailer arrives.
+received_inventory = WeightUpdateRecorder()
+for name, tensor in receive_tensors():
+    stage_tensor(name, tensor)
+    received_inventory.record(name, tensor)
+
+received_manifest = WeightUpdateManifest.from_json(receive_manifest())
+received_manifest.validate(
+    received_inventory,
+    expected_model_id="meta-llama/Llama-3.2-1B",
+    expected_model_config_id="hf-config-revision-or-digest",
+    expected_update_mode="full",
+    current_version="step-99",
+    expected_target_version="step-100",
+)
+activate_staged_weights(received_manifest.target_version)
+```
+
+Validation catches transport omissions, duplicates, reordering, and shape/dtype mismatches relative to the producer's
+recorded inventory, and rejects stale or wrong model/config/update context. It does not independently prove that the
+producer exported every model tensor. The metadata digest detects accidental manifest corruption; it is neither a
+tensor-content checksum nor an authentication mechanism. Content hashing, acknowledgement, retry, and atomic runtime
+activation remain consumer/transport responsibilities.
+
 ```python
 import os
 import torch
