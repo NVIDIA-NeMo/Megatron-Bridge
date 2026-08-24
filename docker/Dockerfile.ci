@@ -55,6 +55,7 @@ ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
     UV_VERSION="0.7.2" \
     UV_HTTP_TIMEOUT=120 \
     NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
+    NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD=1 \
     HYBRID_EP_MULTINODE=1 \
     RDMA_CORE_HOME=/opt/rdma-core/build \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
@@ -192,7 +193,7 @@ COPY --chown=1000:1000 . /opt/Megatron-Bridge
 # prepared environment, and uses /nemo_run for runtime outputs. Keep those paths owned by the
 # existing unprivileged base-image user instead of relying on a root final user.
 RUN install -d -o 1000 -g 1000 -m 0755 /nemo_run /home/ubuntu/.cache && \
-    chown 1000:1000 /opt/Megatron-Bridge
+    chown -R 1000:1000 /opt/Megatron-Bridge
 
 ENV HOME=/home/ubuntu
 USER 1000:1000
