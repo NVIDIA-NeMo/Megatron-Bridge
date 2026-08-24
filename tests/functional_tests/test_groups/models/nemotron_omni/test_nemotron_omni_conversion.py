@@ -40,6 +40,15 @@ _DEFAULT_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 # 52-layer pattern, which keeps a representative mamba (M), MoE-MLP (E) and
 # attention (*) layer mix.
 _LLM_LAYER_TYPES = ["mamba", "moe", "mamba", "moe", "mamba", "attention"]
+# Transformers 5.15 serializes the same hybrid blocks under their canonical names.
+_SERIALIZED_LLM_LAYER_TYPES = [
+    "linear_attention",
+    "moe",
+    "linear_attention",
+    "moe",
+    "linear_attention",
+    "full_attention",
+]
 _LLM_OVERRIDES = {
     "hybrid_override_pattern": "MEMEM*",
     "layer_types": _LLM_LAYER_TYPES,
@@ -220,5 +229,5 @@ class TestNemotronOmniConversion:
         assert "vision_config" in saved_config
         assert "sound_config" in saved_config
         assert saved_config["llm_config"]["num_hidden_layers"] == 6
-        assert saved_config["llm_config"]["layer_types"] == _LLM_LAYER_TYPES
-        assert saved_config["llm_config"]["layers_block_type"] == _LLM_LAYER_TYPES
+        assert saved_config["llm_config"]["layer_types"] == _SERIALIZED_LLM_LAYER_TYPES
+        assert saved_config["llm_config"]["layers_block_type"] == _SERIALIZED_LLM_LAYER_TYPES

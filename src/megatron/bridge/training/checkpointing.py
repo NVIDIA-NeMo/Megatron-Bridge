@@ -177,8 +177,12 @@ class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
     """Run MCore's synchronous torch-dist writer without a CUDA staging barrier."""
 
     @staticmethod
-    def _run_cpu_finalize(finalize_fn: Callable[[], None]) -> None:
-        """Make MCore's failure-status tensor use the CPU for a Gloo save."""
+    def _run_finalize(finalize_fn: Callable[[], None]) -> None:
+        """Use a backend-compatible device for MCore's failure-status tensor."""
+        if torch.distributed.is_initialized() and torch.distributed.get_backend() == "nccl":
+            finalize_fn()
+            return
+
         current_device = torch.cuda.current_device
         try:
             torch.cuda.current_device = lambda: torch.device("cpu")
@@ -204,7 +208,7 @@ class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
                 preload_fn=partial(preload_fn.func, *bound.args, **bound.kwargs),
             )
         async_request = async_request._replace(
-            finalize_fns=[partial(self._run_cpu_finalize, finalize_fn) for finalize_fn in async_request.finalize_fns],
+            finalize_fns=[partial(self._run_finalize, finalize_fn) for finalize_fn in async_request.finalize_fns],
         )
         async_request.execute_sync()
 

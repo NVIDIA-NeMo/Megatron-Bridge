@@ -843,6 +843,21 @@ class TestSaveCheckpoint:
         assert finalize_devices == [torch.device("cpu")]
         assert torch.cuda.current_device is original_current_device
 
+    def test_cpu_torch_dist_strategy_preserves_cuda_finalize_for_nccl(self):
+        """NCCL cannot broadcast MCore's final status tensor from the CPU."""
+        finalize_devices = []
+
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_backend", return_value="nccl"),
+            patch("torch.cuda.current_device", return_value=3),
+        ):
+            _CpuTorchDistSaveShardedStrategy._run_finalize(
+                lambda: finalize_devices.append(torch.cuda.current_device())
+            )
+
+        assert finalize_devices == [3]
+
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""
         old_checkpoint = tmp_path / "iter_0000500"

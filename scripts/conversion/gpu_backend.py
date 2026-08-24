@@ -178,7 +178,7 @@ def _configure_model_provider(
 
 def _uses_model_builder(bridge: AutoBridge) -> bool:
     """Return whether the selected bridge supports native builder construction."""
-    return getattr(bridge._model_bridge, "MODEL_CONFIG_CLASS", None) is not None
+    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
 
 
 def _configure_model_config(

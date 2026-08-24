@@ -1887,7 +1887,7 @@ class TestAutoBridge:
         # Setup mocks
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
-        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
+        mock_bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION = False
 
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
@@ -1919,7 +1919,7 @@ class TestAutoBridge:
         # Setup mocks
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
-        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
+        mock_bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION = False
 
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
@@ -1964,7 +1964,7 @@ class TestAutoBridge:
         """Test import_ckpt low-memory save forwarding."""
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
-        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
+        mock_bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION = False
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
@@ -1997,7 +1997,7 @@ class TestAutoBridge:
     def test_import_ckpt_uses_builder_for_migrated_model(self, mock_from_hf_pretrained):
         """Migrated families import through ModelConfig without a legacy provider."""
         mock_bridge = Mock(spec=AutoBridge)
-        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = object
+        mock_bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION = True
         model_config = Mock()
         model_config.transformer = Mock(use_cpu_initialization=False)
         mock_bridge.get_model_config.return_value = model_config
@@ -2038,7 +2038,7 @@ class TestAutoBridge:
     ):
         """Standalone CPU import uses the shared temporary Gloo lifecycle."""
         mock_bridge = Mock(spec=AutoBridge)
-        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
+        mock_bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION = False
         mock_bridge.to_megatron_model.return_value = [Mock()]
         mock_bridge.save_megatron_model = Mock()
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
@@ -2062,7 +2062,7 @@ class TestAutoBridge:
     ):
         """Import reuses distributed state owned by its caller."""
         mock_bridge = Mock(spec=AutoBridge)
-        mock_bridge._model_bridge.MODEL_CONFIG_CLASS = None
+        mock_bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION = False
         mock_bridge.to_megatron_model.return_value = [Mock()]
         mock_bridge.save_megatron_model = Mock()
         mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}

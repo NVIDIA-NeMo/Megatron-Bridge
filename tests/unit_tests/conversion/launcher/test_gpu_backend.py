@@ -115,6 +115,7 @@ class _FakeProvider:
 
 class _FakeModelBridge:
     MODEL_CONFIG_CLASS = None
+    USE_MODEL_CONFIG_FOR_CONVERSION = False
 
     def get_hf_tokenizer_kwargs(self):
         return {"padding_side": "left"}
@@ -191,6 +192,7 @@ class TestImportHfToMegatron:
 
         class BuilderModelBridge(_FakeModelBridge):
             MODEL_CONFIG_CLASS = object
+            USE_MODEL_CONFIG_FOR_CONVERSION = True
 
         class FakeBridge:
             _model_bridge = BuilderModelBridge()

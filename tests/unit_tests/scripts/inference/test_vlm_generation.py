@@ -27,6 +27,16 @@ finally:
 pytestmark = pytest.mark.unit
 
 
+def test_model_builder_requires_explicit_conversion_migration() -> None:
+    legacy_bridge = SimpleNamespace(_model_bridge=SimpleNamespace(MODEL_CONFIG_CLASS=object))
+    migrated_bridge = SimpleNamespace(
+        _model_bridge=SimpleNamespace(MODEL_CONFIG_CLASS=object, USE_MODEL_CONFIG_FOR_CONVERSION=True)
+    )
+
+    assert vlm_generation._uses_model_builder(legacy_bridge) is False
+    assert vlm_generation._uses_model_builder(migrated_bridge) is True
+
+
 def test_deterministic_execution_sets_required_process_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "CUBLAS_WORKSPACE_CONFIG",

@@ -441,6 +441,12 @@ class MegatronModelBridge(
     # transformer config class.
     MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
 
+    # Conversion still uses the provider-backed construction path unless a model family has
+    # explicitly migrated its conversion lifecycle to ModelBuilder. Keeping this separate
+    # from MODEL_CONFIG_CLASS preserves get_model_config() for legacy families without
+    # silently changing how their checkpoints are constructed.
+    USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
+
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None

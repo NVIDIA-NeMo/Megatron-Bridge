@@ -152,6 +152,7 @@ def test_model_config_owns_transformer_type_and_routes_flat_overrides() -> None:
 
     assert MuseGlimmerModelConfig.transformer_config_class is MuseGlimmerTransformerConfig
     assert "TRANSFORMER_CONFIG_CLASS" not in MuseGlimmerBridge.__dict__
+    assert MuseGlimmerBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     model_config.tensor_model_parallel_size = 8
     model_config.seq_length = 512

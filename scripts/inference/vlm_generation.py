@@ -151,7 +151,7 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
 
 def _uses_model_builder(bridge: AutoBridge) -> bool:
     """Return whether the selected bridge supports native builder construction."""
-    return getattr(bridge._model_bridge, "MODEL_CONFIG_CLASS", None) is not None
+    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
 
 
 def _enable_deterministic_execution() -> None:

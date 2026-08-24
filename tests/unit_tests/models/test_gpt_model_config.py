@@ -141,6 +141,8 @@ def test_gpt_model_config_is_the_bridge_default() -> None:
     assert MegatronModelBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
     assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
     assert "MODEL_CONFIG_CLASS" not in LlamaBridge.__dict__
+    assert MegatronModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
+    assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
     assert BridgeGPTModelConfig.transformer_config_class is TransformerConfig
     assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 

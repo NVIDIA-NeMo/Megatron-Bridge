@@ -1484,7 +1484,7 @@ class AutoBridge(Generic[MegatronModelT]):
         with model_context:
             # Prefer the native ModelConfig/ModelBuilder path for migrated model
             # families while preserving the provider path for legacy bridges.
-            if bridge._model_bridge.MODEL_CONFIG_CLASS is not None:
+            if bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION:
                 model_config = bridge.get_model_config()
                 model_config.transformer.use_cpu_initialization = True
                 megatron_model = bridge.get_model(

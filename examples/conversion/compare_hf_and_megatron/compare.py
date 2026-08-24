@@ -716,7 +716,7 @@ def _load_megatron_model(args):
             ),
             **_hf_revision_kwargs(args.hf_revision),
         )
-        if getattr(bridge._model_bridge, "MODEL_CONFIG_CLASS", None) is not None:
+        if getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False):
             model_config = bridge.get_model_config()
             transformer = model_config.transformer
             transformer.tensor_model_parallel_size = tp
@@ -756,7 +756,7 @@ def _load_megatron_model(args):
             ),
             **_hf_revision_kwargs(args.hf_revision),
         )
-        if getattr(bridge._model_bridge, "MODEL_CONFIG_CLASS", None) is not None:
+        if getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False):
             model_config = bridge.get_model_config()
             transformer = model_config.transformer
             transformer.tensor_model_parallel_size = tp
