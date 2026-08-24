@@ -21,6 +21,9 @@ import torch
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config as flash_packed_peft_config,
+)
+from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config as flash_bf16_base_config,
 )
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
@@ -139,6 +142,35 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
 
 
+def test_flash_packed_peft_recipe_adapts_mla_and_unshared_experts() -> None:
+    cfg = flash_packed_peft_config()
+
+    assert cfg.peft.target_modules == [
+        "linear_q_down_proj",
+        "linear_q_up_proj",
+        "linear_kv_proj",
+        "linear_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
+    assert cfg.peft.dim == 32
+    assert cfg.peft.alpha == 32
+    assert cfg.peft.dropout == 0.0
+    assert cfg.peft.share_expert_adapters is False
+    assert cfg.optimizer.lr == 1.0e-4
+    assert cfg.optimizer.min_lr == 0.0
+
+    sft_cfg = flash_packed_sft_config()
+    assert cfg.dataset == sft_cfg.dataset
+    assert cfg.train == sft_cfg.train
+    assert cfg.rng == sft_cfg.rng
+    assert cfg.model.seq_length == sft_cfg.model.seq_length
+    assert cfg.model.pipeline_model_parallel_size == sft_cfg.model.pipeline_model_parallel_size
+    assert cfg.model.expert_model_parallel_size == sft_cfg.model.expert_model_parallel_size
+    assert cfg.model.moe_token_dispatcher_type == sft_cfg.model.moe_token_dispatcher_type
+    assert cfg.model.recompute_modules == sft_cfg.model.recompute_modules
+
+
 def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     cfg = flash_library_config()
 
@@ -177,5 +209,6 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
 
 
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:
+    assert recipes.deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config is flash_packed_peft_config
     assert recipes.deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config is flash_library_config
     assert recipes.deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config is flash_packed_sft_config

@@ -43,8 +43,7 @@ verification_index:
   training:
     GB200:
       verified: [pretrain, sft, sft_export_inference]
-      unverified: [sft_long_context, checkpoint_resume]
-      unsupported: [peft]
+      unverified: [sft_long_context, peft, checkpoint_resume]
   performance:
     GB200: unverified
 
@@ -304,12 +303,14 @@ items:
         iterations, and all four metrics recorded over at least 100 optimizer steps.
 
   peft:
-    all:
-      status: unsupported
-      precision: null
+    GB200:
+      status: unverified
+      precision: bf16
       command: null
       last_verified: null
-      enabled_features: {}
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: hybridep
       metrics:
         initial_loss: null
         final_loss: null
@@ -317,7 +318,9 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        No LoRA / PEFT recipe exists for DeepSeek-V4 in the current recipe set.
+        The packed OpenMath LoRA recipe must complete 100 finite steps with
+        separate routed-expert adapters, zero skipped or NaN iterations, all five
+        metrics, and a reloadable adapter checkpoint.
 
   checkpoint_resume:
     GB200:

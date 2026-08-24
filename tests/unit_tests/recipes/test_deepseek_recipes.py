@@ -46,6 +46,7 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
     {
         "deepseek_v3_pretrain_config",
         "deepseek_v3_pretrain_config_32nodes",
+        "deepseek_v4_flash_peft_openmath_thinking_packed_config",
         "deepseek_v4_flash_pretrain_config",
         "deepseek_v4_flash_pretrain_mxfp8_config",
         "deepseek_v4_flash_pretrain_muon_config",

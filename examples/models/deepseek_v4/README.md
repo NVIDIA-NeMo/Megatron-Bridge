@@ -158,9 +158,40 @@ Launch the verified GB200 packed recipe from an imported BF16 checkpoint:
 
 The card records 100 finite steps, a fresh-process checkpoint reload, and
 post-SFT GPU export with deterministic HF inference for this configuration at
-CP=1. Long-context and CP=2 SFT remain unverified, and PEFT remains unsupported.
-MXFP8 and Muon SFT recipes are intentionally not shipped because full-model
-tests did not establish a stable supported configuration.
+CP=1. Long-context and CP=2 SFT remain unverified. MXFP8 and Muon SFT recipes
+are intentionally not shipped because full-model tests did not establish a
+stable supported configuration.
+
+## Parameter-Efficient Fine-Tuning
+
+DeepSeek-V4-Flash provides packed OpenMath LoRA recipes that preserve the SFT
+data and objective contract:
+
+| Recipe | Target |
+|--------|--------|
+| `deepseek_v4_flash_peft_openmath_thinking_packed_config` | Portable base |
+| `deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config` | 32-GPU GB200 |
+
+The LoRA rank and alpha are both 32. Adapters cover the MLA query down/up, KV,
+and output projections plus shared and routed expert FC1/FC2 projections.
+Routed experts use separate adapters (`share_expert_adapters=False`) rather
+than sharing one adapter across the experts local to an EP rank.
+
+Launch the GB200 recipe from the same imported BF16 checkpoint and packed data
+used by SFT:
+
+```bash
+./scripts/training/train.sh --nodes 8 --gpus-per-node 4 \
+  --recipe deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config \
+  --mode lora --step-func dsv4_step \
+  --pretrained_checkpoint work/models/deepseek-v4-flash \
+  --save_dir work/results/deepseek-v4-flash-peft \
+  --save_interval 100 --max_steps 100 --seq_length 1024 \
+  dist.distributed_timeout_minutes=180
+```
+
+The verification card records the current loss, checkpoint, and performance
+status for this exact recipe.
 
 ## Legacy Slurm Templates
 

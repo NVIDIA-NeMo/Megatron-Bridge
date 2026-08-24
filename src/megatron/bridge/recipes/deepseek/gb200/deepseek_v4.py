@@ -338,3 +338,12 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
         "NVTE_CPU_OFFLOAD_V1": 1,
     }
     return cfg
+
+
+def deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config() -> ConfigContainer:
+    """Return the GB200-optimized packed OpenMath LoRA config."""
+    from megatron.bridge.recipes.deepseek.deepseek_v4 import _apply_deepseek_v4_lora
+
+    cfg = deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config()
+    _apply_deepseek_v4_lora(cfg)
+    return cfg

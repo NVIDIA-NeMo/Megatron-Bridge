@@ -19,6 +19,7 @@ from __future__ import annotations
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config,
@@ -66,6 +67,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 __all__ = [
     "deepseek_v4_flash_no_mtp_sft_config",
+    "deepseek_v4_flash_peft_openmath_thinking_packed_config",
     "deepseek_v4_flash_pretrain_config",
     "deepseek_v4_flash_pretrain_muon_config",
     "deepseek_v4_flash_pretrain_mxfp8_config",
@@ -83,6 +85,29 @@ __all__ = [
     "DEEPSEEK_V4_FLASH_HF_PATH",
     "set_deepseek_v4_pipeline_model_parallel_layout",
 ]
+
+
+_DEEPSEEK_V4_LORA_TARGET_MODULES = [
+    "linear_q_down_proj",
+    "linear_q_up_proj",
+    "linear_kv_proj",
+    "linear_proj",
+    "linear_fc1",
+    "linear_fc2",
+]
+
+
+def _apply_deepseek_v4_lora(cfg: ConfigContainer) -> None:
+    """Apply the DeepSeek V4 LoRA convergence contract to an SFT config."""
+    cfg.peft = LoRA(
+        target_modules=list(_DEEPSEEK_V4_LORA_TARGET_MODULES),
+        dim=32,
+        alpha=32,
+        dropout=0.0,
+        share_expert_adapters=False,
+    )
+    cfg.optimizer.lr = 1.0e-4
+    cfg.optimizer.min_lr = 0.0
 
 
 def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
@@ -106,4 +131,16 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
         enable_offline_packing=True,
         pad_seq_to_mult=2 * cfg.model.context_parallel_size,
     )
+    return cfg
+
+
+def deepseek_v4_flash_peft_openmath_thinking_packed_config() -> ConfigContainer:
+    """DSv4 Flash LoRA on packed OpenMathInstruct-2 thinking data.
+
+    The attention targets follow the DeepSeek MLA projection layout. Both shared
+    and routed MLP projections are adapted; grouped routed experts use one adapter
+    per local expert to match the verl training layout.
+    """
+    cfg = deepseek_v4_flash_sft_openmath_thinking_packed_config()
+    _apply_deepseek_v4_lora(cfg)
     return cfg
