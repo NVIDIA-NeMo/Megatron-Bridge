@@ -346,4 +346,7 @@ def deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config() -> ConfigCont
 
     cfg = deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config()
     _apply_deepseek_v4_lora(cfg)
+    # Unified recompute cannot replay offloaded activations for unshared grouped-expert adapters.
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.env_vars.pop("NVTE_CPU_OFFLOAD_V1", None)
     return cfg

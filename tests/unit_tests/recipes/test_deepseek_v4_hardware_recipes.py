@@ -159,6 +159,8 @@ def test_flash_packed_peft_recipe_adapts_mla_and_unshared_experts() -> None:
     assert cfg.peft.share_expert_adapters is False
     assert cfg.optimizer.lr == 1.0e-4
     assert cfg.optimizer.min_lr == 0.0
+    assert cfg.model.fine_grained_activation_offloading is False
+    assert "NVTE_CPU_OFFLOAD_V1" not in cfg.env_vars
 
     sft_cfg = flash_packed_sft_config()
     assert cfg.dataset == sft_cfg.dataset
