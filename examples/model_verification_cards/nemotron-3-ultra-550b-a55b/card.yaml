@@ -11,9 +11,8 @@ summary: >
   their canonical 256-GPU MXFP8 recipes.
   Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip is
   verified. CPU conversion, portable manual-forward and deterministic-inference
-  reruns, remaining functional training, checkpoint resume, and the separately
-  scoped GB200 and H100 FSDP workloads still require completed verification
-  runs before those support claims are promoted.
+  reruns, remaining functional training, and checkpoint resume still require
+  completed verification runs before those support claims are promoted.
 verification_index:
   model_level:
     verified:
@@ -34,9 +33,6 @@ verification_index:
   performance:
     GB200: verified
     GB300: verified
-  fsdp:
-    GB200: unverified
-    H100: unverified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
   hf_revision: 624ba927cfbef0427354998700de3d51173c8c04  # pragma: allowlist secret
@@ -478,46 +474,3 @@ items:
         skipped or NaN iterations. Loss moves from 12.20118 to 7.019335; the
         final ten steps average 2282.400 ms, 1306.850 TFLOP/s/GPU, and 3589.204
         tokens/s/GPU. The resolved configuration persists.
-
-  pretrain_fsdp:
-    GB200:
-      status: unverified
-      precision: bf16
-      enabled_features:
-        moe_dispatcher: hybridep
-        megatron_fsdp: optim_grads_params
-      command: null
-      last_verified: null
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        peak_allocated_memory_gib: null
-        peak_reserved_memory_gib: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      expected_result: >
-        No BF16 GB200 Megatron-FSDP library recipe is claimed by this PR. The
-        distributed-optimizer GB200 pretraining path is verified first; FSDP
-        remains unverified until a convergence-safe library configuration
-        completes independently.
-
-    H100:
-      status: unverified
-      precision: bf16
-      enabled_features:
-        megatron_fsdp: optim_grads_params
-      command: null
-      last_verified: null
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        peak_allocated_memory_gib: null
-        peak_reserved_memory_gib: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      expected_result: >
-        No canonical public H100 Megatron-FSDP recipe is currently exported;
-        this workflow remains unverified until one is available and completes
-        all applicable verification gates.
