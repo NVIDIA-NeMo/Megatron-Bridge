@@ -352,6 +352,87 @@ def test_vision_context_parallel_rejects_process_group_mismatch():
         )
 
 
+class _FakeDynamicVisionModel(nn.Module):
+    """Returns one feature row per patch implied by the sizes it is handed."""
+
+    temporal_patch_dim = 1
+    add_class_token = False
+
+    def __init__(self, hidden_size: int, patch_dim: int):
+        super().__init__()
+        self.scale = nn.Parameter(torch.zeros(1))
+        self.hidden_size = hidden_size
+        self.patch_dim = patch_dim
+        self.seen = {}
+
+    def forward(self, images, *, imgs_sizes, packed_seq_params, num_frames):
+        self.seen = {"images": images, "imgs_sizes": imgs_sizes, "num_frames": num_frames}
+        patches = sum(
+            (int(height) // self.patch_dim) * (int(width) // self.patch_dim) for height, width in imgs_sizes.tolist()
+        )
+        return torch.arange(patches * self.hidden_size, dtype=torch.float32).reshape(1, patches, self.hidden_size)
+
+
+def test_sharded_encode_projects_locally_then_gathers_the_global_features():
+    # The distributed equivalence test covers the numerics, but it runs in a
+    # torchrun subprocess. This exercises the same Bridge-side wiring in-process:
+    # the split feeds the tower, the placeholder grid gets padded, and the
+    # projector runs before the gather rather than after it.
+    from megatron.bridge.models.nemotron_omni import modeling_nemotron_omni as modeling
+
+    hidden_size = 8
+    patch_dim = 16
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.patch_dim = patch_dim
+    model.context_parallel_lm = 2
+    model.vision_context_parallel = True
+    model.config = SimpleNamespace(fp8_recipe=None)
+    model.pg_collection = SimpleNamespace(cp=SimpleNamespace(size=lambda: 2))
+    model.vision_model = _FakeDynamicVisionModel(hidden_size, patch_dim)
+    model.vision_projection = nn.Linear(hidden_size * 4, 5, bias=False)
+
+    # This rank keeps a single 1x1-patch placeholder, the shape MCore produces
+    # when a microbatch has fewer images than CP ranks.
+    local_num_frames = torch.tensor([1], dtype=torch.int32)
+    calls = {}
+
+    def fake_split(images, imgs_sizes, packed_seq_params, **kwargs):
+        calls["split"] = kwargs
+        local_sizes = torch.tensor([[patch_dim, patch_dim]], dtype=torch.int32)
+        return images[:, :1, :], local_sizes, packed_seq_params, False, 1, local_num_frames
+
+    def fake_gather(projected, num_padded_ranks):
+        calls["gather"] = {"width": projected.shape[-1], "num_padded_ranks": num_padded_ranks}
+        return projected
+
+    original_split = modeling.split_to_context_parallel_ranks_dynamic_res
+    original_gather = modeling.gather_from_context_parallel_ranks_dynamic_res
+    modeling.split_to_context_parallel_ranks_dynamic_res = fake_split
+    modeling.gather_from_context_parallel_ranks_dynamic_res = fake_gather
+    try:
+        encoded = model._encode_images(
+            torch.randn(1, 3, 32, 32),
+            torch.tensor([[32, 32]], dtype=torch.int32),
+            None,
+            None,
+        )
+    finally:
+        modeling.split_to_context_parallel_ranks_dynamic_res = original_split
+        modeling.gather_from_context_parallel_ranks_dynamic_res = original_gather
+
+    assert calls["split"]["patch_dim"] == patch_dim
+    # The tower must see this rank's shard, including the frame counts the
+    # splitter recomputed for it rather than the microbatch-wide ones.
+    assert model.vision_model.seen["images"].shape[1] == 1
+    assert model.vision_model.seen["num_frames"] is local_num_frames
+    # A 1x1 placeholder grid only survives pixel shuffle once padded to 2x2.
+    assert encoded.shape == (1, 5)
+    # Width 5 is the projector's output, so the gather ran on projected
+    # features; gathering first would have handed it the wider encoder output.
+    assert calls["gather"] == {"width": 5, "num_padded_ranks": 1}
+
+
 @pytest.mark.gpu
 def test_vision_context_parallel_is_disabled_when_cp_is_one(single_rank_model_parallel):
     # Sharding images over a one-rank CP group is a no-op wrapped in two
