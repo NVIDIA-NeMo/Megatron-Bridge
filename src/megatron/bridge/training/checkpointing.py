@@ -1893,6 +1893,8 @@ def save_tokenizer_assets(
     tokenizer: MegatronTokenizer,
     tokenizer_config: TokenizerConfig,
     checkpoint_path: str,
+    *,
+    raise_on_error: bool = False,
 ) -> None:
     """Save tokenizer files to the checkpoint directory.
 
@@ -1904,6 +1906,7 @@ def save_tokenizer_assets(
         tokenizer: The tokenizer instance to save.
         tokenizer_config: The tokenizer configuration (used for file-based tokenizers).
         checkpoint_path: The checkpoint directory path.
+        raise_on_error: Propagate tokenizer persistence errors to the caller.
     """
     if tokenizer is None:
         return
@@ -2022,6 +2025,8 @@ def save_tokenizer_assets(
             import traceback
 
             logger.error(traceback.format_exc())
+        if raise_on_error:
+            raise
 
 
 def _generate_model_state_dict(
