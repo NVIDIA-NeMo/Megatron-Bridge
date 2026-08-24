@@ -346,6 +346,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096
     cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
 
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
