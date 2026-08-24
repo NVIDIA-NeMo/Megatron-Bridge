@@ -328,6 +328,7 @@ class TestDataGPTSFTDataset:
         assert result["loss_mask"].tolist() == [[0, 1, 1, 1, 1, 1, 1, 0]]
         assert result["position_ids"].tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
         assert result["attention_mask"] is None
+        assert result["padding_mask"].tolist() == [[False, False, False, False, False, False, False, True]]
         assert result["cu_seqlens_q"].tolist() == [0, 4, 7]
         assert result["cu_seqlens_kv"].tolist() == [0, 4, 7]
         assert result["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
