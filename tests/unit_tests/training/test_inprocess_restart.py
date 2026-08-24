@@ -16,6 +16,8 @@ import os
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from megatron.bridge.training.config import InProcessRestartConfig
 from megatron.bridge.training.inprocess_restart import inprocess_restart, maybe_wrap_for_inprocess_restart
 from megatron.bridge.training.state import GlobalState
@@ -23,6 +25,36 @@ from megatron.bridge.training.state import GlobalState
 
 class TestInProcessRestart:
     """Test cases for the inprocess_restart function."""
+
+    def test_inprocess_restart_honors_max_iterations(self):
+        """Test that a finite retry limit aborts before the next attempt."""
+        from nvidia_resiliency_ext.inprocess.exception import RestartAbort
+        from nvidia_resiliency_ext.inprocess.state import State
+
+        config = InProcessRestartConfig(
+            enabled=True,
+            max_iterations=2,
+            active_world_size=1,
+            granularity="rank",
+            empty_cuda_cache=False,
+        )
+        mock_global_state = MagicMock(spec=GlobalState)
+
+        with (
+            patch.dict(os.environ, {"MASTER_PORT": "29500"}),
+            patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+            patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+        ):
+            mock_wrapper.return_value.return_value = MagicMock()
+            inprocess_restart(MagicMock(), config, mock_global_state)
+
+        retry_controller = mock_wrapper.call_args.kwargs["initialize"].instances[0]
+        allowed_state = State(rank=0, world_size=1, active_rank=0, active_world_size=1, iteration=1).freeze()
+        exhausted_state = State(rank=0, world_size=1, active_rank=0, active_world_size=1, iteration=2).freeze()
+
+        assert retry_controller(allowed_state) is allowed_state
+        with pytest.raises(RestartAbort):
+            retry_controller(exhausted_state)
 
     def test_inprocess_restart_resolves_default_active_world_size(self):
         """Test the documented WORLD_SIZE fallback for active ranks."""
@@ -53,6 +85,7 @@ class TestInProcessRestart:
         mock_train_fn = MagicMock()
         mock_config = MagicMock(spec=InProcessRestartConfig)
         mock_config.active_world_size = 2
+        mock_config.max_iterations = None
         mock_config.granularity = "rank"
         mock_config.empty_cuda_cache = True
         mock_config.max_rank_faults = None
@@ -108,7 +141,7 @@ class TestInProcessRestart:
             mock_finalize.assert_called()
 
             # Verify initialize components
-            mock_retry.assert_called_once_with(min_world_size=2)
+            mock_retry.assert_called_once_with(max_iterations=None, min_world_size=2)
             mock_nested_completed.assert_called_once()
 
             # Verify abort components

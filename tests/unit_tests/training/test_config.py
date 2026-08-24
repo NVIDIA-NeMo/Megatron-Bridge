@@ -1075,8 +1075,9 @@ class TestConfigContainerValidation:
         """Test validation error when micro_batch_size == 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1225,8 +1226,9 @@ class TestConfigContainerValidation:
             calculate_per_token_loss=True,
         )
         train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=8,
@@ -1756,6 +1758,7 @@ class TestConfigContainerValidation:
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,

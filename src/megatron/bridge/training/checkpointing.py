@@ -16,6 +16,7 @@
 
 import contextlib
 import gc
+import inspect
 import os
 import random
 import shutil
@@ -824,6 +825,14 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"does not implement the CheckpointManager protocol."
             )
 
+        try:
+            inspect.signature(manager.save).bind(None, None)
+        except (TypeError, ValueError) as err:
+            raise TypeError(
+                f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' save method "
+                "must accept (ctx, callback_manager)."
+            ) from err
+
         return manager
 
     return DefaultCheckpointManager(checkpoint_config)
@@ -1472,16 +1481,8 @@ def save_checkpoint(
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
                     msc.torch.save(train_state_dict, train_state_local_filename)
-                    msc.torch.save(train_state_dict, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with msc.open(tracker_filename, "w") as f:
-                        f.write(str(step))
                 else:
                     torch.save(train_state_dict, train_state_local_filename)
-                    shutil.copy(train_state_local_filename, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with open(tracker_filename, "w") as f:
-                        f.write(str(step))
 
                 cfg.to_yaml(config_filename)
 
@@ -1490,6 +1491,18 @@ def save_checkpoint(
                     tokenizer_instance = getattr(cfg.dataset, "tokenizer", None) if cfg.dataset else None
                     if tokenizer_instance is not None:
                         save_tokenizer_assets(tokenizer_instance, cfg.tokenizer, checkpoint_name)
+
+                if MultiStorageClientFeature.is_enabled():
+                    msc = MultiStorageClientFeature.import_package()
+                    msc.torch.save(train_state_dict, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with msc.open(tracker_filename, "w") as f:
+                        f.write(str(step))
+                else:
+                    shutil.copy(train_state_local_filename, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with open(tracker_filename, "w") as f:
+                        f.write(str(step))
 
                 tp_rank = (tensor_rank if tensor_rank is not None else pg_collection.tp.rank()) + 1
                 tp_world_size = pg_collection.tp.size()
@@ -1531,7 +1544,7 @@ def save_checkpoint(
             wandb_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 wandb_writer=state.wandb_logger,
             )
 
@@ -1541,7 +1554,7 @@ def save_checkpoint(
             mlflow_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 mlflow_logger=state.mlflow_logger,
             )
 
@@ -1549,7 +1562,7 @@ def save_checkpoint(
             comet_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 comet_logger=state.comet_logger,
             )
 
@@ -1858,6 +1871,20 @@ def maybe_load_dataloader_state(
         print_rank_0(f"no dataloader state for iteration {iteration}; dataloader starts from the beginning")
         return
 
+    state_file_pattern = join_paths(iter_dir, "train_dataloader_dprank*.pt")
+    saved_dp_size = (
+        len(msc.glob(state_file_pattern))
+        if msc is not None
+        else len(list(Path(iter_dir).glob("train_dataloader_dprank*.pt")))
+    )
+    current_dp_size = get_pg_size(pg_collection.dp)
+    if saved_dp_size != current_dp_size:
+        raise RuntimeError(
+            f"Dataloader state at {iter_dir} was saved for data-parallel size {saved_dp_size}, but the current "
+            f"data-parallel size is {current_dp_size}. Resuming would silently change the training data order; "
+            "refusing to continue."
+        )
+
     dp_rank = get_pg_rank(pg_collection.dp)
     data_state_load_path = join_paths(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
     if not is_file(data_state_load_path):
@@ -1881,6 +1908,8 @@ def save_tokenizer_assets(
     tokenizer: MegatronTokenizer,
     tokenizer_config: TokenizerConfig,
     checkpoint_path: str,
+    *,
+    raise_on_error: bool = False,
 ) -> None:
     """Save tokenizer files to the checkpoint directory.
 
@@ -1892,6 +1921,7 @@ def save_tokenizer_assets(
         tokenizer: The tokenizer instance to save.
         tokenizer_config: The tokenizer configuration (used for file-based tokenizers).
         checkpoint_path: The checkpoint directory path.
+        raise_on_error: Propagate tokenizer persistence errors to the caller.
     """
     if tokenizer is None:
         return
@@ -2010,6 +2040,8 @@ def save_tokenizer_assets(
             import traceback
 
             logger.error(traceback.format_exc())
+        if raise_on_error:
+            raise
 
 
 def _generate_model_state_dict(
@@ -2895,6 +2927,9 @@ def _load_checkpoint_from_path(
         else:
             gen_sd_optim = None
             gen_sd_opt_param_scheduler = None
+            if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
+                ignore_optimizer_state = True
+                print_rank_0("Optimizer state was not saved in the torch-dist checkpoint; using a fresh optimizer")
 
         # Determine if rerun state will be loaded
         if tp_pp_match and not release and not cfg.checkpoint.finetune and "rerun_state_machine" in state_dict:
