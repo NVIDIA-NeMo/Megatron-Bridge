@@ -135,6 +135,7 @@ from megatron.bridge.models.nemotron import (
     NemotronBridge,
 )
 from megatron.bridge.models.nemotron_omni import (
+    Nemotron35SuperVLBridge,
     NemotronOmniBridge,
     NemotronOmniModel,
 )
@@ -298,6 +299,7 @@ __all__ = [
     "NemotronVLModelProvider",
     "NemotronOmniBridge",
     "NemotronOmniModel",
+    "Nemotron35SuperVLBridge",
     # ASR Models
     "Qwen3ASRBridge",
     "Qwen3ASRModel",

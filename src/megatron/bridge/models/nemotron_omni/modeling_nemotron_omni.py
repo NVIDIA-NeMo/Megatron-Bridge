@@ -107,13 +107,57 @@ def _pixel_shuffle_dynamic_resolution(
     return shuffled.reshape(batch, (height * width) // 4, hidden * 4)
 
 
+def _compute_evs_retention_mask(
+    video_embeddings: torch.Tensor,
+    *,
+    height: int,
+    width: int,
+    pruning_rate: float,
+) -> torch.Tensor:
+    """Return HF-compatible EVS decisions for one post-shuffle video grid.
+
+    Unlike the current HF implementation, the spatial grid is explicit rather
+    than reconstructed with ``sqrt(tokens)``. This is equivalent for square
+    inputs and remains correct for dynamic rectangular video.
+    """
+
+    if video_embeddings.ndim != 3:
+        raise ValueError(
+            f"EVS expects [tubelets, spatial_tokens, hidden] embeddings, got {tuple(video_embeddings.shape)}."
+        )
+    if not 0.0 <= pruning_rate <= 1.0:
+        raise ValueError(f"video pruning rate must be in [0, 1], got {pruning_rate}.")
+    if height <= 0 or width <= 0 or height * width != video_embeddings.shape[1]:
+        raise ValueError(f"EVS grid {height}x{width} does not match {video_embeddings.shape[1]} spatial tokens.")
+
+    tubelets = video_embeddings.shape[0]
+    spatial_tokens = height * width
+    if tubelets <= 1 or pruning_rate == 0.0:
+        return torch.ones(tubelets * spatial_tokens, dtype=torch.bool, device=video_embeddings.device)
+
+    grid = video_embeddings.reshape(tubelets, height, width, video_embeddings.shape[-1])
+    similarity = torch.nn.functional.cosine_similarity(grid[1:], grid[:-1], dim=-1)
+    dissimilarity = 1 - similarity
+    dissimilarity = torch.cat(
+        (255 * torch.ones_like(grid[:1, :, :, 0]), dissimilarity),
+        dim=0,
+    )
+    flat_dissimilarity = dissimilarity.reshape(-1)
+    tokens_to_keep = max(spatial_tokens, int(tubelets * spatial_tokens * (1 - pruning_rate)))
+    topk_indices = torch.argsort(flat_dissimilarity, descending=True, stable=True)[:tokens_to_keep]
+    retention_mask = torch.zeros_like(flat_dissimilarity, dtype=torch.bool)
+    retention_mask[topk_indices] = True
+    return retention_mask
+
+
 class NemotronOmniModel(MegatronModule):
     """Nemotron Omni model whose input sequence is already media-expanded.
 
     The collator supplies either a dense batch or a complete MCore THD stream.
-    Media insertion is one-for-one and therefore length preserving. With
+    Media insertion is one-for-one before optional video token pruning. With
     context parallelism, the model inserts media into the full stream and then
-    selects the rank-local CP shard without changing packed metadata.
+    selects the rank-local CP shard without changing packed metadata. Models
+    with EVS pruning currently fail closed for packed sequences.
 
     Image, video, sound, and text inputs use the same one-feature-per-placeholder
     contract.
@@ -156,6 +200,7 @@ class NemotronOmniModel(MegatronModule):
         temporal_patch_dim: int = 1,
         separate_video_embedder: bool = False,
         temporal_ckpt_compat: bool = False,
+        video_pruning_rate: float = 0.0,
         sound_model: Optional[torch.nn.Module] = None,
         sound_projection: Optional[torch.nn.Module] = None,
         sound_token_index: int = 0,
@@ -172,6 +217,7 @@ class NemotronOmniModel(MegatronModule):
         self.sound_token_index = sound_token_index
         self.patch_dim = patch_dim
         self.dynamic_resolution = dynamic_resolution
+        self.video_pruning_rate = video_pruning_rate
         self.sequence_parallel_lm = language_transformer_config.sequence_parallel
         self.context_parallel_lm = language_transformer_config.context_parallel_size
         self.share_embeddings_and_output_weights = share_embeddings_and_output_weights
@@ -391,6 +437,184 @@ class NemotronOmniModel(MegatronModule):
 
         projected = self.vision_projection(encoded.unsqueeze(1))
         return projected.squeeze(1).contiguous()
+
+    def _video_feature_retention_mask(
+        self,
+        image_embeddings: torch.Tensor,
+        imgs_sizes: Optional[torch.Tensor],
+        num_frames: Optional[torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        """Build EVS decisions in the exact flattened media-feature order."""
+
+        pruning_rate = getattr(self, "video_pruning_rate", 0.0)
+        if pruning_rate == 0.0:
+            return None
+        if imgs_sizes is None or num_frames is None:
+            raise ValueError("video pruning requires imgs_sizes and num_frames metadata.")
+        if self.vision_model is None:
+            raise RuntimeError("video pruning requires the vision encoder.")
+
+        temporal_patch_dim = int(getattr(self.vision_model, "temporal_patch_dim", 1))
+        if temporal_patch_dim <= 1:
+            raise ValueError("video pruning requires a temporal video embedder.")
+        frame_counts = [int(value) for value in num_frames.tolist()]
+        sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
+        if sum(frame_counts) != len(sizes):
+            raise ValueError(
+                "num_frames must account for every imgs_sizes row before EVS: "
+                f"sum(num_frames)={sum(frame_counts)}, rows={len(sizes)}."
+            )
+
+        retention_masks = []
+        frame_offset = 0
+        feature_offset = 0
+        for frame_count in frame_counts:
+            if frame_count <= 0:
+                raise ValueError(f"num_frames entries must be positive, got {frame_count}.")
+            media_sizes = sizes[frame_offset : frame_offset + frame_count]
+            frame_offset += frame_count
+            tubelet_sizes = []
+            for group_start in range(0, frame_count, temporal_patch_dim):
+                group_sizes = media_sizes[group_start : group_start + temporal_patch_dim]
+                if len(set(group_sizes)) != 1:
+                    raise ValueError(
+                        "Every frame in a temporal tubelet must use the same dynamic-resolution grid; "
+                        f"got {group_sizes}."
+                    )
+                tubelet_sizes.append(group_sizes[0])
+
+            token_counts = []
+            for height, width in tubelet_sizes:
+                patch_height = height // self.patch_dim
+                patch_width = width // self.patch_dim
+                if patch_height * self.patch_dim != height or patch_width * self.patch_dim != width:
+                    raise ValueError(f"Video size {(height, width)} is not divisible by patch_dim={self.patch_dim}.")
+                if patch_height % 2 or patch_width % 2:
+                    raise ValueError(
+                        "Video patch grids must be even for the spatial 2x2 shuffle; "
+                        f"got {patch_height}x{patch_width}."
+                    )
+                token_counts.append((patch_height // 2) * (patch_width // 2))
+
+            media_feature_count = sum(token_counts)
+            media_embeddings = image_embeddings[feature_offset : feature_offset + media_feature_count]
+            feature_offset += media_feature_count
+            if media_embeddings.shape[0] != media_feature_count:
+                raise ValueError("Projected video features ended before the declared media metadata.")
+
+            # A one-frame media item is an image. A one-tubelet video also has
+            # nothing to prune because EVS always preserves one full tubelet.
+            if frame_count == 1 or len(tubelet_sizes) == 1:
+                retention_masks.append(
+                    torch.ones(media_feature_count, dtype=torch.bool, device=image_embeddings.device)
+                )
+                continue
+            if len(set(tubelet_sizes)) != 1 or len(set(token_counts)) != 1:
+                raise ValueError(
+                    "EVS compares matching spatial positions across tubelets, so one video must use "
+                    f"a common post-resize grid; got {tubelet_sizes}."
+                )
+
+            height, width = tubelet_sizes[0]
+            shuffled_height = height // self.patch_dim // 2
+            shuffled_width = width // self.patch_dim // 2
+            video_embeddings = media_embeddings.reshape(
+                len(tubelet_sizes),
+                token_counts[0],
+                media_embeddings.shape[-1],
+            )
+            retention_masks.append(
+                _compute_evs_retention_mask(
+                    video_embeddings,
+                    height=shuffled_height,
+                    width=shuffled_width,
+                    pruning_rate=pruning_rate,
+                )
+            )
+
+        if feature_offset != image_embeddings.shape[0]:
+            raise ValueError(
+                "Projected media features exceed the declared imgs_sizes/num_frames metadata: "
+                f"used {feature_offset}, received {image_embeddings.shape[0]}."
+            )
+        return torch.cat(retention_masks) if retention_masks else image_embeddings.new_ones((0,), dtype=torch.bool)
+
+    def _apply_video_token_pruning(
+        self,
+        *,
+        input_ids: torch.Tensor,
+        combined_embeddings: torch.Tensor,
+        image_feature_retention_mask: Optional[torch.Tensor],
+        media_token_validity_mask: Optional[torch.Tensor],
+        position_ids: Optional[torch.Tensor],
+        attention_mask: Optional[torch.Tensor],
+        labels: Optional[torch.Tensor],
+        loss_mask: Optional[torch.Tensor],
+        padding_mask: Optional[torch.Tensor],
+        packed_seq_params: Optional[PackedSeqParams],
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
+    ]:
+        """Remove EVS-pruned media tokens from an unpacked inference sequence."""
+
+        if image_feature_retention_mask is None or bool(image_feature_retention_mask.all()):
+            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, padding_mask
+        if packed_seq_params is not None:
+            raise NotImplementedError(
+                "EVS video pruning is not yet supported with collator-owned packed sequences. "
+                "Use unpacked inference for this model."
+            )
+        if input_ids.shape[0] != 1:
+            raise NotImplementedError("EVS video pruning currently requires batch size one.")
+
+        media_mask = input_ids == self.image_token_index
+        if media_token_validity_mask is not None:
+            if media_token_validity_mask.shape != input_ids.shape:
+                raise ValueError("media_token_validity_mask must have the same shape as input_ids.")
+            media_mask = media_mask & media_token_validity_mask.bool()
+        if int(media_mask.sum().item()) != image_feature_retention_mask.numel():
+            raise ValueError(
+                "EVS media alignment failed: "
+                f"found {int(media_mask.sum().item())} placeholders for "
+                f"{image_feature_retention_mask.numel()} feature decisions."
+            )
+
+        token_retention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        token_retention_mask[media_mask] = image_feature_retention_mask.to(device=input_ids.device)
+        index = token_retention_mask[0].nonzero(as_tuple=False).squeeze(-1)
+        input_ids = input_ids.index_select(1, index)
+        combined_embeddings = combined_embeddings.index_select(0, index.to(combined_embeddings.device))
+        if position_ids is not None:
+            # The HF processor does not provide explicit positions, so the
+            # language model constructs a contiguous range after EVS shortens
+            # the sequence. Rebuild that range here rather than retaining gaps
+            # at the removed visual-token positions.
+            position_ids = torch.arange(
+                index.numel(),
+                dtype=position_ids.dtype,
+                device=position_ids.device,
+            ).unsqueeze(0)
+        labels = self._select_sequence(labels, index, dim=1)
+        loss_mask = self._select_sequence(loss_mask, index, dim=1)
+        padding_mask = self._select_sequence(padding_mask, index, dim=1)
+
+        if attention_mask is not None:
+            if attention_mask.dim() == 2:
+                attention_mask = self._select_sequence(attention_mask, index, dim=1)
+            elif attention_mask.dim() == 4:
+                attention_mask = self._select_sequence(attention_mask, index, dim=2)
+                attention_mask = self._select_sequence(attention_mask, index, dim=3)
+            else:
+                raise ValueError(
+                    f"EVS supports a 2-D token-validity mask or 4-D causal mask, got {tuple(attention_mask.shape)}."
+                )
+        return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, padding_mask
 
     def _encode_sound(self, sound_clips: torch.Tensor, sound_length: Optional[torch.Tensor]) -> torch.Tensor:
         """Encode mel features and return valid projected rows in sample order."""
@@ -675,8 +899,14 @@ class NemotronOmniModel(MegatronModule):
                     vision_packed_seq_params,
                     num_frames,
                 )
+                image_feature_retention_mask = self._video_feature_retention_mask(
+                    image_embeddings,
+                    imgs_sizes,
+                    num_frames,
+                )
             else:
                 image_embeddings = None
+                image_feature_retention_mask = None
 
             if has_sound_inputs:
                 sound_embeddings = self._encode_sound(sound_clips, sound_length)
@@ -729,6 +959,27 @@ class NemotronOmniModel(MegatronModule):
                     self.sound_token_index,
                     media_token_validity_mask,
                 )
+
+            (
+                lm_input_ids,
+                combined_embeddings,
+                position_ids,
+                attention_mask,
+                labels,
+                loss_mask,
+                padding_mask,
+            ) = self._apply_video_token_pruning(
+                input_ids=input_ids,
+                combined_embeddings=combined_embeddings,
+                image_feature_retention_mask=image_feature_retention_mask,
+                media_token_validity_mask=media_token_validity_mask,
+                position_ids=position_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+                loss_mask=loss_mask,
+                padding_mask=padding_mask,
+                packed_seq_params=packed_seq_params,
+            )
 
         if packed_seq_params is not None:
             # THD tensors and their logical boundaries are final collator

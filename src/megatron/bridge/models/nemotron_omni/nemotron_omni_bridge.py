@@ -137,6 +137,10 @@ class NemotronOmniBridge(NemotronVLBridge):
         provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
 
         provider_kwargs["num_layers"] = None
+        hybrid_pattern = NemotronHBridge._hf_hybrid_pattern(llm_config)
+        if hybrid_pattern is None:
+            raise ValueError("Nemotron Omni requires hybrid_override_pattern or layers_block_type in llm_config.")
+        provider_kwargs["hybrid_layer_pattern"] = hybrid_pattern
         provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)
 
         if hasattr(hf_config, "projector_hidden_size"):
@@ -179,7 +183,7 @@ class NemotronOmniBridge(NemotronVLBridge):
             provider_kwargs["temporal_ckpt_compat"] = True
 
         provider = NemotronOmniModelProvider(**provider_kwargs)
-        provider.mtp_hybrid_override_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
+        NemotronHBridge._configure_mtp_provider(provider, llm_config)
         return provider
 
     @classmethod
@@ -199,6 +203,10 @@ class NemotronOmniBridge(NemotronVLBridge):
     # ------------------------------------------------------------------
     # Parameter mapping
     # ------------------------------------------------------------------
+
+    def _mtp_hf_prefix(self) -> str:
+        """Return the HF prefix applied to Nemotron-H MTP weights."""
+        return ""
 
     def _llava_mapping_registry(self) -> MegatronMappingRegistry:
         """Build mappings for the historical LLaVA wrapper namespace."""
@@ -281,7 +289,7 @@ class NemotronOmniBridge(NemotronVLBridge):
                     megatron_prefix="language_model.",
                     # The public Omni checkpoint keeps MTP at the top level,
                     # while the rest of NemotronH lives under language_model.
-                    hf_prefix="" if is_mtp else "language_model.",
+                    hf_prefix=self._mtp_hf_prefix() if is_mtp else "language_model.",
                 )
             )
 
@@ -321,6 +329,52 @@ class NemotronOmniBridge(NemotronVLBridge):
         for name in self._HF_PASSTHROUGH_KEYS:
             if name in source_keys:
                 yield from HFWeightTuple(name, state[name]).iter_finalized(cpu=cpu)
+
+
+@MegatronModelBridge.register_bridge(
+    source="NemotronH_Omni_Reasoning_V3",
+    target=NemotronOmniModel,
+    provider=NemotronOmniModelProvider,
+    model_type="nemotron_h_omni",
+)
+class Nemotron35SuperVLBridge(NemotronOmniBridge):
+    """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniModelProvider:
+        """Create the shared Omni provider with Super-VL checkpoint features enabled."""
+        provider = super().provider_bridge(hf_pretrained)
+        hf_config = hf_pretrained.config
+        temporal_patch_dim = int(getattr(hf_config, "video_temporal_patch_size", 1) or 1)
+
+        provider.temporal_patch_dim = temporal_patch_dim
+        provider.separate_video_embedder = temporal_patch_dim > 1
+        # The Super-VL checkpoint carries a trained video embedder. Do not
+        # synthesize one from image weights if that parameter is missing.
+        provider.temporal_ckpt_compat = False
+        provider.video_pruning_rate = float(getattr(hf_config, "video_pruning_rate", 0.0) or 0.0)
+        provider.vision_final_layernorm = bool(provider.mtp_num_layers)
+        return provider
+
+    def _mtp_hf_prefix(self) -> str:
+        """Nemotron 3.5 Super VL nests MTP below ``language_model``."""
+        return "language_model."
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """Add the Super-VL vision final norm to the shared Omni mappings."""
+        mappings = list(super().mapping_registry().mappings)
+        mappings.extend(
+            [
+                AutoMapping(
+                    megatron_param="vision_model.decoder.final_layernorm.weight",
+                    hf_param="vision_projector.vision_final_layernorm.weight",
+                ),
+                AutoMapping(
+                    megatron_param="vision_model.decoder.final_layernorm.bias",
+                    hf_param="vision_projector.vision_final_layernorm.bias",
+                ),
+            ]
+        )
+        return MegatronMappingRegistry(*mappings)
 
 
 class NemotronOmniLlavaBridge(NemotronOmniBridge):

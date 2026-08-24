@@ -173,6 +173,8 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     temporal_patch_dim: int = 1
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
+    video_pruning_rate: float = 0.0
+    vision_final_layernorm: bool = False
 
     # This field is serialized in run_config.yaml. It prevents an older
     # checkpoint whose provider had the same class name but LLaVA semantics
@@ -194,6 +196,10 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             )
         if self.has_sound and self.sound_config is None:
             raise ValueError("Sound-enabled Nemotron Omni requires sound_config from the checkpoint configuration.")
+        if not 0.0 <= self.video_pruning_rate <= 1.0:
+            raise ValueError(f"video_pruning_rate must be in [0, 1], got {self.video_pruning_rate}.")
+        if self.video_pruning_rate > 0 and self.temporal_patch_dim <= 1:
+            raise ValueError("video_pruning_rate > 0 requires temporal_patch_dim > 1.")
 
     def finalize(self) -> None:
         """Finalize a dynamic-resolution Nemotron Omni provider."""
@@ -232,6 +238,11 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         """
         vision_cfg = super()._build_vision_config(language_cfg)
         vision_cfg.pipeline_model_parallel_size = 1
+        if self.vision_final_layernorm:
+            # MCore places a final norm in the vision TransformerBlock when
+            # mtp_num_layers is non-None. Nemotron 3.5 Super VL was trained
+            # with that layout and its HF projector applies the same norm.
+            vision_cfg.mtp_num_layers = 1
         return vision_cfg
 
     def _build_vision_projection_config(self, language_cfg):
@@ -459,6 +470,7 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
             temporal_patch_dim=self.temporal_patch_dim,
             separate_video_embedder=self.separate_video_embedder,
             temporal_ckpt_compat=self.temporal_ckpt_compat,
+            video_pruning_rate=self.video_pruning_rate,
             sound_model=sound_model,
             sound_projection=sound_projection,
             sound_token_index=self.sound_context_token_id,
