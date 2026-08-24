@@ -159,7 +159,12 @@ def test_flash_packed_peft_recipe_adapts_mla_and_unshared_experts() -> None:
     assert cfg.peft.share_expert_adapters is False
     assert cfg.optimizer.lr == 1.0e-4
     assert cfg.optimizer.min_lr == 0.0
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
     assert cfg.model.fine_grained_activation_offloading is False
+    assert cfg.model.offload_modules is None
     assert "NVTE_CPU_OFFLOAD_V1" not in cfg.env_vars
 
     sft_cfg = flash_packed_sft_config()
@@ -170,7 +175,6 @@ def test_flash_packed_peft_recipe_adapts_mla_and_unshared_experts() -> None:
     assert cfg.model.pipeline_model_parallel_size == sft_cfg.model.pipeline_model_parallel_size
     assert cfg.model.expert_model_parallel_size == sft_cfg.model.expert_model_parallel_size
     assert cfg.model.moe_token_dispatcher_type == sft_cfg.model.moe_token_dispatcher_type
-    assert cfg.model.recompute_modules == sft_cfg.model.recompute_modules
 
 
 def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
