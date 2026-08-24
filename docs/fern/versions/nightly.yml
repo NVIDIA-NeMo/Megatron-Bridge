@@ -11,6 +11,58 @@ navigation:
     path: ./nightly/pages/performance-summary.mdx
   - page: Performance Archive
     path: ./nightly/pages/performance-summary-archive.mdx
+# BEGIN GENERATED MODEL VERIFICATION CATALOG
+- section: Model Verification
+  contents:
+  - page: Model Verification Catalog
+    path: ./nightly/pages/model-verification/index.mdx
+  - page: "deepseek-ai/DeepSeek-V3"
+    path: ./nightly/pages/model-verification/models/deepseek-v3.mdx
+  - page: "deepseek-ai/DeepSeek-V4-Flash"
+    path: ./nightly/pages/model-verification/models/deepseek-v4-flash.mdx
+  - page: "google/gemma-3-4b-it"
+    path: ./nightly/pages/model-verification/models/gemma-3-4b-it.mdx
+  - page: "google/gemma-4-26B-A4B-it"
+    path: ./nightly/pages/model-verification/models/gemma-4-26b-a4b-it.mdx
+  - page: "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B"
+    path: ./nightly/pages/model-verification/models/k-exaone-2.mdx
+  - page: "MiniMaxAI/MiniMax-M3"
+    path: ./nightly/pages/model-verification/models/minimax-m3.mdx
+  - page: "moonshotai/Kimi-K3"
+    path: ./nightly/pages/model-verification/models/kimi-k3.mdx
+  - page: "moonshotai/Moonlight-16B-A3B"
+    path: ./nightly/pages/model-verification/models/moonlight-16b-a3b.mdx
+  - page: "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
+    path: ./nightly/pages/model-verification/models/nemotron-3-nano-omni-30b-a3b-reasoning.mdx
+  - page: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    path: ./nightly/pages/model-verification/models/nemotron-3-nano-30b-a3b.mdx
+  - page: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    path: ./nightly/pages/model-verification/models/nemotron-3-nano-4b.mdx
+  - page: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
+    path: ./nightly/pages/model-verification/models/nemotron-3-super-120b-a12b.mdx
+  - page: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+    path: ./nightly/pages/model-verification/models/nemotron-3.5-lightning.mdx
+  - page: "openai/gpt-oss-120b"
+    path: ./nightly/pages/model-verification/models/gpt-oss-120b.mdx
+  - page: "openai/gpt-oss-20b"
+    path: ./nightly/pages/model-verification/models/gpt-oss-20b.mdx
+  - page: "Qwen/Qwen3-235B-A22B"
+    path: ./nightly/pages/model-verification/models/qwen3-235b-a22b.mdx
+  - page: "Qwen/Qwen3-30B-A3B"
+    path: ./nightly/pages/model-verification/models/qwen3-30b-a3b.mdx
+  - page: "Qwen/Qwen3-8B"
+    path: ./nightly/pages/model-verification/models/qwen3-8b.mdx
+  - page: "Qwen/Qwen3.6-35B-A3B"
+    path: ./nightly/pages/model-verification/models/qwen3.6-35b-a3b.mdx
+  - page: "Qwen/Qwen3.8-27B"
+    path: ./nightly/pages/model-verification/models/qwen3.8-27b.mdx
+  - page: "stepfun-ai/Step-3.5-Flash"
+    path: ./nightly/pages/model-verification/models/step35-flash.mdx
+  - page: "zai-org/GLM-5"
+    path: ./nightly/pages/model-verification/models/glm5.mdx
+  - page: "zai-org/GLM-5.2"
+    path: ./nightly/pages/model-verification/models/glm5-2.mdx
+# END GENERATED MODEL VERIFICATION CATALOG
 - section: Guides
   contents:
   - page: Parallelisms Guide

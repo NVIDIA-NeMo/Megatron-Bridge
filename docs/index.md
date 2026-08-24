@@ -11,6 +11,13 @@ performance-summary-archive.md
 ```
 
 ```{toctree}
+:caption: Model Verification
+:hidden:
+
+model-verification/index.md
+```
+
+```{toctree}
 :caption: Guides
 :hidden:
 
