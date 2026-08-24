@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import torch
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    is_gated_delta_net_variant,
-)
+from megatron.core.models.gpt import experimental_attention_variant_module_specs
 from megatron.core.models.hybrid.hybrid_layer_allocation import (
     Symbols,
     get_hybrid_layer_counts,
@@ -33,6 +33,17 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+_mcore_is_gated_delta_net_variant = cast(
+    Callable[[str | None], bool] | None,
+    getattr(experimental_attention_variant_module_specs, "is_gated_delta_net_variant", None),
+)
+
+
+def _is_gated_delta_net_variant(experimental_attention_variant: str | None) -> bool:
+    """Recognize GDN variants across current main and older MCore dev branches."""
+    if _mcore_is_gated_delta_net_variant is not None:
+        return _mcore_is_gated_delta_net_variant(experimental_attention_variant)
+    return experimental_attention_variant in {"gated_delta_net", "gdn", "gdn2"}
 
 
 @dataclass(frozen=True)
@@ -1409,7 +1420,7 @@ def num_floating_point_operations(
 
         # Handle GDN (Gated DeltaNet) hybrid attention variants. MCore normalizes
         # the deprecated "gated_delta_net" alias to "gdn" during config finalization.
-        if is_gated_delta_net_variant(experimental_attention_variant):
+        if _is_gated_delta_net_variant(experimental_attention_variant):
             linear_attention_freq = cfg.model.linear_attention_freq
             decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
