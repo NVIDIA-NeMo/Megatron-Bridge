@@ -76,6 +76,94 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     assert "tokenizer" not in serialized
 
 
+def test_in_batch_config_round_trip_is_declarative_and_serializable(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(),
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=8,
+        dataloader_type="single",
+    )
+
+    serialized = ConfigContainer._convert_value_to_dict(config)
+    restored = instantiate(serialized)
+
+    assert isinstance(restored, GPTSFTDatasetConfig)
+    assert restored.enable_in_batch_packing is True
+    assert restored.in_batch_packing_pad_to_multiple_of == 8
+
+
+def test_config_rejects_nonpositive_in_batch_packing_multiple(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=0,
+        dataloader_type="single",
+    )
+
+    with pytest.raises(ValueError, match="in_batch_packing_pad_to_multiple_of must be greater than 0"):
+        config.validate()
+
+
+def test_config_rejects_batch_dataloader_with_in_batch_packing(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        enable_in_batch_packing=True,
+        dataloader_type="batch",
+    )
+
+    with pytest.raises(ValueError, match="does not support dataloader_type='batch'"):
+        config.validate()
+
+
+@pytest.mark.parametrize(
+    "dataset_kwargs",
+    [
+        {"enable_in_batch_packing": True},
+        {"in_batch_packing_pad_to_multiple_of": 8},
+    ],
+)
+def test_config_rejects_typed_in_batch_fields_in_dataset_kwargs(tmp_path, dataset_kwargs):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        dataset_kwargs=dataset_kwargs,
+    )
+
+    with pytest.raises(ValueError, match="directly on GPTSFTDatasetConfig"):
+        config.validate()
+
+
+def test_config_rejects_dense_attention_mask_with_in_batch_packing(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        enable_in_batch_packing=True,
+        dataloader_type="single",
+        dataset_kwargs={"get_attention_mask_from_fusion": False},
+    )
+
+    with pytest.raises(ValueError, match="requires get_attention_mask_from_fusion=True"):
+        config.validate()
+
+
+def test_config_rejects_offline_and_in_batch_packing(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        enable_in_batch_packing=True,
+        dataloader_type="single",
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=128),
+    )
+
+    with pytest.raises(ValueError, match="enable_offline_packing and enable_in_batch_packing are mutually exclusive"):
+        config.validate()
+
+
 @pytest.mark.parametrize("max_single_sequence_length", [0, 129])
 def test_packed_specs_reject_invalid_max_single_sequence_length(max_single_sequence_length):
     """The per-sequence cap must be positive and fit within the pack."""
@@ -212,6 +300,8 @@ def test_build_gpt_sft_split_routes_chat_options(monkeypatch, tmp_path):
         memmap_workers=1,
         seed=1234,
         packed_sequence_size=-1,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=8,
         dataset_kwargs={
             "chat": True,
             "tool_schemas": {"type": "function"},
@@ -221,6 +311,51 @@ def test_build_gpt_sft_split_routes_chat_options(monkeypatch, tmp_path):
     assert result == str(dataset_path)
     assert captured["use_hf_tokenizer_chat_template"] is True
     assert captured["tool_schemas"] == {"type": "function"}
+    assert captured["enable_in_batch_packing"] is True
+    assert captured["in_batch_packing_pad_to_multiple_of"] == 8
+
+
+def test_build_gpt_sft_split_routes_in_batch_packing_to_prompt_completion(monkeypatch, tmp_path):
+    dataset_path = tmp_path / "training.jsonl"
+    dataset_path.touch()
+    captured = {}
+
+    def _build_sft(**kwargs):
+        captured.update(kwargs)
+        return kwargs["file_path"]
+
+    monkeypatch.setattr(builder_mod, "GPTSFTDataset", _build_sft)
+
+    result = build_gpt_sft_split(
+        dataset_path,
+        tokenizer=object(),
+        seq_length=128,
+        memmap_workers=1,
+        seed=1234,
+        packed_sequence_size=-1,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert result == str(dataset_path)
+    assert captured["enable_in_batch_packing"] is True
+    assert captured["in_batch_packing_pad_to_multiple_of"] == 4
+
+
+def test_build_gpt_sft_split_rejects_offline_and_in_batch_packing(tmp_path):
+    packed_path = tmp_path / "training.npy"
+    packed_path.touch()
+
+    with pytest.raises(ValueError, match="Offline packed data cannot also use in-batch packing"):
+        build_gpt_sft_split(
+            packed_path,
+            tokenizer=object(),
+            seq_length=128,
+            memmap_workers=1,
+            seed=1234,
+            packed_sequence_size=128,
+            enable_in_batch_packing=True,
+        )
 
 
 def test_local_source_rejects_hf_only_settings(tmp_path):
@@ -542,6 +677,9 @@ def test_hf_rewrite_invalidates_memmap_index_sidecars(monkeypatch, tmp_path):
 
 def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatch, tmp_path):
     config = _hf_config(tmp_path)
+    config.enable_in_batch_packing = True
+    config.in_batch_packing_pad_to_multiple_of = 8
+    config.dataloader_type = "single"
     materialize_mock = []
     dataset_calls = []
 
@@ -567,6 +705,8 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
     assert len(dataset_calls) == 2
     assert dataset_calls[0][1]["dataset_kwargs"]["chat"] is True
     assert dataset_calls[0][1]["dataset_kwargs"]["chat_loss_mode"] == "assistant"
+    assert all(call[1]["enable_in_batch_packing"] is True for call in dataset_calls)
+    assert all(call[1]["in_batch_packing_pad_to_multiple_of"] == 8 for call in dataset_calls)
 
 
 def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch, tmp_path):

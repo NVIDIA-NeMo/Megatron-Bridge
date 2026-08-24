@@ -83,6 +83,18 @@ class _FakeBridge:
         return _FakeBridge()
 
 
+class _FakeMoeBridge(_FakeBridge):
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        _FakeBridge.from_hf_pretrained(hf_path, **kwargs)
+        return _FakeMoeBridge()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        cfg = super().to_megatron_provider(load_weights=load_weights)
+        cfg.num_moe_experts = 128
+        return cfg
+
+
 class _FakeTextConfig:
     architectures = None
 
@@ -375,6 +387,27 @@ _QWEN3_MOE_SFT_FUNCS = [
     ]
     if callable(getattr(_qwen_module, name, None))
 ]
+
+
+def test_qwen3_moe_peft_recipe_builds_without_cuda(monkeypatch: pytest.MonkeyPatch):
+    """Offline packing must be able to construct a public recipe without CUDA."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.h100.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeMoeBridge)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    def fail_hardware_probe(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("recipe construction probed CUDA device properties")
+
+    monkeypatch.setattr(torch.cuda, "get_device_properties", fail_hardware_probe)
+
+    cfg = qwen3_30b_a3b_peft_config()
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "deepep"
+
 
 _QWEN3_MOE_PEFT_FUNCS = [
     getattr(_qwen_module, name)

@@ -1312,7 +1312,7 @@ class ConfigContainer(Container):
         # multiples so normalization cannot hide an invalid user value.
         if isinstance(
             self.dataset,
-            (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+            (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
         ):
             self.dataset.validate()
 
@@ -1364,8 +1364,8 @@ class ConfigContainer(Container):
                 self.dataset,
                 (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
             )
-            and self.dataset.seq_length % collate_padding_multiple != 0
-        ):
+            or (isinstance(self.dataset, GPTSFTDatasetConfig) and enable_in_batch_packing)
+        ) and self.dataset.seq_length % collate_padding_multiple != 0:
             raise ValueError(
                 f"{type(self.dataset).__name__}.seq_length must be divisible by the CP/SP collate padding multiple "
                 f"({collate_padding_multiple})."

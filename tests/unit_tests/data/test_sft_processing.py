@@ -301,6 +301,24 @@ def test_prompt_completion_full_loss_and_truncation_preserve_special_tokens():
     assert tokenized.loss_mask.tolist() == [True] * 5
 
 
+def test_prompt_completion_rejects_truncation_without_supervision():
+    tokenizer = _Tokenizer()
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        add_bos=True,
+        add_sep=True,
+        add_eos=False,
+    )
+
+    with pytest.raises(ValueError, match="supervised token"):
+        tokenize_prompt_completion_example(
+            {"prompt": "P", "completion": "A"},
+            tokenizer,
+            preprocessing,
+            max_length=2,
+            sep_token_id=103,
+        )
+
+
 @pytest.mark.parametrize(
     ("truncation_method", "expected_completion"),
     [("right", "bc"), ("left", "defg")],

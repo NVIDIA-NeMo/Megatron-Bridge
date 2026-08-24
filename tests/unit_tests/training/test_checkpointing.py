@@ -16,6 +16,7 @@
 import os
 import pickle
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
@@ -617,6 +618,63 @@ def save_checkpoint_fixtures():
 class TestSaveCheckpoint:
     """Test checkpoint saving functionality."""
 
+    def test_metadata_failure_does_not_publish_incomplete_checkpoint(self, tmp_path, save_checkpoint_fixtures):
+        """A failed metadata write must leave automatic resume on the previous checkpoint."""
+        state = save_checkpoint_fixtures["mock_state"]
+        state.cfg.checkpoint.save = str(tmp_path)
+        state.cfg.checkpoint.most_recent_k = -1
+        state.cfg.to_yaml.side_effect = OSError("metadata write failed")
+
+        previous_state = TrainState(step=500)
+        latest_train_state = tmp_path / "latest_train_state.pt"
+        torch.save(previous_state.state_dict(), latest_train_state)
+        legacy_tracker = tmp_path / "latest_checkpointed_iteration.txt"
+        legacy_tracker.write_text("500")
+
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=None),
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("torch.distributed.is_initialized", return_value=False),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            with pytest.raises(OSError, match="metadata write failed"):
+                save_checkpoint(
+                    state,
+                    save_checkpoint_fixtures["mock_model"],
+                    save_checkpoint_fixtures["mock_optimizer"],
+                    save_checkpoint_fixtures["mock_scheduler"],
+                    1000000,
+                    checkpointing_context={},
+                    pg_collection=pg_collection,
+                )
+
+        assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
+        assert legacy_tracker.read_text() == "500"
+
     @pytest.mark.parametrize("save_rng", [True, False])
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
@@ -832,6 +890,99 @@ class TestSaveCheckpoint:
         assert current_checkpoint.is_dir()
         assert future_incomplete_checkpoint.is_dir()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
+
+    def test_async_checkpoint_loggers_use_scheduled_step(self, save_checkpoint_fixtures):
+        """Delayed logger finalizers must identify the checkpoint they belong to."""
+        state = save_checkpoint_fixtures["mock_state"]
+        state.cfg.checkpoint.async_save = True
+        state.cfg.checkpoint.most_recent_k = -1
+        state.cfg.logger.mlflow_log_artifacts = True
+        state.wandb_logger = Mock()
+        state.mlflow_logger = Mock()
+        state.comet_logger = Mock()
+
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        finalize_fns = []
+        async_request = Mock()
+        async_request.add_finalize_fn.side_effect = finalize_fns.append
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=async_request)
+            )
+            stack.enter_context(
+                patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock())
+            )
+            stack.enter_context(patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()))
+            mock_rerun = stack.enter_context(patch("megatron.bridge.training.checkpointing.get_rerun_state_machine"))
+            stack.enter_context(
+                patch(
+                    "megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes",
+                    return_value=(None, None),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "megatron.bridge.training.checkpointing.generate_state_dict",
+                    return_value={"model": {"weight": Mock()}},
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "megatron.bridge.training.checkpointing.unwrap_model",
+                    return_value=save_checkpoint_fixtures["mock_model"],
+                )
+            )
+            for target in (
+                "save_sharded_modelopt_state",
+                "maybe_save_dataloader_state",
+                "schedule_async_save",
+                "fault_tolerance",
+                "ensure_directory_exists",
+            ):
+                stack.enter_context(patch(f"megatron.bridge.training.checkpointing.{target}"))
+            stack.enter_context(
+                patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True)
+            )
+            stack.enter_context(patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0))
+            mock_wandb = stack.enter_context(patch("megatron.bridge.training.checkpointing.wandb_utils"))
+            mock_mlflow = stack.enter_context(patch("megatron.bridge.training.checkpointing.mlflow_utils"))
+            mock_comet = stack.enter_context(patch("megatron.bridge.training.checkpointing.comet_utils"))
+            stack.enter_context(patch("torch.distributed.is_initialized", return_value=False))
+            stack.enter_context(patch("torch.save"))
+            stack.enter_context(patch("shutil.copy"))
+            stack.enter_context(patch("builtins.open", mock_open()))
+            mock_rerun.return_value.state_dict.return_value = {}
+            save_checkpoint(
+                state,
+                save_checkpoint_fixtures["mock_model"],
+                save_checkpoint_fixtures["mock_optimizer"],
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context={},
+                pg_collection=pg_collection,
+            )
+
+            state.train_state.step = 1001
+            for finalize_fn in finalize_fns:
+                finalize_fn()
+
+        checkpoint_path = "/checkpoints/iter_0001000"
+        mock_wandb.on_save_checkpoint_success.assert_called_once_with(
+            checkpoint_path, "/checkpoints", 1000, wandb_writer=state.wandb_logger
+        )
+        mock_mlflow.on_save_checkpoint_success.assert_called_once_with(
+            checkpoint_path, "/checkpoints", 1000, mlflow_logger=state.mlflow_logger
+        )
+        mock_comet.on_save_checkpoint_success.assert_called_once_with(
+            checkpoint_path, "/checkpoints", 1000, comet_logger=state.comet_logger
+        )
 
     @pytest.mark.parametrize("most_recent_k", [0, 1])
     def test_async_global_non_persistent_overlap_preserves_tracker_checkpoint(

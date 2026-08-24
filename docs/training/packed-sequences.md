@@ -22,12 +22,12 @@ enablement through context parallelism:
 | Path | Use case | Key config |
 |---|---|---|
 | Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
-| Direct-HF/VLM in-batch packing | Direct Hugging Face and supported VLM finetuning | `enable_in_batch_packing=True` |
+| Runtime in-batch packing | GPT-SFT JSONL, Direct Hugging Face, and supported VLM finetuning | `enable_in_batch_packing=True` |
 | Energon online packing | Qwen-VL data using the model-owned Energon collator | `packing_buffer_size=<candidate samples per worker>` |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
 These are related but they are not the same knob. Offline packed SFT and
-Direct-HF/VLM in-batch packing solve padding waste; long-context training
+runtime in-batch packing solve padding waste; long-context training
 primarily addresses activation memory and communication tradeoffs at larger
 sequence lengths.
 
@@ -39,6 +39,15 @@ online packing uses the task encoder's native `select_samples_to_pack` and
 non-packed padding remains in `megatron.bridge.data.collators`. Use
 `scripts/training/prepare_gpt_sft_packed_data.py` when packed GPT SFT artifacts
 should be prepared before launching training.
+
+For `GPTSFTDatasetConfig`, in-batch packing works with both local mmap JSONL
+schemas: prompt/completion (`GPTSFTDataset`) and chat
+(`GPTSFTChatDataset`). Tokenization remains lazy: workers mmap the JSONL and
+read, parse, and tokenize only the rows selected for the current logical
+microbatch. Collation then concatenates those rows into one physical THD batch
+row; it does not materialize an offline dataset or load the full source into
+RAM. Use a microbatch-yielding `single` or `cyclic` dataloader; GPT-SFT
+in-batch packing does not support the global-batch `batch` dataloader.
 
 ## When to Use It
 
@@ -103,13 +112,34 @@ when using CUDA graphs. CUDA graphs additionally require
 `pad_cu_seqlens=true` and packing metadata. Ordinary eager offline packing
 does not universally require fixed-width padding.
 
+## Choosing Runtime In-Batch Packing
+
+Use GPT-SFT in-batch packing when retaining the original JSONL is preferable
+to generating packed Parquet artifacts. Enable it directly on the dataset
+config and use a logical micro-batch larger than one:
+
+```text
+dataset.enable_in_batch_packing=true
+dataset.dataloader_type=single
+train.micro_batch_size=4
+```
+
+The collator preserves each sample's prompt/completion or chat loss mask and
+emits current MCore packed metadata (`cu_seqlens_q`, `cu_seqlens_kv`, and the
+corresponding padded boundaries when CP/SP alignment is required). The model
+sees one physical THD row. `enable_in_batch_packing` and
+`enable_offline_packing` are mutually exclusive. The `batch` dataloader is not
+supported for GPT-SFT in-batch packing; use `single` or `cyclic`.
+
 ## Stable Constraints
 
 The durable constraints for packed sequences in Bridge are:
 
 - offline packed SFT requires configured `micro_batch_size == 1`
-- Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
+- GPT-SFT/Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
   collation flattens those input rows into one physical THD batch row
+- GPT-SFT in-batch packing requires `dataloader_type="single"` or `"cyclic"`;
+  the global-batch `"batch"` dataloader is not supported
 - Energon online packing currently supports the eager Qwen-VL collator path,
   requires physical `micro_batch_size == 1`, the generic `vlm_step`, per-token loss, and
   `ddp.average_in_collective=False`
@@ -130,7 +160,7 @@ The durable constraints for packed sequences in Bridge are:
   overlap is disabled with a warning so training uses the non-overlapped path
 - when context parallelism is used, sequence length must satisfy the standard
   CP divisibility constraints
-- Direct-HF sequence length must also satisfy the LCM of the training and
+- GPT-SFT and Direct-HF sequence length must also satisfy the LCM of the training and
   evaluation CP constraints and `CP * TP` when sequence parallelism is enabled
 - for fine-tuning with CP enabled, per-token loss behavior and reduction
   settings matter

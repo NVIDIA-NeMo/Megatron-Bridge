@@ -475,6 +475,8 @@ def tokenize_prompt_completion_example(
         loss_mask = torch.ones(input_ids.numel(), dtype=torch.bool)
     if skipped_tokens is not None and skipped_tokens.numel() > 0:
         loss_mask &= ~torch.isin(input_ids, skipped_tokens.to(device=input_ids.device, dtype=torch.long))
+    if preprocessing.loss_mode == "completion" and completion_value and not loss_mask[1:].any():
+        raise ValueError("Prompt-completion preprocessing must retain a supervised token for a non-empty completion.")
     return TokenizedPromptCompletion(
         input_ids=input_ids,
         loss_mask=loss_mask,

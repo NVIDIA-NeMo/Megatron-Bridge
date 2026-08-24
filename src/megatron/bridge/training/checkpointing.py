@@ -1480,16 +1480,8 @@ def save_checkpoint(
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
                     msc.torch.save(train_state_dict, train_state_local_filename)
-                    msc.torch.save(train_state_dict, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with msc.open(tracker_filename, "w") as f:
-                        f.write(str(step))
                 else:
                     torch.save(train_state_dict, train_state_local_filename)
-                    shutil.copy(train_state_local_filename, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with open(tracker_filename, "w") as f:
-                        f.write(str(step))
 
                 cfg.to_yaml(config_filename)
 
@@ -1498,6 +1490,18 @@ def save_checkpoint(
                     tokenizer_instance = getattr(cfg.dataset, "tokenizer", None) if cfg.dataset else None
                     if tokenizer_instance is not None:
                         save_tokenizer_assets(tokenizer_instance, cfg.tokenizer, checkpoint_name)
+
+                if MultiStorageClientFeature.is_enabled():
+                    msc = MultiStorageClientFeature.import_package()
+                    msc.torch.save(train_state_dict, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with msc.open(tracker_filename, "w") as f:
+                        f.write(str(step))
+                else:
+                    shutil.copy(train_state_local_filename, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with open(tracker_filename, "w") as f:
+                        f.write(str(step))
 
                 tp_rank = (tensor_rank if tensor_rank is not None else pg_collection.tp.rank()) + 1
                 tp_world_size = pg_collection.tp.size()
@@ -1539,7 +1543,7 @@ def save_checkpoint(
             wandb_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 wandb_writer=state.wandb_logger,
             )
 
@@ -1549,7 +1553,7 @@ def save_checkpoint(
             mlflow_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 mlflow_logger=state.mlflow_logger,
             )
 
@@ -1557,7 +1561,7 @@ def save_checkpoint(
             comet_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 comet_logger=state.comet_logger,
             )
 
