@@ -13,13 +13,54 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.energon import WorkerConfig, get_savable_loader, get_train_dataset
+from megatron.energon.epathlib import EPath
+from megatron.energon.flavors.webdataset.default_generic_webdataset import DefaultGenericWebdatasetFactory
 
 
 logger = logging.getLogger(__name__)
+
+_energon_factory_init = DefaultGenericWebdatasetFactory.__init__
+
+
+def _secure_energon_factory_init(
+    self: DefaultGenericWebdatasetFactory,
+    path: EPath,
+    *,
+    subflavors: dict[str, Any] | None = None,
+    field_map: dict[str, str] | None = None,
+    sample_loader: str | Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    part_filter: str | list[str] | Callable[[str], bool] | None = None,
+    **kwargs: Any,
+) -> None:
+    """Reject dataset-local Python hooks before Energon resolves their files."""
+    executable_fields = [
+        name
+        for name, value in (("sample_loader", sample_loader), ("part_filter", part_filter))
+        if isinstance(value, str)
+    ]
+    if executable_fields:
+        raise ValueError(
+            "Energon dataset metadata cannot load Python files through "
+            f"{', '.join(executable_fields)}. Use a declarative field_map instead."
+        )
+    _energon_factory_init(
+        self,
+        path,
+        subflavors=subflavors,
+        field_map=field_map,
+        sample_loader=sample_loader,
+        part_filter=part_filter,
+        **kwargs,
+    )
+
+
+# Energon constructs this factory internally after reading dataset.yaml, so
+# Bridge must install the guard before calling get_train_dataset().
+DefaultGenericWebdatasetFactory.__init__ = _secure_energon_factory_init
 
 
 class EnergonMultiModalDataModule:

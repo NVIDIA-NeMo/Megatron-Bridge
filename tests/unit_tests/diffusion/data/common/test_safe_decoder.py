@@ -1,0 +1,59 @@
+import io
+import os
+import pickle
+
+import pytest
+import torch
+from webdataset.autodecode import DecodingError
+
+from megatron.bridge.diffusion.data.common.safe_decoder import SafeDiffusionSampleDecoder
+
+
+class _WriteMarkerPayload:
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+
+    def __reduce__(self):
+        return os.system, (f"touch {self.marker}",)
+
+
+@pytest.mark.parametrize("extension", ["pickle", "pkl", "pyd"])
+def test_safe_decoder_loads_plain_tensor_pickles(extension):
+    decoder = SafeDiffusionSampleDecoder()
+    value = {"embedding": torch.arange(4, dtype=torch.float32), "shape": [1, 4]}
+
+    restored = decoder.decode(f"sample.{extension}", pickle.dumps(value))
+
+    assert restored["shape"] == value["shape"]
+    assert torch.equal(restored["embedding"], value["embedding"])
+
+
+def test_safe_decoder_loads_weights_only_pth():
+    decoder = SafeDiffusionSampleDecoder()
+    value = {"embedding": torch.arange(4, dtype=torch.float32), "shape": [1, 4]}
+    buffer = io.BytesIO()
+    torch.save(value, buffer)
+
+    restored = decoder.decode("sample.pth", buffer.getvalue())
+
+    assert restored["shape"] == value["shape"]
+    assert torch.equal(restored["embedding"], value["embedding"])
+
+
+@pytest.mark.parametrize("extension", ["pickle", "pth"])
+def test_safe_decoder_rejects_executable_payloads(extension, tmp_path):
+    decoder = SafeDiffusionSampleDecoder()
+    marker = tmp_path / f"{extension}-executed"
+    payload = _WriteMarkerPayload(str(marker))
+    if extension == "pickle":
+        data = pickle.dumps(payload)
+    else:
+        buffer = io.BytesIO()
+        torch.save(payload, buffer)
+        data = buffer.getvalue()
+
+    with pytest.raises(DecodingError) as error:
+        decoder.decode(f"sample.{extension}", data)
+
+    assert isinstance(error.value.__cause__, pickle.UnpicklingError)
+    assert not marker.exists()
