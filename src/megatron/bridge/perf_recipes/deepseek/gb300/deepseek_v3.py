@@ -200,7 +200,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mla_up_proj", "core_attn"]
 
     cfg.model.cuda_graph_scope = []
     cfg.ddp.overlap_grad_reduce = True
