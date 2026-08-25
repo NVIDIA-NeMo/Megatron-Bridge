@@ -284,6 +284,8 @@ def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+        # Use a supported FP8 attention recipe under the NVFP4 linear-layer recipe.
+        "NVTE_DPA_FP8_RECIPE": "Float8CurrentScaling",
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg

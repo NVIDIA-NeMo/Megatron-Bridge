@@ -161,6 +161,13 @@ def test_deepseek_v3_8gpu_gb300_nvfp4_proxy_has_valid_topology() -> None:
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
 
 
+def test_deepseek_v3_8gpu_gb300_nvfp4_uses_fp8_current_scaling_for_dpa() -> None:
+    cfg = deepseek_v3_pretrain_8gpu_gb300_nvfp4_config()
+
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.env_vars["NVTE_DPA_FP8_RECIPE"] == "Float8CurrentScaling"
+
+
 def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
     cfg = deepseek_v3_pretrain_256gpu_b300_fp8mx_config()
 
