@@ -16,13 +16,11 @@
 
 from __future__ import annotations
 
-import math
 from functools import partial
 from typing import TYPE_CHECKING, Any, Iterable
 
 import torch
 from megatron.core.models.gpt import GPTModel
-from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, get_pg_size
 
@@ -34,7 +32,7 @@ from megatron.bridge.training.utils.flop_utils import (
     get_model_chunk_vp_stage,
     vision_patch_stats_from_grid_thw,
 )
-from megatron.bridge.training.utils.packed_seq_utils import build_uniform_packed_seq_params
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
     get_padded_sequence_length,
     pad_batch_sequence_tensors,
@@ -61,6 +59,9 @@ _MULTIMODAL_KEYS = (
     "feature_attention_mask",
     "audio_feature_lengths",
 )
+_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
+_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS, "total_tokens")
 
 
 def get_batch_from_iterator(
@@ -77,11 +78,17 @@ def get_batch_from_iterator(
     batch = next(data_iterator)
 
     required_device_keys = set(_MULTIMODAL_KEYS)
+    required_host_keys = set()
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
+    if "cu_seqlens_q" in batch:
+        required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
+        required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
+        if batch.get("padding_mask") is not None:
+            required_device_keys.add("padding_mask")
 
     batch_required_keys: dict[str, Any] = {}
     for key, value in batch.items():
@@ -99,6 +106,10 @@ def get_batch_from_iterator(
                         )
             else:
                 batch_required_keys[key] = value.cuda(non_blocking=True) if value is not None else None
+        elif key in required_host_keys:
+            batch_required_keys[key] = value.cpu() if value is not None else None
+        elif key == "total_tokens" and "cu_seqlens_q" in batch:
+            batch_required_keys[key] = int(value) if value is not None else None
         else:
             batch_required_keys[key] = value
 
@@ -143,7 +154,15 @@ def get_batch(data_iterator: Iterable, cfg: "ConfigContainer", use_mtp: bool = F
         is_last_pp_stage=is_last,
     )
 
-    if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+    packed_seq_metadata = (
+        {key: batch[key] for key in _PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+        if batch.get("cu_seqlens_q") is not None
+        else None
+    )
+    if batch.get("padding_mask") is not None and packed_seq_metadata is not None:
+        packed_seq_metadata["padding_mask"] = batch["padding_mask"]
+
+    if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1 and packed_seq_metadata is None:
         seq_len = cfg.model.seq_length
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
         tokens_or_input = pad_or_truncate_2d_to_len(tokens_or_input, seq_len, seq_len, pad_value=0)
@@ -165,6 +184,7 @@ def get_batch(data_iterator: Iterable, cfg: "ConfigContainer", use_mtp: bool = F
         batch.get("attention_mask"),
         batch.get("position_ids"),
         multimodal_inputs,
+        packed_seq_metadata,
     )
 
 
@@ -199,45 +219,6 @@ def pad_batch_sequences_for_context_parallel(
     )
 
     return pad_batch_sequence_tensors(tokens, labels, loss_mask, attention_mask, position_ids, target_len)
-
-
-def pack_or_pad_batch_sequences(
-    tokens: torch.Tensor,
-    labels: torch.Tensor | None,
-    loss_mask: torch.Tensor | None,
-    attention_mask: torch.Tensor | None,
-    position_ids: torch.Tensor | None,
-    pg_collection,
-    *,
-    use_fp8_padding: bool = False,
-    force_to_seq_length: bool = False,
-    seq_length: int | None = None,
-) -> tuple[
-    torch.Tensor,
-    torch.Tensor | None,
-    torch.Tensor | None,
-    torch.Tensor | None,
-    torch.Tensor | None,
-    PackedSeqParams,
-]:
-    """Pad Qwen3-Omni batch tensors and construct THD packed sequence metadata."""
-
-    tp_size = get_pg_size(getattr(pg_collection, "tp", None))
-    cp_size = get_pg_size(getattr(pg_collection, "cp", None))
-    divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
-    divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
-    target_len = get_padded_sequence_length(
-        tokens.size(1),
-        divisible_by,
-        force_to_seq_length=force_to_seq_length,
-        seq_length=seq_length,
-    )
-
-    tokens, labels, loss_mask, attention_mask, position_ids = pad_batch_sequence_tensors(
-        tokens, labels, loss_mask, attention_mask, position_ids, target_len
-    )
-    packed_seq_params = build_uniform_packed_seq_params(tokens.size(0), target_len, tokens.device)
-    return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
 
 
 def _get_dense_batch_on_this_cp_rank(batch: dict[str, Any], cp_group) -> dict[str, Any]:
@@ -275,27 +256,24 @@ def forward_step(
     ep_size = get_pg_size(getattr(pg_collection, "ep", None))
     force_to_seq_length = pp_size > 1 or ep_size > 1
     with straggler_timer(bdata=True):
-        tokens, labels, loss_mask, attention_mask, position_ids, multimodal_inputs = get_batch(
+        tokens, labels, loss_mask, attention_mask, position_ids, multimodal_inputs, packed_seq_metadata = get_batch(
             data_iterator, state.cfg, use_mtp, pg_collection=pg_collection
         )
     timers("batch-generator").stop()
 
     enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
-    packed_seq_params = None
-    if enable_in_batch_packing:
-        tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
-            tokens,
-            labels,
-            loss_mask,
-            attention_mask,
-            position_ids,
-            pg_collection,
-            # Keep packed THD lengths TE-friendly even when the recipe toggles FP8 later.
-            use_fp8_padding=True,
-            force_to_seq_length=force_to_seq_length,
-            seq_length=getattr(config, "seq_length", getattr(state.cfg.model, "seq_length", None)),
+    if enable_in_batch_packing and getattr(state.cfg.dataset, "defer_in_batch_packing_to_step", False):
+        raise ValueError(
+            "qwen3_omni_step requires collate-time in-batch packing; set defer_in_batch_packing_to_step=False"
         )
-    elif cp_size > 1:
+    if enable_in_batch_packing and packed_seq_metadata is None:
+        raise ValueError(
+            "Qwen3-Omni in-batch packing expects collator-owned cu_seqlens_q metadata. "
+            "Ensure the collator receives enable_in_batch_packing=True."
+        )
+    packed_seq_params = get_packed_seq_params(packed_seq_metadata) if packed_seq_metadata is not None else None
+
+    if packed_seq_params is None and cp_size > 1:
         tokens, labels, loss_mask, attention_mask, position_ids = pad_batch_sequences_for_context_parallel(
             tokens,
             labels,
@@ -328,12 +306,20 @@ def forward_step(
                 vision_patch_stats = tuple(
                     total + delta for total, delta in zip(vision_patch_stats, grid_stats, strict=True)
                 )
-    cu_seqlens = packed_seq_params.cu_seqlens_q if packed_seq_params is not None else None
+    cu_seqlens = None
+    cu_seqlens_unpadded = None
+    if packed_seq_params is not None and cp_size == 1:
+        cu_seqlens = packed_seq_params.cu_seqlens_q_padded
+        if cu_seqlens is None:
+            cu_seqlens = packed_seq_params.cu_seqlens_q
+        else:
+            cu_seqlens_unpadded = packed_seq_params.cu_seqlens_q
     accumulate_flops_metadata(
         state,
         tokens,
         vp_stage=get_model_chunk_vp_stage(model),
         cu_seqlens=cu_seqlens,
+        cu_seqlens_unpadded=cu_seqlens_unpadded,
         vision_patch_stats=vision_patch_stats,
     )
 
@@ -345,22 +331,10 @@ def forward_step(
         "loss_mask": loss_mask,
     }
 
-    if enable_in_batch_packing:
-        original_tokens = tokens.clone()
-        if cp_size > 1:
-            forward_args = _get_dense_batch_on_this_cp_rank(forward_args, cp_group=pg_collection.cp)
-        forward_args["input_ids"] = original_tokens
-        forward_args["position_ids"] = None
-        forward_args["attention_mask"] = torch.ones_like(
-            original_tokens,
-            dtype=torch.bool,
-            device=original_tokens.device,
-        )
+    if packed_seq_params is not None:
         forward_args["packed_seq_params"] = packed_seq_params
-        if forward_args["labels"] is not None:
-            forward_args["labels"] = forward_args["labels"].reshape(1, -1)
-        if forward_args["loss_mask"] is not None:
-            forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
+        if packed_seq_metadata is not None and packed_seq_metadata.get("padding_mask") is not None:
+            forward_args["padding_mask"] = packed_seq_metadata["padding_mask"]
     elif cp_size > 1:
         original_tokens = tokens.clone()
         forward_args = _get_dense_batch_on_this_cp_rank(forward_args, cp_group=pg_collection.cp)
@@ -388,10 +362,18 @@ def forward_step(
                 forward_args["attention_mask"],
                 labels=forward_args["labels"],
                 loss_mask=loss_mask,
+                packed_seq_params=forward_args.get("packed_seq_params"),
+                padding_mask=forward_args.get("padding_mask"),
             )
             loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
             return schedule_plan, loss_function
-        output_tensor = model(**forward_args)
+        model_output = model(**forward_args)
+        if isinstance(model_output, tuple):
+            output_tensor, model_loss_mask = model_output
+            if model_loss_mask is not None:
+                loss_mask = model_loss_mask
+        else:
+            output_tensor = model_output
 
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
     return output_tensor, loss_function
