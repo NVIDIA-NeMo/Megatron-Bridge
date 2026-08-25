@@ -27,7 +27,11 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pr
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
+from megatron.bridge.training.mixed_precision import (
+    MixedPrecisionConfig,
+    nemotron_3_super_bf16_with_nvfp4_mixed,
+    nemotron_3_ultra_bf16_with_nvfp4_mixed,
+)
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -65,7 +69,19 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
     cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
-    # Disabled until MCore PR 4358 lands.
+    # Although MCore PR 4358 is merged,
+    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
+    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
+    cfg.fp4_param_gather = False
+    return cfg
+
+
+def _nemotron_3_ultra_nvfp4_precision() -> MixedPrecisionConfig:
+    """Return the NVFP4 precision config used by Nemotron 3 Ultra perf recipes."""
+    cfg = nemotron_3_ultra_bf16_with_nvfp4_mixed()
+    # Although MCore PR 4358 is merged,
+    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
+    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
     cfg.fp4_param_gather = False
     return cfg
 
