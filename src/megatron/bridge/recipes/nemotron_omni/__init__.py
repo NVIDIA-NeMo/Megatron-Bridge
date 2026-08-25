@@ -14,6 +14,7 @@
 
 from .nemotron_35_super_vl import (
     NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
+    nemotron_35_super_vl_pretrain_config,
     nemotron_35_super_vl_sft_config,
 )
 from .nemotron_omni import (
@@ -25,6 +26,7 @@ from .nemotron_omni import (
 
 
 __all__ = [
+    "nemotron_35_super_vl_pretrain_config",
     "nemotron_35_super_vl_sft_config",
     "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
     "nemotron_omni_cord_v2_sft_config",

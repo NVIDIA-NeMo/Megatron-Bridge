@@ -27,6 +27,42 @@ from megatron.bridge.training.config import ConfigContainer
 NEMOTRON_35_SUPER_VL_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
 
 
+def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the 64-H100 BF16 performance pretraining config for Super VL.
+
+    The benchmark policy is inherited directly from the corresponding
+    Nemotron 3 Super recipe. Only the model, multimodal dataset, and tokenizer
+    are replaced with their Super-VL counterparts, and all present model
+    stacks remain trainable.
+
+    Returns:
+        The Super-VL performance pretraining configuration.
+    """
+    # Keep this import local so importing the public library recipe package
+    # does not eagerly import the separate performance-recipe package.
+    from megatron.bridge.perf_recipes._common import _benchmark_common
+    from megatron.bridge.perf_recipes.nemotronh.h100.nemotronh import (
+        nemotron_3_super_pretrain_64gpu_h100_bf16_config,
+    )
+
+    cfg = nemotron_3_super_pretrain_64gpu_h100_bf16_config()
+    vl_cfg = nemotron_35_super_vl_sft_64gpu_h100_bf16_config()
+    cfg.model = vl_cfg.model
+    cfg.dataset = vl_cfg.dataset
+    cfg.tokenizer = vl_cfg.tokenizer
+    # Reapply model-level benchmark settings after replacing the text-only
+    # provider. Non-model benchmark settings are idempotent.
+    cfg.model.moe_router_force_load_balancing = True
+    _benchmark_common(cfg)
+    cfg.ddp.overlap_param_gather = False
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.checkpoint.async_save = False
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    return cfg
+
+
 def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     """Return the 64-H100 BF16 SFT configuration for Nemotron 3.5 Super VL.
 
@@ -57,5 +93,6 @@ def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
 
 
 __all__ = [
+    "nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config",
     "nemotron_35_super_vl_sft_64gpu_h100_bf16_config",
 ]

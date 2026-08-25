@@ -24,9 +24,6 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     nemotron_3_nano_pretrain_config,
     nemotronh_56b_pretrain_config,
 )
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl import (
-    nemotron_35_super_vl_sft_64gpu_h100_bf16_config,
-)
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
@@ -71,12 +68,13 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def _apply_nemotron_3_super_64gpu_h100_benchmark_policy(cfg: ConfigContainer) -> ConfigContainer:
-    """Apply the shared Nemotron 3 Super 64-H100 BF16 benchmark policy."""
+def nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× H100, BF16."""
+    cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
-    # Performance mode adds only benchmark policy and forced routing on top of
-    # the library-owned execution layout.
+    # The library recipe owns the measured execution layout. Performance mode
+    # adds only benchmark policy and forced routing on top of that shared base.
     cfg.model.moe_router_force_load_balancing = True
     _benchmark_common(cfg)
     # `_benchmark_common` enables parameter prefetch globally. Restore the
@@ -85,52 +83,10 @@ def _apply_nemotron_3_super_64gpu_h100_benchmark_policy(cfg: ConfigContainer) ->
     cfg.ddp.overlap_param_gather = False
     cfg.model.moe_hybridep_num_sms = None
     cfg.checkpoint.async_save = False
-    return cfg
 
-
-def nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× H100, BF16."""
-    cfg = _apply_nemotron_3_super_64gpu_h100_benchmark_policy(nemotron_3_super_pretrain_config())
     # Keep the process settings aligned with the convergence recipe. In
     # particular, do not silently change CUDA stream scheduling between the
     # natural-routing and forced-routing measurements.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-    }
-    return cfg
-
-
-def _nemotron_35_super_vl_pretrain_benchmark_base() -> ConfigContainer:
-    """Compose the Super pretrain workload with Super-VL model and data."""
-    cfg = nemotron_3_super_pretrain_config()
-    vl_cfg = nemotron_35_super_vl_sft_64gpu_h100_bf16_config()
-    cfg.model = vl_cfg.model
-    cfg.dataset = vl_cfg.dataset
-    cfg.tokenizer = vl_cfg.tokenizer
-    # The library factory is an SFT recipe and freezes RADIO. This benchmark
-    # models pretraining, so retain gradients for every present model stack.
-    cfg.model.freeze_language_model = False
-    cfg.model.freeze_vision_model = False
-    cfg.model.freeze_vision_projection = False
-    return cfg
-
-
-def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Super VL pretrain benchmark: 64× H100, BF16."""
-    cfg = _apply_nemotron_3_super_64gpu_h100_benchmark_policy(_nemotron_35_super_vl_pretrain_benchmark_base())
-    # Keep the exact Nemotron 3 Super H100 process settings visible on this
-    # public factory, as required for flat performance recipes.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,

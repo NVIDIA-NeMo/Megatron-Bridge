@@ -36,7 +36,6 @@ _super_vl_recipe_module = importlib.import_module("megatron.bridge.recipes.nemot
 _super_vl_h100_recipe_module = importlib.import_module(
     "megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl"
 )
-_super_vl_perf_module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.h100.nemotronh")
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 _SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
@@ -336,9 +335,9 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
 
 
-def test_super_vl_perf_recipe_reuses_super_benchmark_policy(fake_processor):
+def test_super_vl_pretrain_recipe_reuses_super_benchmark_policy(fake_processor):
     cfg = _build_config(
-        _super_vl_perf_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
+        _super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
         fake_processor,
     )
 
@@ -364,6 +363,9 @@ def test_super_vl_perf_recipe_reuses_super_benchmark_policy(fake_processor):
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.recompute_modules == ["layernorm", "moe_act", "moe", "core_attn"]
+    assert cfg.model.apply_rope_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.use_te_rng_tracker is False
 
     assert cfg.model.seq_length == 4096
     assert cfg.dataset.seq_length == 4096
