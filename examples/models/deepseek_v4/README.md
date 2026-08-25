@@ -158,9 +158,10 @@ Launch the verified GB200 packed recipe from an imported BF16 checkpoint:
 
 The card records 100 finite steps, a fresh-process checkpoint reload, and
 post-SFT GPU export with deterministic HF inference for this configuration at
-CP=1. Long-context and CP=2 SFT remain unverified. MXFP8 and Muon SFT recipes
-are intentionally not shipped because full-model tests did not establish a
-stable supported configuration.
+CP=1. It also records a separate 100-step CP=2 packed-SFT validation at
+sequence length 1024; longer sequence lengths remain unverified. MXFP8 and
+Muon SFT recipes are intentionally not shipped because full-model tests did
+not establish a stable supported configuration.
 
 ## Parameter-Efficient Fine-Tuning
 

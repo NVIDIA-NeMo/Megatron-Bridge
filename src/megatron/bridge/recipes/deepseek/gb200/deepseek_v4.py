@@ -11,10 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""GB200 recipes for DeepSeek V4 Flash.
-
-Validated on OCI GB200 NVL72 (64 GPUs, PP=8, EP=8).
-"""
+"""GB200 pretraining, SFT, and PEFT recipes for DeepSeek V4 Flash."""
 
 import torch
 

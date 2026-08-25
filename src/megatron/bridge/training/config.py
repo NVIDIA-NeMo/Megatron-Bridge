@@ -497,6 +497,16 @@ class TrainingConfig(MTrainTrainingConfig):
 class CheckpointConfig(MTrainCheckpointConfig):
     """Configuration settings for model checkpointing (saving and loading)."""
 
+    stage_precision_aware_optimizer_state_on_cpu: bool = False
+    """Stage expanded precision-aware Transformer Engine optimizer state on CPU.
+
+    Enable this when reduced-precision Adam state fits during training but its
+    portable FP32 checkpoint representation would exceed available GPU memory.
+    The checkpoint values and dtypes are unchanged; only their device during
+    state-dict construction is affected. Supported only for ``torch_dist``
+    checkpoints.
+    """
+
     pretrained_checkpoint: Optional[str] = None
     """Directory containing a pretrained model checkpoint for finetuning.
 
@@ -597,6 +607,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
 
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
+
+        if self.stage_precision_aware_optimizer_state_on_cpu and self.ckpt_format != "torch_dist":
+            raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
 
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
@@ -1312,7 +1325,7 @@ class ConfigContainer(Container):
         # multiples so normalization cannot hide an invalid user value.
         if isinstance(
             self.dataset,
-            (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+            (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
         ):
             self.dataset.validate()
 
@@ -1364,8 +1377,8 @@ class ConfigContainer(Container):
                 self.dataset,
                 (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
             )
-            and self.dataset.seq_length % collate_padding_multiple != 0
-        ):
+            or (isinstance(self.dataset, GPTSFTDatasetConfig) and enable_in_batch_packing)
+        ) and self.dataset.seq_length % collate_padding_multiple != 0:
             raise ValueError(
                 f"{type(self.dataset).__name__}.seq_length must be divisible by the CP/SP collate padding multiple "
                 f"({collate_padding_multiple})."

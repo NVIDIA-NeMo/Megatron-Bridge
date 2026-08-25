@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ruff: noqa: F401
-"""Compatibility aliases for legacy recipe names."""
+"""Hardware-agnostic DeepSeek V4 recipes and compatibility aliases."""
 
 from __future__ import annotations
 
