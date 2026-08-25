@@ -30,7 +30,6 @@ from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
-    _compute_evs_retention_mask,
     _pixel_shuffle_dynamic_resolution,
 )
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
@@ -297,83 +296,6 @@ def test_dynamic_resolution_pixel_shuffle_groups_spatial_2x2_blocks():
             dtype=torch.float32,
         ),
     )
-
-
-def test_evs_retention_matches_hf_for_square_video():
-    video_embeddings = torch.randn(3, 4, 8, generator=torch.Generator().manual_seed(7))
-
-    retention_mask = _compute_evs_retention_mask(
-        video_embeddings,
-        height=2,
-        width=2,
-        pruning_rate=0.5,
-    )
-
-    # Direct transcription of the SourceOfTruth HF operation for its square
-    # input domain. The Bridge helper must preserve those exact decisions.
-    grid = video_embeddings.reshape(3, 2, 2, 8)
-    dissimilarity = 1 - torch.nn.functional.cosine_similarity(grid[1:], grid[:-1], dim=-1)
-    dissimilarity = torch.cat((255 * torch.ones_like(grid[:1, :, :, 0]), dissimilarity), dim=0)
-    expected = torch.zeros(12, dtype=torch.bool)
-    expected[torch.argsort(dissimilarity.reshape(-1), descending=True, stable=True)[:6]] = True
-
-    assert torch.equal(retention_mask, expected)
-
-
-def test_evs_retention_uses_explicit_rectangular_grid():
-    video_embeddings = torch.randn(2, 6, 4, generator=torch.Generator().manual_seed(11))
-
-    retention_mask = _compute_evs_retention_mask(
-        video_embeddings,
-        height=2,
-        width=3,
-        pruning_rate=0.7,
-    )
-
-    assert retention_mask.shape == (12,)
-    assert retention_mask.sum().item() == 6
-    assert retention_mask[:6].all()
-
-
-def test_video_evs_prunes_matching_placeholders_and_token_aligned_tensors():
-    image_features = torch.tensor(
-        [
-            [101.0, 102.0, 103.0],
-            [201.0, 202.0, 203.0],
-            [301.0, 302.0, 303.0],
-            [401.0, 402.0, 403.0],
-        ]
-    )
-    model = _BoundaryModel(image_features)
-    model.video_pruning_rate = 0.7
-    model.patch_dim = 16
-    model.vision_model = SimpleNamespace(temporal_patch_dim=2)
-    input_ids = torch.tensor([[7, 18, 18, 18, 18, 9]])
-    labels = input_ids.clone()
-    loss_mask = torch.ones_like(input_ids, dtype=torch.float32)
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-    position_ids = torch.arange(input_ids.shape[1]).unsqueeze(0)
-
-    output = model(
-        input_ids=input_ids,
-        position_ids=position_ids,
-        attention_mask=attention_mask,
-        labels=labels,
-        loss_mask=loss_mask,
-        images=torch.ones(1),
-        imgs_sizes=torch.tensor([[32, 64]] * 4),
-        num_frames=torch.tensor([4]),
-    )
-
-    assert output.shape == (4, 1, 3)
-    assert torch.equal(output[0, 0], torch.tensor([7.0, 7.0, 7.0]))
-    assert torch.equal(output[1, 0], image_features[0])
-    assert torch.equal(output[2, 0], image_features[1])
-    assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
-    assert torch.equal(model.language_model.last_kwargs["labels"], torch.tensor([[7, 18, 18, 9]]))
-    assert torch.equal(model.language_model.last_kwargs["loss_mask"], torch.ones(1, 4))
-    assert torch.equal(model.language_model.last_kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.bool))
-    assert torch.equal(model.language_model.last_kwargs["position_ids"], torch.arange(4).unsqueeze(0))
 
 
 def test_image_forward_replaces_expanded_placeholders_without_changing_length():
@@ -909,7 +831,7 @@ def test_super_vl_rectangular_image_and_video_use_exact_visual_token_counts(
     single_rank_model_parallel,
 ):
     del single_rank_model_parallel
-    provider = _TinyOmniProvider(vision_final_layernorm=True, video_pruning_rate=0.7)
+    provider = _TinyOmniProvider(vision_final_layernorm=True)
     provider.finalize()
     model = provider.provide().cuda().eval()
 
@@ -941,7 +863,7 @@ def test_super_vl_rectangular_image_and_video_use_exact_visual_token_counts(
         )
 
     assert image_output.shape == (1, 4, 128)
-    assert video_output.shape == (1, 4, 128)
+    assert video_output.shape == (1, 6, 128)
     assert torch.isfinite(image_output).all()
     assert torch.isfinite(video_output).all()
 

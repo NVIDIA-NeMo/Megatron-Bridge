@@ -351,7 +351,6 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         # The Super-VL checkpoint carries a trained video embedder. Do not
         # synthesize one from image weights if that parameter is missing.
         provider.temporal_ckpt_compat = False
-        provider.video_pruning_rate = float(getattr(hf_config, "video_pruning_rate", 0.0) or 0.0)
         provider.vision_final_layernorm = bool(provider.mtp_num_layers)
         return provider
 

@@ -475,7 +475,6 @@ def test_nemotron_35_super_vl_provider_reuses_omni_with_list_based_mtp():
     assert provider.temporal_patch_dim == 2
     assert provider.separate_video_embedder is True
     assert provider.temporal_ckpt_compat is False
-    assert provider.video_pruning_rate == 0.7
     assert provider.vision_final_layernorm is True
 
     vision_config = provider._build_vision_config(provider)
