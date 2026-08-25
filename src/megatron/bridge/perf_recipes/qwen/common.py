@@ -34,6 +34,9 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
 
 
 def _enable_hybridep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_hybridep_num_sms = 32
     cfg.model.cuda_graph_impl = "full_iteration"
     cfg.model.cuda_graph_scope = []
     cfg.rng.te_rng_tracker = True
@@ -58,3 +61,11 @@ def _enable_hybridep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
         overlap_moe_expert_parallel_comm=True,
         delay_wgrad_compute=True,
     )
+
+
+def _enable_hybridep_full_iteration_nvfp4(cfg: ConfigContainer) -> None:
+    """Enable the full-iteration HybridEP stack for an NVFP4 benchmark."""
+    _enable_hybridep_full_iteration_mxfp8(cfg)
+    cfg.mixed_precision.fp8_dot_product_attention = False
+    cfg.comm_overlap.tp_comm_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = False
