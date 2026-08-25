@@ -66,6 +66,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -2124,17 +2125,21 @@ def generate_state_dict(
     include_optimizer_state = ckpt_cfg.save_optim or is_loading
     if include_optimizer_state:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
-            if ckpt_cfg.ckpt_format == "torch_dist":
-                state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
-            elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
-                if optim_sd_kwargs is None:
-                    optim_sd_kwargs = {}
-                if "metadata" not in optim_sd_kwargs:
-                    optim_sd_kwargs["metadata"] = {}
-                # Use the metadata that was passed in (should include FSDP-specific metadata)
-                state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **optim_sd_kwargs)
-            else:
-                state_dict["optimizer"] = optimizer.state_dict()
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(
+                optimizer,
+                enabled=ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu,
+            ):
+                if ckpt_cfg.ckpt_format == "torch_dist":
+                    state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
+                elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
+                    if optim_sd_kwargs is None:
+                        optim_sd_kwargs = {}
+                    if "metadata" not in optim_sd_kwargs:
+                        optim_sd_kwargs["metadata"] = {}
+                    # Use the metadata that was passed in (should include FSDP-specific metadata)
+                    state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **optim_sd_kwargs)
+                else:
+                    state_dict["optimizer"] = optimizer.state_dict()
         if opt_param_scheduler is not None:
             state_dict["opt_param_scheduler"] = opt_param_scheduler.state_dict()
 
@@ -3188,7 +3193,13 @@ def _load_checkpoint_from_path(
                     # DistributedOptimizer copies loaded tensors into main
                     # params via .copy_(), which fails on leaf Variables that
                     # require grad without this context.
-                    with torch.no_grad():
+                    with (
+                        torch.no_grad(),
+                        memory_efficient_precision_aware_optimizer_state_checkpointing(
+                            optimizer,
+                            enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
+                        ),
+                    ):
                         optimizer.load_state_dict(state_dict["optimizer"])
 
             if opt_param_scheduler is not None:
