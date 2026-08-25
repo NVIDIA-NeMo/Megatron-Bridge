@@ -212,7 +212,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=False, fp8_output_proj=False)
     # cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.high_priority_a2a_comm_stream = False
-    cfg.model.mla_down_proj_fusion = True
+    # cfg.model.mla_down_proj_fusion = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -286,7 +286,7 @@ def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
         # Use a supported FP8 attention recipe under the NVFP4 linear-layer recipe.
-        "NVTE_DPA_FP8_RECIPE": "Float8CurrentScaling",
+        # "NVTE_DPA_FP8_RECIPE": "Float8CurrentScaling",
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
