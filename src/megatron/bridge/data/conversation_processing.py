@@ -1563,13 +1563,27 @@ def _value_contains_token_sequence(
     return None if any(result is None for result in results) else False
 
 
+def _conversation_contains_token_sequences(
+    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    tokenizer: Any,
+    token_sequences: Sequence[Sequence[int]],
+) -> bool | None:
+    """Return whether rendered conversation payloads contain any requested token sequence."""
+    payloads: list[Any] = [
+        {key: value for key, value in turn.items() if key != "role"}
+        for turn in _conversation_from_example(example_or_conversation)
+    ]
+    payloads.append(chat_template_kwargs_from_example(example_or_conversation))
+    return _value_contains_token_sequence(payloads, tokenizer, token_sequences)
+
+
 def _conversation_contains_boundary_tokens(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
     tokenizer: Any,
     boundary_config: AssistantMaskBoundaryConfig,
 ) -> bool | None:
     """Return whether rendered conversation payloads contain structural token sequences."""
-    token_sequences = [
+    token_sequences: list[Sequence[int]] = [
         *(_token_map_from_boundary_config(boundary_config.role_start_tokens).values()),
         *(_token_map_from_boundary_config(boundary_config.role_end_tokens).values()),
         *(
@@ -1579,12 +1593,29 @@ def _conversation_contains_boundary_tokens(
             if (token_ids := _as_token_id_list(raw_token_ids))
         ),
     ]
-    payloads: list[Any] = [
-        {key: value for key, value in turn.items() if key != "role"}
-        for turn in _conversation_from_example(example_or_conversation)
+    return _conversation_contains_token_sequences(example_or_conversation, tokenizer, token_sequences)
+
+
+def _conversation_contains_loss_boundary_tokens(
+    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    tokenizer: Any,
+    boundary_config: AssistantMaskBoundaryConfig,
+) -> bool | None:
+    """Return whether payloads contain a loss-role start or any role-end boundary."""
+    role_start_tokens = _token_map_from_boundary_config(boundary_config.role_start_tokens)
+    role_end_tokens = _token_map_from_boundary_config(boundary_config.role_end_tokens)
+    loss_roles = set(boundary_config.loss_roles)
+    token_sequences: list[Sequence[int]] = [
+        *(token_ids for role, token_ids in role_start_tokens.items() if role in loss_roles),
+        *(role_end_tokens.values()),
+        *(
+            token_ids
+            for raw_variants in boundary_config.role_end_token_variants.values()
+            for raw_token_ids in raw_variants
+            if (token_ids := _as_token_id_list(raw_token_ids))
+        ),
     ]
-    payloads.append(chat_template_kwargs_from_example(example_or_conversation))
-    return _value_contains_token_sequence(payloads, tokenizer, token_sequences)
+    return _conversation_contains_token_sequences(example_or_conversation, tokenizer, token_sequences)
 
 
 def _trim_leading_token_ids(
@@ -1641,6 +1672,7 @@ def _assistant_mask_from_boundary_config(
     *,
     include_content: bool = True,
     conversation_roles: Sequence[str] | None = None,
+    ignore_nonloss_role_starts: bool = False,
 ) -> torch.Tensor | None:
     role_start_tokens = _token_map_from_boundary_config(boundary_config.role_start_tokens)
     role_end_tokens = _token_map_from_boundary_config(boundary_config.role_end_tokens)
@@ -1699,9 +1731,21 @@ def _assistant_mask_from_boundary_config(
     found_loss_segment = False
     for marker_idx, (start_pos, role, marker_len) in enumerate(deduped_markers):
         content_start = start_pos + marker_len
-        next_marker_start = deduped_markers[marker_idx + 1][0] if marker_idx + 1 < len(deduped_markers) else len(ids)
         if role not in loss_roles:
             continue
+        if ignore_nonloss_role_starts:
+            next_marker_start = next(
+                (
+                    later_start
+                    for later_start, later_role, _ in deduped_markers[marker_idx + 1 :]
+                    if later_role in loss_roles
+                ),
+                len(ids),
+            )
+        else:
+            next_marker_start = (
+                deduped_markers[marker_idx + 1][0] if marker_idx + 1 < len(deduped_markers) else len(ids)
+            )
 
         candidate_end_spans = []
         for priority, role_end_pattern in enumerate([role_end_tokens[role], *role_end_token_variants.get(role, [])]):
@@ -1714,7 +1758,11 @@ def _assistant_mask_from_boundary_config(
                 search_start = end_start + 1
         if not candidate_end_spans:
             continue
-        if conversation_roles is not None and len({end_start for end_start, _, _ in candidate_end_spans}) != 1:
+        if (
+            conversation_roles is not None
+            and not ignore_nonloss_role_starts
+            and len({end_start for end_start, _, _ in candidate_end_spans}) != 1
+        ):
             return None
         end_start, _, after_end = min(candidate_end_spans)
         role_end_span = (end_start, after_end)
@@ -1761,18 +1809,50 @@ def build_assistant_loss_mask(
 
     mask = _assistant_mask_from_hf_chat_template(example_or_conversation, ids, processor, tokenizer)
     if boundary_config is not None:
-        boundary_scan_is_safe = not boundary_config.rendered_turn_end_roles and (
-            not conversation
-            or _conversation_contains_boundary_tokens(example_or_conversation, tokenizer, boundary_config) is False
+        boundary_tokens_in_payload = (
+            _conversation_contains_boundary_tokens(example_or_conversation, tokenizer, boundary_config)
+            if conversation
+            else False
         )
-        if mask is None or float(mask.sum().item()) == 0.0:
-            boundary_mask = _assistant_mask_from_conversation_turns(
-                example_or_conversation,
-                ids,
-                tokenizer,
-                tokenizer,
-                boundary_config,
+        boundary_scan_is_safe = not boundary_config.rendered_turn_end_roles and (boundary_tokens_in_payload is False)
+        direct_boundary_scan_is_safe = boundary_scan_is_safe
+        ignore_nonloss_role_starts = False
+        if (
+            not direct_boundary_scan_is_safe
+            and not boundary_config.rendered_turn_end_roles
+            and conversation_roles is not None
+            and boundary_tokens_in_payload is True
+        ):
+            # Non-loss role markers cannot change assistant span ownership once the payload scan
+            # proves there are no end markers or loss-role starts. Those ambiguous loss boundaries
+            # continue through the conversation-prefix fallback below.
+            direct_boundary_scan_is_safe = (
+                _conversation_contains_loss_boundary_tokens(example_or_conversation, tokenizer, boundary_config)
+                is False
             )
+            ignore_nonloss_role_starts = direct_boundary_scan_is_safe
+        if mask is None or float(mask.sum().item()) == 0.0:
+            # Payload analysis makes the token scan exact for clean conversations and payloads
+            # containing only non-loss role markers. Prefer it over rendering every conversation
+            # prefix, which is quadratic for long tool-use trajectories.
+            boundary_mask = (
+                _assistant_mask_from_boundary_config(
+                    ids,
+                    boundary_config,
+                    conversation_roles=conversation_roles,
+                    ignore_nonloss_role_starts=ignore_nonloss_role_starts,
+                )
+                if direct_boundary_scan_is_safe
+                else None
+            )
+            if boundary_mask is None:
+                boundary_mask = _assistant_mask_from_conversation_turns(
+                    example_or_conversation,
+                    ids,
+                    tokenizer,
+                    tokenizer,
+                    boundary_config,
+                )
             if boundary_mask is None and processor is not tokenizer:
                 boundary_mask = _assistant_mask_from_conversation_turns(
                     example_or_conversation,
@@ -1781,25 +1861,31 @@ def build_assistant_loss_mask(
                     tokenizer,
                     boundary_config,
                 )
-            if boundary_mask is None and boundary_scan_is_safe:
-                boundary_mask = _assistant_mask_from_boundary_config(
-                    ids,
-                    boundary_config,
-                    conversation_roles=conversation_roles,
-                )
             if boundary_mask is None and not boundary_scan_is_safe and mask is not None:
                 mask = None
             if mask is None or (boundary_mask is not None and float(boundary_mask.sum().item()) > 0.0):
                 mask = boundary_mask
         else:
-            boundary_token_mask = _assistant_mask_from_conversation_turns(
-                example_or_conversation,
-                ids,
-                tokenizer,
-                tokenizer,
-                boundary_config,
-                include_content=False,
+            boundary_token_mask = (
+                _assistant_mask_from_boundary_config(
+                    ids,
+                    boundary_config,
+                    include_content=False,
+                    conversation_roles=conversation_roles,
+                    ignore_nonloss_role_starts=ignore_nonloss_role_starts,
+                )
+                if direct_boundary_scan_is_safe
+                else None
             )
+            if boundary_token_mask is None:
+                boundary_token_mask = _assistant_mask_from_conversation_turns(
+                    example_or_conversation,
+                    ids,
+                    tokenizer,
+                    tokenizer,
+                    boundary_config,
+                    include_content=False,
+                )
             if boundary_token_mask is None and processor is not tokenizer:
                 boundary_token_mask = _assistant_mask_from_conversation_turns(
                     example_or_conversation,
@@ -1808,13 +1894,6 @@ def build_assistant_loss_mask(
                     tokenizer,
                     boundary_config,
                     include_content=False,
-                )
-            if boundary_token_mask is None and boundary_scan_is_safe:
-                boundary_token_mask = _assistant_mask_from_boundary_config(
-                    ids,
-                    boundary_config,
-                    include_content=False,
-                    conversation_roles=conversation_roles,
                 )
             if boundary_token_mask is not None:
                 mask = torch.maximum(mask, boundary_token_mask)

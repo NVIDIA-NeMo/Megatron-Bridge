@@ -21,23 +21,78 @@ from collections.abc import Callable
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
-from megatron.bridge.data.packing.algorithms import create_hist, create_packing_strategy, fill_packing_strategy
+from megatron.bridge.data.packing.algorithms import (
+    create_hist,
+    create_packing_strategy,
+    fill_packing_strategy,
+    iter_packing_strategy,
+)
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 logger = logging.getLogger(__name__)
 
 _shared_dataset = None
+_PACKING_ITEM_KEYS = ("input_ids", "loss_mask", "answer_start_idx")
+
+
+def _storage_path(path: str | Path) -> Any:
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        return msc.Path(str(path))
+    return Path(path)
+
+
+def _temporary_sibling(path: str | Path) -> Any:
+    destination = _storage_path(path)
+    suffix = destination.suffix
+    stem = destination.name[: -len(suffix)] if suffix else destination.name
+    return destination.with_name(f".{stem}.{uuid4().hex}.tmp{suffix}")
+
+
+def _publish_staged_path(staged_path: Any, destination_path: str | Path) -> None:
+    destination = _storage_path(destination_path)
+    if MultiStorageClientFeature.is_enabled():
+        staged_path.rename(destination)
+    else:
+        staged_path.replace(destination)
+
+
+def _remove_staged_path(staged_path: Any | None) -> None:
+    if staged_path is not None:
+        staged_path.unlink(missing_ok=True)
+
+
+def _select_packing_item_fields(item):
+    if not isinstance(item, dict):
+        return item
+    selected = {}
+    for key in _PACKING_ITEM_KEYS:
+        if key not in item:
+            continue
+        value = item[key]
+        if key in {"input_ids", "loss_mask"}:
+            if torch.is_tensor(value):
+                value = value.detach().cpu().numpy()
+            elif not isinstance(value, np.ndarray):
+                value = np.asarray(value)
+        selected[key] = value
+    return selected
 
 
 def _get_shared_dataset_item(i):
-    return _shared_dataset[i]
+    try:
+        return _select_packing_item_fields(_shared_dataset[i])
+    except Exception as error:
+        error.add_note(f"Failed to prepare packed-SFT dataset index {i}.")
+        raise
 
 
 def _init_shared_dataset_worker(dataset):
@@ -47,7 +102,7 @@ def _init_shared_dataset_worker(dataset):
 
 def _materialize_dataset_items(dataset, num_workers):
     if num_workers <= 1:
-        return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
+        return np.array([_select_packing_item_fields(dataset[i]) for i in tqdm(range(len(dataset)))])
 
     # File-backed tensor sharing avoids one descriptor per returned tensor; the pool still needs descriptors.
     previous_sharing_strategy = torch.multiprocessing.get_sharing_strategy()
@@ -79,10 +134,10 @@ def _pre_pad_data_point(data: dict, max_seq_length: int, max_stored_length_to_pa
     """Pad a single data point so its runtime segment length is divisible by the requested multiple.
 
     Pads ``input_ids``/``context_ids`` with ``pad_id`` and ``loss_mask`` with ``0`` (no loss on
-    pad positions). The chat preprocessing path (``_chat_preprocess``) returns ``torch`` tensors
-    rather than plain lists, so values are normalized to lists before concatenating; this avoids a
-    ``TypeError`` from ``tensor + list`` and keeps ``loss_mask`` the same length as ``input_ids`` so
-    that grouped samples do not produce a ragged array in ``fill_packing_strategy``.
+    pad positions). The chat preprocessing path (``_chat_preprocess``) returns ``torch`` tensors;
+    those and NumPy arrays retain their compact representation so corpus-scale preparation does not
+    expand every token into a Python object. Plain-list inputs remain lists. ``loss_mask`` stays the
+    same length as ``input_ids`` so grouped samples cannot produce ragged packing inputs.
 
     Args:
         data: A single tokenized example. Mutated in place.
@@ -99,19 +154,28 @@ def _pre_pad_data_point(data: dict, max_seq_length: int, max_stored_length_to_pa
         if key not in data:
             continue
         val = data[key]
-        # _chat_preprocess returns torch tensors / numpy arrays; normalize to a plain list.
-        val = val.tolist() if hasattr(val, "tolist") else list(val)
         sequence_length = len(val)
-        if sequence_length <= max_stored_length_to_pad:
-            val = val + [pad_value] * (max_stored_length_to_pad - sequence_length)
-        else:
+        if sequence_length > max_stored_length_to_pad:
             if sequence_length > max_seq_length + 1:
                 logger.info(
                     "Sequence length %d exceeds max_seq_length %d; truncating for packing.",
                     sequence_length,
                     max_seq_length,
                 )
-            val = val[:max_stored_length_to_pad]
+            if torch.is_tensor(val):
+                val = val[:max_stored_length_to_pad].clone()
+            elif isinstance(val, np.ndarray):
+                val = val[:max_stored_length_to_pad].copy()
+            else:
+                val = list(val[:max_stored_length_to_pad])
+        elif sequence_length < max_stored_length_to_pad:
+            padding_length = max_stored_length_to_pad - sequence_length
+            if torch.is_tensor(val):
+                val = torch.cat((val, val.new_full((padding_length,), pad_value)))
+            elif isinstance(val, np.ndarray):
+                val = np.concatenate((val, np.full(padding_length, pad_value, dtype=val.dtype)))
+            else:
+                val = list(val) + [pad_value] * padding_length
         data[key] = val
     return
 
@@ -149,7 +213,6 @@ def tokenize_dataset(
     """
     if not dataset_kwargs:
         dataset_kwargs = {}
-
     # Handle tool_schemas - convert to JSON string if needed
     ts = dataset_kwargs.get("tool_schemas")
     if ts and not isinstance(ts, str):
@@ -227,6 +290,7 @@ def prepare_gpt_sft_packed_data(
     dataset_kwargs: dict | None = None,
     pad_seq_to_mult: int | None = 1,
     num_tokenizer_workers: int = -1,
+    stream_packed_parquet: bool = False,
     *,
     dataset_builder: Callable[..., Any],
 ):
@@ -249,11 +313,17 @@ def prepare_gpt_sft_packed_data(
             preparation (e.g., set to 2 * context_parallel_size for THD CP).
         num_tokenizer_workers: Number of worker processes used to materialize tokenized samples.
             Values less than or equal to 1 run serially.
+        stream_packed_parquet: Fill and write Parquet row groups incrementally instead of retaining
+            corpus-sized Python token lists. This option is not supported for legacy NumPy output.
         dataset_builder: Builder-owned callable that constructs one unpacked GPT SFT split.
 
     Returns:
         None: Saves the packed sequence data to the specified output path.
     """
+    output_path_str = str(output_path)
+    is_parquet_output = output_path_str.lower().endswith((".parquet", ".pq"))
+    if stream_packed_parquet and not is_parquet_output:
+        raise ValueError("stream_packed_parquet requires a Parquet output path.")
     logger.info(f"Preparing packed sequence from {input_path}")
     dataset = tokenize_dataset(
         input_path,
@@ -269,43 +339,117 @@ def prepare_gpt_sft_packed_data(
 
     random_state = np.random.get_state()
     np.random.seed(seed)
+    staged_output_path = None
     try:
         assignments, packing_metadata = create_packing_strategy(histogram, packed_sequence_size, packing_algorithm)
-        output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
+
+        if stream_packed_parquet:
+            from megatron.bridge.data.packing.parquet import write_packed_parquet_streaming
+
+            staged_output_path = _temporary_sibling(output_path)
+            output_rows = iter_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
+            try:
+                write_packed_parquet_streaming(
+                    output_rows,
+                    staged_output_path,
+                    _publish_on_completion=False,
+                )
+            except Exception:
+                _remove_staged_path(staged_output_path)
+                raise
+        else:
+            output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
     finally:
         np.random.set_state(random_state)
 
-    # save output data
-    output_path_str = str(output_path)
-    if output_path_str.lower().endswith((".parquet", ".pq")):
-        from megatron.bridge.data.packing.parquet import write_packed_parquet
-
-        write_packed_parquet(output_data, output_path)
-    else:
-        # Legacy .npy format
-        if MultiStorageClientFeature.is_enabled():
-            msc = MultiStorageClientFeature.import_package()
-            msc.numpy.save(output_path, output_data)
-        else:
-            np.save(output_path, output_data)
-
-    # save packing metadata, packing_metadata is appended to the packing file if it exists
-    if output_metadata_path is not None:
+    if not stream_packed_parquet:
+        # Keep every materialized output hidden until its metadata is ready,
+        # matching the streaming path's retry-safe publication contract.
+        staged_output_path = _temporary_sibling(output_path)
         try:
-            with output_metadata_path.open(mode="r") as f:
-                packing_metadata_file = json.load(f)
-                # 'packing_metadata_file' is expected to be a list of dicts: List[Dict[str, int]]
-                # Each dict corresponds to a packed dataset. Typically there will be two dicts,
-                # one each for the packed val and train datasets.
-                # Each dict records two values: 'max_samples_per_bin', the max
-                # number of samples per packed sequence, and 'dataset_max_seqlen', the max
-                # sequence length per sample in the packed dataset.
-                assert isinstance(packing_metadata_file, list), "invalid packing_metadata_file!"
-        except FileNotFoundError:
-            packing_metadata_file = []
+            if is_parquet_output:
+                from megatron.bridge.data.packing.parquet import write_packed_parquet
 
-        packing_metadata_file.append(packing_metadata)
-        with output_metadata_path.open(mode="w") as f:
-            json.dump(packing_metadata_file, f)
+                write_packed_parquet(output_data, staged_output_path)
+            else:
+                # Legacy .npy format. The staged sibling retains the .npy
+                # suffix so NumPy does not silently append a second suffix.
+                if MultiStorageClientFeature.is_enabled():
+                    msc = MultiStorageClientFeature.import_package()
+                    msc.numpy.save(staged_output_path, output_data)
+                else:
+                    np.save(staged_output_path, output_data)
+        except Exception:
+            _remove_staged_path(staged_output_path)
+            raise
+
+    # Save packing metadata. Streaming output stays at a temporary sibling
+    # until metadata is complete, so a failed preparation cannot leave a
+    # discoverable packed dataset that the builder would accept on retry.
+    staged_metadata_path = None
+    metadata_backup_path = None
+    metadata_path = None
+    metadata_published = False
+    try:
+        if output_metadata_path is not None:
+            metadata_path = _storage_path(output_metadata_path)
+            staged_metadata_path = _temporary_sibling(output_metadata_path)
+            metadata_existed = True
+            try:
+                with metadata_path.open(mode="r") as f:
+                    packing_metadata_file = json.load(f)
+                    # 'packing_metadata_file' is expected to be a list of dicts: List[Dict[str, int]]
+                    # Each dict corresponds to a packed dataset. Typically there will be two dicts,
+                    # one each for the packed val and train datasets.
+                    # Each dict records two values: 'max_samples_per_bin', the max
+                    # number of samples per packed sequence, and 'dataset_max_seqlen', the max
+                    # sequence length per sample in the packed dataset.
+                    assert isinstance(packing_metadata_file, list), "invalid packing_metadata_file!"
+            except FileNotFoundError:
+                metadata_existed = False
+                packing_metadata_file = []
+
+            packing_metadata_file.append(packing_metadata)
+            with staged_metadata_path.open(mode="w") as f:
+                json.dump(packing_metadata_file, f)
+
+            # Keep the previous metadata recoverable until the packed dataset
+            # is published. The dataset path is the builder's completion gate,
+            # so metadata must be rolled back if that final publication fails.
+            if metadata_existed:
+                metadata_backup_path = _temporary_sibling(output_metadata_path)
+                _publish_staged_path(metadata_path, metadata_backup_path)
+            try:
+                _publish_staged_path(staged_metadata_path, output_metadata_path)
+            except Exception:
+                if metadata_backup_path is not None:
+                    _publish_staged_path(metadata_backup_path, output_metadata_path)
+                    metadata_backup_path = None
+                raise
+            staged_metadata_path = None
+            metadata_published = True
+
+        if staged_output_path is not None:
+            try:
+                _publish_staged_path(staged_output_path, output_path)
+            except Exception:
+                if metadata_published:
+                    if metadata_backup_path is not None:
+                        _publish_staged_path(metadata_backup_path, output_metadata_path)
+                        metadata_backup_path = None
+                    else:
+                        metadata_path.unlink(missing_ok=True)
+                raise
+            staged_output_path = None
+    except Exception:
+        _remove_staged_path(staged_metadata_path)
+        _remove_staged_path(staged_output_path)
+        raise
+
+    if metadata_backup_path is not None:
+        try:
+            _remove_staged_path(metadata_backup_path)
+        except Exception as error:
+            logger.warning("Unable to remove packed metadata backup %s: %s", metadata_backup_path, error)
 
     logger.info(f"Packed sequence is prepared and saved to {output_path}")

@@ -16,7 +16,7 @@
 
 import collections
 import logging
-from typing import Dict, List, Sequence, Tuple, TypeVar
+from typing import Any, Dict, Iterator, List, Sequence, Tuple, TypeVar
 
 import numpy as np
 from tqdm import tqdm
@@ -303,6 +303,88 @@ def create_packing_strategy(
     return assignments, packing_metadata
 
 
+def _to_python_list(values: Any) -> list:
+    """Convert one tensor/array/list to an independent Python list."""
+    if hasattr(values, "tolist"):
+        return values.tolist()
+    return np.asarray(values).tolist()
+
+
+def iter_packing_strategy(
+    assignments: List[List[int]],
+    sequences: Dict[int, List[Dict]],
+    pack_size: int,
+    pad_id: int,
+) -> Iterator[Dict]:
+    """Yield filled packs without materializing corpus-sized Python token lists.
+
+    This preserves :func:`fill_packing_strategy` ordering: samples in every
+    length bucket are permuted once, and assignments consume that permutation
+    from the end. Only the samples used by the current pack are converted to
+    Python lists.
+
+    Args:
+          assignments: A list of bins containing sequence lengths.
+          sequences: Tokenized samples grouped by runtime sequence length.
+          pack_size: Maximum sequence length used to build ``assignments``.
+          pad_id: Tokenizer padding token. Retained for parity with
+              :func:`fill_packing_strategy`.
+
+    Yields:
+          Packed rows with ``input_ids``, shifted ``loss_mask``, and
+          ``seq_start_id`` fields.
+    """
+    del pad_id
+    ifile_handles: dict[int, tuple[list[int], bool]] = {}
+    for seq_len in tqdm(range(pack_size + 1)):
+        per_seq_data = sequences[seq_len]
+        if not per_seq_data:
+            continue
+
+        permutation = np.random.permutation(len(per_seq_data)).tolist()
+        try:
+            for item in per_seq_data:
+                item["loss_mask"]
+            use_loss_mask = True
+        except KeyError:
+            try:
+                for item in per_seq_data:
+                    item["answer_start_idx"]
+                use_loss_mask = False
+            except KeyError as err:
+                err_msg = "Key errors loss_mask and answer_start_idx missing in example - "
+                err_msg += f"{err} {per_seq_data[0]}"
+                logging.error(err_msg)
+                raise ValueError(err_msg) from err
+        ifile_handles[seq_len] = (permutation, use_loss_mask)
+
+    for assignment in tqdm(assignments):
+        packed_input_ids: list = []
+        packed_loss_mask: list = []
+        seq_start_id = [0]
+        for seq_length in assignment:
+            permutation, use_loss_mask = ifile_handles[seq_length]
+            item = sequences[seq_length][permutation.pop()]
+            item_input_ids = _to_python_list(item["input_ids"])
+            if use_loss_mask:
+                item_loss_mask = _to_python_list(item["loss_mask"])[1:] + [False]
+            else:
+                answer_start_idx = item["answer_start_idx"]
+                item_loss_mask = [idx >= (answer_start_idx - 1) for idx in range(len(item_input_ids))]
+            packed_input_ids.extend(item_input_ids)
+            packed_loss_mask.extend(item_loss_mask)
+            seq_start_id.append(len(packed_input_ids))
+        yield {
+            "input_ids": packed_input_ids,
+            "loss_mask": packed_loss_mask,
+            "seq_start_id": seq_start_id[:-1],
+        }
+
+    assert all(not handle[0] for handle in ifile_handles.values()), (
+        "Error: There are items left over from the assignment"
+    )
+
+
 def fill_packing_strategy(
     assignments: List[List[int]],
     sequences: Dict[int, List[Dict]],
@@ -326,56 +408,7 @@ def fill_packing_strategy(
           output_data: A list of dictionaries, where each dictionary represents a packed sequence with its input IDs,
                         loss mask (if available), and starting indices.
     """
-    ifile_handles = dict()
-    for seq_len in tqdm(range(pack_size + 1)):
-        per_seq_data = sequences[seq_len]
-        if len(per_seq_data) > 0:
-            perm = np.random.permutation(len(per_seq_data))
-            input_ids = np.array([x["input_ids"] for x in per_seq_data])[perm].tolist()
-            try:
-                loss_mask = np.array([x["loss_mask"] for x in per_seq_data])[perm].tolist()
-                # roll loss mask by 1 to align with labels. We want to train on the output after the last context token
-                loss_mask = [x[1:] + [False] for x in loss_mask]
-            except KeyError:
-                try:
-                    loss_mask = np.array(
-                        [
-                            [
-                                # (x['answer_start_idx'] - 1) because we want to train on the output
-                                # after the last context token
-                                idx >= (x["answer_start_idx"] - 1)
-                                for idx in range(len(x["input_ids"]))
-                            ]
-                            for x in per_seq_data
-                        ]
-                    )[perm].tolist()
-                except KeyError as err:
-                    err_msg = "Key errors loss_mask and answer_start_idx missing in example - "
-                    err_msg += f"{err} {per_seq_data[0]}"
-                    logging.error(err_msg)
-                    raise ValueError(err_msg)
-            ifile_handles[seq_len] = (input_ids, loss_mask)
-    input_ids, loss_mask, seq_start_id = {}, {}, {}
-    for oindex, assignment in tqdm(enumerate(assignments), total=len(assignments)):
-        _input_ids, _loss_mask, _seq_start_id = [], [], [0]
-        for seq_length in assignment:
-            _input_ids.extend(ifile_handles[seq_length][0].pop())
-            _loss_mask.extend(ifile_handles[seq_length][1].pop())
-            _seq_start_id.append(len(_input_ids))
-        input_ids[oindex] = _input_ids
-        loss_mask[oindex] = _loss_mask
-        seq_start_id[oindex] = _seq_start_id[:-1]
-    output_data = []
-    for i in range(len(input_ids)):
-        item_dict = {
-            "input_ids": input_ids[i],
-            "loss_mask": loss_mask[i],
-            "seq_start_id": seq_start_id[i],
-        }
-        output_data.append(item_dict)
-    assert all(not seq[0] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
-    assert all(not seq[1] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
-    return output_data
+    return list(iter_packing_strategy(assignments, sequences, pack_size, pad_id))
 
 
 def get_seqlen_list(elem: Dict) -> Tuple[List[int], int]:

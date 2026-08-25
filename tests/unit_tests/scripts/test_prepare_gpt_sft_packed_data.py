@@ -35,6 +35,7 @@ class _PackedSequenceSpecs:
     packed_sequence_size: int = 2048
     pad_seq_to_mult: int = 8
     num_tokenizer_workers: int = -1
+    stream_packed_parquet: bool = False
 
 
 @dataclass
@@ -91,6 +92,8 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     builders = types.ModuleType("megatron.bridge.data.builders")
     builders.GPTSFTDatasetBuilder = _GPTSFTDatasetBuilder
     builders.GPTSFTDatasetConfig = _DatasetConfig
+    gpt_sft_builder = types.ModuleType("megatron.bridge.data.builders.gpt_sft")
+    gpt_sft_builder.build_gpt_sft_split = Mock()
     packing = types.ModuleType("megatron.bridge.data.packing")
     training = types.ModuleType("megatron.bridge.training")
     tokenizers = types.ModuleType("megatron.bridge.training.tokenizers")
@@ -108,6 +111,7 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     monkeypatch.setitem(sys.modules, "megatron.bridge", bridge)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data", data)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders", builders)
+    monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders.gpt_sft", gpt_sft_builder)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.packing", packing)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training", training)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.tokenizers", tokenizers)
@@ -118,6 +122,7 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     monkeypatch.setattr(bridge, "recipes", recipes, raising=False)
     monkeypatch.setattr(bridge, "data", data, raising=False)
     monkeypatch.setattr(data, "builders", builders, raising=False)
+    monkeypatch.setattr(builders, "gpt_sft", gpt_sft_builder, raising=False)
     monkeypatch.setattr(data, "packing", packing, raising=False)
     monkeypatch.setattr(packing, "offline", offline, raising=False)
     monkeypatch.setattr(bridge, "training", training, raising=False)
@@ -187,6 +192,7 @@ def test_prepare_gpt_sft_packed_data_forwards_supported_overrides_and_explicit_p
             "4096",
             "--hf-path",
             "nvidia/unit",
+            "--stream-packed-parquet",
             *worker_args,
             "--train-input-path",
             str(train_input),
@@ -208,13 +214,14 @@ def test_prepare_gpt_sft_packed_data_forwards_supported_overrides_and_explicit_p
     assert kwargs["packed_sequence_size"] == 2048
     assert kwargs["max_seq_length"] == 4096
     assert kwargs["num_tokenizer_workers"] == expected_workers
+    assert kwargs["stream_packed_parquet"] is True
     assert kwargs["dataset_kwargs"] == {
         "chat": "template",
         "use_hf_tokenizer_chat_template": True,
     }
 
 
-def test_prepare_gpt_sft_packed_data_forwards_worker_count_to_default_builder(monkeypatch):
+def test_prepare_gpt_sft_packed_data_forwards_streaming_and_worker_count_to_default_builder(monkeypatch):
     module = _load_module()
 
     def unit_recipe():
@@ -224,7 +231,14 @@ def test_prepare_gpt_sft_packed_data_forwards_worker_count_to_default_builder(mo
     monkeypatch.setattr(
         sys,
         "argv",
-        ["prepare_gpt_sft_packed_data.py", "--recipe", "unit_recipe", "--num-tokenizer-workers", "8"],
+        [
+            "prepare_gpt_sft_packed_data.py",
+            "--recipe",
+            "unit_recipe",
+            "--num-tokenizer-workers",
+            "8",
+            "--stream-packed-parquet",
+        ],
     )
 
     module.main()
@@ -232,4 +246,23 @@ def test_prepare_gpt_sft_packed_data_forwards_worker_count_to_default_builder(mo
     assert len(_GPTSFTDatasetBuilder.instances) == 1
     builder = _GPTSFTDatasetBuilder.instances[0]
     assert builder.kwargs["config"].offline_packing_specs.num_tokenizer_workers == 8
+    assert builder.kwargs["config"].offline_packing_specs.stream_packed_parquet is True
+    assert builder.prepare_data_called
+
+
+def test_prepare_gpt_sft_packed_data_preserves_recipe_streaming_without_cli_flag(monkeypatch):
+    module = _load_module()
+
+    def unit_recipe():
+        specs = _PackedSequenceSpecs(stream_packed_parquet=True)
+        return _RecipeConfig(dataset=_DatasetConfig(offline_packing_specs=specs))
+
+    _install_pack_sft_stubs(monkeypatch, unit_recipe)
+    monkeypatch.setattr(sys, "argv", ["prepare_gpt_sft_packed_data.py", "--recipe", "unit_recipe"])
+
+    module.main()
+
+    assert len(_GPTSFTDatasetBuilder.instances) == 1
+    builder = _GPTSFTDatasetBuilder.instances[0]
+    assert builder.kwargs["config"].offline_packing_specs.stream_packed_parquet is True
     assert builder.prepare_data_called

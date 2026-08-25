@@ -37,6 +37,8 @@ class PackedSequenceSpecs:
     pad_cu_seqlens: bool = False
     """Pad cumulative sequence boundaries for full-iteration, whole-layer, or attention-scoped CUDA graphs."""
     pad_seq_to_mult: int | None = 1
+    stream_packed_parquet: bool = False
+    """Fill and write Parquet row groups incrementally to bound token-list conversion memory."""
 
     def __post_init__(self) -> None:
         """Validate alignment settings and any explicitly supplied artifacts."""

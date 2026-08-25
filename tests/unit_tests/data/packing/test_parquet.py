@@ -21,7 +21,9 @@ and the validate_row helper.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,7 +33,11 @@ import pytest
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
-from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetDataset, write_packed_parquet
+from megatron.bridge.data.packing.parquet import (
+    GPTSFTPackedParquetDataset,
+    write_packed_parquet,
+    write_packed_parquet_streaming,
+)
 from megatron.bridge.data.packing.paths import (
     _resolve_parquet_paths,
     is_packed_parquet_file,
@@ -95,6 +101,77 @@ def test_write_packed_parquet_normalizes_mixed_loss_mask_types(tmp_path):
     table = pq.read_table(path)
     assert table.schema.field("loss_mask").type == pa.list_(pa.int8())
     assert table.column("loss_mask").to_pylist() == [[1, 0, 1, 0]]
+
+
+@pytest.mark.unit
+def test_write_packed_parquet_streaming_bounds_row_groups(tmp_path):
+    rows = [_make_packed_row(n_tokens=4, n_seqs=1) for _ in range(5)]
+    path = tmp_path / "streaming.idx.parquet"
+    baseline_path = tmp_path / "baseline.idx.parquet"
+
+    write_packed_parquet(rows, baseline_path)
+    write_packed_parquet_streaming(rows, path, row_group_size=5, max_row_group_tokens=8)
+
+    parquet_file = pq.ParquetFile(path)
+    table = parquet_file.read()
+    assert parquet_file.metadata.num_row_groups == 3
+    assert [parquet_file.metadata.row_group(i).num_rows for i in range(3)] == [2, 2, 1]
+    assert table.schema.field("input_ids").type == pa.list_(pa.int64())
+    assert table.schema.field("loss_mask").type == pa.list_(pa.int8())
+    assert table.column("input_ids").to_pylist() == [row["input_ids"] for row in rows]
+    assert table.column("loss_mask").to_pylist() == [row["loss_mask"] for row in rows]
+    assert table.column("seq_start_id").to_pylist() == [row["seq_start_id"] for row in rows]
+    assert table.equals(pq.read_table(baseline_path))
+
+
+@pytest.mark.unit
+def test_write_packed_parquet_streaming_failure_does_not_publish_partial_file(tmp_path):
+    path = tmp_path / "failed-streaming.idx.parquet"
+
+    def failing_rows():
+        yield _make_packed_row(n_tokens=4, n_seqs=1)
+        yield _make_packed_row(n_tokens=4, n_seqs=1)
+        yield _make_packed_row(n_tokens=4, n_seqs=1)
+        raise RuntimeError("synthetic row failure")
+
+    with pytest.raises(RuntimeError, match="synthetic row failure"):
+        write_packed_parquet_streaming(failing_rows(), path, row_group_size=2)
+
+    assert not path.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit
+def test_write_packed_parquet_streaming_uses_bounded_msc_sink(tmp_path, monkeypatch):
+    path = tmp_path / "msc-streaming.idx.parquet"
+    uploaded_local_paths = []
+
+    def upload_file(remote_path, local_path):
+        uploaded_local_paths.append(Path(local_path))
+        shutil.copyfile(local_path, remote_path)
+
+    fake_msc = SimpleNamespace(
+        Path=Path,
+        open=lambda *args, **kwargs: pytest.fail("streaming must not use an MSC BytesIO write handle"),
+        upload_file=upload_file,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.parquet.MultiStorageClientFeature.is_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.parquet.MultiStorageClientFeature.import_package",
+        lambda: fake_msc,
+    )
+    monkeypatch.setattr(pa, "BufferOutputStream", lambda: pytest.fail("streaming must not buffer whole output"))
+
+    rows = [_make_packed_row(n_tokens=4, n_seqs=1) for _ in range(3)]
+    write_packed_parquet_streaming(rows, path, row_group_size=2)
+
+    assert pq.read_table(path).column("input_ids").to_pylist() == [row["input_ids"] for row in rows]
+    assert sorted(item.name for item in tmp_path.iterdir()) == [path.name]
+    assert len(uploaded_local_paths) == 1
+    assert not uploaded_local_paths[0].exists()
 
 
 # ---------------------------------------------------------------------------
