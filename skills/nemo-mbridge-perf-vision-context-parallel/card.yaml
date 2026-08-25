@@ -6,8 +6,8 @@ summary: >
   microbatch instead of all of it. This is data parallelism over images reusing
   the CP group, not ring attention: the encoder attends within each image via
   cu_seqlens, so no sequence is split and the only added collective is the
-  post-projector gather. Opt-in through model.vision_context_parallel, default
-  False, and a silent no-op at context_parallel_size=1.
+  post-projector gather. Controlled by model.vision_context_parallel, default
+  True, and a silent no-op at context_parallel_size=1.
 validation_status:
   upstream_mcore_split_gather_helpers:
     - code_verified

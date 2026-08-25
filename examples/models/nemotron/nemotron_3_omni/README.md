@@ -265,7 +265,7 @@ Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Ener
 
 ### Vision Context Parallelism
 
-`model.vision_context_parallel=True` shards the microbatch's images (or
+`model.vision_context_parallel` shards the microbatch's images (or
 temporal tubelets) across the language model's context-parallel group, so each
 CP rank encodes `1/CP` of them instead of all of them. This is data parallelism
 over images, not ring attention — RADIO already attends within each image via
@@ -274,9 +274,10 @@ cross-rank attention communication is introduced. The vision projector runs on
 the rank-local shard, and a single gather afterwards restores the full feature
 set that every rank needs to merge media into the packed text sequence.
 
-The flag defaults to `False` and is a no-op unless
-`model.context_parallel_size > 1`. Both recipes below ship with CP=1, so enable
-it only when you raise CP.
+The flag defaults to `True` and is a no-op unless
+`model.context_parallel_size > 1`. Both recipes below ship with CP=1, so it only
+takes effect once you raise CP. Set `model.vision_context_parallel=False` to
+encode every image redundantly on every CP rank.
 
 Measured on 2 nodes / 16 GPUs (PP=1, DP=2, EP=8, ETP=1, MBS=2, GBS=64, GA=16),
 flipping only this flag:

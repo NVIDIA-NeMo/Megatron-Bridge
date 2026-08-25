@@ -42,19 +42,20 @@ They are not alternatives and do not compose in any tested configuration.
 
 ```python
 cfg.model.context_parallel_size = 2      # the flag is a no-op at CP=1
-cfg.model.vision_context_parallel = True
+cfg.model.vision_context_parallel = False  # opt out; on by default
 ```
 
-Defaults to `False`. It self-disables when `context_parallel_size == 1`, so
-turning it on in a recipe that does not raise CP changes nothing and reports no
-error.
+Defaults to `True`. It self-disables when `context_parallel_size == 1`, so a
+recipe that does not raise CP behaves exactly as it did before the flag existed
+and reports no error. Opting out is only useful for A/B measurement or to
+isolate a suspected split/gather bug.
 
 ## Code Anchors
 
 Provider field, `src/megatron/bridge/models/nemotron_omni/nemotron_omni_provider.py`:
 
 ```python
-vision_context_parallel: bool = False
+vision_context_parallel: bool = True
 ```
 
 Gating, in `NemotronOmniModel.__init__`
@@ -86,7 +87,7 @@ Project-then-gather, at the end of `_encode_images`:
 if shard_vision:
     # Project before the gather so the projector stays sharded, then
     # restore the global feature set every CP rank's media merge needs.
-    projected = self.vision_projection(encoded.unsqueeze(1)).squeeze(1)
+    projected = _project_multimodal_embeddings(self.vision_projection, encoded)
     gathered = gather_from_context_parallel_ranks_dynamic_res(projected, num_padded_ranks)
     return gathered.contiguous()
 ```
@@ -145,14 +146,17 @@ signature described under Pitfalls, not noise.
 ## Pitfalls
 
 1. **Silent no-op at CP=1.** The flag ANDs with `context_parallel_lm > 1`. Both
-   checked-in Nemotron Omni recipes ship CP=1, so enabling it there changes
-   nothing. Always confirm CP>1 before attributing a result to this flag.
+   checked-in Nemotron Omni recipes ship CP=1, so the on-by-default value changes
+   nothing there. Always confirm CP>1 before attributing a result to this flag,
+   and note that raising CP now silently enables image sharding too.
 2. **Count-based split leaves the tail rank hot.** Images are divided by count
    with the remainder on the last rank. Multi-image data with a wide per-sample
    image-count spread (e.g. Mantis, 1-5 images/sample at CP=4) balances poorly:
    peak memory is set by the busiest rank, so the win shrinks. A
    patch-count-balanced greedy split on image boundaries is the fix, and it
-   belongs **upstream in MCore**, not reimplemented in Bridge.
+   belongs **upstream in MCore**, not reimplemented in Bridge. Since the flag is
+   on by default, this imbalance is what a multi-image CP>1 run gets unless the
+   user opts out.
 3. **Process-group divergence is checked, not assumed.** The MCore splitter
    resolves the CP group from global parallel state, so a `ProcessGroupCollection`
    whose `cp` size disagrees with `context_parallel_size` would shard against the
@@ -166,16 +170,20 @@ signature described under Pitfalls, not noise.
 5. **Do not gather before projecting.** Gathering encoder output first would
    replicate the projector on every rank and move a larger tensor. The ordering
    is deliberate.
-6. **CP=8 placeholder path is unvalidated end-to-end.** Unit tests cover the
-   even-grid padding, but no multi-node run has exercised a microbatch with fewer
-   images than ranks.
+6. **The placeholder path is unvalidated end-to-end.** A two-rank unit test
+   proves the sharded encoder matches the unsharded one when a microbatch holds
+   fewer images than ranks, but no multi-node training run has exercised it, and
+   nothing covers CP=8.
 
 ## Verification
 
-Unit tests for the padding helper:
+Unit tests. The second file self-launches a two-rank `torch.distributed` job and
+asserts the sharded tower matches the unsharded one for fewer images than ranks,
+an exact split, and a remainder; it skips when fewer than two GPUs are visible:
 
 ```bash
 uv run python -m pytest tests/unit_tests/models/nemotron_omni/test_nemotron_omni_model.py -q
+uv run python -m pytest tests/unit_tests/models/nemotron_omni/test_vision_context_parallel_distributed.py -q
 ```
 
 Multi-GPU A/B. Run the same recipe twice at CP>1, flipping only the flag, and
@@ -186,7 +194,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
   scripts/training/run_recipe.py \
   --recipe nemotron_omni_cord_v2_sft_config \
   model.context_parallel_size=2 \
-  model.vision_context_parallel=true \
+  model.vision_context_parallel=false \
   train.train_iters=20
 ```
 
