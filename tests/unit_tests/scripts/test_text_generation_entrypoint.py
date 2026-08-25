@@ -182,6 +182,44 @@ def test_print_results_includes_returned_log_probabilities(
 
 
 @pytest.mark.unit
+def test_legacy_generation_prints_text_from_generated_tokens(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy output must not derive the completion from the raw prompt's character length."""
+
+    class _GeneratedTokens:
+        def tolist(self) -> list[int]:
+            return [7]
+
+    class _LegacyEngine:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def generate(self, **_kwargs: object) -> list[types.SimpleNamespace]:
+            return [types.SimpleNamespace(generated_text="", generated_tokens=_GeneratedTokens())]
+
+    messages: list[str] = []
+    monkeypatch.setattr(text_generation_entrypoint, "StaticInferenceEngine", _LegacyEngine)
+    monkeypatch.setattr(text_generation_entrypoint, "print_rank_0", messages.append)
+    tokenizer = types.SimpleNamespace(
+        tokenize=lambda _prompt: [1, 2],
+        detokenize=lambda tokens: " answer" if tokens == [7] else "Question answer",
+    )
+    args = types.SimpleNamespace(max_new_tokens=1, max_seq_length=16, max_batch_size=None, seed=0)
+
+    text_generation_entrypoint._generate_with_legacy_static_engine(
+        args,
+        model=object(),
+        tokenizer=tokenizer,
+        prompts=["Question<|im_end|>"],
+        sampling_params=object(),
+    )
+
+    assert "[0] Generated:  answer" in messages
+
+
+@pytest.mark.unit
 def test_dynamic_generation_rejects_failed_inference_requests(
     text_generation_entrypoint: types.ModuleType,
     monkeypatch: pytest.MonkeyPatch,

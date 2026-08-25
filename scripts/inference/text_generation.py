@@ -194,6 +194,10 @@ def _generate_with_legacy_static_engine(
         legacy=True,
     )
     outputs = engine.generate(prompts=prompts, sampling_params=sampling_params)
+    for output in outputs:
+        generated_tokens = getattr(output, "generated_tokens", None)
+        if generated_tokens is not None:
+            output.generated_text = tokenizer.detokenize(generated_tokens.tolist())
     _print_results(prompts, outputs)
 
 
