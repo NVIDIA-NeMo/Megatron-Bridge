@@ -101,6 +101,9 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
     def _build_vision_config(self, language_cfg):
         """Build RADIO ViT-H vision encoder config from a language config copy."""
         vision_cfg = copy.deepcopy(language_cfg)
+        if not self.use_vision_backbone_fp8_arch:
+            vision_cfg.fp8 = None
+            vision_cfg.fp8_param = False
         vision_cfg.sequence_parallel = False
         vision_cfg.context_parallel_size = 1
         vision_cfg.tp_comm_overlap = False

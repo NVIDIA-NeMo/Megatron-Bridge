@@ -6,15 +6,17 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Verification uses the immutable public model and CORD v2 revisions.
-  CPU and distributed GPU import, deterministic Megatron inference, bounded
-  full-model SFT, and LoRA PEFT runs completed. Strict CPU and GPU round trips
-  preserved all 7,349 tensors bitwise, but Transformers 5.8.0 cannot natively
-  reload the local custom-code exports because its dynamic-module cache omits
-  transitive configuration imports. The one-step HF/Megatron comparison
-  predicts the same token but remains below the 0.99 cosine gate. The packed
-  8K long-context recipe completes one optimizer step but does not complete the
-  second because of H100 memory pressure. Unsupported and incomplete workflows
-  remain explicitly identified rather than inferred from focused unit coverage.
+  CPU and distributed GPU import, deterministic Megatron inference, 100-step
+  one-node H100 full-model SFT, in-batch-packed 8K SFT, and LoRA PEFT runs
+  completed. The H100 fine-tuning variants preserve real image-text samples and
+  natural routing while using lower-precision optimizer state; 4K SFT and PEFT
+  use HybridEP, while packed CP2 uses the standard all-to-all dispatcher. Strict
+  CPU and GPU round trips preserved all 7,349 tensors bitwise, but Transformers
+  5.8.0 cannot natively reload the local custom-code exports because its
+  dynamic-module cache omits transitive configuration imports. The one-step
+  HF/Megatron comparison predicts the same token but remains below the 0.99
+  cosine gate. Unsupported and incomplete workflows remain explicitly
+  identified rather than inferred from focused unit coverage.
 verification_index:
   model_level:
     verified:
@@ -27,8 +29,8 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [sft, peft]
-      unverified: [sft_export_inference, sft_long_context]
+      verified: [sft, sft_long_context, peft]
+      unverified: [sft_export_inference]
       unsupported: [pretrain, checkpoint_resume]
 model:
   hf_id: nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
@@ -180,37 +182,45 @@ items:
     H100:
       status: verified
       precision: bf16
-      enabled_features: {}
+      bridge_commit: 9b69b47a321de14b0453c230dd130e18ae0f00f7  # pragma: allowlist secret
+      enabled_features:
+        moe_dispatcher: hybridep
       command: >
-        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config
+        ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
+        --recipe nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config
         --mode sft --step_func nemotron_omni_step
         --pretrained_checkpoint
         work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
-        --max_steps 10 --tensor_model_parallel_size 2
-        --pipeline_model_parallel_size 2 --expert_model_parallel_size 4
-        --expert_tensor_parallel_size 1
+        --max_steps 100
         --save_dir
-        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-checkpoints-clean
-        --save_interval 10
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-4k-checkpoints
+        --save_interval 50
         'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
         dataset.do_validation=false dataset.do_test=false
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         logger.log_interval=1 logger.log_throughput=true rng.seed=5678
-      last_verified: 2026-07-30
+      last_verified: 2026-08-12
       metrics:
-        initial_loss: 1.123339
-        final_loss: 0.4893276
-        last_10_steps_step_time_ms_avg: 24454.11
-        last_10_steps_model_tflops_per_gpu_avg: 60.73
-        last_10_steps_tokens_per_second_per_gpu_avg: 669.990
+        initial_loss: 1.281308
+        final_loss: 0.03330838
+        last_10_steps_step_time_ms_avg: 3603.67
+        last_10_steps_model_tflops_per_gpu_avg: 197.10
+        last_10_steps_tokens_per_second_per_gpu_avg: 9092.952
       expected_result: >
-        The immutable-revision CORD v2 run completes exactly 10 full-SFT
-        optimizer steps on 16 H100 GPUs at TP2/PP2/CP1/EP4/ETP1, GBS/MBS
-        64/1. LM loss is finite from 1.123339 to 0.4893276, all ten recorded
-        steps average 24,454.11 ms and 60.73 TFLOP/s/GPU including first-step
-        compilation, no iteration is skipped or NaN, and a complete
-        iter_0000010 checkpoint is saved.
+        The immutable-revision, real image-text CORD v2 run completes exactly
+        100 full-SFT optimizer steps on eight H100 GPUs at
+        TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/4 with natural-routing HybridEP.
+        Execution uses selective MoE/layernorm recompute, fused attention, TE
+        cross entropy, fused weighted squared-ReLU, and router fusion without
+        changing the image-text objective or routing policy. Model parameters,
+        main gradients, and Adam moments use BF16; optimizer main parameters use
+        scaled FP16 without parameter remainders. LM loss is finite from
+        1.281308 to 0.03330838, the final ten steps average 3,603.67 ms and
+        197.10 TFLOP/s/GPU, sampled peak memory is 76,349 MiB, and no iteration
+        is skipped or NaN. Complete optimizer and RNG checkpoints are saved at
+        steps 50 and 100. Direct step-50 resume loads the complete state and
+        reaches step 100 at 197.07 final-ten TFLOP/s/GPU with finite loss and
+        zero skipped or NaN iterations.
 
   sft_export_inference:
     H100:
@@ -224,10 +234,10 @@ items:
           --hf-model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
           --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
           --megatron-path
-          work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-checkpoints-clean/iter_0000010
+          work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-4k-checkpoints/iter_0000100
           --hf-path
           work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-hf-export-clean
-          --torch-dtype bfloat16 --tp 2 --pp 1 --ep 4 --etp 1
+          --torch-dtype bfloat16 --tp 2 --pp 1 --ep 8 --etp 1
           --trust-remote-code --distributed-save --not-strict
         - >
           uv run python
@@ -247,72 +257,86 @@ items:
 
   sft_long_context:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: eb7cf72392ac07e7a095b87d9b1d6bf2b38c5b6e  # pragma: allowlist secret
       enabled_features:
         sequence_packing: in_batch
         context_parallel_size: 2
       command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+        ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
         --recipe nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config
         --mode sft --step_func nemotron_omni_step
         --pretrained_checkpoint
         work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
-        --max_steps 10
+        --max_steps 100
         --save_dir
-        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/long-context-checkpoints-clean
-        --save_interval 10
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-8k-packed-checkpoints
+        --save_interval 50
         'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
         dataset.do_validation=false dataset.do_test=false
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         logger.log_interval=1 logger.log_throughput=true rng.seed=5678
-      last_verified: null
+      last_verified: 2026-08-11
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.251364
+        final_loss: 0.01020405
+        last_10_steps_step_time_ms_avg: 15577.9
+        last_10_steps_model_tflops_per_gpu_avg: 93.73
+        last_10_steps_tokens_per_second_per_gpu_avg: 4206.986
       expected_result: >
-        The 8K TP4/PP1/CP2/EP1/ETP4, MBS2 in-batch-packing run uses
-        precision-aware Adam with FP16 main parameters and stored FP32
-        remainders, BF16 gradients, and BF16 moments. Step 1 completes with
-        finite LM loss 1.142561 in 170,179.0 ms at 8.6 TFLOP/s/GPU with no
-        skipped or NaN iteration, but step 2 encounters rank-divergent H100
-        memory exhaustion and does not produce the required 10-step checkpoint.
+        The immutable-revision, real image-text CORD v2 run completes exactly
+        100 full-SFT optimizer steps on eight H100 GPUs at
+        TP4/PP1/CP2/EP8/ETP1 and GBS/MBS 64/2 with 8K in-batch packing and the
+        standard all-to-all dispatcher. Model parameters, main gradients, and
+        Adam moments use BF16; optimizer main parameters use scaled FP16 without
+        parameter remainders. LM loss is finite from 1.251364 to 0.01020405, the
+        final ten steps average 15,577.9 ms and 93.73 TFLOP/s/GPU, sampled peak
+        memory is 75,197 MiB, and no iteration is skipped or NaN. Complete
+        optimizer and RNG checkpoints are saved at steps 50 and 100. Direct
+        step-50 resume loads the complete state and reaches step 100 with finite
+        loss and zero skipped or NaN iterations.
 
   peft:
     H100:
       status: verified
       precision: bf16
-      enabled_features: {}
+      bridge_commit: eb7cf72392ac07e7a095b87d9b1d6bf2b38c5b6e  # pragma: allowlist secret
+      enabled_features:
+        moe_dispatcher: hybridep
       command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-        --recipe nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config
+        ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
+        --recipe nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config
         --mode lora --step_func nemotron_omni_step
         --pretrained_checkpoint
         work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
-        --max_steps 10
+        --max_steps 100
         --save_dir
-        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/peft-checkpoints-clean
-        --save_interval 10
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/peft-checkpoints
+        --save_interval 50
         'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
         dataset.do_validation=false dataset.do_test=false
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         logger.log_interval=1 logger.log_throughput=true rng.seed=5678
-      last_verified: 2026-07-30
+      last_verified: 2026-08-11
       metrics:
-        initial_loss: 1.098394
-        final_loss: 0.3166811
-        last_10_steps_step_time_ms_avg: 41897.41
-        last_10_steps_model_tflops_per_gpu_avg: 22.22
-        last_10_steps_tokens_per_second_per_gpu_avg: 782.101
+        initial_loss: 1.282941
+        final_loss: 0.02634745
+        last_10_steps_step_time_ms_avg: 11621.42
+        last_10_steps_model_tflops_per_gpu_avg: 61.25
+        last_10_steps_tokens_per_second_per_gpu_avg: 2819.621
       expected_result: >
-        The ten-step TP4/PP1/CP1/EP1 LoRA run exits successfully and saves a
-        complete eight-shard iter_0000010 adapter checkpoint. LM loss is finite
-        from 1.098394 to 0.3166811, all ten steps average 41,897.41 ms and
-        22.22 TFLOP/s/GPU including first-step compilation, and no iteration is
-        skipped or NaN.
+        The immutable-revision, real image-text CORD v2 run completes exactly
+        100 LoRA optimizer steps on eight H100 GPUs at
+        TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/1 with natural-routing HybridEP.
+        Model parameters, main gradients, and Adam moments use BF16; optimizer
+        main parameters use scaled FP16 without parameter remainders. LM loss is
+        finite from 1.282941 to 0.02634745, the final ten steps average
+        11,621.42 ms and 61.25 TFLOP/s/GPU, sampled peak memory is 44,873 MiB,
+        and no iteration is skipped or NaN. Complete optimizer and RNG
+        checkpoints are saved at steps 50 and 100. Direct step-50 resume loads
+        the complete state and reaches step 100 with finite loss and zero
+        skipped or NaN iterations.
 
   checkpoint_resume:
     all:
