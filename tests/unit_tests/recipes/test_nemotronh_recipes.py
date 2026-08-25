@@ -180,6 +180,12 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
             id="nano-gb300",
         ),
         pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
+            "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
+            True,
+            id="nano-vr200",
+        ),
+        pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
             "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config",
             False,
@@ -191,14 +197,20 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
             False,
             id="super-gb300",
         ),
+        pytest.param(
+            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
+            "nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config",
+            False,
+            id="super-vr200",
+        ),
     ],
 )
-def test_nemotron_3_gb_mxfp8_perf_recipes_enable_cutedsl_fusion(
+def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
     module_name: str,
     factory_name: str,
     has_comm_overlap: bool,
 ) -> None:
-    """GB MXFP8 recipes match the measured CutDSL and MoE overlap settings."""
+    """Selected MXFP8 recipes match the measured CutDSL and MoE overlap settings."""
     module = importlib.import_module(module_name)
     cfg = getattr(module, factory_name)()
 

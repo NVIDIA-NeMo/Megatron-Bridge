@@ -1101,6 +1101,11 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
             processor,
             assistant_start="<|assistant|>",
             assistant_end=None,
+            role_start_markers={
+                "system": "<|system|>",
+                "user": "<|user|>",
+                "tool": "<|observation|>",
+            },
             rendered_turn_end_roles=(CHATML_ASSISTANT_ROLE,),
         )
 
@@ -1440,6 +1445,18 @@ def _assistant_mask_from_conversation_turns(
 
         if role in rendered_turn_end_roles:
             content_end = after_end = turn_limit
+            if turn_index + 1 < len(conversation):
+                boundary_tokens_in_payload = _conversation_contains_boundary_tokens(
+                    example_or_conversation, tokenizer, boundary_config
+                )
+                if boundary_tokens_in_payload is not False:
+                    return None
+                next_role = conversation[turn_index + 1].get("role")
+                next_role_start_tokens = role_start_tokens.get(next_role, [])
+                next_role_start, _ = find_token_span(rendered_ids, next_role_start_tokens, content_start)
+                if next_role_start < 0:
+                    return None
+                content_end = after_end = next_role_start
         else:
             candidate_ends: list[tuple[int, int, int, list[int]]] = []
             for priority, pattern in enumerate(end_patterns):
