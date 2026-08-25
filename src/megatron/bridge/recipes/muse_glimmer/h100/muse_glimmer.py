@@ -33,28 +33,19 @@ _MODEL_REVISION = "f84ecc3a0ea984a4c04542a84269e3d065350a6e"  # pragma: allowlis
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 
 
-def _apply_model_and_data(
-    cfg: ConfigContainer,
-    *,
-    seq_length: int,
-    tensor_parallel_size: int,
-    pipeline_parallel_size: int,
-    context_parallel_size: int,
-) -> None:
-    """Apply the exact model, multimodal data, and common execution settings."""
+def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigContainer:
+    """Return a 100-step random-init multimodal pretraining config on 32 H100 GPUs."""
+    cfg = _sft_common_vlm()
+
     cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID, revision=_MODEL_REVISION).get_model_config()
-    cfg.model.seq_length = seq_length
-    cfg.model.tensor_model_parallel_size = tensor_parallel_size
-    cfg.model.pipeline_model_parallel_size = pipeline_parallel_size
-    cfg.model.pipeline_dtype = torch.bfloat16 if pipeline_parallel_size > 1 else None
+    cfg.model.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
-    if pipeline_parallel_size == 2:
-        cfg.model.hybrid_layer_pattern = f"{'*' * 20}|{'*' * 32}"
-    elif pipeline_parallel_size == 4:
-        cfg.model.hybrid_layer_pattern = "|".join("*" * layers for layers in (9, 15, 15, 13))
-    cfg.model.context_parallel_size = context_parallel_size
-    if context_parallel_size > 1:
-        cfg.model.cp_comm_type = "a2a"
+    cfg.model.hybrid_layer_pattern = f"{'*' * 20}|{'*' * 32}"
+    cfg.model.context_parallel_size = 1
+    cfg.model.cp_comm_type = "p2p"
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
@@ -67,7 +58,7 @@ def _apply_model_and_data(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["core_attn"]
 
-    cfg.dataset.seq_length = seq_length
+    cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = _MODEL_ID
     cfg.dataset.hf_processor_kwargs = {
         "revision": _MODEL_REVISION,
@@ -77,7 +68,11 @@ def _apply_model_and_data(
     cfg.dataset.source.load_kwargs = {"revision": _CORD_V2_REVISION}
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
-    cfg.dataset.num_workers = 4
+    cfg.dataset.pad_to_max_length = True
+    cfg.dataset.enable_in_batch_packing = False
+    # Worker-local RNG and prefetch queues are not part of the checkpoint.
+    # Main-process loading keeps the step-50 resume data stream reproducible.
+    cfg.dataset.num_workers = 0
     cfg.dataset.dataloader_type = "cyclic"
 
     cfg.mixed_precision = bf16_mixed()
@@ -89,43 +84,21 @@ def _apply_model_and_data(
     cfg.validation.eval_iters = 0
     cfg.logger.log_interval = 1
     cfg.logger.log_throughput = True
-    cfg.train.micro_batch_size = 1
-    cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 10
-
-
-def _set_optimizer(cfg: ConfigContainer, *, max_lr: float, warmup_iters: int) -> None:
-    """Set the bounded cosine schedule shared by verification workloads."""
-    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=warmup_iters,
-        max_lr=max_lr,
-        min_lr=0.0,
-    )
-    cfg.scheduler.lr_decay_iters = 100
-
-
-def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigContainer:
-    """Return a 100-step random-init multimodal pretraining config on 32 H100 GPUs."""
-    cfg = _sft_common_vlm()
-    _apply_model_and_data(
-        cfg,
-        seq_length=4096,
-        tensor_parallel_size=8,
-        pipeline_parallel_size=2,
-        context_parallel_size=1,
-    )
-    cfg.dataset.pad_to_max_length = True
-    cfg.dataset.enable_in_batch_packing = False
-    # Worker-local RNG and prefetch queues are not part of the checkpoint.
-    # Main-process loading keeps the step-50 resume data stream reproducible.
-    cfg.dataset.num_workers = 0
     cfg.rng.seed = 1234
     cfg.train.train_iters = 100
     # TP8/PP2 leaves two data-parallel replicas on 32 GPUs. One sample per
     # replica keeps this bounded verification recipe to one microbatch per
     # optimizer step while exercising the complete multimodal model.
     cfg.train.global_batch_size = 2
-    _set_optimizer(cfg, max_lr=3e-4, warmup_iters=40)
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=40,
+        max_lr=3e-4,
+        min_lr=0.0,
+    )
+    cfg.scheduler.lr_decay_iters = 100
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
@@ -138,19 +111,64 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigConta
 def muse_glimmer_30b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a 100-step full multimodal SFT config on 32 H100 GPUs."""
     cfg = _sft_common_vlm()
-    _apply_model_and_data(
-        cfg,
-        seq_length=4096,
-        tensor_parallel_size=8,
-        pipeline_parallel_size=2,
-        context_parallel_size=1,
-    )
+
+    cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID, revision=_MODEL_REVISION).get_model_config()
+    cfg.model.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.hybrid_layer_pattern = f"{'*' * 20}|{'*' * 32}"
+    cfg.model.context_parallel_size = 1
+    cfg.model.cp_comm_type = "p2p"
+    cfg.model.sequence_parallel = True
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    cfg.model.recompute_vision_layers = True
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.hf_processor_path = _MODEL_ID
+    cfg.dataset.hf_processor_kwargs = {
+        "revision": _MODEL_REVISION,
+        "max_image_tokens": 256,
+    }
+    cfg.dataset.source.split = "train"
+    cfg.dataset.source.load_kwargs = {"revision": _CORD_V2_REVISION}
+    cfg.dataset.do_validation = False
+    cfg.dataset.do_test = False
+    cfg.dataset.num_workers = 4
+    cfg.dataset.dataloader_type = "cyclic"
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.enable_in_batch_packing = False
+
+    cfg.mixed_precision = bf16_mixed()
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 8
-    _set_optimizer(cfg, max_lr=5e-6, warmup_iters=10)
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=10,
+        max_lr=5e-6,
+        min_lr=0.0,
+    )
+    cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
     cfg.checkpoint.save_optim = False
@@ -164,20 +182,64 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContainer:
     """Return a 100-step packed 8K full SFT config with CP2 on 32 H100 GPUs."""
     cfg = _sft_common_vlm()
-    _apply_model_and_data(
-        cfg,
-        seq_length=8192,
-        tensor_parallel_size=1,
-        pipeline_parallel_size=4,
-        context_parallel_size=2,
-    )
+
+    cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID, revision=_MODEL_REVISION).get_model_config()
+    cfg.model.seq_length = 8192
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.hybrid_layer_pattern = "|".join("*" * layers for layers in (9, 15, 15, 13))
+    cfg.model.context_parallel_size = 2
+    cfg.model.cp_comm_type = "a2a"
+    cfg.model.sequence_parallel = True
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    cfg.model.recompute_vision_layers = True
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.hf_processor_path = _MODEL_ID
+    cfg.dataset.hf_processor_kwargs = {
+        "revision": _MODEL_REVISION,
+        "max_image_tokens": 256,
+    }
+    cfg.dataset.source.split = "train"
+    cfg.dataset.source.load_kwargs = {"revision": _CORD_V2_REVISION}
+    cfg.dataset.do_validation = False
+    cfg.dataset.do_test = False
+    cfg.dataset.num_workers = 4
+    cfg.dataset.dataloader_type = "cyclic"
     cfg.dataset.pad_to_max_length = False
     cfg.dataset.enable_in_batch_packing = True
+
+    cfg.mixed_precision = bf16_mixed()
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 2
-    _set_optimizer(cfg, max_lr=5e-6, warmup_iters=10)
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=10,
+        max_lr=5e-6,
+        min_lr=0.0,
+    )
+    cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
     cfg.checkpoint.save_optim = False
@@ -191,13 +253,40 @@ def muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config() -> ConfigContaine
 def muse_glimmer_30b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a 100-step attention-projection LoRA config on 8 H100 GPUs."""
     cfg = _peft_common_vlm()
-    _apply_model_and_data(
-        cfg,
-        seq_length=8192,
-        tensor_parallel_size=8,
-        pipeline_parallel_size=1,
-        context_parallel_size=1,
-    )
+
+    cfg.model = AutoBridge.from_hf_pretrained(_MODEL_ID, revision=_MODEL_REVISION).get_model_config()
+    cfg.model.seq_length = 8192
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.hybrid_layer_pattern = "*" * 52
+    cfg.model.context_parallel_size = 1
+    cfg.model.cp_comm_type = "p2p"
+    cfg.model.sequence_parallel = True
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    cfg.model.recompute_vision_layers = True
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = "auto"
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.hf_processor_path = _MODEL_ID
+    cfg.dataset.hf_processor_kwargs = {
+        "revision": _MODEL_REVISION,
+        "max_image_tokens": 256,
+    }
+    cfg.dataset.source.split = "train"
+    cfg.dataset.source.load_kwargs = {"revision": _CORD_V2_REVISION}
+    cfg.dataset.do_validation = False
+    cfg.dataset.do_test = False
+    cfg.dataset.num_workers = 4
+    cfg.dataset.dataloader_type = "cyclic"
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.enable_in_batch_packing = False
 
@@ -209,10 +298,27 @@ def muse_glimmer_30b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
         peft_cfg.dropout = 0.0
     cfg.peft = peft_cfg
 
+    cfg.mixed_precision = bf16_mixed()
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
     cfg.rng.seed = 5678
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 8
-    _set_optimizer(cfg, max_lr=1e-4, warmup_iters=10)
+    cfg.train.micro_batch_size = 1
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 10
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=10,
+        max_lr=1e-4,
+        min_lr=0.0,
+    )
+    cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
     cfg.env_vars = {
