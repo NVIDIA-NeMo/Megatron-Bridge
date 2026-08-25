@@ -246,7 +246,7 @@ def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
     cfg.model.mla_down_proj_fusion = True
     cfg.model.num_layers = 4
-    cfg.model.moe_layer_freq = cfg.model.moe_layer_freq[: cfg.model.num_layers]
+    # cfg.model.moe_layer_freq = cfg.model.moe_layer_freq[: cfg.model.num_layers]
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -255,6 +255,8 @@ def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|t|t|tmL")
+    num_dense_layers = cfg.model.moe_layer_freq.count(0)
+    cfg.model.moe_layer_freq = [0] * num_dense_layers + [1] * (cfg.model.num_layers - num_dense_layers)
 
     cfg.train.global_batch_size = 128
     cfg.validation.eval_global_batch_size = 128
