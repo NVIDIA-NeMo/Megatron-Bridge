@@ -15,8 +15,8 @@ summary: >
   text-only prompt clears the 0.99 correlation gate, at cosine similarity
   0.998666; the image-conditioned prompt measures 0.868094, so the item
   remains unverified and the divergence is scoped to the vision path. PEFT is
-  verified on the same single node. The remaining functional training
-  workflows are
+  verified on the same single node, and SFT is verified on 48 H100 GPUs with
+  the canonical 48-GPU recipe. The remaining functional training workflows are
   unverified and await a bounded public multi-node run. sft_long_context has
   no Qwen3.5-VL 122B-A10B recipe yet, so it remains unverified rather than
   claiming coverage from another model size.
@@ -32,8 +32,8 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [peft]
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [sft, peft]
+      unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
   performance:
     H100: verified
 model:
@@ -229,22 +229,48 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 6a834c008f0179a25fe936e136672a9ecabe0a58  # pragma: allowlist secret
       enabled_features: {}
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 6 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config
+        --pretrained_checkpoint
+        work/model-verification/qwen35-vl-122b-a10b/megatron-gpu/iter_0000000
+        --max_steps 100 --warmup_iters 10
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/sft-checkpoint
+        --save_interval 100
+        checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 0.523469
+        final_loss: 0.040955
+        last_10_steps_step_time_ms_avg: 3358.000
+        last_10_steps_model_tflops_per_gpu_avg: 53.700
+        last_10_steps_tokens_per_second_per_gpu_avg: 813.200
       expected_result: >
-        This workflow remains unverified. The canonical library recipe
-        qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config occupies 48 H100 GPUs at
-        TP2/PP6/EP8 and must save its final full-model checkpoint so
-        sft_export_inference can export and reload it.
+        The command completes all 100 steps of the canonical 48-GPU recipe
+        qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config at TP2/PP6/EP8/ETP1 with
+        sequence parallelism, MBS1/GBS32, sequence length 4096, all three
+        language, vision, and vision-projection towers trainable, one
+        multi-token-prediction layer at loss scale 0.1, natural expert routing
+        over the all-to-all dispatcher, uniform full activation recompute of one
+        layer, and no CUDA graphs. Every optimizer step reports finite losses
+        with zero skipped and zero NaN iterations, training loss falls from
+        0.523469 to 0.040955, and the final full-model checkpoint is written at
+        step 100 as 48 distributed-checkpoint shards plus metadata. The recipe
+        reaches MBS1 deliberately: at MBS4 the fp32 logits alone are 7.58 GiB
+        per rank at vocabulary 248320 and TP2, which exhausted device memory at
+        the first optimizer step. Global batch size is unchanged at 32, so only
+        the gradient-accumulation layout differs. This is a support verification
+        of the SFT workflow, not a member of a shared convergence cohort: the
+        recipe uses the CORD-v2 dataset with a 2e-5 to 2e-6 cosine schedule, so
+        its losses must not be compared against cards whose SFT runs use a
+        different dataset, sequence length, or schedule.
 
   sft_export_inference:
     H100:
