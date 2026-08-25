@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import html
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -59,19 +60,15 @@ def test_catalog_discovers_every_card_without_a_model_list(catalog: dict[str, ob
 
 
 @pytest.mark.parametrize(
-    ("slug", "hf_id", "command_fragment", "metric_fragment"),
+    ("slug", "command_fragment"),
     [
         (
             "glm5-2",
-            "zai-org/GLM-5.2",
             "glm52_pretrain_416gpu_h100_bf16_config",
-            "last_10_steps_step_time_ms_avg",
         ),
         (
             "qwen3.8-27b",
-            "Qwen/Qwen3.8-27B",
             "qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config",
-            "last_10_steps_model_tflops_per_gpu_avg",
         ),
     ],
 )
@@ -79,20 +76,17 @@ def test_pilot_models_render_end_to_end(
     generator: ModuleType,
     catalog: dict[str, object],
     slug: str,
-    hf_id: str,
     command_fragment: str,
-    metric_fragment: str,
 ) -> None:
     model = _models(catalog)[slug]
-    page = generator.render_model_page(model, REPO_ROOT, fern=False)
+    page = generator.render_model_section([model])
 
-    assert f"# {hf_id}" in page
-    assert model["source_card"] in page
-    assert model["hf_revision"] in page
+    assert f'id="verified-{slug}"' in page
     assert command_fragment in page
-    assert metric_fragment in page
-    assert "#### Exact command" in page
-    assert "#### Expected result" in page
+    assert 'class="verification-model-explorer"' in page
+    assert "Exact command" in page
+    assert "Expected result" in page
+    assert "Full verification records" not in page
 
 
 def test_current_heterogeneous_shapes_are_concrete_entries(catalog: dict[str, object]) -> None:
@@ -175,21 +169,149 @@ items:
     assert len({entry["source_pointer"] for entry in entries}) == len(entries)
 
 
-def test_catalog_table_has_one_row_per_concrete_entry(generator: ModuleType, catalog: dict[str, object]) -> None:
-    expected_count = sum(len(model["entries"]) for model in catalog["models"])
-    page = generator.render_catalog_page(catalog, fern=False)
+def test_catalog_is_a_simple_model_directory(generator: ModuleType, catalog: dict[str, object]) -> None:
+    page = generator.render_supported_models_page(catalog, REPO_ROOT, fern=False)
 
-    assert len([line for line in page.splitlines() if line.startswith("| [")]) == expected_count
-    assert "never combines independent fields into a synthetic command" in page
-    assert "verification-catalog-filters" in page
+    assert page.count('class="verification-model-link"') == len(catalog["models"])
+    assert "never combined into synthetic commands" in page
+    assert 'href="deepseek/deepseek-v3.html#verified-deepseek-v3"' in page
+    assert "# Supported Models" in page
+    assert "data-model-explorer" not in page
+    assert "verification-catalog-filters" not in page
+
+
+def test_sphinx_model_page_renders_focused_combinations(generator: ModuleType, catalog: dict[str, object]) -> None:
+    model = _models(catalog)["qwen3-30b-a3b"]
+    page = generator.render_model_section([model])
+    capability_workflows = {
+        "import-export": {
+            "hf_to_megatron_cpu",
+            "hf_to_megatron_gpu",
+            "megatron_to_hf_cpu",
+            "megatron_to_hf_gpu",
+        },
+        "pretrain": {"pretrain", "pretrain_fsdp", "pretrain_weak_scaling"},
+        "benchmark": {"pretrain_performance"},
+        "sft": {"sft"},
+        "lora": {"peft"},
+        "long-context": {"sft_long_context"},
+    }
+    expected_entries = [
+        entry for entry in model["entries"] if entry["workflow"] in set().union(*capability_workflows.values())
+    ]
+
+    assert page.count('data-capability-tab="') == len(capability_workflows)
+    assert page.count('class="verification-combination"') == len(expected_entries)
+    assert page.count('class="verification-model-detail"') == len(expected_entries)
+    assert page.count('class="verification-filter-row"') == 1
+    assert model["summary"] not in page
+    assert "source card" not in page
+    assert "Verification:" not in page
+    assert f"### {model['hf_id']}" not in page
+    assert set(workflow for _, _, workflows in generator.CAPABILITY_TABS for workflow in workflows) == set().union(
+        *capability_workflows.values()
+    )
+    for precision in ("bf16", "fp8_mx", "nvfp4"):
+        assert f'data-precision="{precision}"' in page
+    hardware_values = {
+        str(entry["hardware"]) for entry in expected_entries if entry.get("hardware") not in (None, "all")
+    }
+    for hardware in hardware_values:
+        assert f'<button type="button" data-hardware="{hardware}">{hardware}</button>' in page
+    for entry in expected_entries:
+        assert page.count(f'id="{entry["entry_id"]}"') == 1
+        assert f'data-entry="{entry["entry_id"]}"' in page
+        if entry["workflow"] == "pretrain_performance":
+            button = next(line for line in page.splitlines() if f'data-entry="{entry["entry_id"]}"' in line)
+            assert 'data-capability="benchmark"' in button
+        expected_hardware = "" if entry.get("hardware") in (None, "all") else entry["hardware"]
+        button = next(line for line in page.splitlines() if f'data-entry="{entry["entry_id"]}"' in line)
+        assert f'data-hardware="{expected_hardware}"' in button
+        for command in entry["commands"]:
+            assert html.escape(command) in page
+        assert html.escape(entry["expected_result"]) in page
+
+
+def test_full_verification_records_are_removed_from_every_model_page(
+    generator: ModuleType, catalog: dict[str, object]
+) -> None:
+    for model in catalog["models"]:
+        page = generator.render_model_section([model])
+        assert "Full verification records" not in page
+        assert 'class="verification-model-explorer"' in page
+
+
+def test_recorded_training_metrics_are_rendered(generator: ModuleType, catalog: dict[str, object]) -> None:
+    model = _models(catalog)["gpt-oss-120b"]
+    page = generator.render_model_section([model])
+
+    assert "Recorded metrics" in page
+    assert 'class="verification-metric-list"' in page
+    assert "verification-metric-grid" not in page
+    assert "Initial loss" in page
+    assert "Final loss" in page
+    assert "Step time · last 10 avg" in page
+    assert "2,481.140 ms" in page
+    assert "Model throughput · last 10 avg" in page
+    assert "1,077.350 TFLOP/s/GPU" in page
+    assert "Token throughput · last 10 avg" in page
+    assert "33,017.081 tokens/s/GPU" in page
+
+
+def test_models_map_to_canonical_guides(generator: ModuleType, catalog: dict[str, object]) -> None:
+    models = _models(catalog)
+    paths = {slug: generator._find_model_doc(REPO_ROOT, model) for slug, model in models.items()}
+
+    assert all(path != "models/README.md" for path in paths.values())
+    assert len(set(paths.values())) == len(models)
+    assert paths["gpt-oss-20b"] == "models/gpt_oss/gpt-oss-20b.md"
+    assert paths["gpt-oss-120b"] == "models/gpt_oss/gpt-oss-120b.md"
+    assert paths["nemotron-3-nano-4b"] == "models/nemotron/nemotron3-nano-4b.md"
+    assert paths["nemotron-3-super-120b-a12b"] == "models/nemotron/nemotron3-super.md"
+    assert paths["qwen3.8-27b"] == "models/qwen/qwen3.8-27b.md"
+
+
+def test_model_page_merge_preserves_intro_and_replaces_old_sections(generator: ModuleType) -> None:
+    original = "# Example\n\nHandwritten summary.\n\n## Architecture\n\nDetails.\n"
+    section = f"{generator.MODEL_SECTION_START}\n\n## Verified configurations\n\n{generator.MODEL_SECTION_END}\n"
+    merged = generator._merge_model_page(original, section)
+
+    assert merged.startswith("# Example\n\nHandwritten summary.\n\n" + generator.MODEL_SECTION_START)
+    assert "## Architecture" not in merged
+    assert "Details." not in merged
+    assert generator._merge_model_page(merged, section) == merged
+    assert generator._merge_model_page(original, section, title="New title").startswith("# New title\n\n")
 
 
 def test_generated_outputs_and_navigation_are_current(generator: ModuleType, catalog: dict[str, object]) -> None:
     nav = (REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8")
+    supported_models = (REPO_ROOT / "docs/models/README.md").read_text(encoding="utf-8")
 
     assert generator.generate(REPO_ROOT, check=True)
     for model in catalog["models"]:
-        assert f"model-verification/models/{model['slug']}.mdx" in nav
+        model_doc = generator._find_model_doc(REPO_ROOT, model)
+        page = (REPO_ROOT / "docs" / model_doc).read_text(encoding="utf-8")
+        assert f'id="verified-{model["slug"]}"' in page
+        assert page.count(generator.MODEL_SECTION_START) == 1
+        assert model["summary"] not in page
+        assert f"model-verification/models/{model['slug']}.mdx" not in nav
+    deepseek_page = (REPO_ROOT / "docs/models/deepseek/deepseek-v3.md").read_text(encoding="utf-8")
+    assert "is a large-scale Mixture-of-Experts" in deepseek_page
+    assert "## Conversion with" not in deepseek_page
+    assert "pretrain_performance.H100" not in deepseek_page
+    assert 'href="deepseek/deepseek-v3.html#verified-deepseek-v3"' in supported_models
+    assert 'href="gpt_oss/gpt-oss-20b.html#verified-gpt-oss-20b"' in supported_models
+    assert 'href="gpt_oss/gpt-oss-120b.html#verified-gpt-oss-120b"' in supported_models
+    assert "./nightly/pages/models/gpt_oss/gpt-oss-20b.mdx" in nav
+    assert "./nightly/pages/models/gpt_oss/gpt-oss-120b.mdx" in nav
+    for retired_doc in generator.RETIRED_COMBINED_MODEL_DOCS:
+        assert not (REPO_ROOT / "docs" / retired_doc).exists()
+        assert not (REPO_ROOT / "docs/fern/versions/nightly/pages" / Path(retired_doc).with_suffix(".mdx")).exists()
+    assert "Model Verification Catalog" not in nav
+    assert not (REPO_ROOT / "docs/model-verification/index.md").exists()
+    assert not (REPO_ROOT / "docs/fern/versions/nightly/pages/model-verification/index.mdx").exists()
+    assert not list((REPO_ROOT / "docs/model-verification/models").glob("*.md"))
+    assert not list((REPO_ROOT / "docs/fern/versions/nightly/pages/model-verification/models").glob("*.mdx"))
 
 
 def test_normalized_commands_equal_card_scalars(catalog: dict[str, object]) -> None:

@@ -11,58 +11,6 @@ navigation:
     path: ./nightly/pages/performance-summary.mdx
   - page: Performance Archive
     path: ./nightly/pages/performance-summary-archive.mdx
-# BEGIN GENERATED MODEL VERIFICATION CATALOG
-- section: Model Verification
-  contents:
-  - page: Model Verification Catalog
-    path: ./nightly/pages/model-verification/index.mdx
-  - page: "deepseek-ai/DeepSeek-V3"
-    path: ./nightly/pages/model-verification/models/deepseek-v3.mdx
-  - page: "deepseek-ai/DeepSeek-V4-Flash"
-    path: ./nightly/pages/model-verification/models/deepseek-v4-flash.mdx
-  - page: "google/gemma-3-4b-it"
-    path: ./nightly/pages/model-verification/models/gemma-3-4b-it.mdx
-  - page: "google/gemma-4-26B-A4B-it"
-    path: ./nightly/pages/model-verification/models/gemma-4-26b-a4b-it.mdx
-  - page: "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B"
-    path: ./nightly/pages/model-verification/models/k-exaone-2.mdx
-  - page: "MiniMaxAI/MiniMax-M3"
-    path: ./nightly/pages/model-verification/models/minimax-m3.mdx
-  - page: "moonshotai/Kimi-K3"
-    path: ./nightly/pages/model-verification/models/kimi-k3.mdx
-  - page: "moonshotai/Moonlight-16B-A3B"
-    path: ./nightly/pages/model-verification/models/moonlight-16b-a3b.mdx
-  - page: "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
-    path: ./nightly/pages/model-verification/models/nemotron-3-nano-omni-30b-a3b-reasoning.mdx
-  - page: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
-    path: ./nightly/pages/model-verification/models/nemotron-3-nano-30b-a3b.mdx
-  - page: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
-    path: ./nightly/pages/model-verification/models/nemotron-3-nano-4b.mdx
-  - page: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
-    path: ./nightly/pages/model-verification/models/nemotron-3-super-120b-a12b.mdx
-  - page: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
-    path: ./nightly/pages/model-verification/models/nemotron-3.5-lightning.mdx
-  - page: "openai/gpt-oss-120b"
-    path: ./nightly/pages/model-verification/models/gpt-oss-120b.mdx
-  - page: "openai/gpt-oss-20b"
-    path: ./nightly/pages/model-verification/models/gpt-oss-20b.mdx
-  - page: "Qwen/Qwen3-235B-A22B"
-    path: ./nightly/pages/model-verification/models/qwen3-235b-a22b.mdx
-  - page: "Qwen/Qwen3-30B-A3B"
-    path: ./nightly/pages/model-verification/models/qwen3-30b-a3b.mdx
-  - page: "Qwen/Qwen3-8B"
-    path: ./nightly/pages/model-verification/models/qwen3-8b.mdx
-  - page: "Qwen/Qwen3.6-35B-A3B"
-    path: ./nightly/pages/model-verification/models/qwen3.6-35b-a3b.mdx
-  - page: "Qwen/Qwen3.8-27B"
-    path: ./nightly/pages/model-verification/models/qwen3.8-27b.mdx
-  - page: "stepfun-ai/Step-3.5-Flash"
-    path: ./nightly/pages/model-verification/models/step35-flash.mdx
-  - page: "zai-org/GLM-5"
-    path: ./nightly/pages/model-verification/models/glm5.mdx
-  - page: "zai-org/GLM-5.2"
-    path: ./nightly/pages/model-verification/models/glm5-2.mdx
-# END GENERATED MODEL VERIFICATION CATALOG
 - section: Guides
   contents:
   - page: Parallelisms Guide
@@ -85,6 +33,10 @@ navigation:
   contents:
   - page: Supported Models
     path: ./nightly/pages/models/README.mdx
+  - contents:
+    - page: EXAONE and K-EXAONE
+      path: ./nightly/pages/models/exaone/exaone.mdx
+    section: EXAONE
   - contents:
     - page: Ling 2.0
       path: ./nightly/pages/models/bailing/ling-2.mdx
@@ -120,18 +72,24 @@ navigation:
       path: ./nightly/pages/models/glm/glm-45v.mdx
     - page: GLM-4.7 and GLM-4.7-Flash
       path: ./nightly/pages/models/glm/glm47.mdx
-    - page: GLM-5 and GLM-5.1
+    - page: GLM-5
       path: ./nightly/pages/models/glm/glm5.mdx
+    - page: GLM-5.2
+      path: ./nightly/pages/models/glm/glm5-2.mdx
     section: GLM
   - contents:
-    - page: GPT OSS
-      path: ./nightly/pages/models/gpt_oss/gpt-oss.mdx
+    - page: GPT OSS 20B
+      path: ./nightly/pages/models/gpt_oss/gpt-oss-20b.mdx
+    - page: GPT OSS 120B
+      path: ./nightly/pages/models/gpt_oss/gpt-oss-120b.mdx
     section: GPT-OSS
   - contents:
     - page: Kimi K2
       path: ./nightly/pages/models/kimi/kimi-k2.mdx
     - page: Kimi-K2.5-VL
       path: ./nightly/pages/models/kimi/kimi-k25-vl.mdx
+    - page: Kimi K3
+      path: ./nightly/pages/models/kimi/kimi-k3.mdx
     section: Kimi
   - contents:
     - page: Llama 2
@@ -164,10 +122,14 @@ navigation:
       path: ./nightly/pages/models/nemotron/llama-nemotron.mdx
     - page: Nemotron H and Nemotron Nano v2
       path: ./nightly/pages/models/nemotron/nemotronh.mdx
-    - page: Nemotron 3 Nano
+    - page: Nemotron 3 Nano 30B-A3B
       path: ./nightly/pages/models/nemotron/nemotron3-nano.mdx
+    - page: Nemotron 3 Nano 4B
+      path: ./nightly/pages/models/nemotron/nemotron3-nano-4b.mdx
     - page: Nemotron 3 Super
       path: ./nightly/pages/models/nemotron/nemotron3-super.mdx
+    - page: Nemotron 3.5 Lightning
+      path: ./nightly/pages/models/nemotron/nemotron3.5-lightning.mdx
     - page: Nemotron Nano V2 VL
       path: ./nightly/pages/models/nemotron/nemotron-nano-v2-vl.mdx
     - page: Nemotron-3 Nano Omni
@@ -178,8 +140,12 @@ navigation:
       path: ./nightly/pages/models/olmoe/olmoe.mdx
     section: OLMoE
   - contents:
-    - page: Qwen
-      path: ./nightly/pages/models/qwen/qwen.mdx
+    - page: Qwen3-235B-A22B
+      path: ./nightly/pages/models/qwen/qwen3-235b-a22b.mdx
+    - page: Qwen3-30B-A3B
+      path: ./nightly/pages/models/qwen/qwen3-30b-a3b.mdx
+    - page: Qwen3-8B
+      path: ./nightly/pages/models/qwen/qwen3-8b.mdx
     - page: Qwen3-MoE
       path: ./nightly/pages/models/qwen/qwen3-moe.mdx
     - page: Qwen3-Next
@@ -188,8 +154,10 @@ navigation:
       path: ./nightly/pages/models/qwen/qwen2.5-vl.mdx
     - page: Qwen3-VL
       path: ./nightly/pages/models/qwen/qwen3-vl.mdx
-    - page: Qwen 3.5 / 3.6
-      path: ./nightly/pages/models/qwen/qwen35-vl.mdx
+    - page: Qwen3.6-35B-A3B
+      path: ./nightly/pages/models/qwen/qwen3.6-35b-a3b.mdx
+    - page: Qwen3.8-27B
+      path: ./nightly/pages/models/qwen/qwen3.8-27b.mdx
     - page: Qwen2-Audio
       path: ./nightly/pages/models/qwen/qwen2-audio.mdx
     - page: Qwen2.5-Omni
