@@ -1337,7 +1337,7 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
