@@ -31,6 +31,25 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
+# Public Nemotron 3.5 Lightning checkpoint used by the Lightning recipe API.
+_NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+_NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
+
+
+def _apply_nemotron_3_5_lightning_defaults(cfg: ConfigContainer) -> ConfigContainer:
+    """Apply the Nemotron 3.5 Lightning workload contract to a B200 execution config."""
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    return cfg
+
+
 def nemotronh_56b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 64× B200, FP8 current-scaling."""
     cfg = nemotronh_56b_pretrain_config()
@@ -365,6 +384,53 @@ def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B200, BF16."""
+    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_bf16_config())
+
+
+def _build_nemotron_3_5_lightning_b200_mxfp8() -> ConfigContainer:
+    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config())
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B200, MXFP8."""
+    return _build_nemotron_3_5_lightning_b200_mxfp8()
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_fsdp_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B200, MXFP8, Megatron FSDP."""
+    cfg = _build_nemotron_3_5_lightning_b200_mxfp8()
+
+    # Megatron FSDP registers module hooks that Transformer Engine CUDA graph
+    # capture rejects.
+    cfg.train.global_batch_size = 384
+    cfg.train.micro_batch_size = 3
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+
+    cfg.model.init_model_with_meta_device = True
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    cfg.checkpoint.load = None
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× B200, NVFP4."""
+    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config())
 
 
 def nemotronh_56b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
