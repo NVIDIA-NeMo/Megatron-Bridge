@@ -30,9 +30,10 @@ summary: >
   also produced identical bounded greedy completions from two independent reloads.
 
   The GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections
-  and to separate routed/shared expert FC1/FC2 projections. It completed 100 finite
-  steps, saved an adapter-only checkpoint, and reloaded that checkpoint in a fresh
-  process for finite step 101.
+  and to separate routed/shared expert FC1/FC2 projections. Its execution path uses
+  scoped Transformer Engine CUDA graphs and tuned HybridEP dispatch. It completed
+  100 finite steps, saved an adapter-only checkpoint, and reloaded that checkpoint
+  in a fresh process for finite step 101.
 
 verification_index:
   model_level:
@@ -311,7 +312,7 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: 1a67d67f01e39eb2399fe59fb1f24b7f241a787c  # pragma: allowlist secret
+      bridge_commit: 043d9cdaa1ac0cb52437d8d417a9f3150dfcae3b  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 8 --gpus-per-node 4
         --recipe deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config
@@ -334,18 +335,21 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-24
+      last_verified: 2026-08-25
       enabled_features:
         sequence_packing: offline
+        cuda_graph:
+          implementation: transformer_engine
+          scopes: [moe_router, moe_preprocess]
         moe_dispatcher: hybridep
       metrics:
         initial_loss: 0.9435847
-        final_loss: 0.2915190
-        last_10_steps_step_time_ms_avg: 9903.50
-        last_10_steps_model_tflops_per_gpu_avg: 38.13
-        last_10_steps_tokens_per_second_per_gpu_avg: 413.591155
+        final_loss: 0.2914867
+        last_10_steps_step_time_ms_avg: 6944.33
+        last_10_steps_model_tflops_per_gpu_avg: 52.00
+        last_10_steps_tokens_per_second_per_gpu_avg: 589.833720
         peak_allocated_memory_gib: 53.712
-        peak_reserved_memory_gib: 53.979
+        peak_reserved_memory_gib: 53.953
       expected_result: >
         On 32 GB200 (8 nodes x 4 GPUs), TP1/PP4/EP8/CP1 with dense DP8 and expert
         DP1, GBS/MBS 128/1. The recipe applies rank-32, alpha-32 LoRA with zero
@@ -356,13 +360,15 @@ items:
         warmup/decay horizon used by the verified SFT item while freezing the base
         model and using PEFT's own 1e-4 peak learning rate.
         It disables activation recompute and offload because the reduced PEFT
-        training-state footprint fits with 53.712 GiB peak allocated memory. All
-        100 steps completed with finite LM/MTP losses and zero skipped or NaN
-        iterations. For context, initial LM/MTP losses exactly matched SFT; final
-        LM and MTP losses were 2.84% and 2.81% above SFT, respectively. The 9.9 GiB
-        adapter-only checkpoint reloaded after the same base checkpoint in a
-        fresh process and completed finite step 101 with LM loss 0.2829354 and
-        MTP loss 0.02593753.
+        training-state footprint fits with 53.712 GiB peak allocated memory.
+        Transformer Engine CUDA graphs cover moe_router and moe_preprocess, while
+        HybridEP uses 32 flex-dispatcher SMs, 8 ranks per NVLink domain, 128-token
+        combine chunks, a 72-GPU domain, and MNNVL. All 100 steps completed with
+        finite LM/MTP losses and zero skipped or NaN iterations. For context,
+        initial LM/MTP losses exactly matched SFT; final LM and MTP losses were
+        2.82% and 2.84% above SFT, respectively. The adapter-only checkpoint
+        reloaded after the same base checkpoint in a fresh process and completed
+        finite step 101 with LM loss 0.2827368 and MTP loss 0.02594211.
 
   checkpoint_resume:
     GB200:
