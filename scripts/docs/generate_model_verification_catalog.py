@@ -79,6 +79,7 @@ OWNER_LABELS = {
     "stepfun-ai": "StepFun",
     "zai-org": "Z.ai",
 }
+DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset({"NVIDIA-Nemotron-3-Super-120B-A12B-BF16"})
 MODEL_PAGE_PATHS = {
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
@@ -534,10 +535,14 @@ def _model_directory(catalog: dict[str, object], repo_root: Path, *, fern: bool)
             href = f"{relative_model_doc}{suffix}#verified-{model['slug']}"
             entries = [_mapping(entry, f"{model['slug']} entry") for entry in model["entries"]]
             status = _directory_status(entries)
+            allowlist_suffix = (
+                " <!-- pragma: allowlist secret -->" if model_name in DETECT_SECRETS_ALLOWLIST_MODEL_NAMES else ""
+            )
             lines.extend(
                 [
                     f'      <a class="verification-model-link" href="{href}">',
-                    f'        <strong title="{html.escape(hf_id, quote=True)}">{html.escape(model_name)}</strong>',
+                    f'        <strong title="{html.escape(hf_id, quote=True)}">{html.escape(model_name)}</strong>'
+                    f"{allowlist_suffix}",
                     f"        {_status_badge(status)}",
                     "      </a>",
                 ]

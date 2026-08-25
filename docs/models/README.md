@@ -104,7 +104,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </a>
       <a class="verification-model-link" href="nemotron/nemotron3-super.html#verified-nemotron-3-super-120b-a12b">
-        <strong title="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16">NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong>
+        <strong title="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16">NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->
         <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
       <a class="verification-model-link" href="nemotron/nemotron3.5-lightning.html#verified-nemotron-3.5-lightning">

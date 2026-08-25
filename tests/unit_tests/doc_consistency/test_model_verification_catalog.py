@@ -175,6 +175,7 @@ def test_catalog_is_a_simple_model_directory(generator: ModuleType, catalog: dic
     assert page.count('class="verification-model-link"') == len(catalog["models"])
     assert "never combined into synthetic commands" in page
     assert 'href="deepseek/deepseek-v3.html#verified-deepseek-v3"' in page
+    assert "NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->" in page
     assert "# Supported Models" in page
     assert "data-model-explorer" not in page
     assert "verification-catalog-filters" not in page
