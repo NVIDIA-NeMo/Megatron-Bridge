@@ -15,11 +15,14 @@ summary: >
   text-only prompt clears the 0.99 correlation gate, at cosine similarity
   0.998666; the image-conditioned prompt measures 0.868094, so the item
   remains unverified and the divergence is scoped to the vision path. PEFT is
-  verified on the same single node, and SFT is verified on 48 H100 GPUs with
-  the canonical 48-GPU recipe. The remaining functional training workflows are
-  unverified and await a bounded public multi-node run. sft_long_context has
-  no Qwen3.5-VL 122B-A10B recipe yet, so it remains unverified rather than
-  claiming coverage from another model size.
+  verified on the same single node, SFT is verified on 48 H100 GPUs with the
+  canonical 48-GPU recipe, and pretrain is verified on 128 H100 GPUs with the
+  canonical 128-GPU recipe run with its freeze flags overridden so all three
+  towers train. sft_export_inference is unverified because only its export
+  half can run on this hardware; the bf16 export exceeds single-device memory
+  and the reload has no sharded path. sft_long_context has no Qwen3.5-VL
+  122B-A10B recipe yet, so it remains unverified rather than claiming coverage
+  from another model size.
 verification_index:
   model_level:
     verified:
@@ -32,8 +35,8 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [sft, peft]
-      unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft, peft]
+      unverified: [sft_export_inference, sft_long_context, checkpoint_resume]
   performance:
     H100: verified
 model:
@@ -205,27 +208,51 @@ items:
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 8a98400e0371a78d48f81e6e19fdf3d89207b2c5  # pragma: allowlist secret
       enabled_features: {}
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config
+        --max_steps 100 --warmup_iters 10
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/selfref
+        --save_interval 50
+        checkpoint.load=null
+        model.freeze_language_model=false
+        model.freeze_vision_model=false
+        model.freeze_vision_projection=false
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 13.043600
+        final_loss: 3.712553
+        last_10_steps_step_time_ms_avg: 2655.290
+        last_10_steps_model_tflops_per_gpu_avg: 24.570
+        last_10_steps_tokens_per_second_per_gpu_avg: 385.645
       expected_result: >
-        This workflow remains unverified. The only canonical 128-GPU library
-        recipe for this variant,
-        qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config, trains on
-        the mock VLM dataset and freezes the language and vision towers, so its
-        completed run is recorded under pretrain_performance rather than as
-        functional pretraining. Verifying this item requires a real-data
-        122B-A10B pretrain recipe that updates the language tower and saves a
-        middle and final checkpoint so checkpoint_resume can continue directly
-        from the middle checkpoint.
+        The command completes all 100 optimizer steps on 128 H100 GPUs at
+        TP4/PP8/CP2/EP8/ETP1 with sequence parallelism, MBS2/GBS32, sequence
+        length 4096, natural expert routing over the all-to-all dispatcher with
+        global_aux_loss balancing at coefficient 0.001 and no capacity factor,
+        one multi-token-prediction layer, no activation recompute, and no CUDA
+        graphs. The three freeze overrides make the language tower, vision
+        tower, and vision projection all trainable, so every optimizer step
+        updates the full parameter set and each saved checkpoint carries full
+        optimizer and RNG state. Loss falls from 13.043600 to 3.712553, every
+        step reports finite losses with zero skipped and zero NaN iterations,
+        and checkpoints are written at steps 50 and 100. One scope limit bounds
+        this result: the recipe trains on the mock VLM dataset, so the losses
+        demonstrate a working full-model training step and numerical health,
+        not data-driven convergence, and they must not be compared against any
+        real-data cohort. This run must also not be compared against
+        pretrain_performance.H100 even though both use the same recipe, the
+        same hardware, and the same 100-step window. That item keeps the
+        canonical freeze flags and trains only the vision projection, which is
+        a different trainable parameter set and therefore a different
+        convergence contract.
 
   sft:
     H100:
@@ -417,6 +444,10 @@ items:
         throughput and numerical health, not data-driven convergence, and they
         must not be compared against any real-data cohort. The recipe also
         freezes the language and vision towers and trains only the vision
-        projection, so the reported TFLOP/s reflects that trainable-parameter
-        set rather than full-model pretraining. This item stays separate from
-        the real-data functional pretrain item, which remains unverified.
+        projection. The reported TFLOP/s is a fixed analytic full-model
+        estimate that scales inversely with step time and does not subtract the
+        backward work skipped for the frozen towers, so it overstates the
+        useful arithmetic this run actually performs and is comparable only
+        against other runs of this same frozen configuration. For that reason
+        it must not be compared against pretrain.H100, which runs the same
+        recipe and hardware with all three towers trainable.
