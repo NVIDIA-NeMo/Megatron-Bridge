@@ -93,7 +93,10 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
         finalize.append(inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=torch.cuda.empty_cache))
 
     initialize = inprocess.Compose(
-        inprocess.initialize.RetryController(min_world_size=active_world_size),
+        inprocess.initialize.RetryController(
+            max_iterations=config.max_iterations,
+            min_world_size=active_world_size,
+        ),
         inprocess.nested_restarter.NestedRestarterHandlingCompleted(),
     )
 

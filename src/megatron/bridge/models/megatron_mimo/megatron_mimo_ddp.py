@@ -104,6 +104,8 @@ def wrap_megatron_mimo_model_distributed(
                     module=submodule,
                     pg_collection=module_pg,
                 )
+                # MCore optimizers unwrap DDP and read process groups from the wrapped module.
+                wrapped.module.pg_collection = module_pg
                 megatron_mimo_model.modality_submodules[module_name] = wrapped
 
     return megatron_mimo_model
