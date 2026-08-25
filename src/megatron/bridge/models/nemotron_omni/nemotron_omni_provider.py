@@ -181,7 +181,8 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     # context-parallel group instead of encoding every image on every CP rank.
     # The vision tower is replicated, so this is data parallelism borrowing the
     # CP group, not sequence sharding: RADIO already attends per image.
-    vision_context_parallel: bool = False
+    # No-op at CP=1, so defaulting it on only changes CP>1 runs.
+    vision_context_parallel: bool = True
 
     # This field is serialized in run_config.yaml. It prevents an older
     # checkpoint whose provider had the same class name but LLaVA semantics
