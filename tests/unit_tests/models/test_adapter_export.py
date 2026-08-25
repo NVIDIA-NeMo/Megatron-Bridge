@@ -511,6 +511,77 @@ class TestSaveHfAdapter:
 
         assert mock_bridge.export_adapter_weights.call_args.kwargs["exclude_adapter_base_prefixes"] == ("mtp.layers",)
 
+    @pytest.mark.parametrize("expand_shared_outer", [True, False])
+    def test_save_passes_expand_shared_outer(self, tmp_path, expand_shared_outer):
+        """save_hf_adapter should pass expand_shared_outer through to adapter streaming."""
+        from megatron.bridge.peft.lora import LoRA
+
+        output_dir = tmp_path / f"adapter_out_expand_{expand_shared_outer}"
+        fake_weights = [
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_A.weight", torch.randn(8, 64)),
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
+        ]
+
+        mock_bridge = MagicMock()
+        mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(),
+                base_model_name_or_path="test/model",
+                expand_shared_outer=expand_shared_outer,
+            )
+
+        assert mock_bridge.export_adapter_weights.call_args.kwargs["expand_shared_outer"] is expand_shared_outer
+
+    def test_save_hf_adapter_clones_aliased_shared_outer_weights(self, tmp_path):
+        """Expanded shared-outer weights alias one storage; the save path must clone them.
+
+        ``safetensors.save_file`` rejects tensors that share memory, so the clone in
+        ``save_hf_adapter`` is load-bearing whenever ``expand_shared_outer`` is used.
+        """
+        from safetensors.torch import load_file
+
+        from megatron.bridge.peft.lora import LoRA
+
+        output_dir = tmp_path / "adapter_out_aliased"
+        # One storage reused under two per-expert names, as the expand path emits it.
+        shared = torch.randn(8, 64)
+        fake_weights = [
+            _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_A.weight", shared),
+            _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_A.weight", shared),
+            _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", torch.randn(64, 8)),
+            _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(64, 8)),
+        ]
+
+        mock_bridge = MagicMock()
+        mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(),
+                base_model_name_or_path="test/model",
+                expand_shared_outer=True,
+            )
+
+        state = load_file(str(output_dir / "adapter_model.safetensors"))
+        saved = [tensor for name, tensor in state.items() if name.endswith("lora_A.weight")]
+        assert len(saved) == 2
+        for tensor in saved:
+            torch.testing.assert_close(tensor, shared)
+
     def test_save_with_nonzero_dropout_keeps_linear_target_modules(self, tmp_path):
         from megatron.bridge.peft.lora import LoRA
 
@@ -996,6 +1067,23 @@ class TestExportAdapterCkpt:
         save_kwargs = bridge.save_hf_adapter.call_args.kwargs
         assert save_kwargs["exclude_adapter_base_prefixes"] == ("mtp.layers",)
 
+    @pytest.mark.parametrize("expand_shared_outer", [True, False])
+    def test_expand_shared_outer_passed_to_save(self, bridge, ckpt_dir, tmp_path, expand_shared_outer):
+        """expand_shared_outer should be threaded from checkpoint export to save_hf_adapter."""
+        bridge.export_adapter_ckpt(
+            str(ckpt_dir),
+            tmp_path / "out",
+            expand_shared_outer=expand_shared_outer,
+        )
+
+        assert bridge.save_hf_adapter.call_args.kwargs["expand_shared_outer"] is expand_shared_outer
+
+    def test_expand_shared_outer_defaults_to_false(self, bridge, ckpt_dir, tmp_path):
+        """Omitting the flag must preserve the existing shared `[1, ...]` layout."""
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
+
+        assert bridge.save_hf_adapter.call_args.kwargs["expand_shared_outer"] is False
+
     def test_dist_checkpointing_called_with_ckpt_path(self, bridge, ckpt_dir, tmp_path):
         bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
 
@@ -1160,6 +1248,7 @@ class TestExportAdapterScript:
             sequence_parallel=False,
             dtype=torch.bfloat16,
             exclude_adapter_base_prefix=[],
+            expand_shared_outer=False,
         )
 
         with (
@@ -1186,6 +1275,7 @@ class TestExportAdapterScript:
             sequence_parallel=False,
             dtype=torch.float32,
             exclude_adapter_base_prefix=["mtp.layers"],
+            expand_shared_outer=False,
         )
         bridge = MagicMock()
 
@@ -1203,7 +1293,49 @@ class TestExportAdapterScript:
             peft_checkpoint=str(tmp_path),
             output_path=tmp_path / "out",
             exclude_adapter_base_prefixes=("mtp.layers",),
+            expand_shared_outer=False,
         )
+
+    def test_main_cpu_export_forwards_expand_shared_outer(self, tmp_path):
+        """`--expand-shared-outer` must reach the CPU export path, not just the Python API."""
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=1,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+            expand_shared_outer=True,
+        )
+        bridge = MagicMock()
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.parse_args", return_value=args),
+            patch(
+                "examples.conversion.adapter.export_adapter.AutoBridge.from_hf_pretrained",
+                return_value=bridge,
+            ),
+        ):
+            export_adapter.main()
+
+        assert bridge.export_adapter_ckpt.call_args.kwargs["expand_shared_outer"] is True
+
+    def test_parser_exposes_expand_shared_outer(self):
+        """Guard against the CLI parser drifting from the fake args used above."""
+        from examples.conversion.adapter import export_adapter
+
+        argv = ["--hf-model-path", "test/model", "--lora-checkpoint", "/tmp/ckpt"]
+        with patch("sys.argv", ["export_adapter.py", *argv]):
+            assert export_adapter.parse_args().expand_shared_outer is False
+        with patch("sys.argv", ["export_adapter.py", *argv, "--expand-shared-outer"]):
+            assert export_adapter.parse_args().expand_shared_outer is True
 
     def test_configure_cuda_device_requires_cuda(self):
         from examples.conversion.adapter import export_adapter
@@ -1242,6 +1374,7 @@ class TestExportAdapterScript:
             sequence_parallel=False,
             dtype=torch.float32,
             exclude_adapter_base_prefix=[],
+            expand_shared_outer=False,
         )
 
         with (
@@ -1272,6 +1405,7 @@ class TestExportAdapterScript:
             sequence_parallel=False,
             dtype=torch.float32,
             exclude_adapter_base_prefix=[],
+            expand_shared_outer=False,
         )
         model_chunks = [MagicMock(), MagicMock()]
         for chunk in model_chunks:
@@ -1323,6 +1457,7 @@ class TestExportAdapterScript:
             sequence_parallel=False,
             dtype=torch.float32,
             exclude_adapter_base_prefix=[],
+            expand_shared_outer=False,
         )
         model_chunk = MagicMock()
         model_chunk.to.return_value = model_chunk
@@ -1379,6 +1514,7 @@ class TestExportAdapterScript:
             sequence_parallel=False,
             dtype=torch.float32,
             exclude_adapter_base_prefix=[],
+            expand_shared_outer=False,
         )
         model_chunk = MagicMock()
         model_chunk.to.return_value = model_chunk
@@ -1424,3 +1560,138 @@ class TestExportAdapterScript:
         mock_enable_legacy.assert_called_once_with([model_chunk], state_dicts[0], tmp_path)
         mock_load.assert_called_once_with(state_dicts[1], str(tmp_path), validate_access_integrity=False)
         model_chunk.load_state_dict.assert_called_once_with({"adapter": "weights"}, strict=False)
+
+
+class TestStreamSharedOuterAdapterWeights:
+    """Tests for ``MegatronPeftBridge._stream_shared_outer_adapter_weights``.
+
+    Verifies the two export contracts for the shared-outer grouped-expert LoRA
+    adapter: the default SGLang shared ``[1, ...]`` layout vs. the ``expand_shared_outer``
+    per-expert 2D (vLLM ``pack_moe``) layout, plus the unchanged per-expert side.
+    """
+
+    def _make_bridge(self):
+        return MegatronPeftBridge()
+
+    def _run(
+        self, bridge, linear_in, linear_out, num_experts, expand, cpu=False, mapping_registry=None, megatron_model=None
+    ):
+        # linear_in_task / linear_out_task are unused by this method.
+        task = SimpleNamespace(global_base_prefix="mlp.experts", adapter_key=None)
+        gen = bridge._stream_shared_outer_adapter_weights(
+            megatron_model=megatron_model,
+            mapping_registry=mapping_registry,
+            adapter_task=task,
+            linear_in_tensor=linear_in,
+            linear_out_tensor=linear_out,
+            num_moe_experts=num_experts,
+            cpu=cpu,
+            expand_shared_outer=expand,
+        )
+        return list(gen)
+
+    def _mapping(self):
+        # ``_get_base_hf_param_names_for_adapter`` looks up ``f"{prefix}{suffix}"``.
+        # Both the shared side (``.weight0``) and the per-expert side (``.weight{idx}``)
+        # map to per-expert HF names for the same grouped-expert linear (``gate_proj``);
+        # the shared-side branch strips the expert index via ``_strip_hf_expert_index``.
+        mapping = MagicMock()
+
+        def lookup(name):
+            idx = name.rsplit(".weight", 1)[1]
+            return SimpleNamespace(hf_param=f"model.layers.0.mlp.experts.{idx}.gate_proj.weight")
+
+        mapping.megatron_to_hf_lookup.side_effect = lookup
+        return mapping
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_shared_side_default_emits_shared_1d_aggregate(self, _mock_ep):
+        """expand=False: shared 2D side is unsqueezed to [1, out, in] under expert-agnostic names."""
+        bridge = self._make_bridge()
+        linear_in = torch.randn(4, 8)  # [rank, hidden] shared across experts
+        linear_out = torch.randn(2, 2, 4)  # [num_experts, out, rank] per-expert side
+
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch.object(bridge, "_select_expert_adapter_weight", side_effect=lambda w, g, i, n: w[i]),
+            patch.object(bridge, "_get_fused_adapter_linear_out_slices", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            out = self._run(
+                bridge, linear_in, linear_out, num_experts=2, expand=False, mapping_registry=self._mapping()
+            )
+
+        # Shared side (linear_in/A): one [1, rank, hidden] tensor under an expert-agnostic name.
+        shared = [t for t in out if t.param_name.endswith(".lora_A.weight")]
+        # One [1, rank, hidden] tensor under an expert-agnostic name (experts.gate_proj.lora_A).
+        assert len(shared) == 1
+        assert shared[0].weight.shape == (1, 4, 8)
+        assert shared[0].param_name == "model.layers.0.mlp.experts.gate_proj.lora_A.weight"
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_shared_side_expanded_emits_per_expert_2d(self, _mock_ep):
+        """expand=True: shared side replicated under per-expert 2D names (vLLM pack_moe)."""
+        bridge = self._make_bridge()
+        linear_in = torch.randn(4, 8)
+        linear_out = torch.randn(2, 2, 4)
+
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch.object(bridge, "_select_expert_adapter_weight", side_effect=lambda w, g, i, n: w[i]),
+            patch.object(bridge, "_get_fused_adapter_linear_out_slices", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            out = self._run(
+                bridge, linear_in, linear_out, num_experts=2, expand=True, mapping_registry=self._mapping()
+            )
+
+        shared = [t for t in out if t.param_name.endswith(".lora_A.weight")]
+        # One 2D tensor per expert, kept 2D (no unsqueeze), per-expert names.
+        assert len(shared) == 2
+        assert [t.param_name for t in shared] == [
+            "model.layers.0.mlp.experts.0.gate_proj.lora_A.weight",
+            "model.layers.0.mlp.experts.1.gate_proj.lora_A.weight",
+        ]
+        for t in shared:
+            assert t.weight.shape == (4, 8)
+        # Same underlying shared tensor reused across experts (not cloned).
+        assert shared[0].weight.data_ptr() == shared[1].weight.data_ptr()
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_per_expert_side_unaffected_by_flag(self, _mock_ep):
+        """The per-expert 3D side emits one slice per expert regardless of expand."""
+        bridge = self._make_bridge()
+        linear_in = torch.randn(4, 8)
+        linear_out = torch.randn(2, 2, 4)  # per-expert side
+
+        results = {}
+        for expand in (False, True):
+            with (
+                patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+                patch.object(bridge, "_select_expert_adapter_weight", side_effect=lambda w, g, i, n: w[i]),
+                patch.object(bridge, "_get_fused_adapter_linear_out_slices", return_value=None),
+                patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+            ):
+                out = self._run(
+                    bridge, linear_in, linear_out, num_experts=2, expand=expand, mapping_registry=self._mapping()
+                )
+            results[expand] = [
+                (t.param_name, tuple(t.weight.shape)) for t in out if t.param_name.endswith(".lora_B.weight")
+            ]
+
+        assert results[False] == results[True]
+        assert [n for n, _ in results[False]] == [
+            "model.layers.0.mlp.experts.0.gate_proj.lora_B.weight",
+            "model.layers.0.mlp.experts.1.gate_proj.lora_B.weight",
+        ]
+        for _, shape in results[False]:
+            assert shape == (2, 4)

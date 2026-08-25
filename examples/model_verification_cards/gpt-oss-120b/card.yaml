@@ -3,15 +3,16 @@
 
 title: gpt_oss_120b
 summary: >
-  Performance scope: pretrain_performance.GB200 uses a tuned canonical
-  performance recipe; timing and throughput metrics from functional training
-  items remain sanity checks rather than optimized performance results.
+  Performance scope: pretrain_performance.GB200 and
+  pretrain_performance.GB300 use tuned canonical performance recipes;
+  timing and throughput metrics from functional training items remain sanity
+  checks rather than optimized performance results.
   GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export,
   manual HF/Megatron forward-pass correlation, deterministic Megatron
   inference, bounded H100 pretraining, H100 SFT, H100 PEFT, and H100
   checkpoint resume, H100 SFT export/inference, and H100 long-context SFT are
-  verified. GB200 pretraining performance is verified. CPU conversion remains
-  planned but not yet verified.
+  verified. GB200 and GB300 pretraining performance are verified. CPU
+  conversion remains planned but not yet verified.
 verification_index:
   model_level:
     verified:
@@ -27,6 +28,7 @@ verification_index:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
   performance:
     GB200: verified
+    GB300: verified
 model:
   hf_id: openai/gpt-oss-120b
   hf_revision: b5c939de8f754692c1647ca79fbf85e8c1e70f8a  # pragma: allowlist secret
@@ -440,3 +442,27 @@ items:
         the same final-ten window. The resolved configuration persists. Mock
         data and forced routing make the loss a finiteness check rather than
         convergence evidence.
+
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
+        --recipe gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/gpt-oss-120b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-19
+      metrics:
+        initial_loss: 12.78424
+        final_loss: 0.0985439
+        last_10_steps_step_time_ms_avg: 2481.140
+        last_10_steps_model_tflops_per_gpu_avg: 1077.350
+        last_10_steps_tokens_per_second_per_gpu_avg: 33017.081
+      expected_result: >
+        On exactly 64 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP16/ETP1, GBS/MBS 1280/4,
+        and sequence length 4096. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.78424 to 0.0985439; the
+        final ten steps average 2481.140 ms, 1077.350 TFLOP/s/GPU, and
+        33017.081 tokens/s/GPU. The resolved configuration persists.
