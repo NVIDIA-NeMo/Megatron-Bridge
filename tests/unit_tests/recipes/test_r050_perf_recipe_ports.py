@@ -18,6 +18,7 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
+    deepseek_v3_pretrain_8gpu_gb300_nvfp4_config,
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
@@ -141,6 +142,23 @@ def test_deepseek_v3_gb300_nvfp4_reuses_allocations_during_cuda_graph_capture() 
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == (
         "expandable_segments:True,graph_capture_record_stream_reuse:True"
     )
+
+
+def test_deepseek_v3_8gpu_gb300_nvfp4_proxy_has_valid_topology() -> None:
+    cfg = deepseek_v3_pretrain_8gpu_gb300_nvfp4_config()
+
+    assert cfg.model.num_layers == 4
+    assert cfg.model.moe_layer_freq == [0, 0, 0, 1]
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.virtual_pipeline_model_parallel_size == 2
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_layout == "Et|t|t|tmL"
+    assert cfg.train.global_batch_size == 128
+    assert cfg.validation.eval_global_batch_size == 128
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
 
 
 def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:

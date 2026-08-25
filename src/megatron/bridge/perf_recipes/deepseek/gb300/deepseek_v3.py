@@ -245,7 +245,19 @@ def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 8× GB300, NVFP4."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
     cfg.model.mla_down_proj_fusion = True
-    cfg.model.num_layers = 3
+    cfg.model.num_layers = 4
+    cfg.model.moe_layer_freq = cfg.model.moe_layer_freq[: cfg.model.num_layers]
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_tensor_parallel_size = 1
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|t|t|tmL")
+
+    cfg.train.global_batch_size = 128
+    cfg.validation.eval_global_batch_size = 128
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -259,7 +271,7 @@ def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
