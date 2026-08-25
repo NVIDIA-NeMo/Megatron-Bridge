@@ -39,6 +39,7 @@ from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config as pro_fp8_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -165,12 +166,24 @@ def test_flash_packed_peft_recipe_adapts_mla_and_unshared_experts() -> None:
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.fine_grained_activation_offloading is False
     assert cfg.model.offload_modules is None
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["moe_router", "moe_preprocess"]
+    assert cfg.model.cuda_graph_warmup_steps == 3
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
     assert "NVTE_CPU_OFFLOAD_V1" not in cfg.env_vars
 
     sft_cfg = flash_packed_sft_config()
     assert cfg.dataset == sft_cfg.dataset
     assert cfg.train == sft_cfg.train
-    assert cfg.rng == sft_cfg.rng
+    assert cfg.rng.seed == sft_cfg.rng.seed
+    assert cfg.rng.inference_rng_tracker == sft_cfg.rng.inference_rng_tracker
+    assert cfg.rng.data_parallel_random_init == sft_cfg.rng.data_parallel_random_init
     assert cfg.model.seq_length == sft_cfg.model.seq_length
     assert cfg.model.pipeline_model_parallel_size == sft_cfg.model.pipeline_model_parallel_size
     assert cfg.model.expert_model_parallel_size == sft_cfg.model.expert_model_parallel_size

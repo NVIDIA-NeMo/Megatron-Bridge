@@ -36,6 +36,7 @@ from megatron.bridge.recipes.utils.optimizer_utils import (
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
@@ -350,4 +351,18 @@ def deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config() -> ConfigCont
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
     cfg.env_vars.pop("NVTE_CPU_OFFLOAD_V1", None)
+
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["moe_router", "moe_preprocess"])
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+    }
     return cfg
