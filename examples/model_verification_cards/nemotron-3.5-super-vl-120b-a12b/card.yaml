@@ -3,9 +3,12 @@
 
 title: nemotron_3_5_super_vl_120b_a12b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. The pinned eight-GPU BF16 import and distributed export are verified:
+  Performance scope: pretrain_performance.H100 is unverified. An initial
+  64-H100 BF16 recipe and a six-step fixed-512 real-video memory-fit screen
+  exist, but processor-sized dynamic-video verification and the canonical
+  50-step run remain pending; reported timing is a bring-up sanity check, not
+  an optimized performance result. The pinned eight-GPU BF16 import and
+  distributed export are verified:
   the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
   the immutable HF source bitwise, and the exported package reloaded natively
   through Transformers on eight H100s. CPU conversion, deterministic
@@ -27,6 +30,8 @@ verification_index:
     H100:
       unverified: [sft, sft_export_inference]
       unsupported: [pretrain, sft_long_context, peft, checkpoint_resume]
+  performance:
+    H100: unverified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
   hf_revision: e86197a3bad449de618a5835f26835ce770c6f10  # pragma: allowlist secret
@@ -146,9 +151,46 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Megatron Bridge does not yet publish a from-scratch multimodal
-        pretraining recipe for this checkpoint; the initial training surface is
-        supervised image/video finetuning from a converted checkpoint.
+        Megatron Bridge does not yet publish a convergence-oriented
+        from-scratch multimodal pretraining recipe for this checkpoint; the
+        initial convergence-training surface is supervised image/video
+        finetuning from a converted checkpoint. The separate performance
+        recipe is benchmark-only and does not satisfy this item.
+
+  pretrain_performance:
+    H100:
+      status: unverified
+      precision: bf16
+      command: >
+        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
+        --recipe nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config
+        --mode pretrain
+        dataset.path=work/data/nemotron-3.5-super-vl/energon
+        logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-performance/ConfigContainer.yaml
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
+      expected_result: >
+        On exactly 64 H100s, the canonical BF16 real-video performance recipe
+        must complete 50 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS
+        1280/1, with the audio-free Nemotron Omni vision/projector/temporal
+        stack fully trainable, checkpoint-native one-layer MTP, forced routing,
+        HybridEP flex dispatch with 1.10x fixed expert capacity, eager
+        execution, and the same selective recompute modules as Nemotron 3
+        Super. Every video must use processor-sized post-resize grids and exact
+        per-tubelet placeholder counts. Loss must remain finite with zero
+        skipped or NaN iterations, the final ten-step timing/throughput window
+        and peak allocated/reserved memory must be recorded, and the resolved
+        configuration must persist. The current fixed-512 six-step screen is
+        memory-fit evidence only and does not satisfy this item.
 
   sft:
     H100:
