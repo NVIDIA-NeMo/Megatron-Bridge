@@ -209,7 +209,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=False)
+    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=False, fp8_output_proj=False)
     # cfg.model.moe_hybridep_num_sms_preprocessing = 108
     # cfg.model.high_priority_a2a_comm_stream = False
     cfg.model.mla_down_proj_fusion = True
