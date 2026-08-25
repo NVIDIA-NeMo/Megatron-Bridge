@@ -280,10 +280,20 @@ items:
       last_verified: null
       depends_on: sft
       expected_result: >
-        This workflow remains unverified. It requires the ordered pair of a
-        synchronous export from the final SFT checkpoint followed by a
-        deterministic hf-inference reload that records the actual
-        generated-token count and the literal completion.
+        This workflow remains unverified because only its export half
+        completes. Exporting the final SFT checkpoint succeeds and produces 40
+        safetensors shards totalling 234 GiB alongside config.json,
+        generation_config.json, and chat_template.jinja. The deterministic
+        reload half cannot run: the shared verifier places the entire model on
+        one torch device, and 234 GiB of bf16 weights exceed the 80 GiB
+        capacity of a single H100, so the reload aborts once roughly 78 GiB is
+        resident. Falling back to host memory does not help either, because the
+        Qwen3.5-VL modeling code calls the CUDA-only causal_conv1d kernel and
+        rejects CPU tensors. Verifying this item requires either an
+        accelerator whose memory holds the full bf16 export or a sharded
+        multi-device reload path in the shared verifier; that limitation
+        applies to every model whose export exceeds one device and is not
+        specific to this variant.
 
   sft_long_context:
     H100:
