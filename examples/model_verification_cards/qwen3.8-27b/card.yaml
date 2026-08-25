@@ -1,0 +1,476 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen3_8_27b
+summary: >
+  Performance scope: pretrain_performance.GB200 uses the tuned canonical
+  language-and-projector MockVLM recipe and records 819.190 corrected model
+  TFLOP/s/GPU on 16 GB200 GPUs; timing from all functional items remains sanity
+  evidence. All workloads in this card target GB200 hardware. Conversion,
+  deterministic inference, pretraining, SFT, long-context SFT, PEFT, and
+  post-SFT export are verified. Full-language checkpoint resume remains
+  unverified because four intermediate losses exceeded the comparison bound.
+  No dense-27B Megatron FSDP recipe is available.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    GB200:
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft]
+      unverified: [checkpoint_resume]
+  performance:
+    GB200: verified
+model:
+  hf_id: Qwen/Qwen3.8-27B
+  hf_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0  # pragma: allowlist secret
+  architecture: Qwen3_5ForConditionalGeneration
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08.rc5
+  bridge_commit: d790e32a88654968021291d68c510f41d64df461  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1 --gpus-per-node 1 --mem 512G
+      --hf-model Qwen/Qwen3.8-27B
+      --hf-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+      --megatron-path work/model-verification/qwen3.8-27b/cpu-megatron
+    last_verified: 2026-08-14
+    expected_result: >
+      The pinned-revision CPU import completed in 3m11s and created a reloadable
+      iter_0000000 containing 8 nonempty files totaling 55,586,366,001 bytes.
+      The converter selected Qwen35VLBridge, completed all 956 mappings, kept
+      model weights on CPU, and reported 27,781,427,952 parameters. One shared
+      runtime GB200 was used for Transformer Engine vision-module construction.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 4
+      --hf-model Qwen/Qwen3.8-27B
+      --hf-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+      --megatron-path work/model-verification/qwen3.8-27b/gpu-megatron
+      --tp 4
+    last_verified: 2026-08-14
+    expected_result: >
+      The pinned-revision four-GB200 import completed in 2m01s at TP4/PP1 and
+      created an 11-file iter_0000000 totaling 55,592,033,255 bytes, including
+      four distributed checkpoint shards. All 956 conversion mappings completed,
+      and subsequent export and two independent inference runs reloaded it.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --gpus-per-node 1 --mem 512G
+      --hf-model Qwen/Qwen3.8-27B
+      --hf-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+      --megatron-path
+      work/model-verification/qwen3.8-27b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3.8-27b/cpu-hf-export
+    last_verified: 2026-08-14
+    expected_result: >
+      CPU export completed in 2m16s, wrote every source tensor, and produced 26
+      files totaling 55,583,128,197 bytes. The index preserves the original
+      1,199-key set and exact 18-shard placement with 55,562,855,904 BF16 tensor
+      bytes. Transformers strictly reloaded the export as
+      Qwen3_5ForConditionalGeneration with empty missing, unexpected,
+      mismatched, and error sets, then completed processor-native GB200
+      inference. Export normalizes vision_config.model_type from qwen3_5 to
+      qwen3_5_vision and updates producer-version metadata without changing the
+      architecture.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 4
+      --hf-model Qwen/Qwen3.8-27B
+      --hf-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+      --megatron-path
+      work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3.8-27b/gpu-hf-export
+      --tp 4
+    last_verified: 2026-08-14
+    expected_result: >
+      The four-GB200 distributed export completed in 1m55s, wrote every source
+      tensor, and produced 26 files totaling 55,583,128,222 bytes. Its index has
+      the same 1,199 keys, 18-shard placement, and 55,562,855,904 BF16 tensor
+      bytes as the pinned source and CPU export. Transformers strictly reloaded
+      it with empty missing, unexpected, mismatched, and error sets and completed
+      processor-native inference. Relative to CPU export, config.json only adds
+      the metadata field vision_config.dtype=bfloat16.
+
+  manual_forward_pass:
+    status: verified
+    precision: bf16
+    bridge_commit: ab905ac72ccc9e45a081153655eda9ee469fdcff  # pragma: allowlist secret
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4
+      --task model-comparison
+      --hf_model_path Qwen/Qwen3.8-27B
+      --hf-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+      --model_class Qwen3_5ForConditionalGeneration
+      --megatron_model_path
+      work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+      --tp 4 --image_path work/data/medpix/verification.png
+      --prompt "What was observed in the imaging?"
+    last_verified: 2026-08-14
+    expected_result: >
+      The pinned HF weights and imported TP4 checkpoint both produced
+      1-by-128-by-248320 logits from a 128-token input and a 256-by-1536 pixel
+      tensor. Both selected token 248045, the assistant-start special token.
+      Cosine similarity: 0.995276 (99.53%); the maximum and mean absolute logit
+      differences were 1.125000 and 0.192757. This passes the required
+      next-token match and 0.99 cosine-similarity gate. The input was MedPix-VQA
+      revision
+      69eb219d477ab8699296da1fd6b89beb768042d3 validation row 0, case MPX1095;
+      its 256-by-256 image has SHA-256
+      f5210fcff6dad525c80fcd0f462b274c9da4d634ccd4f1cc76578f1bfe13646d.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4
+      --task vlm-generation
+      --hf_model_path Qwen/Qwen3.8-27B
+      --hf-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+      --megatron_model_path
+      work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+      --tp 4 --image_path work/data/medpix/verification.png
+      --prompt "What was observed in the imaging?" --max_new_tokens 32
+    last_verified: 2026-08-14
+    expected_result: >
+      Two independent four-GB200 greedy-decoding runs loaded the imported TP4
+      checkpoint and consumed MedPix-VQA revision
+      69eb219d477ab8699296da1fd6b89beb768042d3 validation row 0, case MPX1095,
+      using source-image SHA-256
+      f5210fcff6dad525c80fcd0f462b274c9da4d634ccd4f1cc76578f1bfe13646d.
+      Both exited successfully with byte-identical 32-token completions and
+      reached the 32-token maximum without EOS. The exact completion was: "The
+      user has provided an axial brain MRI image, likely T2-weighted given the
+      bright CSF and the appearance of the structures. The image is from Med".
+
+  pretrain:
+    GB200:
+      status: verified
+      precision: bf16
+      bridge_commit: 2e945d0734f2f0fb764320dda9c90139d02b792d  # pragma: allowlist secret
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
+        --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config
+        --mode pretrain --deterministic
+        --pretrained_checkpoint
+        work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+        --max_steps 20 --warmup_iters 2
+        --save_dir work/model-verification/qwen3.8-27b/pretrain/checkpoints
+        --save_interval 10
+        dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export
+        tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export
+        model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
+        checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0
+        ddp.check_for_large_grads=true logger.log_interval=1
+        logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain/resolved-config.yaml
+        scheduler.lr_decay_iters=20
+      last_verified: 2026-08-20
+      metrics:
+        initial_loss: 6.858159
+        final_loss: 3.955657
+        last_10_steps_step_time_ms_avg: 41391.140
+        last_10_steps_model_tflops_per_gpu_avg: 33.240
+        last_10_steps_tokens_per_second_per_gpu_avg: 197.917
+      expected_result: >
+        The 16-GB200 MockVLM pretrain completed exactly 20 deterministic steps
+        at TP4/PP4, sequence length 4096, and MBS2/GBS32. The language model and
+        multimodal vision merger trained while the vision encoder remained
+        frozen. Loss remained finite from 6.858159 to 3.955657 with finite
+        gradients and zero skipped or NaN iterations. Steps 11-20 averaged
+        41,391.140 ms, 33.240 corrected model TFLOP/s/GPU, and 197.917 token
+        slots/s/GPU. Checkpoints at iterations 10 and 20 each contain 20 files
+        totaling 399,257,378,741 bytes, and the tracker records iteration 20.
+        Both built-in 32-iteration validation and test passes completed at loss
+        3.907797. The process exited successfully in 26m31s.
+
+  sft:
+    GB200:
+      status: verified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
+        --recipe qwen35_vl_27b_sft_16gpu_h100_bf16_config --mode sft
+        --dataset medpix --deterministic
+        --pretrained_checkpoint
+        work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+        --max_steps 100 --warmup_iters 10 --save_interval 50
+        'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
+        'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
+        dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export
+        dataset.do_validation=false dataset.pad_to_max_length=true
+        tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export
+        model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
+        model.recompute_granularity=full model.recompute_method=uniform
+        model.recompute_num_layers=1 model.recompute_modules=null
+        scheduler.lr_decay_iters=100 validation.eval_iters=0
+        validation.eval_interval=0 ddp.check_for_large_grads=true
+        --save_dir work/model-verification/qwen3.8-27b/sft-recompute/checkpoints
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3.8-27b/sft-recompute/resolved-config.yaml
+      last_verified: 2026-08-14
+      metrics:
+        initial_loss: 2.116404
+        final_loss: 1.429567
+        last_10_steps_step_time_ms_avg: 24160.490
+        last_10_steps_model_tflops_per_gpu_avg: 58.010
+        last_10_steps_tokens_per_second_per_gpu_avg: 339.066
+      expected_result: >
+        The 16-GB200 run completed exactly 100 full-SFT MedPix steps at
+        TP4/PP4, MBS4/GBS32, deterministic mode, and one-layer full-uniform
+        activation recompute. Loss remained finite from 2.116404 to 1.429567
+        with zero skipped or NaN iterations. Steps 91-100 averaged 24,160.490
+        ms and 58.010 model TFLOP/s/GPU. Step-50 and step-100 saves each
+        contain 20 files totaling 404,422,605,133 bytes, the tracker selects
+        iteration 100, and the process exited successfully in 45m42s. The
+        unchanged stock TP4/PP4 recipe without activation recompute reached the
+        training loop but OOMed near the approximately 184.3-GiB per-GPU
+        device limit; the successful command records the required config-only
+        recompute overrides.
+
+  sft_export_inference:
+    GB200:
+      status: verified
+      precision: bf16
+      depends_on: sft
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device cpu
+          --nodes 1 --gpus-per-node 1 --mem 512G
+          --hf-model Qwen/Qwen3.8-27B
+          --hf-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+          --megatron-path
+          work/model-verification/qwen3.8-27b/sft-recompute/checkpoints/iter_0000100
+          --hf-path work/model-verification/qwen3.8-27b/sft-recompute/hf-export
+        - >
+          ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 1
+          --task hf-inference
+          --hf-model work/model-verification/qwen3.8-27b/sft-recompute/hf-export
+          --prompt "What was observed in the imaging?"
+          --image work/data/medpix/verification.png
+          --max-new-tokens 32 --chat-template --disable-thinking
+      last_verified: 2026-08-14
+      expected_result: >
+        CPU export from the exact step-100 SFT checkpoint completed all 956
+        mappings in 2m39s and reported that every source tensor was written.
+        The export contains 26 nonempty files totaling 55,583,128,197 bytes;
+        its index maps 1,199 keys to 18 safetensors shards with
+        55,562,855,904 serialized BF16 tensor bytes. The unchanged strict HF
+        verifier then reloaded the persisted export without any missing,
+        unexpected, mismatched, or error entries on one GB200 and generated
+        exactly 32 tokens at the 32-token maximum. The literal completion was:
+        "The imaging shows •  CT:  Hyperdense lesion in the right cerebellum.\n•
+        MRI:  Well-circumscribed, homogenous". Because deterministic mode is
+        persisted in the training checkpoint, Transformer Engine requires
+        nondeterministic algorithms to be explicitly disabled while
+        constructing the Megatron model for export. An initial strict attempt
+        without that environment
+        setting failed before conversion and deleted its partial output. The
+        successful retry explicitly disabled nondeterministic Transformer
+        Engine algorithms through runtime wiring outside this public card and
+        made no code change.
+
+  sft_long_context:
+    GB200:
+      status: verified
+      precision: bf16
+      enabled_features:
+        sequence_packing: in_batch
+        context_parallel_size: 2
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
+        --recipe qwen35_vl_27b_sft_16gpu_h100_bf16_config --mode sft
+        --dataset medpix
+        --pretrained_checkpoint
+        work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+        --max_steps 20 --warmup_iters 2 --seq_length 8192
+        --pipeline_model_parallel_size 2 --context_parallel_size 2
+        'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
+        'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
+        dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export
+        dataset.do_validation=false dataset.enable_in_batch_packing=true
+        dataset.defer_in_batch_packing_to_step=true
+        dataset.in_batch_packing_pad_to_multiple_of=4
+        tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export
+        model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
+        model.calculate_per_token_loss=true model.recompute_granularity=full
+        model.recompute_method=uniform model.recompute_num_layers=1
+        ddp.average_in_collective=false scheduler.lr_decay_iters=20
+        checkpoint.load=null checkpoint.save=null validation.eval_iters=0
+        validation.eval_interval=0 ddp.check_for_large_grads=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3.8-27b/sft-long/resolved-config.yaml
+      last_verified: 2026-08-14
+      metrics:
+        initial_loss: 2.343622
+        final_loss: 1.378064
+        last_10_steps_step_time_ms_avg: 8164.790
+        last_10_steps_model_tflops_per_gpu_avg: 362.530
+        last_10_steps_tokens_per_second_per_gpu_avg: 2006.665
+      expected_result: >
+        The 16-GB200 run completed exactly 20 full-SFT steps at
+        TP4/PP2/CP2, MBS4/GBS32, 8192 tokens, deferred processor-native
+        in-batch packing with pad-to-multiple-of-4, per-token loss, and
+        one-layer full-uniform activation recompute. Loss remained finite from
+        2.343622 to 1.378064 with zero skipped or NaN iterations. Steps 11-20
+        averaged 8,164.790 ms and 362.530 model TFLOP/s/GPU. The process exited
+        successfully without checkpoint output. An earlier otherwise identical
+        attempt with --deterministic reached the training loop but triggered the
+        explicit guard that packed sequence does not support deterministic mode;
+        the successful command omits that incompatible flag, as does the Qwen
+        3.5 MoE reference card.
+
+  peft:
+    GB200:
+      status: verified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+        --recipe qwen35_vl_27b_peft_2gpu_h100_bf16_config --mode lora
+        --tensor_model_parallel_size 4 --dataset medpix --deterministic
+        --pretrained_checkpoint
+        work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+        --max_steps 100 --warmup_iters 10 --save_interval 50
+        'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
+        'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
+        dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export
+        dataset.do_validation=false dataset.pad_to_max_length=true
+        tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export
+        model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
+        model.recompute_granularity=full model.recompute_method=uniform
+        model.recompute_num_layers=1 model.recompute_modules=null
+        scheduler.lr_decay_iters=100 validation.eval_iters=0
+        validation.eval_interval=0 ddp.check_for_large_grads=true
+        --save_dir work/model-verification/qwen3.8-27b/peft-tp4-recompute/checkpoints
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3.8-27b/peft-tp4-recompute/resolved-config.yaml
+      last_verified: 2026-08-14
+      metrics:
+        initial_loss: 2.115661
+        final_loss: 1.558339
+        last_10_steps_step_time_ms_avg: 74048.550
+        last_10_steps_model_tflops_per_gpu_avg: 75.790
+        last_10_steps_tokens_per_second_per_gpu_avg: 442.520
+      expected_result: >
+        The four-GB200 run completed exactly 100 deterministic MedPix LoRA
+        steps at TP4/PP1, MBS4/GBS32, and one-layer full-uniform activation
+        recompute. Loss remained finite from 2.115661 to 1.558339 with zero
+        skipped or NaN iterations. Steps 91-100 averaged 74,048.550 ms and
+        75.790 model TFLOP/s/GPU. Step-50 and step-100 adapter checkpoints each
+        contain 8 files totaling 2,294,105,245 bytes, the tracker selects
+        iteration 100, and the process exited successfully in 2h01m43s. The
+        unchanged stock TP2 two-GPU recipe without activation recompute OOMed;
+        a TP4 retry without recompute also OOMed near the approximately
+        184.3-GiB per-GPU device limit. The successful command records only the
+        required topology and recompute config overrides, with no code change.
+
+  checkpoint_resume:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
+        --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config
+        --mode pretrain --deterministic
+        --load_dir work/model-verification/qwen3.8-27b/pretrain/checkpoints
+        --max_steps 20 --warmup_iters 2
+        --save_dir work/model-verification/qwen3.8-27b/pretrain-resume/checkpoints
+        --save_interval 10
+        dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export
+        tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export
+        model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
+        checkpoint.ckpt_step=10 validation.eval_iters=0 validation.eval_interval=0
+        ddp.check_for_large_grads=true logger.log_interval=1
+        logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-resume/resolved-config.yaml
+        scheduler.lr_decay_iters=20
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [11, 20]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A clean 16-GB200 attempt loaded the full iteration-10 checkpoint with
+        optimizer, scheduler, and RNG state and directly executed steps 11-20.
+        All losses and gradients were finite, the run wrote a complete
+        iteration-20 checkpoint, and the first and final resumed losses stayed
+        within the declared bound. However, steps 15-18 did not: the largest
+        relative difference from the uninterrupted reference was 39.6205% at
+        step 15. The resolved reference and resume configs differ only in the
+        expected checkpoint source, step, and pretrained-checkpoint fallback.
+        This card therefore makes no checkpoint-resume verification claim
+        until the intermediate divergence is understood and a clean rerun
+        matches the reference contract.
+
+  pretrain_performance:
+    GB200:
+      status: verified
+      precision: bf16
+      bridge_commit: 2e945d0734f2f0fb764320dda9c90139d02b792d  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 4
+        --recipe qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config
+        --mode pretrain --pretrained_checkpoint
+        work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000
+        --max_steps 20 --warmup_iters 2
+        dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export
+        tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export
+        model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044
+        logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-performance/resolved-config.yaml
+        scheduler.lr_decay_iters=20
+      last_verified: 2026-08-20
+      metrics:
+        initial_loss: 6.852387
+        final_loss: 3.884668
+        last_10_steps_step_time_ms_avg: 1679.460
+        last_10_steps_model_tflops_per_gpu_avg: 819.190
+        last_10_steps_tokens_per_second_per_gpu_avg: 4877.758
+        peak_allocated_memory_gib: 174.120
+      expected_result: >
+        On 16 GB200 GPUs, the exact canonical BF16 language-and-projector
+        MockVLM recipe completes 20 steps at TP2/PP1/CP1, DP8, sequence length
+        4096, and MBS2/GBS32. The language model and multimodal vision merger
+        train while the vision encoder remains frozen. The recipe uses fused
+        Gated DeltaNet execution without activation recompute and disables
+        evaluation and checkpoint output for the bounded run. Loss remains
+        finite from 6.852387 to 3.884668 with finite gradients and zero skipped
+        or NaN iterations. Excluding first-iteration kernel compilation, steps
+        11-20 average 1,679.460 ms, 819.190 corrected model TFLOP/s/GPU, and
+        4,877.758 token slots/s/GPU; peak allocated memory is 174.120 GiB. The
+        process exits successfully. This mock-data result is throughput
+        evidence, not convergence evidence.

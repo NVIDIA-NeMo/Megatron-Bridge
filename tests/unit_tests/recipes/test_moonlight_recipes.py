@@ -21,12 +21,14 @@
 #
 
 import importlib
+from dataclasses import dataclass
 from typing import Callable
 
 import pytest
 import torch
 
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
 _moonlight_module = importlib.import_module("megatron.bridge.recipes.moonlight")
@@ -76,8 +78,13 @@ def _apply_test_overrides(cfg, name: str):
     return cfg
 
 
+@dataclass(init=False)
 class _FakeMoonlightModelProvider:
     """Fake Moonlight model provider for testing without model I/O."""
+
+    pipeline_model_parallel_size: int = 1
+    virtual_pipeline_model_parallel_size: int | None = None
+    pipeline_model_parallel_layout: object | None = None
 
     def __init__(self, *args, **kwargs):
         # Store all the kwargs that would be passed to the real provider
@@ -110,6 +117,15 @@ class _FakeMoonlightModelProvider:
         self.moe_token_dispatcher_type = "alltoall"
         self.moe_enable_deepep = False
         self.moe_shared_expert_overlap = True
+        self.overlap_moe_expert_parallel_comm = False
+        self.delay_wgrad_compute = False
+        self.gradient_accumulation_fusion = False
+        self.mtp_num_layers = None
+        self.bf16 = False
+        self.fp16 = False
+        self.tp_comm_overlap = False
+        self.use_te_rng_tracker = False
+        self.use_cpu_initialization = False
 
         # Set parallelism defaults if not provided
         if not hasattr(self, "tensor_model_parallel_size"):
@@ -482,6 +498,35 @@ def test_moonlight_16b_legacy_sft_contract_remains_available(monkeypatch: pytest
     assert cfg.model.sequence_parallel is True
     assert cfg.model.vocab_size == 163844
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
+
+
+def test_moonlight_pipeline_layout_tracks_supported_runner_override(monkeypatch: pytest.MonkeyPatch):
+    """Recipe-owned layouts must follow supported public pipeline overrides."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
+    from megatron.bridge.recipes.moonlight.h100.moonlight_16b import _get_moonlight_pipeline_layout
+    from megatron.bridge.training import comm_overlap
+    from megatron.bridge.training import config as training_config
+    from megatron.bridge.training.config import runtime_config_update
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    patch_recipe_module_global(monkeypatch, moonlight_16b_sft_config, "AutoBridge", _FakeBridge)
+    cfg = moonlight_16b_sft_config()
+    recipe_runner, _ = _load_recipe_runner_module()
+    cli_overrides = [
+        "model.pipeline_model_parallel_size=2",
+        "model.virtual_pipeline_model_parallel_size=1",
+    ]
+
+    cfg = process_config_with_overrides(cfg, cli_overrides=cli_overrides)
+    recipe_runner.sync_model_pipeline_layout(cfg, cli_overrides=cli_overrides)
+    monkeypatch.setattr(comm_overlap, "is_te_min_version", lambda _: True)
+    monkeypatch.setattr(training_config, "validate_flex_dispatcher_backend", lambda _: None)
+    monkeypatch.setattr(cfg.optimizer, "finalize", lambda: None)
+    monkeypatch.setenv("WORLD_SIZE", "16")
+    runtime_config_update(cfg)
+
+    assert cfg.data_parallel_size == 8
+    assert cfg.model.pipeline_model_parallel_layout == _get_moonlight_pipeline_layout(2, 1)
 
 
 def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
