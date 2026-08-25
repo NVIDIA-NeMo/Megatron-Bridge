@@ -37,7 +37,11 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 
 
-def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDatasetConfig:
+def _make_nemotron_omni_energon_dataset(
+    micro_batch_size: int,
+    *,
+    hf_processor_path: str,
+) -> EnergonDatasetConfig:
     """Create the declarative temporal-video Energon config used by Omni recipes."""
     return EnergonDatasetConfig(
         path=None,
@@ -45,7 +49,7 @@ def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDataset
         micro_batch_size=micro_batch_size,
         num_workers=2,
         task_encoder=NemotronOmniEnergonTaskEncoderConfig(
-            hf_processor_path=_DEFAULT_HF_PATH,
+            hf_processor_path=hf_processor_path,
             max_audio_duration=10.0,
             num_mel_bins=128,
             visual_keys=("pixel_values",),
@@ -68,7 +72,7 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
     """
-    cfg = _nemotron_omni_base()
+    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
     cfg.model.temporal_patch_dim = 1
     cfg.model.has_sound = False
     cfg.dataset = DirectHFSFTDatasetConfig(
@@ -136,7 +140,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """
     from megatron.bridge.peft.lora import LoRA
 
-    cfg = _nemotron_omni_base()
+    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
     cfg.model.temporal_patch_dim = 1
     cfg.model.has_sound = False
     cfg.peft = LoRA(
@@ -181,12 +185,10 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_omni_base() -> ConfigContainer:
+def _nemotron_omni_base(*, hf_path: str) -> ConfigContainer:
     """Shared model/training config for all Nemotron Omni recipes."""
     cfg = _sft_common_vlm()
-    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
     cfg.model.tensor_model_parallel_size = 4
@@ -257,14 +259,17 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     Uses ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``).
     """
-    cfg = _nemotron_omni_base()
+    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
 
     # Enable temporal video embedder on the model side
     cfg.model.temporal_patch_dim = 2
     cfg.model.separate_video_embedder = True
     cfg.model.temporal_ckpt_compat = True
 
-    cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
+    cfg.dataset = _make_nemotron_omni_energon_dataset(
+        cfg.train.micro_batch_size,
+        hf_processor_path=_DEFAULT_HF_PATH,
+    )
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
@@ -281,7 +286,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """
     from megatron.bridge.peft.lora import LoRA
 
-    cfg = _nemotron_omni_base()
+    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
 
     cfg.model.temporal_patch_dim = 2
     cfg.model.separate_video_embedder = True
@@ -308,7 +313,10 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
+    cfg.dataset = _make_nemotron_omni_energon_dataset(
+        cfg.train.micro_batch_size,
+        hf_processor_path=_DEFAULT_HF_PATH,
+    )
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {

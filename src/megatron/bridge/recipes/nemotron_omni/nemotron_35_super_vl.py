@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl import *  # noqa: F403
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import *  # noqa: F403
+"""Hardware-agnostic alias for Nemotron 3.5 Super VL training."""
+
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl import (
+    NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
+)
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl import (
+    nemotron_35_super_vl_sft_64gpu_h100_bf16_config as nemotron_35_super_vl_sft_config,
+)
 
 
 __all__ = [
-    "nemotron_35_super_vl_sft_64gpu_h100_bf16_config",
-    "nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config",
-    "nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config",
-    "nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config",
-    "nemotron_omni_valor32k_peft_4gpu_h100_bf16_config",
-    "nemotron_omni_valor32k_sft_4gpu_h100_bf16_config",
+    "nemotron_35_super_vl_sft_config",
+    "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
 ]
