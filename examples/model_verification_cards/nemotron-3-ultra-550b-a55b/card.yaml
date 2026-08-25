@@ -9,20 +9,21 @@ summary: >
   main. The separately scoped
   pretrain_performance.GB200 and pretrain_performance.GB300 are verified with
   their canonical 256-GPU MXFP8 recipes.
-  Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip is
-  verified. CPU conversion, portable manual-forward and deterministic-inference
-  reruns, remaining functional training, and checkpoint resume still require
-  completed verification runs before those support claims are promoted.
+  Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip and
+  checkpoint-backed deterministic inference are verified. CPU conversion,
+  portable manual-forward, remaining functional training, and checkpoint
+  resume still require completed verification runs before those support claims
+  are promoted.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
+      - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - manual_forward_pass
-      - inference
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
@@ -39,8 +40,8 @@ model:
   architecture: NemotronHForCausalLM
   min_transformers_version: "5.8.0"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 69bd20947c629aff4aaafebfcdce4062666cffbc  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: d352aceda8ed4136f1db787bcf449c1b210a2438  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -136,7 +137,7 @@ items:
       orchestration path must produce equivalent evidence before promotion.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 3 --gpus-per-node 8
@@ -148,16 +149,15 @@ items:
       --prompt "Explain why the sky appears blue in one sentence."
       --max_new_tokens 32 --apply-chat-template --thinking-mode disabled
       --legacy-full-prefix
-    last_verified: null
+    last_verified: 2026-08-25
     expected_result: >
-      The distributed Megatron execution must reload the pinned BF16
-      checkpoint and complete an exact 32-token deterministic greedy decode
-      without an earlier EOS. The expected JSON-escaped literal completion is
-      "The user wants a one-sentence explanation for why the sky appears
+      The public launcher exited successfully after reloading the pinned BF16
+      checkpoint at TP1/PP3/EP8/ETP1. Against the 32-token maximum, greedy
+      decoding produced exactly 32 tokens over generation steps 0-31 without
+      an earlier EOS and emitted the exact JSON-escaped literal completion "The
+      user wants a one-sentence explanation for why the sky appears
       blue.\u003c/think\u003eThe sky appears blue because Earth's atmosphere
-      scatters shorter (blue)". Historical direct-entry-point evidence
-      produced this completion, but the public launcher command must be rerun
-      before the item is promoted.
+      scatters shorter (blue)".
 
   pretrain:
     H100:
