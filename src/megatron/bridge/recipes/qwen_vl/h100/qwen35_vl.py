@@ -1376,6 +1376,10 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # First-step Triton autotuning for the hybrid MoE layers runs per pipeline
+    # stage, so an early pipeline-parallel collective can idle past the
+    # 10-minute default and trip the NCCL watchdog before step 1 completes.
+    cfg.dist.distributed_timeout_minutes = 60
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
