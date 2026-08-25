@@ -29,6 +29,11 @@ summary: >
   and passed independent strict GPU-only HF reloads. The public post-SFT workflow
   also produced identical bounded greedy completions from two independent reloads.
 
+  The GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections
+  and to separate routed/shared expert FC1/FC2 projections. It completed 100 finite
+  steps, saved an adapter-only checkpoint, and reloaded that checkpoint in a fresh
+  process for finite step 101.
+
 verification_index:
   model_level:
     verified:
@@ -42,8 +47,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     GB200:
-      verified: [pretrain, sft, sft_export_inference]
-      unverified: [sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, peft]
+      unverified: [sft_long_context, checkpoint_resume]
   performance:
     GB200: unverified
 
@@ -304,23 +309,59 @@ items:
 
   peft:
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
-      command: null
-      last_verified: null
+      bridge_commit: 1a67d67f01e39eb2399fe59fb1f24b7f241a787c  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 8 --gpus-per-node 4
+        --recipe deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config
+        --mode lora --step-func dsv4_step
+        --pretrained_checkpoint work/models/deepseek-v4-flash-megatron
+        --save_dir work/model-verification/dsv4-flash/peft-ref
+        --save_interval 100 --max_steps 100
+        --seq_length 1024
+        --pipeline_model_parallel_size 4 --context_parallel_size 1
+        --expert_model_parallel_size 8
+        'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL'
+        scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
+        validation.eval_interval=0 validation.eval_iters=0
+        rng.seed=5678
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null
+        checkpoint.load_optim=false checkpoint.load_rng=false
+        checkpoint.save_optim=false
+        ddp.overlap_grad_reduce=false
+        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+        dist.distributed_timeout_minutes=180
+      last_verified: 2026-08-24
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 0.9435847
+        final_loss: 0.2915190
+        last_10_steps_step_time_ms_avg: 9903.50
+        last_10_steps_model_tflops_per_gpu_avg: 38.13
+        last_10_steps_tokens_per_second_per_gpu_avg: 413.591155
+        peak_allocated_memory_gib: 53.712
+        peak_reserved_memory_gib: 53.979
       expected_result: >
-        The packed OpenMath LoRA recipe must complete 100 finite steps with
-        separate routed-expert adapters, zero skipped or NaN iterations, all five
-        metrics, and a reloadable adapter checkpoint.
+        On 32 GB200 (8 nodes x 4 GPUs), TP1/PP4/EP8/CP1 with dense DP8 and expert
+        DP1, GBS/MBS 128/1. The recipe applies rank-32, alpha-32 LoRA with zero
+        dropout to linear_q_down_proj, linear_q_up_proj, linear_kv_proj,
+        linear_proj, linear_fc1, and linear_fc2. Routed experts use separate
+        per-expert adapters; shared experts are also adapted. The run preserves
+        the packed OpenMath thinking data, objective, natural routing, schedule,
+        and seed used by the verified SFT item while freezing the base model.
+        It disables activation recompute and offload because the reduced PEFT
+        training-state footprint fits with 53.712 GiB peak allocated memory. All
+        100 steps completed with finite LM/MTP losses and zero skipped or NaN
+        iterations. Initial LM/MTP losses exactly matched SFT; final LM and MTP
+        losses were 2.84% and 2.81% above SFT, respectively. The 9.9 GiB
+        adapter-only checkpoint reloaded after the same base checkpoint in a
+        fresh process and completed finite step 101 with LM loss 0.2829354 and
+        MTP loss 0.02593753.
 
   checkpoint_resume:
     GB200:

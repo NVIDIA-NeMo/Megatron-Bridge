@@ -23,6 +23,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("deepseek-v3", "pretrain_performance", "GB300"): (4096, 4096, 256),
     ("deepseek-v4-flash", "pretrain", "GB200"): (4096, 256, 128),
     ("deepseek-v4-flash", "sft", "GB200"): (1024, 128, 32),
+    ("deepseek-v4-flash", "peft", "GB200"): (1024, 128, 32),
     ("gemma-4-26b-a4b-it", "sft", "H100"): (4096, 32, 8),
     ("gemma-4-26b-a4b-it", "peft", "H100"): (4096, 32, 4),
     ("glm5-2", "pretrain", "H100"): (2048, 1024, 352),
