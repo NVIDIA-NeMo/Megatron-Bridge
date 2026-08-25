@@ -108,6 +108,11 @@ def _apply_deepseek_v4_lora(cfg: ConfigContainer) -> None:
     )
     cfg.optimizer.lr = 1.0e-4
     cfg.optimizer.min_lr = 0.0
+    # MCore's unified recompute path cannot replay the frozen grouped-expert graph.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
 
 def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:

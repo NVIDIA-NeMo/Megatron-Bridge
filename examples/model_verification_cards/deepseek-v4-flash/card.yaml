@@ -352,13 +352,14 @@ items:
         dropout to linear_q_down_proj, linear_q_up_proj, linear_kv_proj,
         linear_proj, linear_fc1, and linear_fc2. Routed experts use separate
         per-expert adapters; shared experts are also adapted. The run preserves
-        the packed OpenMath thinking data, objective, natural routing, schedule,
-        and seed used by the verified SFT item while freezing the base model.
+        the packed OpenMath thinking data, objective, natural routing, seed, and
+        warmup/decay horizon used by the verified SFT item while freezing the base
+        model and using PEFT's own 1e-4 peak learning rate.
         It disables activation recompute and offload because the reduced PEFT
         training-state footprint fits with 53.712 GiB peak allocated memory. All
         100 steps completed with finite LM/MTP losses and zero skipped or NaN
-        iterations. Initial LM/MTP losses exactly matched SFT; final LM and MTP
-        losses were 2.84% and 2.81% above SFT, respectively. The 9.9 GiB
+        iterations. For context, initial LM/MTP losses exactly matched SFT; final
+        LM and MTP losses were 2.84% and 2.81% above SFT, respectively. The 9.9 GiB
         adapter-only checkpoint reloaded after the same base checkpoint in a
         fresh process and completed finite step 101 with LM loss 0.2829354 and
         MTP loss 0.02593753.

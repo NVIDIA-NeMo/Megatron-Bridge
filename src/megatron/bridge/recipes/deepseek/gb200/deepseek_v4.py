@@ -346,12 +346,7 @@ def deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config() -> ConfigCont
 
     cfg = deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config()
     _apply_deepseek_v4_lora(cfg)
-    # PEFT's smaller training-state footprint lets this adapter graph avoid MCore's
-    # unified recompute path, which cannot replay the frozen grouped-expert graph.
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    # PEFT's smaller training-state footprint also lets this graph avoid activation offload.
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
     cfg.env_vars.pop("NVTE_CPU_OFFLOAD_V1", None)
