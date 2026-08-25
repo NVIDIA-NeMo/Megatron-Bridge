@@ -19,6 +19,9 @@ from megatron.bridge.perf_recipes._common import (
     _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
 )
+from megatron.bridge.recipes.llama.llama2 import (
+    llama2_70b_peft_config,
+)
 from megatron.bridge.recipes.llama.llama3 import (
     llama3_8b_pretrain_config,
     llama3_8b_sft_config,
