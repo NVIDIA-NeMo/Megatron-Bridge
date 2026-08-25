@@ -13,10 +13,12 @@
 # limitations under the License.
 
 # Build layer variables
-# Supported mode: FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder
+# Supported mode: FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder,
+# VLLM_WHEEL_SRC=vllm_wheel_build|vllm_wheel_none
 # TRT-LLM stages are not present in this Dockerfile.
 ARG FW_DEP_BUILDER
 ARG FW_BASE_FINAL
+ARG VLLM_WHEEL_SRC=vllm_wheel_build
 
 ARG NEMO_FW_BASE_IMAGE
 FROM ${NEMO_FW_BASE_IMAGE} AS base
@@ -31,7 +33,7 @@ ENV NVIDIA_PRODUCT_NAME="NeMo Framework" \
 ##
 ##############################################################################
 
-FROM base AS vllm_wheel
+FROM base AS vllm_wheel_build
 
 ARG VLLM_VERSION=v0.14.1
 ARG MAX_JOBS=4
@@ -46,6 +48,13 @@ RUN mkdir -p /src/vllm && \
     python use_existing_torch.py && \
     pip install -r requirements/build/cuda.txt && \
     pip wheel --no-deps --no-build-isolation -v .
+
+# /src/vllm must exist for the install step's bind mount.
+FROM base AS vllm_wheel_none
+
+RUN mkdir -p /src/vllm
+
+FROM ${VLLM_WHEEL_SRC} AS vllm_wheel
 
 ##############################################################################
 ##
@@ -127,10 +136,14 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
 # Copy Wheels
 RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
     --mount=type=bind,source=docker/patches/vllm.patch,target=/opt/vllm.patch \
+    if ! compgen -G "/tmp/vllm/vllm*.whl" >/dev/null; then \
+    echo "No vLLM wheel produced; skipping vLLM install."; \
+    else \
     pip install /tmp/vllm/vllm*.whl && \
     pushd /usr/local/lib/python3.12/dist-packages/vllm && \
     patch -p1 < /opt/vllm.patch && \
-    popd
+    popd; \
+    fi
 
 ##############################################################################
 ##

@@ -445,6 +445,15 @@ class TestDataLoaders:
 class TestSampleBasedDataLoaders:
     """Tests for sample-based training data loader functionality."""
 
+    def test_get_train_valid_test_num_samples_final_only_validation(self):
+        cfg = create_simple_test_config()
+        cfg.validation.eval_interval = None
+
+        _, valid_samples, _ = get_train_valid_test_num_samples(cfg)
+
+        expected_valid_samples = cfg.validation.eval_iters * cfg.train.global_batch_size
+        assert valid_samples == expected_valid_samples
+
     def test_get_train_valid_test_num_samples_iteration_based(self):
         """Test sample calculation for iteration-based training."""
         cfg = create_simple_test_config()

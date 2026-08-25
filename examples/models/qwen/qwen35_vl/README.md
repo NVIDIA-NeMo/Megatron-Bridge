@@ -102,6 +102,15 @@ convergence.
 
 See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning with configurable model sizes.
 
+Text-only chat rows may provide official Qwen template controls under `chat_template_kwargs`. For example,
+`{"enable_thinking": true, "truncate_history_thinking": false}` preserves historical reasoning on Qwen3.6 by
+translating the canonical history option to the template-native `preserve_thinking=true`. The Qwen3.5 template does
+not expose that control and continues to omit reasoning before the latest user query.
+
+Tool definitions remain in the top-level `tools` field. OpenAI JSON-string `function.arguments` are normalized to
+objects before rendering. Assistant headers, system/user turns, and tool responses are masked from loss; assistant
+thinking boundaries, retained reasoning, tool calls, answers, and `<|im_end|>` are supervised.
+
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
 See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning with configurable model sizes.

@@ -26,6 +26,7 @@ from .gpt_oss import (
     gpt_oss_20b_sft_openmathinstruct2_thinking_packed_config,
     gpt_oss_120b_peft_config,
     gpt_oss_120b_pretrain_config,
+    gpt_oss_120b_sft_32k_config,
     gpt_oss_120b_sft_config,
 )
 
@@ -34,6 +35,7 @@ __all__ = [
     "gpt_oss_20b_pretrain_config",
     "gpt_oss_20b_pretrain_fp8_current_scaling_config",
     "gpt_oss_120b_pretrain_config",
+    "gpt_oss_120b_sft_32k_config",
     "gpt_oss_20b_sft_config",
     "gpt_oss_20b_sft_32k_config",
     "gpt_oss_20b_sft_openmathinstruct2_thinking_packed_config",
