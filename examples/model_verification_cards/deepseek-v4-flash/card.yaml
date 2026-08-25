@@ -12,10 +12,13 @@ summary: >
   checkpoint resume on GB200. CPU conversion remains unverified because full
   BF16 materialization requires a high-memory CPU node. Optimized Megatron
   KV-cache inference is unavailable for DSv4HybridAttention, while the
-  maintained non-cached full-prefix compatibility path remains unverified for
-  this model. PEFT also remains unverified because no exact model recipe is
-  currently exported. SFT export requires nemo_26.08.rc4 or later (TE 2.18)
-  and the Bridge fix for stream_weights_megatron_to_hf None-task handling.
+  maintained non-cached full-prefix compatibility path is unsupported on
+  Bridge main as of 2026-08-25: Bridge requests the dsv4_hybrid attention
+  variant, but the pinned MCore neither accepts that variant nor provides its
+  hybrid-attention implementation. PEFT also remains unverified because no
+  exact model recipe is currently exported. SFT export requires
+  nemo_26.08.rc4 or later (TE 2.18) and the Bridge fix for
+  stream_weights_megatron_to_hf None-task handling.
 
   Known issues tracked for follow-up PRs:
   - DSv4ExpertGatedMLPMapping: moe_grouped_gemm=True export produces malformed expert
@@ -33,8 +36,9 @@ verification_index:
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - inference
       - manual_forward_pass
+    unsupported:
+      - inference
   training:
     GB200:
       verified: [pretrain, sft, sft_long_context, sft_export_inference, checkpoint_resume]
@@ -137,24 +141,22 @@ items:
       285 B parameter model. Requires 8 or more nodes for side-by-side comparison.
 
   inference:
-    status: unverified
-    precision: bf16
-    command: >
-      ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 4
-      --task legacy-full-prefix-generation --legacy-full-prefix
-      --hf_model_path deepseek-ai/DeepSeek-V4-Flash
-      --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1
-      --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000
-      --prompt "The capital of France is" --max_new_tokens 32
-      --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code
+    status: unsupported
+    precision: null
+    command: null
     last_verified: null
     expected_result: >
-      Optimized KV-cache autoregressive inference currently conflicts with
-      DSv4HybridAttention's requirement that inference_context be None. The
-      maintained legacy full-prefix task intentionally disables that context
-      and is therefore a plausible non-cached compatibility path, but no exact
-      DeepSeek V4 run has completed. The command must finish one synchronous
-      deterministic greedy generation before this item is promoted.
+      On Bridge main as of 2026-08-25 with the pinned MCore, both optimized
+      KV-cache and legacy full-prefix inference are unavailable. The public
+      legacy launcher exits during provider finalization, before checkpoint
+      loading, because Bridge requests experimental attention variant
+      dsv4_hybrid while the pinned MCore rejects that value and lacks the
+      DeepSeek V4 hybrid-attention implementation. Bridge's functional
+      DeepSeek V4 tests skip when that upstream module is absent. Support
+      requires a public MCore pin containing the hybrid implementation, an
+      accepted dsv4_hybrid variant, and a successful synchronous deterministic
+      decode through the public launcher; renaming the variant to ordinary DSA
+      does not supply the missing hybrid architecture.
 
   pretrain:
     GB200:
