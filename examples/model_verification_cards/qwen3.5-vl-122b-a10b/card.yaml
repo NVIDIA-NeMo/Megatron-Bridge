@@ -18,7 +18,12 @@ summary: >
   verified on the same single node, SFT is verified on 48 H100 GPUs with the
   canonical 48-GPU recipe, and pretrain is verified on 128 H100 GPUs with the
   canonical 128-GPU recipe run with its freeze flags overridden so all three
-  towers train. sft_export_inference is unverified because only its export
+  towers train. checkpoint_resume is verified against that same pretrain run by
+  continuing from its iteration-50 checkpoint: step 51 reproduces the reference
+  exactly and step 100 lands within 0.248 percent, far tighter than the roughly
+  1.4 percent drift between two independent launches of this
+  order-sensitive BF16 mixture-of-experts recipe.
+  sft_export_inference is unverified because only its export
   half can run on this hardware; the bf16 export exceeds single-device memory
   and the reload has no sharded path. sft_long_context has no Qwen3.5-VL
   122B-A10B recipe yet, so it remains unverified rather than claiming coverage
@@ -35,8 +40,8 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [pretrain, sft, peft]
-      unverified: [sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft, peft, checkpoint_resume]
+      unverified: [sft_export_inference, sft_long_context]
   performance:
     H100: verified
 model:
@@ -385,28 +390,66 @@ items:
 
   checkpoint_resume:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
-      command: null
-      last_verified: null
+      bridge_commit: 8a98400e0371a78d48f81e6e19fdf3d89207b2c5  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config
+        --max_steps 100 --warmup_iters 10
+        --load_dir work/model-verification/qwen35-vl-122b-a10b/selfref
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/selfref-resumed
+        --save_interval 100
+        checkpoint.ckpt_step=50
+        model.freeze_language_model=false
+        model.freeze_vision_model=false
+        model.freeze_vision_projection=false
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 3.821736
+        final_loss: 3.703343
+        last_10_steps_step_time_ms_avg: 2459.260
+        last_10_steps_model_tflops_per_gpu_avg: 26.500
+        last_10_steps_tokens_per_second_per_gpu_avg: 416.385
       depends_on: pretrain
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
+        sentinels_match: true
       expected_result: >
-        This workflow remains unverified. It requires one direct continuation
-        from the pretrain middle checkpoint into a distinct output root that
-        restores model, optimizer, scheduler, and RNG state and matches the
-        uninterrupted reference at both declared sentinel steps.
+        The continuation loads iteration 50 of the pretrain reference, trains
+        steps 51 through 100 into a distinct output root, and completes with no
+        skipped or NaN iterations before writing a 131-shard torch_dist
+        checkpoint at step 100. Both towers and the projection are trainable in
+        this configuration, so the reload restores optimizer and RNG state for
+        the full parameter set rather than for a small trainable subset. The
+        first sentinel is exact: step 51 reproduces the reference lm loss
+        3.821736 along with the identical gradient norm 44.270, auxiliary
+        routing loss 4.609055, multi-token-prediction loss 1.901619, and
+        consumed-sample count 1632, which is what demonstrates that model,
+        optimizer, scheduler, and data-iterator state were all restored rather
+        than reinitialized. The second sentinel is 3.703343 against the
+        reference 3.712553, a relative difference of 0.248 percent, well inside
+        the declared 1e-2 tolerance. The residual gap at step 100 is expected
+        and is not evidence of a defect: this bf16 mixture-of-experts recipe is
+        not bitwise reproducible because expert reductions are order-sensitive
+        and the continuation ran on a different node set. For calibration, two
+        identically configured launches of this same recipe from scratch drift
+        roughly 1.4 percent apart by step 50, so the 0.248 percent observed here
+        is an order of magnitude tighter and is only achievable from genuinely
+        restored state. Comparison is valid only against pretrain on this same
+        hardware key, because that reference is the very run whose iteration-50
+        checkpoint was consumed; comparing against any separately launched run
+        would measure recipe nondeterminism instead of resume correctness. The
+        timing figures are sanity observations from a mock dataset, and the
+        TFLOP/s figure is the same fixed analytic full-model estimate described
+        under pretrain, so it must not be compared against
+        pretrain_performance, which runs with the towers frozen.
 
   pretrain_performance:
     H100:
