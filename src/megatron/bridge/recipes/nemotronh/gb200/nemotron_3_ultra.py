@@ -103,9 +103,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContaine
 
     The execution policy adopts the canonical TP2/PP1/EP64 Megatron-FSDP
     configuration with HybridEP, targeted expert-activation offload, and
-    selective expert-activation recompute. It retains the library recipe's
-    natural routing, numerical checks, optimizer, scheduler, and training
-    objective instead of benchmark-only policy.
+    selective expert-activation and layernorm recompute. It retains the library
+    recipe's natural routing, numerical checks, optimizer, scheduler, and
+    training objective instead of benchmark-only policy.
 
     Returns:
         GB200 MXFP8 Megatron-FSDP pretraining configuration.
@@ -139,7 +139,10 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContaine
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = ["moe_act"]
+    # The benchmark recipe force-balances expert routing. Natural routing can
+    # produce hotter expert ranks, so cheaply recompute layernorm as well to
+    # preserve HBM headroom without changing the routing or training objective.
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
 
     cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
