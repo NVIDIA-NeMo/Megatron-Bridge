@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib
+import inspect
 from types import SimpleNamespace
 from typing import Callable
 
@@ -91,6 +92,7 @@ def fake_processor(monkeypatch: pytest.MonkeyPatch):
     import transformers
 
     patch_recipe_module_global(monkeypatch, _recipe_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _super_vl_h100_recipe_module, "AutoBridge", _FakeAutoBridge)
     monkeypatch.setattr(_h100_recipe_module, "_DEFAULT_HF_PATH", _TEST_HF_ID)
     monkeypatch.setattr(
         _super_vl_h100_recipe_module,
@@ -152,6 +154,12 @@ def test_default_hf_path_is_public_model_id():
 
 def test_super_vl_default_hf_path_matches_model_id():
     assert _super_vl_recipe_module.NEMOTRON_35_SUPER_VL_HF_MODEL_ID == _SUPER_VL_HF_ID
+
+
+def test_model_family_bases_own_their_checkpoint_selection():
+    assert inspect.signature(_h100_recipe_module._nemotron_omni_base).parameters == {}
+    assert inspect.signature(_super_vl_h100_recipe_module._nemotron_35_super_vl_base).parameters == {}
+    assert not hasattr(_super_vl_h100_recipe_module, "_nemotron_omni_base")
 
 
 @pytest.mark.parametrize("recipe_func", _RECIPE_FUNCS)

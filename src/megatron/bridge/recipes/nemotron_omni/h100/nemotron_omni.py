@@ -72,7 +72,7 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
     """
-    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
+    cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
     cfg.model.has_sound = False
     cfg.dataset = DirectHFSFTDatasetConfig(
@@ -140,7 +140,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """
     from megatron.bridge.peft.lora import LoRA
 
-    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
+    cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
     cfg.model.has_sound = False
     cfg.peft = LoRA(
@@ -185,10 +185,12 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_omni_base(*, hf_path: str) -> ConfigContainer:
+def _nemotron_omni_base() -> ConfigContainer:
     """Shared model/training config for all Nemotron Omni recipes."""
     cfg = _sft_common_vlm()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True).to_megatron_provider(
+        load_weights=False
+    )
     cfg.model.seq_length = 4096
 
     cfg.model.tensor_model_parallel_size = 4
@@ -259,7 +261,7 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     Uses ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``).
     """
-    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
+    cfg = _nemotron_omni_base()
 
     # Enable temporal video embedder on the model side
     cfg.model.temporal_patch_dim = 2
@@ -286,7 +288,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """
     from megatron.bridge.peft.lora import LoRA
 
-    cfg = _nemotron_omni_base(hf_path=_DEFAULT_HF_PATH)
+    cfg = _nemotron_omni_base()
 
     cfg.model.temporal_patch_dim = 2
     cfg.model.separate_video_embedder = True
