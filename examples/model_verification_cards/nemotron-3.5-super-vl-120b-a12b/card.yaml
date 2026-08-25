@@ -1,0 +1,271 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: nemotron_3_5_super_vl_120b_a12b
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. The pinned eight-GPU BF16 import and distributed export are verified:
+  the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
+  the immutable HF source bitwise, and the exported package reloaded natively
+  through Transformers on eight H100s. CPU conversion, deterministic
+  generation, and training verification remain pending. The initial 64-H100
+  multimodal SFT recipe reuses the Nemotron Omni image/video stack without
+  audio and retains the checkpoint's separate temporal embedder and one-layer
+  MTP configuration.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - megatron_to_hf_gpu
+    unverified:
+      - hf_to_megatron_cpu
+      - megatron_to_hf_cpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [sft, sft_export_inference]
+      unsupported: [pretrain, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+  hf_revision: e86197a3bad449de618a5835f26835ce770c6f10  # pragma: allowlist secret
+  architecture: NemotronH_Omni_Reasoning_V3
+  min_transformers_version: "5.12.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08.rc5
+  bridge_commit: f375ef553a06b782f5129c1bc9a060a55259da4f  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+      --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
+      --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/cpu-megatron
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: null
+    expected_result: >
+      The pinned CPU import must exit successfully, create a reloadable
+      iter_0000000 checkpoint, and map the complete 43,078-tensor source
+      checkpoint without missing or unexpected model parameters.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+      --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
+      --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --trust-remote-code --low-memory-save
+    last_verified: 2026-08-25
+    expected_result: >
+      The pinned eight-GPU BF16 import exits successfully after mapping 6,281
+      parameters per rank and creates a TP1/PP1/EP8/ETP1 iter_0000000
+      checkpoint containing the complete language, MTP, image, projector, and
+      temporal-video weights. The paired export reloads this saved checkpoint
+      successfully.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+      --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
+      --megatron-path
+      work/model-verification/nemotron-3.5-super-vl-120b-a12b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/cpu-hf-export
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Strict CPU export must exit successfully, reproduce all 43,078 source
+      tensors with exact keys, shapes, dtypes, and values, and reload natively
+      through Transformers at the pinned revision.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+      --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
+      --megatron-path
+      work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --trust-remote-code --distributed-save --save-every-n-ranks 1
+    last_verified: 2026-08-25
+    expected_result: >
+      Strict distributed export exits successfully in 63 indexed shards. All
+      43,078 source tensors match in keys, shapes, dtypes, and values, with
+      maximum difference zero. AutoConfig, AutoProcessor, and
+      AutoModelForImageTextToText reload the local-only export natively as
+      NemotronH_Omni_Reasoning_V3 across all eight visible H100s.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Verification requires the public model-comparison launcher to preserve
+      Nemotron Omni processor metadata for one rectangular image. Hugging Face
+      and Megatron must predict the same next token with cosine similarity of
+      at least 0.99, with maximum and mean absolute logit differences reported
+      as diagnostics.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Verification requires synchronous deterministic greedy image and video
+      generation through the public VLM launcher, including exact post-resize
+      grids and per-tubelet visual-token counts. Record the literal completion
+      and actual generated-token count under an explicit maximum bound.
+
+  pretrain:
+    all:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Megatron Bridge does not yet publish a from-scratch multimodal
+        pretraining recipe for this checkpoint; the initial training surface is
+        supervised image/video finetuning from a converted checkpoint.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
+        --recipe nemotron_35_super_vl_sft_64gpu_h100_bf16_config
+        --mode sft
+        --pretrained_checkpoint
+        work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron/iter_0000000
+        --max_steps 100
+        dataset.path=work/data/nemotron-3.5-super-vl/energon
+        dataset.do_validation=false dataset.do_test=false
+        validation.eval_iters=0 validation.eval_interval=0
+        checkpoint.load=null
+        --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-config/ConfigContainer.yaml
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        On exactly 64 H100s, the BF16 audio-free image/video SFT run must
+        complete 100 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS
+        1280/1, with the checkpoint-native one-layer MTP, separate temporal
+        embedder, natural routing, HybridEP flex dispatch, fixed expert
+        capacity, selective recompute, and precision-aware optimizer. Loss must
+        remain finite with zero skipped or NaN iterations. Complete step-50 and
+        step-100 checkpoints and the resolved ConfigContainer must persist.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 1 --gpus-per-node 8
+          --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+          --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
+          --megatron-path
+          work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft/iter_0000100
+          --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-hf-export
+          --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+          --trust-remote-code --distributed-save --save-every-n-ranks 1
+        - >
+          ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+          --task hf-inference
+          --hf-model work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-hf-export
+          --prompt "Describe the image." --image docs/images/tp1.png
+          --max-new-tokens 32 --chat-template --trust-remote-code
+          --device cuda --dtype bfloat16
+      last_verified: null
+      expected_result: >
+        Strict export must reproduce a natively reloadable Transformers
+        checkpoint. Deterministic greedy image generation must then complete
+        successfully, with the literal completion and actual generated-token
+        count recorded under the 32-token maximum.
+
+  sft_long_context:
+    all:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        No long-context multimodal SFT recipe with context parallelism and
+        sequence packing is published for this exact model variant yet.
+
+  peft:
+    all:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        No model-specific LoRA or DoRA recipe is published for this exact
+        multimodal variant yet.
+
+  checkpoint_resume:
+    all:
+      status: unsupported
+      precision: null
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison: null
+      expected_result: >
+        There is no supported pretraining reference workflow for this model,
+        so no optimizer and RNG checkpoint-resume sentinel contract is
+        available yet.
