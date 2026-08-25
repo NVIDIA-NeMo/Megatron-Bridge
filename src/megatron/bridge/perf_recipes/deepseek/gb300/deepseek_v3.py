@@ -244,7 +244,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
 def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 8× GB300, NVFP4."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
-    cfg.model.mla_down_proj_fusion = True
+    # cfg.model.mla_down_proj_fusion = True
     cfg.model.num_layers = 4
     # cfg.model.moe_layer_freq = cfg.model.moe_layer_freq[: cfg.model.num_layers]
 
