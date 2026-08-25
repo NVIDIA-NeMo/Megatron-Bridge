@@ -53,6 +53,7 @@ from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
+    LocalHFParamSpec,
     MegatronParamMapping,
 )
 from megatron.bridge.models.conversion.peft_bridge import (
@@ -167,6 +168,8 @@ class WeightConversionTask(Generic[MappingT]):
             dtype; bridges that requantize on export skip it (no scale companions).
         export_hook: Export-only transformation applied after mapping conversion and
             before final device placement.
+        required_hf_param_names: Import-only source tensors consumed by the loading
+            hook. Defaults to the parameter names declared by ``mapping.hf_param``.
 
     """
 
@@ -181,6 +184,41 @@ class WeightConversionTask(Generic[MappingT]):
     export_hook: Optional[Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]] = field(
         default=None, compare=False, repr=False
     )
+    required_hf_param_names: tuple[str, ...] | None = field(default=None, compare=False)
+
+    @property
+    def hf_param_names(self) -> tuple[str, ...]:
+        """HF tensors required to import this Megatron parameter."""
+        if self.required_hf_param_names is not None:
+            return self.required_hf_param_names
+        hf_param = self.mapping.hf_param
+        names = (hf_param,) if isinstance(hf_param, str) else tuple(hf_param.values())
+        return tuple(dict.fromkeys(names))
+
+    def local_hf_param_specs(self) -> tuple[LocalHFParamSpec, ...]:
+        """Return this parameter's canonical local HF-compatible views.
+
+        An empty tuple means the caller must use the normal Bridge conversion
+        path; it does not declare the model unsupported for HF conversion or
+        M-to-N refit. Destination backend and topology compatibility are outside
+        this per-parameter contract, including whether MXFP8 is transferred as
+        qualified physical data/scales or requantized from a logical view.
+        """
+        return self.mapping.local_hf_param_specs(self.global_param_name)
+
+    def combine_local_hf_weights(self, weights: Mapping[str, torch.Tensor]) -> torch.Tensor:
+        """Reassemble transferred local HF views into this Megatron parameter."""
+        specs = self.local_hf_param_specs()
+        if not specs:
+            raise ValueError(f"{self.param_name!r} has no local HF parameter views.")
+        if len(specs) == 1:
+            return weights[specs[0].name]
+
+        split_dims = {spec.split_dim for spec in specs}
+        if len(split_dims) != 1 or None in split_dims:
+            raise ValueError(f"{self.param_name!r} local HF views cannot be combined generically.")
+        ordered = sorted(specs, key=lambda spec: spec.split_index)
+        return torch.cat([weights[spec.name] for spec in ordered], dim=ordered[0].split_dim)
 
 
 class _HFNameSuffixMapping:
@@ -1013,6 +1051,70 @@ class MegatronModelBridge(
             hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
         return hf_weights
 
+    @staticmethod
+    def get_hf_import_param_names(
+        hf_param: str | dict[str, str],
+        available_hf_param_names: set[str] | None = None,
+    ) -> tuple[str, ...]:
+        """Declare HF tensors that the import preprocessing hook may consume.
+
+        When checkpoint keys are available, this includes common quantization
+        companions and alternative packed representations. This keeps incremental
+        import callers from running a task before scale sidecars have arrived.
+        Bridges whose preprocessing hook reads other companion keys must override
+        this method to declare them.
+
+        Args:
+            hf_param: Parameter name or role-to-name mapping from the conversion mapping.
+            available_hf_param_names: Complete source schema, when known.
+
+        Returns:
+            Ordered, deduplicated source tensor names required for the task.
+        """
+        mapped_names = (hf_param,) if isinstance(hf_param, str) else tuple(hf_param.values())
+        if available_hf_param_names is None:
+            return tuple(dict.fromkeys(mapped_names))
+
+        required_names: list[str] = []
+        for name in mapped_names:
+            if name in available_hf_param_names:
+                required_names.append(name)
+                companion_names = [f"{name}_scale_inv"]
+                if name.endswith(".weight"):
+                    companion_names.append(f"{name[: -len('.weight')]}.scale")
+                required_names.extend(
+                    companion_name for companion_name in companion_names if companion_name in available_hf_param_names
+                )
+                continue
+
+            packed_representations = (
+                (f"{name}_packed", f"{name}_scale", f"{name}_shape"),
+                (f"{name}_packed", f"{name}_scale"),
+                (f"{name}_blocks", f"{name}_scales"),
+            )
+            representation = next(
+                (
+                    candidate
+                    for candidate in packed_representations
+                    if all(part in available_hf_param_names for part in candidate)
+                ),
+                None,
+            )
+            if representation is not None:
+                required_names.extend(representation)
+
+        return tuple(dict.fromkeys(required_names))
+
+    @staticmethod
+    def _convert_loaded_hf_weight(
+        task: WeightConversionTask,
+        hf_weights: torch.Tensor | dict[str, torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        """Convert already-loaded HF inputs for one Bridge task."""
+        if task.megatron_module is None:
+            return None
+        return task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
+
     def maybe_modify_converted_hf_weight(
         self,
         task: WeightConversionTask,
@@ -1313,7 +1415,7 @@ class MegatronModelBridge(
                     _hf_import_cache[hf_param_key] = hf_weights
 
             # 2) Delegate conversion & distribution to the bridge
-            converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
+            converted_weights = self._convert_loaded_hf_weight(task, hf_weights)
 
             # 3) Copy into Megatron param if this rank received a shard
             if converted_weights is not None:
@@ -1360,7 +1462,7 @@ class MegatronModelBridge(
                 # "a leaf Variable that requires grad is being used in an in-place operation."
                 with torch.no_grad():
                     task.param_weight.copy_(converted_weights)
-        self._broadcast_shared_embeddings(megatron_model)
+        self.finalize_hf_import(megatron_model)
         if use_megatron_fsdp:
             for m in original_megatron_model:
                 m.module.install_optimized_model_weights()
@@ -1378,6 +1480,8 @@ class MegatronModelBridge(
         hf_pretrained: HFPreTrained,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        *,
+        hf_state_dict: Mapping[str, torch.Tensor] | None = None,
     ) -> Iterable[MegatronWeightTuple]:
         """Generator variant of load_weights_hf_to_megatron for streaming weight conversion.
 
@@ -1392,6 +1496,8 @@ class MegatronModelBridge(
                 or list of model instances to extract configuration from.
             conversion_tasks (Optional[List[WeightConversionTask]]): Pre-built conversion tasks.
                 If not provided, tasks will be built automatically from the models.
+            hf_state_dict: Optional external HF-style state mapping. When omitted,
+                weights are read from ``hf_pretrained.state``.
 
         Yields:
             MegatronWeightTuple: Named tuples containing:
@@ -1425,18 +1531,15 @@ class MegatronModelBridge(
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+        if hf_state_dict is None:
+            hf_state_dict = hf_pretrained.state
 
         for task in conversion_tasks:
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
-            hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state
-            if isinstance(task.mapping.hf_param, str):
-                hf_weights = hf_state_dict[task.mapping.hf_param]
-            else:
-                hf_weights = {k: hf_state_dict[v] for k, v in task.mapping.hf_param.items()}
-
-            converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
+            hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
+            converted_weights = self._convert_loaded_hf_weight(task, hf_weights)
             if converted_weights is not None:
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
@@ -1822,6 +1925,13 @@ class MegatronModelBridge(
                 if hasattr(unwrapped_model, "output_layer"):
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
+    def finalize_hf_import(self, megatron_model: Union[MegatronModel, List[MegatronModel]]) -> None:
+        """Finalize tied parameters and parameter-derived caches after import."""
+        from megatron.core.resharding import refresh_module_caches
+
+        self._broadcast_shared_embeddings(megatron_model)
+        refresh_module_caches(megatron_model)
+
     def _should_skip_mtp_duplicate_embedding_export(
         self,
         task: WeightConversionTask,
@@ -1899,6 +2009,7 @@ class MegatronModelBridge(
         self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
 
         hf_keys: Optional[Iterable[str]] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
+        hf_key_set = set(hf_keys) if hf_keys is not None else None
 
         mapping_registry = self.mapping_registry()
         pg_collection = _get_pg_collection_from_model(megatron_model)
@@ -1918,7 +2029,7 @@ class MegatronModelBridge(
         mappings_by_global_name = self._validate_conversion_mappings(
             mapping_registry,
             sorted_global_param_names_all_pp_ranks,
-            hf_keys,
+            hf_key_set,
         )
 
         global_names_index_dict = {name: idx for idx, name in enumerate(sorted_global_param_names_all_pp_ranks)}
@@ -1954,6 +2065,7 @@ class MegatronModelBridge(
                     param_weight=local_weights,
                     mapping=mapping,
                     weight_dtype=weight_dtype,
+                    required_hf_param_names=self.get_hf_import_param_names(mapping.hf_param, hf_key_set),
                 )
 
         # Fill the remaining ones for pp communications
@@ -1972,6 +2084,7 @@ class MegatronModelBridge(
                     param_weight=None,
                     mapping=mapping,
                     weight_dtype=weight_dtype,
+                    required_hf_param_names=self.get_hf_import_param_names(mapping.hf_param, hf_key_set),
                 )
 
         return self._require_concrete_tasks(pending_tasks)
