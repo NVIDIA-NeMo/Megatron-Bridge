@@ -49,6 +49,12 @@ def apply_flex_dispatcher_backend(
             )
         return
 
+    if not torch.cuda.is_available() and moe_flex_dispatcher_backend in ("deepep", "hybridep"):
+        model_config.moe_token_dispatcher_type = "flex"
+        model_config.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
+        model_config.moe_shared_expert_overlap = False
+        return
+
     device_properties = torch.cuda.get_device_properties(0)
     if moe_flex_dispatcher_backend == "deepep":
         if not (
@@ -74,7 +80,6 @@ def apply_flex_dispatcher_backend(
         if get_rank_safe() == 0:
             logger.warning("Not a valid flex dispatcher backend. Skipping flex dispatcher backend configuration.")
         return
-
     model_config.moe_token_dispatcher_type = "flex"
     model_config.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
     model_config.moe_shared_expert_overlap = False
@@ -83,6 +88,10 @@ def apply_flex_dispatcher_backend(
 def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
     """Validate DeepEP or HybridEP is supported for the current GPU architecture."""
     if model_config.moe_token_dispatcher_type == "flex":
+        if model_config.moe_flex_dispatcher_backend is None:
+            _fallback_to_alltoall(model_config)
+            return
+
         device_properties = torch.cuda.get_device_properties(0)
         if model_config.moe_flex_dispatcher_backend == "deepep":
             if not (

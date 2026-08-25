@@ -23,11 +23,13 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
-from megatron.core.inference.sampling.torch_sampling import TorchSampling
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MODULE_PATH = _REPO_ROOT / "src" / "megatron" / "bridge" / "inference" / "text_generation.py"
+_TORCH_SAMPLING_PATH = (
+    _REPO_ROOT / "3rdparty" / "Megatron-LM" / "megatron" / "core" / "inference" / "sampling" / "torch_sampling.py"
+)
 
 
 class _AttnBackend(Enum):
@@ -42,6 +44,10 @@ class _MambaInferenceStateConfig:
     @classmethod
     def from_model(cls, model):
         return cls()
+
+
+class _DynamicInferenceContext:
+    DEFAULT_MAX_TOKENS = 16_384
 
 
 class _SamplingParams:
@@ -62,6 +68,26 @@ def _module(name: str, **attrs: object) -> types.ModuleType:
     return module
 
 
+def _load_torch_sampling() -> type:
+    base_module_name = "megatron.core.inference.sampling.base"
+    original_base_module = sys.modules.get(base_module_name)
+    sys.modules[base_module_name] = _module(base_module_name, Sampling=object)
+    try:
+        spec = importlib.util.spec_from_file_location("torch_sampling_under_test", _TORCH_SAMPLING_PATH)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.TorchSampling
+    finally:
+        if original_base_module is None:
+            sys.modules.pop(base_module_name, None)
+        else:
+            sys.modules[base_module_name] = original_base_module
+
+
+TorchSampling = _load_torch_sampling()
+
+
 def _install_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     stubs = {
         "megatron.core.inference.apis": _module(
@@ -72,6 +98,10 @@ def _install_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
             "megatron.core.inference.config",
             InferenceConfig=_PassthroughInit,
             MambaInferenceStateConfig=_MambaInferenceStateConfig,
+        ),
+        "megatron.core.inference.contexts.dynamic_context": _module(
+            "megatron.core.inference.contexts.dynamic_context",
+            DynamicInferenceContext=_DynamicInferenceContext,
         ),
         "megatron.core.transformer.enums": _module(
             "megatron.core.transformer.enums",
@@ -178,8 +208,28 @@ def test_build_inference_config_rounds_max_requests_up_to_tp(text_generation):
     assert config.kwargs["materialize_only_last_token_logits"] is True
 
 
-def test_build_inference_config_auto_sizes_max_requests_when_unset(text_generation):
-    """Server path: max_batch_size and num_prompts both None -> max_requests left as None."""
+def test_build_inference_config_caps_auto_sized_server_requests_at_token_budget(text_generation):
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=None,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=128,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
+    assert config.kwargs["max_requests"] is not None
+    assert config.kwargs["max_requests"] <= 128
+    assert config.kwargs["max_requests"] % 2 == 0
+
+
+def test_build_inference_config_preserves_kv_auto_sizing_without_token_limit(text_generation):
     model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
 
     config = text_generation.build_inference_config(
@@ -196,6 +246,49 @@ def test_build_inference_config_auto_sizes_max_requests_when_unset(text_generati
     )
 
     assert config.kwargs["max_requests"] is None
+
+
+@pytest.mark.parametrize(
+    ("num_prompts", "tp", "max_tokens", "expected_max_requests"),
+    ((16_385, 1, None, 16_384), (10, 2, 3, 2)),
+)
+def test_build_inference_config_caps_default_requests_at_token_budget(
+    text_generation, num_prompts, tp, max_tokens, expected_max_requests
+):
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=num_prompts,
+        tp=tp,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=max_tokens,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
+    assert config.kwargs["max_requests"] == expected_max_requests
+
+
+def test_build_inference_config_rejects_explicit_batch_above_token_budget(text_generation):
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+
+    with pytest.raises(ValueError, match=r"--max_batch_size \(4\) cannot exceed --max_tokens \(3\)"):
+        text_generation.build_inference_config(
+            model=model,
+            max_sequence_length=4096,
+            max_batch_size=4,
+            num_prompts=10,
+            tp=2,
+            block_size_tokens=256,
+            kv_cache_buffer_size_gb=20.0,
+            max_tokens=3,
+            return_log_probs=False,
+            enable_chunked_prefill=False,
+        )
 
 
 def test_build_inference_config_clamps_learned_absolute_sequence_length(text_generation):
@@ -321,6 +414,23 @@ def test_top_p_sampling_is_compatible_with_default_cli_values(text_generation):
 
     assert params.kwargs["top_k"] == 0
     assert sampled.shape == (1,)
+
+
+def test_zero_temperature_top_p_sampling_is_greedy(text_generation):
+    params = _parse_sampling_params(text_generation, ["--temperature", "0", "--top_p", "0.9"])
+    logits = text_generation.torch.tensor([[1.0, 2.0, 3.0]])
+
+    sampled = TorchSampling.sample_from_logits(
+        logits,
+        params.kwargs["temperature"],
+        params.kwargs["top_k"],
+        params.kwargs["top_p"],
+        generator=text_generation.torch.Generator().manual_seed(0),
+    )
+
+    assert params.kwargs["top_k"] == 1
+    assert params.kwargs["top_p"] == 0.0
+    assert sampled.item() == 2
 
 
 def test_default_sampling_remains_greedy(text_generation):

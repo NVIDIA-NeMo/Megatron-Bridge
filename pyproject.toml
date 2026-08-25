@@ -130,6 +130,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "wandb==0.27.2",
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -157,6 +158,17 @@ name = "flash-mla"
 version = "1.0.0+b7643bd"
 requires-dist = []
 
+# Lane-specific metadata for VCS packages that otherwise compile CUDA extensions during lock.
+[[tool.uv.dependency-metadata]]
+name = "transformer-engine"
+version = "2.17.1+4329ff84"
+requires-dist = ["pydantic<2.14", "importlib-metadata>=1.0", "packaging", "torch>=2.1", "einops", "onnxscript", "onnx", "nvdlfw-inspect"]
+
+[[tool.uv.dependency-metadata]]
+name = "fast-hadamard-transform"
+version = "1.0.4.post1"
+requires-dist = ["torch", "packaging", "ninja"]
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
@@ -178,6 +190,7 @@ te = [
 ssm = [
     "mamba-ssm",
     "causal-conv1d",
+    "tilelang>=0.1.9",
 ]
 audio = [
     "librosa",
