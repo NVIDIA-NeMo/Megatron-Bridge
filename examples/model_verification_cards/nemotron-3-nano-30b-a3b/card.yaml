@@ -3,18 +3,21 @@
 
 title: nemotron_3_nano_30b_a3b
 summary: >
-  Performance scope: pretrain_performance.GB300 uses the tuned canonical
-  8-GPU MXFP8 recipe. Model-level and functional training workflows remain
-  unverified in this card.
+  The pinned BF16 checkpoint has verified one-node GPU import and
+  checkpoint-backed deterministic inference. Performance scope:
+  pretrain_performance.GB300 uses the tuned canonical 8-GPU MXFP8 recipe.
+  CPU conversion, GPU export, manual forward, and functional training
+  workflows remain unverified in this card.
 verification_index:
   model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - inference
     unverified:
       - hf_to_megatron_cpu
-      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
-      - inference
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -27,7 +30,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08
-  bridge_commit: bc09410353986ac7255ffd31fb2b720fb9007107  # pragma: allowlist secret
+  bridge_commit: d352aceda8ed4136f1db787bcf449c1b210a2438  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -40,13 +43,24 @@ items:
       pinned Hugging Face revision with all applicable verification gates.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --distributed-timeout-minutes 120 --trust-remote-code
+      --low-memory-save
+    last_verified: 2026-08-25
     expected_result: >
-      This workflow remains unverified and requires a public run against the
-      pinned Hugging Face revision with all applicable verification gates.
+      The pinned one-node 8-H100 import exits successfully at
+      TP1/PP1/EP8/ETP1, persists iter_0000000, and reloads it for inference.
+      A separate public GPU round-trip at the same topology exhaustively
+      compares all 6,243 exported BF16 weights against the immutable source:
+      6,243 of 6,243 match with no skipped FP8 tensors or mismatches.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -76,13 +90,26 @@ items:
       pinned Hugging Face revision with all applicable verification gates.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task legacy-full-prefix-generation
+      --hf_model_path nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron_model_path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000
+      --tp 1 --pp 1 --ep 8 --etp 1
+      --prompt "Explain why the sky appears blue in one sentence."
+      --max_new_tokens 32 --apply-chat-template --thinking-mode disabled
+      --trust-remote-code --legacy-full-prefix
+    last_verified: 2026-08-25
     expected_result: >
-      This workflow remains unverified and requires a public run against the
-      pinned Hugging Face revision with all applicable verification gates.
+      The public launcher reloaded the pinned BF16 checkpoint and produced
+      exactly 32 generated tokens across generation steps 0 through 31, using
+      the 32-token maximum without an earlier EOS. The literal completion is
+      'User asks: "Explain why the sky appears blue in one sentence." So we
+      need to give a single sentence explanation. Provide concise answer.
+      Probably: "'.
 
   pretrain:
     H100:

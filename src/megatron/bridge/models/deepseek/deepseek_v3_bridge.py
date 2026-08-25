@@ -53,6 +53,36 @@ _dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
 class DeepSeekV3Bridge(MegatronModelBridge):
     """Megatron Bridge for DeepSeek-V3."""
 
+    @staticmethod
+    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 1) -> list[list[str]]:
+        """Generate a pipeline-parallel layout for DeepSeek V3 conversion.
+
+        DeepSeek V3 has 61 decoder layers, so the model cannot use ordinary
+        pipeline partitioning for the practical PP sizes needed to hold the
+        full checkpoint. The conversion launcher calls this hook to distribute
+        decoder layers unevenly while keeping embeddings on the first stage and
+        MTP plus loss on the last stage.
+
+        Args:
+            num_layers: Number of decoder layers.
+            pp: Pipeline parallel size.
+            mtp_layers: Number of MTP layers.
+
+        Returns:
+            A flexible pipeline layout with exactly ``pp`` stages.
+        """
+        base_layers, extra_layers = divmod(num_layers, pp)
+        layout: list[list[str]] = []
+        for pp_rank in range(pp):
+            stage = ["decoder"] * (base_layers + int(pp_rank < extra_layers))
+            if pp_rank == 0:
+                stage.insert(0, "embedding")
+            if pp_rank == pp - 1:
+                stage.extend(["mtp"] * mtp_layers)
+                stage.append("loss")
+            layout.append(stage)
+        return layout
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
@@ -178,8 +208,26 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Preserve a source rotary embedding inverse frequency tensor if present."""
+        """Preserve source-required shared MTP aliases and rotary frequencies."""
         global_name = task.global_param_name
+        num_layers = getattr(self.hf_config, "num_hidden_layers", None)
+        if isinstance(num_layers, int):
+            shared_mtp_aliases = {
+                "embedding.word_embeddings.weight": (
+                    "model.embed_tokens.weight",
+                    f"model.layers.{num_layers}.embed_tokens.weight",
+                ),
+                "output_layer.weight": (
+                    "lm_head.weight",
+                    f"model.layers.{num_layers}.shared_head.head.weight",
+                ),
+            }
+            alias = shared_mtp_aliases.get(global_name)
+            if alias is not None:
+                source_key, alias_key = alias
+                if source_key in converted_weights_dict and alias_key in hf_state_dict:
+                    converted_weights_dict[alias_key] = converted_weights_dict[source_key]
+
         if not global_name.startswith("decoder.layers.") or not global_name.endswith(".input_layernorm.weight"):
             return converted_weights_dict
 

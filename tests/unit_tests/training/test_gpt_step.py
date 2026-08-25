@@ -223,6 +223,7 @@ class TestGetBatch:
             "cu_seqlens_kv_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
             "max_seqlen_q": torch.tensor(4, dtype=torch.int32),
             "max_seqlen_kv": torch.tensor(4, dtype=torch.int32),
+            "pad_between_seqs": True,
         }
 
         out = _partition_packed_batch_for_cp(batch, cp_group)
@@ -234,6 +235,7 @@ class TestGetBatch:
         assert torch.equal(out["position_ids"], torch.tensor([[0, 1, 2, 3]]))
         assert torch.equal(out["loss_mask"], torch.ones(1, 4))
         assert torch.equal(out["padding_mask"], torch.tensor([[False, False, False, True]]))
+        assert out["pad_between_seqs"] is True
 
     def test_partition_packed_batch_trims_negative_sentinel_fallback(self, monkeypatch):
         """Packed CP slicing can trim CPU cu_seqlens without a precomputed argmin."""
@@ -328,6 +330,7 @@ class TestGetBatch:
             "cu_seqlens_kv_padded": cu_seqlens_kv_padded,
             "max_seqlen_q": max_seqlen_q,
             "max_seqlen_kv": max_seqlen_kv,
+            "pad_between_seqs": True,
         }
 
         (
@@ -356,6 +359,7 @@ class TestGetBatch:
         assert torch.equal(packed_seq_metadata["cu_seqlens_kv_padded"], cu_seqlens_kv_padded)
         assert torch.equal(packed_seq_metadata["max_seqlen_q"], max_seqlen_q)
         assert torch.equal(packed_seq_metadata["max_seqlen_kv"], max_seqlen_kv)
+        assert packed_seq_metadata["pad_between_seqs"] is True
         assert "cu_seqlens" not in packed_seq_metadata
         assert "cu_seqlens_argmin" not in packed_seq_metadata
 

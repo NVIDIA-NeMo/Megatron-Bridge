@@ -956,6 +956,151 @@ class TestSaveCheckpoint:
         assert future_incomplete_checkpoint.is_dir()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
 
+    @pytest.mark.parametrize("previous_step, previous_checkpoint_remains", [(10, False), (20, True)])
+    def test_sync_persistent_save_honors_retain_interval(
+        self, tmp_path, save_checkpoint_fixtures, previous_step, previous_checkpoint_remains
+    ):
+        """Persistent saves retain only interval checkpoints and the latest checkpoint."""
+        previous_checkpoint = tmp_path / f"iter_{previous_step:07d}"
+        previous_checkpoint.mkdir()
+        (tmp_path / "latest_checkpointed_iteration.txt").write_text(str(previous_step))
+        current_checkpoint = tmp_path / "iter_0000030"
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.train_state.step = 30
+        state.train_state.state_dict.return_value = {"step": torch.tensor(30)}
+        state.cfg.checkpoint.save = str(tmp_path)
+        state.cfg.checkpoint.async_save = False
+        state.cfg.checkpoint.save_retain_interval = 20
+        state.cfg.checkpoint.most_recent_k = -1
+        state.wandb_logger = Mock()
+
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        with (
+            patch(
+                "megatron.bridge.training.checkpointing.dist_checkpointing.save",
+                return_value=None,
+            ),
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("torch.distributed.is_initialized", return_value=False),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            save_checkpoint(
+                state,
+                save_checkpoint_fixtures["mock_model"],
+                save_checkpoint_fixtures["mock_optimizer"],
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context={},
+                pg_collection=pg_collection,
+            )
+
+        assert previous_checkpoint.exists() is previous_checkpoint_remains
+        assert current_checkpoint.is_dir()
+
+    def test_async_persistent_save_defers_retain_interval_cleanup(self, tmp_path, save_checkpoint_fixtures):
+        """The previous checkpoint remains available until its async replacement is durable."""
+        previous_checkpoint = tmp_path / "iter_0000010"
+        previous_checkpoint.mkdir()
+        latest_train_state = tmp_path / "latest_train_state.pt"
+        torch.save({"step": torch.tensor(10)}, latest_train_state)
+        (tmp_path / "latest_checkpointed_iteration.txt").write_text("10")
+        current_checkpoint = tmp_path / "iter_0000030"
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.train_state.step = 30
+        state.train_state.state_dict.return_value = {"step": torch.tensor(30)}
+        state.cfg.checkpoint.save = str(tmp_path)
+        state.cfg.checkpoint.async_save = True
+        state.cfg.checkpoint.save_retain_interval = 20
+        state.cfg.checkpoint.most_recent_k = -1
+        state.wandb_logger = Mock()
+
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        finalize_fns = []
+        async_request = Mock()
+        async_request.add_finalize_fn.side_effect = finalize_fns.append
+
+        def run_cleanup_immediately(*, target):
+            thread = Mock()
+            thread.start.side_effect = target
+            return thread
+
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=async_request),
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.schedule_async_save"),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("megatron.bridge.training.checkpointing.threading.Thread", side_effect=run_cleanup_immediately),
+            patch("torch.distributed.is_initialized", return_value=False),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            save_checkpoint(
+                state,
+                save_checkpoint_fixtures["mock_model"],
+                save_checkpoint_fixtures["mock_optimizer"],
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context={},
+                pg_collection=pg_collection,
+            )
+
+            assert previous_checkpoint.is_dir()
+            assert torch.load(latest_train_state, weights_only=True)["step"].item() == 10
+            for finalize_fn in finalize_fns:
+                finalize_fn()
+
+        assert not previous_checkpoint.exists()
+        assert current_checkpoint.is_dir()
+        assert torch.load(latest_train_state, weights_only=True)["step"].item() == 30
+
     def test_async_checkpoint_loggers_use_scheduled_step(self, save_checkpoint_fixtures):
         """Delayed logger finalizers must identify the checkpoint they belong to."""
         state = save_checkpoint_fixtures["mock_state"]
@@ -1144,7 +1289,13 @@ class TestSaveCheckpoint:
         assert future_incomplete_checkpoint.is_dir()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 30
 
-    def test_sync_global_non_persistent_honors_configured_retention(self, tmp_path, save_checkpoint_fixtures):
+    @pytest.mark.parametrize(
+        "most_recent_k, save_retain_interval, expected_steps",
+        [(5, None, (20, 30, 40, 50, 60)), (-1, 20, (50, 60))],
+    )
+    def test_sync_global_non_persistent_honors_configured_retention(
+        self, tmp_path, save_checkpoint_fixtures, most_recent_k, save_retain_interval, expected_steps
+    ):
         """Synchronous global non-persistent cleanup must retain the configured checkpoint count."""
         save_dir = tmp_path / "persistent"
         non_persistent_dir = tmp_path / "non_persistent"
@@ -1162,8 +1313,10 @@ class TestSaveCheckpoint:
         state.cfg.checkpoint.non_persistent_ckpt_type = "global"
         state.cfg.checkpoint.non_persistent_global_ckpt_dir = str(non_persistent_dir)
         state.cfg.checkpoint.async_save = False
-        state.cfg.checkpoint.most_recent_k = 5
+        state.cfg.checkpoint.most_recent_k = most_recent_k
+        state.cfg.checkpoint.save_retain_interval = save_retain_interval
         state.wandb_logger = Mock()
+        (non_persistent_dir / "latest_checkpointed_iteration.txt").write_text("50")
 
         pg_collection = Mock()
         pg_collection.expt_dp.rank.return_value = 0
@@ -1208,9 +1361,8 @@ class TestSaveCheckpoint:
                 non_persistent_ckpt=True,
             )
 
-        assert not (non_persistent_dir / "iter_0000010").exists()
-        for step in (20, 30, 40, 50):
-            assert (non_persistent_dir / f"iter_{step:07d}").is_dir()
+        actual_steps = {int(checkpoint.name.removeprefix("iter_")) for checkpoint in non_persistent_dir.glob("iter_*")}
+        assert actual_steps == {*expected_steps, 70}
         assert current_checkpoint.is_dir()
         assert future_incomplete_checkpoint.is_dir()
 
