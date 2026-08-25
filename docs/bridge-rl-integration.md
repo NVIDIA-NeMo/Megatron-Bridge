@@ -76,6 +76,7 @@ Translate your RL framework config into Megatron Bridge's `ConfigContainer` for 
 
 ```python
 import torch
+from megatron.bridge import AutoBridge
 from megatron.bridge.training.config import (
     ConfigContainer,
     TrainingConfig,
@@ -83,17 +84,38 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     DistributedDataParallelConfig,
     CheckpointConfig,
+    LoggerConfig,
     TokenizerConfig,
 )
 from nemo_rl.models.policy import PolicyConfig  # or your own policy cfg type
 
 # Example: map your RL config to Megatron config
 def build_megatron_config(rl_cfg: PolicyConfig, pretrained_ckpt_dir: str) -> ConfigContainer:
-    model_cfg = rl_cfg["megatron_cfg"].copy()
+    bridge = AutoBridge.from_hf_pretrained(rl_cfg["model_name"])
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+
+    # Keep framework-owned optimizer/scheduler/DDP mappings out of the model
+    # provider. Apply only provider fields, with Bridge validating each name.
+    provider_fields = (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "context_parallel_size",
+        "expert_model_parallel_size",
+        "expert_tensor_parallel_size",
+        "sequence_parallel",
+        "recompute_granularity",
+        "recompute_method",
+        "recompute_num_layers",
+    )
+    model_overrides = {name: rl_cfg["megatron_cfg"][name] for name in provider_fields if name in rl_cfg["megatron_cfg"]}
+
     # Precision
-    dtype = rl_cfg["precision"]
-    model_cfg["bf16"] = dtype == "bfloat16"
-    model_cfg["fp16"] = dtype == "float16"
+    dtype = {
+        "float32": torch.float32,
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+    }[rl_cfg["precision"]]
+    model_cfg.apply_overrides_and_finalize(dtype=dtype, overrides=model_overrides)
 
     checkpoint = CheckpointConfig(
         save_interval=100,
@@ -130,10 +152,10 @@ def build_megatron_config(rl_cfg: PolicyConfig, pretrained_ckpt_dir: str) -> Con
         tokenizer_model=rl_cfg["model_name"],
     )
 
-    return ConfigContainer(
+    cfg = ConfigContainer(
         model=model_cfg,
         checkpoint=checkpoint,
-        logger=None,
+        logger=LoggerConfig(),
         train=train,
         optimizer=opt,
         ddp=ddp,
@@ -141,6 +163,8 @@ def build_megatron_config(rl_cfg: PolicyConfig, pretrained_ckpt_dir: str) -> Con
         dataset=None,
         tokenizer=tokenizer,
     )
+    cfg.validate()
+    return cfg
 ```
 
 Initialize Megatron-Core using a helper similar to `setup_megatron_model` from NeMo-RL:

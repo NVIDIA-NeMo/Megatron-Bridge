@@ -32,6 +32,7 @@ from typing import Optional
 
 import torch
 from megatron.core import tensor_parallel
+from megatron.core.fp8_utils import get_fp8_align_size
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.models.multimodal.context_parallel import (
     gather_from_context_parallel_ranks_dynamic_res,
@@ -132,6 +133,28 @@ def _pad_patch_grid_to_even(
     grid = features.reshape(height, width, features.shape[-1])
     grid = torch.nn.functional.pad(grid, (0, 0, 0, padded_width - width, 0, padded_height - height))
     return grid.reshape(1, padded_height * padded_width, -1), padded_height, padded_width
+
+
+def _project_multimodal_embeddings(
+    projection: torch.nn.Module,
+    embeddings: torch.Tensor,
+) -> torch.Tensor:
+    """Project media rows, padding only the temporary FP8 compute input."""
+    input_shape = embeddings.shape[:-1]
+    flat_embeddings = embeddings.reshape(-1, 1, embeddings.shape[-1])
+    num_embeddings = flat_embeddings.shape[0]
+    projection_config = getattr(projection, "config", None)
+    if getattr(projection_config, "fp8", None):
+        alignment = get_fp8_align_size(projection_config.fp8_recipe)
+        padding = -num_embeddings % alignment
+        if padding:
+            flat_embeddings = torch.cat(
+                (flat_embeddings, flat_embeddings.new_zeros((padding, 1, flat_embeddings.shape[-1]))),
+                dim=0,
+            )
+
+    projected = projection(flat_embeddings)[:num_embeddings]
+    return projected.reshape(*input_shape, projected.shape[-1])
 
 
 class NemotronOmniModel(MegatronModule):
@@ -471,7 +494,7 @@ class NemotronOmniModel(MegatronModule):
             if shard_vision:
                 # Project before the gather so the projector stays sharded, then
                 # restore the global feature set every CP rank's media merge needs.
-                projected = self.vision_projection(encoded.unsqueeze(1)).squeeze(1)
+                projected = _project_multimodal_embeddings(self.vision_projection, encoded)
                 gathered = gather_from_context_parallel_ranks_dynamic_res(projected, num_padded_ranks)
                 return gathered.contiguous()
         else:
@@ -480,8 +503,7 @@ class NemotronOmniModel(MegatronModule):
             encoded = encoded[:, class_tokens:, :]
             encoded = pixel_shuffle(encoded).reshape(-1, encoded.shape[-1] * 4)
 
-        projected = self.vision_projection(encoded.unsqueeze(1))
-        return projected.squeeze(1).contiguous()
+        return _project_multimodal_embeddings(self.vision_projection, encoded).contiguous()
 
     def _encode_sound(self, sound_clips: torch.Tensor, sound_length: Optional[torch.Tensor]) -> torch.Tensor:
         """Encode mel features and return valid projected rows in sample order."""
@@ -510,7 +532,10 @@ class NemotronOmniModel(MegatronModule):
         projection_parameter = next(self.sound_projection.parameters(), None)
         if projection_parameter is not None:
             sound_embeddings = sound_embeddings.to(dtype=projection_parameter.dtype)
-        projected = self.sound_projection(sound_embeddings.permute(1, 0, 2).contiguous()).contiguous()
+        projected = _project_multimodal_embeddings(
+            self.sound_projection,
+            sound_embeddings.permute(1, 0, 2).contiguous(),
+        ).contiguous()
         projected_by_sample = projected.permute(1, 0, 2)
         if getattr(getattr(self.sound_model, "config", None), "sound_pad_to_clip_duration", False):
             return projected_by_sample.reshape(-1, projected.shape[-1]).contiguous()
