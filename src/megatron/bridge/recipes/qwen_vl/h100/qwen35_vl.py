@@ -1336,7 +1336,7 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 300000
-    cfg.train.global_batch_size = 36
+    cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 4
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
@@ -2197,17 +2197,21 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
     # Training config
     cfg.train.train_iters = 300000
-    cfg.train.global_batch_size = 36
-    cfg.train.micro_batch_size = 4
+    cfg.train.global_batch_size = 32
+    # Sharded weights already occupy ~32 GiB per H100 at EP=8/TP=2, and the
+    # vocab-parallel cross entropy materializes fp32 logits of
+    # MBS x seq x (248320 / TP) x 4 B, which is 7.58 GiB at MBS=4 and does not
+    # fit alongside them on 80 GiB.
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
