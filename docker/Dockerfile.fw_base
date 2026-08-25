@@ -134,20 +134,43 @@ RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
 
 ##############################################################################
 ##
-## Reinstall the aws-ofi-nccl EFA plugin
+## Install CSP NCCL network plugins
 ##
 ## NVIDIA PyTorch >= 26.06 dropped aws-ofi-nccl and defaults
 ## NCCL_NET_PLUGIN=spcx (HPCX Spectrum-X), which cannot drive EFA -> NCCL falls
 ## back to TCP sockets on AWS. Rebuild the plugin against the reinstalled NCCL and
-## the image's libfabric so EFA jobs keep their fabric. Selection stays per-CSP in
-## the launcher (EKSEnvPlugin pins NCCL_NET_PLUGIN for AWS). Kept last so it does
-## not invalidate the CUDA-toolkit or vLLM layer caches.
+## the image's libfabric so EFA jobs keep their fabric. Also install Google's gIB
+## plugin for GCP A3 Ultra+ instances. Kept last so these plugins are built against
+## the final NCCL and do not invalidate the CUDA-toolkit or vLLM layer caches.
 ##############################################################################
 
 ARG AWS_OFI_NCCL_VERSION=v1.17.3
+ARG GCP_NCCL_PLUGINS_VERSION=1.1.2
+ARG TARGETARCH
 
 RUN --mount=type=bind,source=docker/common/install_aws_ofi_nccl.sh,target=/opt/install_aws_ofi_nccl.sh \
     bash /opt/install_aws_ofi_nccl.sh --AWS_OFI_NCCL_VER=$AWS_OFI_NCCL_VERSION
+
+RUN set -euxo pipefail && \
+    case "${TARGETARCH}" in amd64|arm64) ;; *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1;; esac && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        -o /etc/apt/keyrings/cloud-google.asc && \
+    echo "deb [signed-by=/etc/apt/keyrings/cloud-google.asc] https://packages.cloud.google.com/apt gpudirect-gib-apt main" \
+        > /etc/apt/sources.list.d/nccl-gib.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        "nccl-gcp-plugins-ngc=${GCP_NCCL_PLUGINS_VERSION}-*" && \
+    test -f /opt/gcp/nccl-plugins/lib64/libnccl-net-gcp.so && \
+    echo "/opt/gcp/nccl-plugins/lib64" > /etc/ld.so.conf.d/gcp-nccl-plugins.conf && \
+    rm -f /etc/apt/sources.list.d/nccl-gib.list /etc/apt/keyrings/cloud-google.asc && \
+    rm -rf /var/lib/apt/lists/* && \
+    ldconfig
+
+RUN --mount=type=bind,source=docker/common/gcp_nccl_init.sh,target=/opt/gcp_nccl_init.sh \
+    install -m 0644 /opt/gcp_nccl_init.sh /etc/gcp_nccl_init.sh && \
+    { grep -qxF '. /etc/gcp_nccl_init.sh' /etc/shinit_v2 || \
+      echo '. /etc/gcp_nccl_init.sh' >> /etc/shinit_v2; }
 
 ##############################################################################
 ##
