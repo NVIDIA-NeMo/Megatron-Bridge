@@ -209,9 +209,43 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=False, fp8_output_proj=False)
-    cfg.model.moe_hybridep_num_sms_preprocessing = 108
-    cfg.model.high_priority_a2a_comm_stream = False
+    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=False)
+    # cfg.model.moe_hybridep_num_sms_preprocessing = 108
+    # cfg.model.high_priority_a2a_comm_stream = False
+
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Keep DeepSeek kernel selection aligned with the measured baseline.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 8× GB300, NVFP4."""
+    cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
+    cfg.model.mla_down_proj_fusion = True
+    cfg.model.num_layers = 3
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
