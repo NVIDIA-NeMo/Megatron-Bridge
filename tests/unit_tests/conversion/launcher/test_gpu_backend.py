@@ -70,7 +70,7 @@ def _fake_megatron_modules():
     return modules
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def cli():
     """Load the conversion script as a module under a stable test name."""
     spec = importlib.util.spec_from_file_location("gpu_backend_under_test", _CLI_PATH)
@@ -180,6 +180,8 @@ class TestImportHfToMegatron:
         from_hf_call = next(call for call in calls if call[0] == "from_hf_pretrained")
         assert from_hf_call[1] == ("hf",)
         assert from_hf_call[2]["revision"] == "0123456789abcdef"  # pragma: allowlist secret
+        initialize_call = next(call for call in calls if call[0] == "initialize_model_parallel")
+        assert initialize_call[2] == {"seed": 0, "create_gloo_process_groups": False}
         assert prepared_outputs == [(("/ckpt",), {"overwrite": False, "source_paths": ["hf"]})]
 
 
@@ -255,6 +257,8 @@ class TestExportMegatronToHf:
         load_call = next(call for call in calls if call[0] == "load_megatron_model")
         assert load_call[1] == (str(checkpoint_path),)
         assert load_call[2]["mp_overrides"]["expert_model_parallel_size"] == 2
+        initialize_call = next(call for call in calls if call[0] == "initialize_model_parallel")
+        assert initialize_call[2] == {"seed": 0, "create_gloo_process_groups": False}
 
         reference_call = next(call for call in calls if call[0] == "from_hf_pretrained")
         assert reference_call[1] == ("hf",)
@@ -406,6 +410,8 @@ class TestRoundtrip:
 
         provider_call = next(call for call in calls if call[0] == "to_megatron_provider")
         assert provider_call[2] == {"load_weights": True}
+        initialize_call = next(call for call in calls if call[0] == "initialize_model_parallel")
+        assert initialize_call[2] == {"seed": 0, "create_gloo_process_groups": False}
         assert verified_models == [["megatron-model"]]
         assert initialized_timeouts == [45]
 

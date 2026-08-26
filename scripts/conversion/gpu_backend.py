@@ -317,7 +317,7 @@ def import_checkpoint(
     _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
     _maybe_generate_pipeline_layout(bridge, model_provider, pp)
     model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
     megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     bridge.save_megatron_model(
@@ -397,7 +397,7 @@ def export_checkpoint(
     _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
     resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
     model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
 
     model_parallel_overrides: dict[str, object] = {
         "tensor_model_parallel_size": tp,
@@ -470,7 +470,7 @@ def roundtrip_checkpoint(
     _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
     _maybe_generate_pipeline_layout(bridge, model_provider, pp)
     model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
     megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
     _verify_roundtrip_weights(bridge, megatron_model)
     print_rank_0("GPU round-trip validation complete")
