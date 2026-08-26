@@ -17,13 +17,14 @@
 import inspect
 from functools import partial
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_decoder_block_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -57,6 +58,9 @@ def _config(q_lora_rank):
 
 
 def _resolve(q_lora_rank):
+    if not hasattr(MLASelfAttention, "_resolve_qk_norm_config"):
+        pytest.skip("This MCore pin consumes MLA submodule specs directly in __init__")
+
     # `_resolve_qk_norm_config` only reads `self.config`, so bypass __init__ (which would
     # need process groups) but keep a real instance so its zero-arg `super()` resolves.
     attention = MLASelfAttentionWithoutQueryNorm.__new__(MLASelfAttentionWithoutQueryNorm)
@@ -66,6 +70,17 @@ def _resolve(q_lora_rank):
 
 class TestMLASelfAttentionWithoutQueryNorm:
     """DeepSeek MLA must not gain a query norm the HF architecture does not define."""
+
+    def test_no_query_lora_rewrites_the_legacy_spec_before_parent_init(self):
+        """Older MCore consumes the submodule spec directly and has no resolver hook."""
+        submodules = _mla_submodules()
+        with patch.object(MLASelfAttention, "__init__", return_value=None) as parent_init:
+            MLASelfAttentionWithoutQueryNorm(_config(q_lora_rank=None), submodules, layer_number=1)
+
+        rewritten = parent_init.call_args.args[1]
+        assert "LayerNorm" not in rewritten.linear_q_proj.__name__
+        assert "LayerNorm" in rewritten.linear_kv_up_proj.__name__
+        assert rewritten.q_layernorm is IdentityOp
 
     def test_no_query_lora_drops_the_fused_query_norm(self):
         """With q_lora_rank=None, HF has no query norm, so linear_q_proj must stay unfused."""
