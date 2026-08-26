@@ -132,6 +132,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$BASELINE_MCORE_REF" ]; then \
         export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+        export TMS_CUDA_MAJOR="$("${CUDA_HOME:-/usr/local/cuda}"/bin/nvcc --version | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | head -1)" && \
+        test -n "$TMS_CUDA_MAJOR" && \
         export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
             CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
             CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
@@ -146,6 +148,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    export TMS_CUDA_MAJOR="$("${CUDA_HOME:-/usr/local/cuda}"/bin/nvcc --version | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | head -1)" && \
+    test -n "$TMS_CUDA_MAJOR" && \
     # flash-mla (Megatron-LM's no_pypi_wheels group) has no PyPI wheel and is built from source by
     # the uv sync below. Point the compilers at the CCCL/libcu++ headers (under cccl/ in this base
     # image, not the default CUDA include path) and scope the build to the target archs.
