@@ -55,8 +55,10 @@ items:
     last_verified: null
     expected_result: >
       The pinned CPU import must exit successfully, create iter_0000000, and
-      preserve the complete source checkpoint so the paired CPU export can audit
-      every supported tensor for exact keys, shapes, dtypes, and values.
+      preserve the complete source checkpoint. A subsequent CPU export from
+      that CPU-imported checkpoint must audit every supported tensor for exact
+      keys, shapes, dtypes, and values; the currently verified CPU export uses
+      the independently verified GPU-imported checkpoint instead.
 
   hf_to_megatron_gpu:
     status: verified
