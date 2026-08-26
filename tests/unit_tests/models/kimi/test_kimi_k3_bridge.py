@@ -203,6 +203,26 @@ def test_kda_a_log_export_restores_zero_padding() -> None:
     assert torch.count_nonzero(result[name][96:]).item() == 0
 
 
+def test_plain_export_replaces_mxfp4_keys_in_shard_map() -> None:
+    """Plain exports must shard virtual BF16 expert weights without MXFP4 companions."""
+    bridge = KimiK3Bridge()
+    weight_key = "language_model.model.layers.1.mlp.experts.0.gate_proj.weight"
+    packed_key = f"{weight_key}_packed"
+    scale_key = f"{weight_key}_scale"
+    source_map = {
+        packed_key: "model-00001-of-00002.safetensors",
+        scale_key: "model-00001-of-00002.safetensors",
+        "language_model.model.norm.weight": "model-00002-of-00002.safetensors",
+    }
+
+    export_map = bridge.get_hf_export_key_to_filename_map(source_map, torch.bfloat16)
+
+    assert export_map == {
+        weight_key: "model-00001-of-00002.safetensors",
+        "language_model.model.norm.weight": "model-00002-of-00002.safetensors",
+    }
+
+
 def test_export_preserves_unconverted_multimodal_weights(monkeypatch: pytest.MonkeyPatch) -> None:
     """K3 keeps the published vision tower and projector in strict HF exports."""
     language = torch.tensor([1.0])

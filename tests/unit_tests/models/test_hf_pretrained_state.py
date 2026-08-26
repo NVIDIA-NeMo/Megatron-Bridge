@@ -126,6 +126,34 @@ def test_save_generator_strict_false_writes_nested_partial_shard(tmp_path) -> No
 
 
 @pytest.mark.parametrize("distributed_save", [False, True])
+def test_save_generator_accepts_export_key_map_override(tmp_path, monkeypatch, distributed_save: bool) -> None:
+    shard = "model-00001-of-00001.safetensors"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            "model.weight_packed": shard,
+            "model.weight_scale": shard,
+        },
+    )
+    source = SafeTensorsStateSource(tmp_path)
+    output_path = tmp_path / "output"
+    if distributed_save:
+        _mock_single_rank_distributed(monkeypatch)
+
+    source.save_generator(
+        iter([("model.weight", torch.ones((2, 2), dtype=torch.bfloat16))]),
+        output_path,
+        distributed_save=distributed_save,
+        key_to_filename_map_override={"model.weight": shard},
+    )
+
+    with safe_open(output_path / shard, framework="pt", device="cpu") as saved:
+        assert set(saved.keys()) == {"model.weight"}
+    index_data = json.loads((output_path / "model.safetensors.index.json").read_text(encoding="utf-8"))
+    assert index_data["weight_map"] == {"model.weight": shard}
+
+
+@pytest.mark.parametrize("distributed_save", [False, True])
 def test_save_generator_recomputes_index_total_size(tmp_path, monkeypatch, distributed_save: bool) -> None:
     first_shard = "model-00001-of-00002.safetensors"
     second_shard = "model-00002-of-00002.safetensors"

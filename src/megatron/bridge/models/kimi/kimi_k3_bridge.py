@@ -376,6 +376,28 @@ class KimiK3Bridge(MegatronModelBridge):
         finally:
             hf_pretrained.state.source.get_all_keys = original_get_all_keys
 
+    @staticmethod
+    def get_hf_export_key_to_filename_map(
+        key_to_filename_map: Mapping[str, str],
+        weight_dtype: torch.dtype,
+    ) -> dict[str, str]:
+        """Replace routed-expert MXFP4 pairs with their virtual plain-weight keys."""
+        del weight_dtype
+        export_map: dict[str, str] = {}
+        source_keys = set(key_to_filename_map)
+        for key, filename in key_to_filename_map.items():
+            if key.endswith(".weight_packed"):
+                weight_key = key.removesuffix("_packed")
+                if f"{weight_key}_scale" in source_keys:
+                    export_map[weight_key] = filename
+                    continue
+            if key.endswith(".weight_scale"):
+                weight_key = key.removesuffix("_scale")
+                if f"{weight_key}_packed" in source_keys:
+                    continue
+            export_map[key] = filename
+        return export_map
+
     @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,

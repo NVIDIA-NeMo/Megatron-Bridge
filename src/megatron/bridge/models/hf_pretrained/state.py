@@ -702,6 +702,7 @@ class SafeTensorsStateSource(StateSource):
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
         ignored_source_key_suffixes: Iterable[str] | None = None,
+        key_to_filename_map_override: Mapping[str, str] | None = None,
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -732,6 +733,8 @@ class SafeTensorsStateSource(StateSource):
                 source sharding map when saving.
             ignored_source_key_suffixes: Source tensor key suffixes to omit from the expected
                 source sharding map when saving.
+            key_to_filename_map_override: Optional export-specific key-to-shard map. This supports
+                plain-dtype exports whose keys differ from a quantized source checkpoint.
 
         """
         if distributed_save:
@@ -742,6 +745,7 @@ class SafeTensorsStateSource(StateSource):
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
                 ignored_source_key_suffixes=ignored_source_key_suffixes,
+                key_to_filename_map_override=key_to_filename_map_override,
             )
 
         # In a distributed environment, only rank 0 should write to disk.
@@ -761,10 +765,14 @@ class SafeTensorsStateSource(StateSource):
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        key_to_filename_map = self._filter_source_keys(
-            self.key_to_filename_map,
-            ignored_source_key_prefixes,
-            ignored_source_key_suffixes,
+        key_to_filename_map = (
+            dict(key_to_filename_map_override)
+            if key_to_filename_map_override is not None
+            else self._filter_source_keys(
+                self.key_to_filename_map,
+                ignored_source_key_prefixes,
+                ignored_source_key_suffixes,
+            )
         )
         all_expected_keys = set(key_to_filename_map.keys())
 
@@ -946,6 +954,7 @@ class SafeTensorsStateSource(StateSource):
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
         ignored_source_key_suffixes: Iterable[str] | None = None,
+        key_to_filename_map_override: Mapping[str, str] | None = None,
     ):
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
@@ -972,10 +981,14 @@ class SafeTensorsStateSource(StateSource):
         if is_distributed:
             torch.distributed.barrier()
 
-        key_to_filename_map = self._filter_source_keys(
-            self.key_to_filename_map,
-            ignored_source_key_prefixes,
-            ignored_source_key_suffixes,
+        key_to_filename_map = (
+            dict(key_to_filename_map_override)
+            if key_to_filename_map_override is not None
+            else self._filter_source_keys(
+                self.key_to_filename_map,
+                ignored_source_key_prefixes,
+                ignored_source_key_suffixes,
+            )
         )
 
         # Fallback: no sharding map, single-file save
