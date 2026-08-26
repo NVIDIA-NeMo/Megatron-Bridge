@@ -14,6 +14,8 @@
 # ruff: noqa: F401
 """Common helpers for llama performance recipes."""
 
+import torch
+
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,

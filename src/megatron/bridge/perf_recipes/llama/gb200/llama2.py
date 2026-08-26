@@ -33,7 +33,7 @@ def llama2_70b_peft_4gpu_gb200_fp8ds_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
-    cfg.model.cuda_graph_impl = None
+    cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = None
     cfg.model.cpu_offloading_num_layers = 20
     cfg.model.cpu_offloading = True
@@ -78,7 +78,7 @@ def llama2_70b_peft_8gpu_gb200_fp8ds_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
     cfg.model.cpu_offloading_num_layers = 11
     cfg.model.cpu_offloading = True
     cfg.validation.eval_global_batch_size = 8
@@ -122,7 +122,7 @@ def llama2_70b_peft_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
     cfg.model.cpu_offloading_num_layers = 20
     cfg.optimizer.lr = 0.0006
     cfg.validation.eval_global_batch_size = 4
@@ -166,7 +166,7 @@ def llama2_70b_peft_72gpu_gb200_fp8ds_config() -> ConfigContainer:
     cfg.train.global_batch_size = 9
     cfg.train.micro_batch_size = 1
     cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
     cfg.model.cpu_offloading_num_layers = 20
     cfg.model.cpu_offloading = True
     cfg.validation.eval_global_batch_size = 8
@@ -211,7 +211,7 @@ def llama2_70b_peft_512gpu_gb200_fp8ds_config() -> ConfigContainer:
     cfg.train.global_batch_size = 64
     cfg.train.micro_batch_size = 1
     cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
     cfg.model.cpu_offloading_num_layers = 20
     cfg.model.cpu_offloading = True
     cfg.optimizer.lr = 0.0006
