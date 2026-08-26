@@ -31,12 +31,10 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
-    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config,
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
 
 pytestmark = pytest.mark.unit
@@ -54,12 +52,6 @@ _GB200_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
 )
 _GB200_FSDP_RECIPES = (nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,)
-_HYBRID_EP_ENV_NAMES = {
-    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
-    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
-    "NVLINK_DOMAIN_SIZE",
-    "USE_MNNVL",
-}
 _NEMOTRON_3_RECIPES = (
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
@@ -103,10 +95,6 @@ _NEMOTRON_NANO_PERF_FACTORIES = (
     ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config"),
     ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
     ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"),
-    (
-        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
-        "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config",
-    ),
     ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config"),
     ("megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh", "nemotron_3_nano_pretrain_8gpu_vr200_bf16_config"),
     ("megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh", "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config"),
@@ -178,40 +166,6 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
-
-
-def test_nemotron_3_nano_gb300_mxfp8_ncclep_defaults() -> None:
-    """The MXFP8 example uses static fused NCCL EP and no HybridEP environment."""
-    cfg = nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config()
-
-    assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
-    assert cfg.model.moe_shared_expert_overlap is False
-    assert cfg.model.high_priority_a2a_comm_stream is True
-    assert cfg.model.moe_hybridep_num_sms is None
-    assert cfg.model.moe_flex_dispatcher_num_sms is None
-    assert cfg.model.moe_ncclep_zero_copy is False
-
-    assert cfg.model.moe_grouped_gemm is True
-    assert cfg.model.use_transformer_engine_op_fuser is True
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
-
-    assert cfg.model.offload_modules == []
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.05
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
-
-    assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
-    assert cfg.model.use_te_rng_tracker is True
-    assert cfg.rng.te_rng_tracker is True
-    assert cfg.env_vars.keys().isdisjoint(_HYBRID_EP_ENV_NAMES)
-    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-
-    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
-    assert cfg.comm_overlap.delay_wgrad_compute is False
-    assert cfg.model.moe_router_padding_for_quantization is True
-    assert cfg.model.moe_paged_stash is True
 
 
 @pytest.mark.parametrize(
