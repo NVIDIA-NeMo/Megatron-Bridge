@@ -109,9 +109,11 @@ items:
       TP2/PP2 distributed export completed without a missing PP owner. Source
       and export contained the same 883 keys with exact shapes, dtypes, and
       torch.equal values, including all 437 legacy
-      vision_tower.vision_model.* tensors. Native
-      Gemma3ForConditionalGeneration strict reload reported no missing,
-      unexpected, mismatched, or errored tensors.
+      vision_tower.vision_model.* tensors. Transformers exposes 884 logical
+      state entries after reload because tied lm_head.weight aliases the single
+      stored language_model.model.embed_tokens.weight tensor; no extra tensor
+      is serialized. Native Gemma3ForConditionalGeneration strict reload
+      reported no missing, unexpected, mismatched, or errored tensors.
 
   manual_forward_pass:
     status: verified
