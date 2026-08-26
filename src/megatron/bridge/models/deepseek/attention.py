@@ -64,15 +64,21 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
     """
 
     def _resolve_qk_norm_config(self, submodules):
-        """Replace the fused query projection with a plain one when there is no query LoRA.
+        """Replace the fused query projection with a plain one when there is no query LoRA."""
+        if not hasattr(MLASelfAttention, "_resolve_qk_norm_config"):
+            if self.config.q_lora_rank is None and self.config.transformer_impl != "transformer_engine":
+                raise ValueError(
+                    "DeepSeek without a query LoRA (`q_lora_rank=None`) requires "
+                    "`transformer_impl='transformer_engine'`."
+                )
+            return {
+                "linear_q_proj": submodules.linear_q_proj,
+                "linear_q_up_proj": submodules.linear_q_up_proj,
+                "linear_kv_up_proj": submodules.linear_kv_up_proj,
+                "q_layernorm": submodules.q_layernorm,
+                "kv_layernorm": submodules.kv_layernorm,
+            }
 
-        The standalone-``q_layernorm`` case is neutralised *before* delegating: an MLA spec
-        may set ``q_layernorm`` to a real norm whenever ``qk_layernorm`` is on, and the
-        parent resolver rejects that outright when there is no query LoRA to consume it
-        (``_raise_unused_q_norm``). Dropping the query norm is exactly what this class
-        exists to do, so the rejection would fire on a configuration this class already
-        knows how to satisfy.
-        """
         if self.config.q_lora_rank is not None:
             return super()._resolve_qk_norm_config(submodules)
 
