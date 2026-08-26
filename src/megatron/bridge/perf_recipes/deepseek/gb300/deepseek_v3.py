@@ -238,53 +238,6 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 8× GB300, NVFP4."""
-    cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
-    cfg.model.num_layers = 5
-    cfg.model.moe_layer_freq = [0, 0, 0, 1, 1]
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 4
-    cfg.model.expert_tensor_parallel_size = 1
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|t|t*2|tmL")
-
-    cfg.train.global_batch_size = 128
-    cfg.validation.eval_global_batch_size = 128
-
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # NVFP4 fast-math path.
-        "NVTE_USE_FAST_MATH": 1,
-        # Use a supported FP8 attention recipe under the NVFP4 linear-layer recipe.
-        # "NVTE_DPA_FP8_RECIPE": "Float8CurrentScaling",
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-    }
-    return cfg
-
-
 def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, BF16, Megatron FSDP."""
     cfg = deepseek_v3_pretrain_config()
