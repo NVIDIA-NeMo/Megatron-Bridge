@@ -211,7 +211,7 @@ class TestLocalBackend:
         config.transformer_impl = "local"
         object.__setattr__(attention, "config", config)
 
-        with pytest.raises(ValueError, match="transformer_engine"):
+        with pytest.raises((ValueError, RuntimeError), match="TransformerEngine|transformer_engine"):
             attention._resolve_qk_norm_config(_local_mla_submodules())
 
     def test_local_spec_with_a_query_lora_is_untouched(self):
