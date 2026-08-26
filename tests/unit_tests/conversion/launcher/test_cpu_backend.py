@@ -39,8 +39,8 @@ def _load_cpu_backend():
             return types.SimpleNamespace(hf_pretrained="checkpoint-config")
 
     @contextmanager
-    def low_memory_model_load_context():
-        calls.append(("low_memory_model_load", "enter"))
+    def low_memory_model_load_context(**kwargs):
+        calls.append(("low_memory_model_load", "enter", kwargs))
         try:
             yield
         finally:
@@ -142,7 +142,7 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
             (str(checkpoint), "hf/model@0123456789abcdef"),  # pragma: allowlist secret
             {"trust_remote_code": False},
         ),
-        ("low_memory_model_load", "enter"),
+        ("low_memory_model_load", "enter", {"mmap_directory": Path("/")}),
         (
             "export_ckpt",
             "checkpoint-config",

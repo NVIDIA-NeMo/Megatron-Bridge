@@ -157,6 +157,9 @@ TRACKER_PREFIX = "latest"
 _CHECKPOINT_VERSION = None
 
 logger = getLogger(__name__)
+# DCP factory expansion can add roughly one third of the model payload at peak.
+_FILE_BACKED_LOAD_MEMORY_FRACTION = 0.6
+_FILE_BACKED_STORAGE_BLOCK_BYTES = 16 * 1024**3
 _NON_PERSISTENT_CKPT_SUBDIR = "non_persistent"
 _DIRECT_ITERATION_DIR_SENTINEL = -2
 _CHECKPOINT_CLEANUP_LOCK = threading.Lock()
@@ -166,6 +169,58 @@ HF_WEIGHTS_SUBDIR = "hf"
 # default (currently only Megatron Energon). Used to derive dataloader_save / dataloader_load when
 # those config fields are left unset.
 DATALOADER_STATE_SUBDIR = "energon"
+
+
+@dataclass
+class _FileBackedStorageBlock:
+    """One sparse file mapping used by low-memory CPU checkpoint loading."""
+
+    storage: torch.UntypedStorage
+    capacity_bytes: int
+    used_bytes: int = 0
+
+
+class _FileBackedTensorAllocator:
+    """Allocate CPU tensors from a small set of sparse file mappings."""
+
+    def __init__(self, directory: Path, *, block_bytes: int = _FILE_BACKED_STORAGE_BLOCK_BYTES) -> None:
+        self.directory = directory
+        self.block_bytes = block_bytes
+        self.blocks: list[_FileBackedStorageBlock] = []
+
+    @staticmethod
+    def _align(value: int, alignment: int) -> int:
+        return (value + alignment - 1) // alignment * alignment
+
+    def allocate_like(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Return a contiguous file-backed CPU tensor with matching shape and dtype."""
+        if tensor.numel() == 0:
+            return torch.empty(tensor.shape, dtype=tensor.dtype, device="cpu")
+        if tensor.layout != torch.strided:
+            raise TypeError(f"File-backed checkpoint tensors require strided layout, got {tensor.layout}")
+
+        element_bytes = tensor.element_size()
+        required_bytes = tensor.numel() * element_bytes
+        block = next(
+            (
+                candidate
+                for candidate in reversed(self.blocks)
+                if self._align(candidate.used_bytes, element_bytes) + required_bytes <= candidate.capacity_bytes
+            ),
+            None,
+        )
+        if block is None:
+            capacity_bytes = max(self.block_bytes, self._align(required_bytes, 4096))
+            path = self.directory / f"block-{len(self.blocks):05d}.bin"
+            storage = torch.UntypedStorage.from_file(str(path), shared=True, nbytes=capacity_bytes)
+            block = _FileBackedStorageBlock(storage=storage, capacity_bytes=capacity_bytes)
+            self.blocks.append(block)
+
+        byte_offset = self._align(block.used_bytes, element_bytes)
+        block.used_bytes = byte_offset + required_bytes
+        result = torch.empty(0, dtype=tensor.dtype, device="cpu")
+        result.set_(block.storage, byte_offset // element_bytes, tensor.shape)
+        return result
 
 
 # ============================================================================
@@ -2341,6 +2396,7 @@ def _load_model_weights_from_checkpoint(
     ] = "assume_ok_unexpected",
     strict: bool = True,
     assign_loaded_tensors: bool = False,
+    file_backed_allocator: _FileBackedTensorAllocator | None = None,
 ) -> Optional[Union[StateDict, tuple[StateDict, set[str], set[str]]]]:
     """Load model weights from a checkpoint.
 
@@ -2358,6 +2414,9 @@ def _load_model_weights_from_checkpoint(
         strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
         assign_loaded_tensors: Load into a meta-device model by assigning the
             checkpoint tensors instead of copying them into existing storage.
+        file_backed_allocator: Optional sparse-file allocator used when the
+            model payload is too close to available host memory for anonymous
+            checkpoint staging.
     """
 
     state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
@@ -2375,7 +2434,13 @@ def _load_model_weights_from_checkpoint(
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
 
     if assign_loaded_tensors:
-        sharded_state_dict = _strip_sharded_tensor_data(sharded_state_dict)
+        if file_backed_allocator is not None and _requires_file_backed_checkpoint_load(model):
+            logger.info("Using file-backed checkpoint tensors for the low-memory CPU load")
+            sharded_state_dict = _replace_sharded_tensor_data_with_file_backed(
+                sharded_state_dict, file_backed_allocator
+            )
+        else:
+            sharded_state_dict = _strip_sharded_tensor_data(sharded_state_dict)
 
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
@@ -2757,6 +2822,75 @@ def _strip_sharded_tensor_data(sharded_state_dict: ShardedStateDict) -> ShardedS
         return value
 
     return dict_list_map_inplace(strip_data, sharded_state_dict)
+
+
+def _available_memory_bytes() -> int:
+    """Return Linux MemAvailable, with a portable sysconf fallback."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+
+
+def _requires_file_backed_checkpoint_load(model: list[MegatronModule]) -> bool:
+    """Choose mapped checkpoint storage when anonymous tensors risk host OOM."""
+    seen: set[int] = set()
+    model_bytes = 0
+    for module in model:
+        for tensor in (*module.parameters(), *module.buffers()):
+            if id(tensor) in seen:
+                continue
+            seen.add(id(tensor))
+            model_bytes += tensor.numel() * tensor.element_size()
+    return model_bytes >= _available_memory_bytes() * _FILE_BACKED_LOAD_MEMORY_FRACTION
+
+
+def _replace_sharded_tensor_data_with_file_backed(
+    sharded_state_dict: ShardedStateDict,
+    allocator: _FileBackedTensorAllocator,
+) -> ShardedStateDict:
+    """Back checkpoint targets and factory results with reclaimable file mappings."""
+
+    def allocate_sharded_tensor(value: Any) -> Any:
+        if not isinstance(value, ShardedTensor):
+            return value
+        template = value.data
+        if template is None:
+            template = torch.empty(value.local_shape, dtype=value.dtype, device="meta")
+        return replace(value, data=allocator.allocate_like(template))
+
+    def replace_data(value: Any) -> Any:
+        if isinstance(value, ShardedTensor):
+            return allocate_sharded_tensor(value)
+        if isinstance(value, ShardedTensorFactory):
+            original_build_fn = value.build_fn
+            original_merge_fn = value.merge_fn
+
+            def build_file_backed(key: str, data: torch.Tensor, replica_id: Any, flattened_range: Any) -> Any:
+                result = original_build_fn(key, data, replica_id, flattened_range)
+                return dict_list_map_inplace(allocate_sharded_tensor, result)
+
+            def merge_file_backed(loaded: Any) -> torch.Tensor:
+                merged = original_merge_fn(loaded)
+                mapped = allocator.allocate_like(merged)
+                mapped.copy_(merged)
+                return mapped
+
+            factory_data = value.data
+            if factory_data is not None and not factory_data.is_meta:
+                factory_data = torch.empty_like(factory_data, device="meta")
+            return replace(
+                value,
+                data=factory_data,
+                build_fn=build_file_backed,
+                merge_fn=merge_file_backed,
+            )
+        return value
+
+    return dict_list_map_inplace(replace_data, sharded_state_dict)
 
 
 def _load_model_state_dict(

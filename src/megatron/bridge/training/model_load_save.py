@@ -19,6 +19,7 @@ import socket
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Generator, Literal, Optional, Union
 
 import torch
@@ -31,7 +32,7 @@ from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
-from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.checkpointing import _FileBackedTensorAllocator, save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
@@ -42,7 +43,9 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 logger = logging.getLogger(__name__)
 
-_LOW_MEMORY_MODEL_LOAD = ContextVar("_LOW_MEMORY_MODEL_LOAD", default=False)
+_LOW_MEMORY_MODEL_LOAD: ContextVar[_FileBackedTensorAllocator | None] = ContextVar(
+    "_LOW_MEMORY_MODEL_LOAD", default=None
+)
 
 HF_BASED_TOKENIZERS = [
     "BertWordPieceLowerCase",
@@ -53,13 +56,15 @@ HF_BASED_TOKENIZERS = [
 
 
 @contextmanager
-def low_memory_model_load_context() -> Generator[None, None, None]:
-    """Build CPU-loaded models on meta and assign checkpoint tensors directly."""
-    token = _LOW_MEMORY_MODEL_LOAD.set(True)
-    try:
-        yield
-    finally:
-        _LOW_MEMORY_MODEL_LOAD.reset(token)
+def low_memory_model_load_context(*, mmap_directory: Path | None = None) -> Generator[None, None, None]:
+    """Build CPU models on meta and make oversized checkpoint storage file-backed."""
+    with TemporaryDirectory(prefix=".mbridge-checkpoint-mmap-", dir=mmap_directory) as temporary_directory:
+        allocator = _FileBackedTensorAllocator(Path(temporary_directory))
+        token = _LOW_MEMORY_MODEL_LOAD.set(allocator)
+        try:
+            yield
+        finally:
+            _LOW_MEMORY_MODEL_LOAD.reset(token)
 
 
 def _uses_hybrid_rng_tracker(model_cfg: Any) -> bool:
@@ -444,6 +449,7 @@ def build_and_load_model(
         load_kwargs = {"return_state_dict": return_state_dict}
         if getattr(model_cfg, "init_model_with_meta_device", False) is True:
             load_kwargs["assign_loaded_tensors"] = True
+            load_kwargs["file_backed_allocator"] = _LOW_MEMORY_MODEL_LOAD.get()
         maybe_state_dict = _load_model_weights_from_checkpoint(checkpoint_path, model, **load_kwargs)
 
         if return_state_dict:
@@ -512,7 +518,7 @@ def load_megatron_model(
     if use_cpu_init:
         model_cfg.fp8 = None
         model_cfg.fp8_param = False
-        if _LOW_MEMORY_MODEL_LOAD.get():
+        if _LOW_MEMORY_MODEL_LOAD.get() is not None:
             model_cfg.init_model_with_meta_device = True
 
     # Apply model-parallel overrides if provided
