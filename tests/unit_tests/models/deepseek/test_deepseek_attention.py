@@ -83,6 +83,42 @@ class TestMLASelfAttentionWithoutQueryNorm:
         assert "LayerNorm" in resolved["linear_q_up_proj"].__name__
         assert "LayerNorm" in resolved["linear_kv_up_proj"].__name__
 
+    def test_legacy_mcore_keeps_spec_projections(self, monkeypatch):
+        """Before MCore's resolver, only the unused standalone query norm needs removal."""
+        attention = MLASelfAttentionWithoutQueryNorm.__new__(MLASelfAttentionWithoutQueryNorm)
+        object.__setattr__(attention, "config", _config(q_lora_rank=None))
+        monkeypatch.delattr(MLASelfAttention, "_resolve_qk_norm_config")
+        submodules = _mla_submodules()
+
+        resolved = attention._resolve_qk_norm_config(submodules)
+
+        assert resolved["linear_q_proj"] is submodules.linear_q_proj
+        assert resolved["linear_kv_up_proj"] is submodules.linear_kv_up_proj
+        assert resolved["q_layernorm"] is IdentityOp
+
+    def test_legacy_mcore_local_backend_is_rejected(self, monkeypatch):
+        """The legacy path keeps the existing no-query-LoRA Transformer Engine guard."""
+        attention = MLASelfAttentionWithoutQueryNorm.__new__(MLASelfAttentionWithoutQueryNorm)
+        config = _config(q_lora_rank=None)
+        config.transformer_impl = "local"
+        object.__setattr__(attention, "config", config)
+        monkeypatch.delattr(MLASelfAttention, "_resolve_qk_norm_config")
+
+        with pytest.raises(ValueError, match="transformer_engine"):
+            attention._resolve_qk_norm_config(_local_mla_submodules())
+
+    def test_legacy_mcore_query_lora_is_untouched(self, monkeypatch):
+        """The compatibility path must preserve every query-LoRA submodule selection."""
+        attention = MLASelfAttentionWithoutQueryNorm.__new__(MLASelfAttentionWithoutQueryNorm)
+        object.__setattr__(attention, "config", _config(q_lora_rank=1536))
+        monkeypatch.delattr(MLASelfAttention, "_resolve_qk_norm_config")
+        submodules = _mla_submodules()
+
+        resolved = attention._resolve_qk_norm_config(submodules)
+
+        assert resolved["linear_q_up_proj"] is submodules.linear_q_up_proj
+        assert resolved["q_layernorm"] is submodules.q_layernorm
+
     @pytest.mark.parametrize("q_lora_rank", [None, 1536])
     def test_standalone_norms_stay_disabled(self, q_lora_rank):
         """Norms stay fused into the projections; no standalone q/kv norm modules appear."""
