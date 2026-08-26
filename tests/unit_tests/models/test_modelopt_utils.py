@@ -249,8 +249,8 @@ def _distributed_topology_worker(rank, world_size, init_file):
     try:
         original_capture = modelopt_utils._capture_source_state
         original_get_pp_group = modelopt_utils.model_bridge_utils._get_pp_group
-        modelopt_utils._capture_source_state = (
-            lambda _task: (_ for _ in ()).throw(ValueError("rank-local failure")) if rank == 0 else None
+        modelopt_utils._capture_source_state = lambda _task: (
+            (_ for _ in ()).throw(ValueError("rank-local failure")) if rank == 0 else None
         )
         modelopt_utils.model_bridge_utils._get_pp_group = lambda _model: torch.distributed.group.WORLD
         try:
