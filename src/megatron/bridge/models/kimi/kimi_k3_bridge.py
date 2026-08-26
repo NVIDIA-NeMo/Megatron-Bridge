@@ -50,6 +50,21 @@ class KimiK3Bridge(MegatronModelBridge):
 
     _HF_PASSTHROUGH_PREFIXES = ("vision_tower.", "mm_projector.")
 
+    @staticmethod
+    def generate_pipeline_layout(num_layers: int, pp: int, mtp_layers: int = 0) -> list[list[str]]:
+        """Distribute K3's 93 language layers across arbitrary PP sizes."""
+        base_layers, extra_layers = divmod(num_layers, pp)
+        layout: list[list[str]] = []
+        for pp_rank in range(pp):
+            stage = ["decoder"] * (base_layers + int(pp_rank < extra_layers))
+            if pp_rank == 0:
+                stage.insert(0, "embedding")
+            if pp_rank == pp - 1:
+                stage.extend(["mtp"] * mtp_layers)
+                stage.append("loss")
+            layout.append(stage)
+        return layout
+
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
         """Use SiLU as the config marker; the K3 spec installs the exact SiTU module."""

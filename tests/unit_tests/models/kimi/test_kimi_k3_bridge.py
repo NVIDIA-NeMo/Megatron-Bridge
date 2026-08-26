@@ -123,6 +123,15 @@ def test_provider_bridge_configures_four_layer_proxy(kimi_k3_pretrained: Mock) -
     assert provider.params_dtype == torch.bfloat16
 
 
+def test_pipeline_layout_distributes_official_layer_count_across_pp_four() -> None:
+    """K3's 93 layers use a valid uneven four-stage conversion layout."""
+    layout = KimiK3Bridge.generate_pipeline_layout(num_layers=93, pp=4)
+
+    assert [stage.count("decoder") for stage in layout] == [24, 23, 23, 23]
+    assert layout[0][0] == "embedding"
+    assert layout[-1][-1] == "loss"
+
+
 def test_mapping_registry_covers_kda_latent_moe_and_attn_res(kimi_k3_pretrained: Mock) -> None:
     """Custom K3 weights resolve in both conversion directions."""
     bridge = KimiK3Bridge()

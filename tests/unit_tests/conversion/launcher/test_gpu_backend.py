@@ -350,6 +350,28 @@ class TestExportMegatronToHf:
 
 
 class TestPipelineLayout:
+    def test_generate_reads_nested_text_config(self, cli):
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                assert (num_layers, pp, mtp_layers) == (93, 4, 0)
+                return [[f"stage-{index}"] for index in range(pp)]
+
+        provider = _FakeProvider([])
+        bridge = types.SimpleNamespace(
+            _model_bridge=ModelBridge(),
+            hf_pretrained=types.SimpleNamespace(
+                config=types.SimpleNamespace(text_config=types.SimpleNamespace(num_hidden_layers=93))
+            ),
+        )
+
+        assert cli._maybe_generate_pipeline_layout(bridge, provider, pp=4)
+        assert provider.pipeline_model_parallel_layout == [
+            ["stage-0"],
+            ["stage-1"],
+            ["stage-2"],
+            ["stage-3"],
+        ]
+
     def test_restore_uses_latest_checkpoint_iteration(self, cli, tmp_path):
         for iteration, marker in ((1, "old"), (2, "latest")):
             iteration_path = tmp_path / f"iter_{iteration:07d}"

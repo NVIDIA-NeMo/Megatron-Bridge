@@ -100,8 +100,9 @@ def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModel
     if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
         return False
     hf_config = bridge.hf_pretrained.config
-    num_layers = hf_config.num_hidden_layers
-    mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+    model_config = getattr(hf_config, "text_config", hf_config)
+    num_layers = model_config.num_hidden_layers
+    mtp_layers = getattr(model_config, "num_nextn_predict_layers", 0) or 0
     model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
         num_layers, pp, mtp_layers
     )
