@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 
 [options]
@@ -2223,6 +2223,7 @@ dev = [
     { name = "openai", extra = ["aiohttp"] },
     { name = "opentelemetry-api" },
     { name = "orjson" },
+    { name = "pillow" },
     { name = "quart" },
     { name = "tensorstore" },
     { name = "tqdm" },
@@ -2274,6 +2275,7 @@ requires-dist = [
     { name = "opentelemetry-api", marker = "extra == 'dev'", specifier = ">=1.33.1,<2" },
     { name = "orjson", marker = "extra == 'dev'" },
     { name = "packaging", specifier = ">=24.2" },
+    { name = "pillow", marker = "extra == 'dev'" },
     { name = "quart", marker = "extra == 'dev'" },
     { name = "sentencepiece", marker = "extra == 'mlm'" },
     { name = "sentencepiece", marker = "extra == 'training'" },
