@@ -99,7 +99,7 @@ items:
     expected_result: >
       A complete distributed export produced 59,396 indexed keys in 17
       safetensors shards. Every exported tensor matches the pinned source
-      bitwise across 1,498,715,008,512 payload bytes, and the corrected
+      bitwise across 1,498,715,010,176 payload bytes, and the corrected
       config/tokenizer reload successfully. The run exposed and fixed
       preservation of one physical repeated MTP layer across four speculative
       steps. The config fix is committed; this item remains unverified until
