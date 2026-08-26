@@ -96,6 +96,7 @@ def _llama2_benchmark_common(cfg: ConfigContainer) -> None:
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.check_for_nan_in_grad = False
     cfg.model.hidden_size = 8192
     cfg.model.ffn_hidden_size = 28672
     cfg.model.num_layers = 80
