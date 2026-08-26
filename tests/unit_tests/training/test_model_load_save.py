@@ -310,6 +310,56 @@ class TestLoadMegatronModel:
 
         assert built_layer_count == provider.num_layers
 
+    @pytest.mark.parametrize(
+        ("mp_overrides", "expect_saved_layout"),
+        [
+            ({"pipeline_model_parallel_size": 2}, True),
+            ({"pipeline_model_parallel_size": 4}, False),
+            (
+                {
+                    "pipeline_model_parallel_size": 2,
+                    "pipeline_model_parallel_layout": None,
+                },
+                False,
+            ),
+        ],
+        ids=["same-pp", "changed-pp", "explicit-clear"],
+    )
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_pipeline_override_does_not_reuse_incompatible_saved_layout(
+        self,
+        mock_load_model_config,
+        mock_build_and_load_model,
+        mp_overrides,
+        expect_saved_layout,
+    ):
+        """A saved PP layout is retained only for a compatible requested topology."""
+        provider = GPTModelProvider(
+            num_layers=4,
+            hidden_size=16,
+            num_attention_heads=2,
+            pipeline_model_parallel_size=2,
+            pipeline_model_parallel_layout=[
+                ["embedding", "decoder", "decoder"],
+                ["decoder", "decoder", "loss"],
+            ],
+        )
+        mock_load_model_config.return_value = (provider, None)
+
+        def _finalized_layout(checkpoint_path, model_cfg, *args):
+            model_cfg.finalize()
+            return model_cfg.pipeline_model_parallel_layout
+
+        mock_build_and_load_model.side_effect = _finalized_layout
+
+        result = load_megatron_model("/ckpt", mp_overrides=mp_overrides)
+
+        if expect_saved_layout:
+            assert isinstance(result, PipelineParallelLayerLayout)
+        else:
+            assert result is None
+
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
