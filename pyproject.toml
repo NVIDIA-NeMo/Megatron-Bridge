@@ -158,10 +158,12 @@ name = "flash-mla"
 version = "1.0.0+9edee0c"
 requires-dist = []
 
-# torch-memory-saver is pinned by the active MCore checkout to audited commit
-# 9bc9a442e6d108c7b7903def199896a005143aaf. That source has no runtime
-# dependencies; declaring its metadata keeps lock generation from executing setup.py,
-# whose extension build requires TMS_CUDA_MAJOR.
+# The selected MCore ref added torch-memory-saver through NVIDIA/Megatron-LM#6701
+# (merged as ab5e2c9de62182b3544f1cd2884a4b146d64803c after NVIDIA CI and review).
+# MCore pins source commit 9bc9a442e6d108c7b7903def199896a005143aaf. setup.py at
+# that commit declares version 0.0.10b1, no install_requires, and native CUDA extension
+# sources under csrc; the lock resolves the same full commit. Supplying only that audited
+# metadata avoids executing setup.py during lock generation; the CI image still builds it.
 [[tool.uv.dependency-metadata]]
 name = "torch-memory-saver"
 version = "0.0.10b1"
