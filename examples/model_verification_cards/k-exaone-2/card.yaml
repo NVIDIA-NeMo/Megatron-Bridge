@@ -6,8 +6,8 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining,
-  full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export,
-  training, export-after-SFT, long-context SFT, and checkpoint resume remain
+  full SFT, and PEFT in this Bridge revision. CPU import, training,
+  export-after-SFT, long-context SFT, and checkpoint resume remain
   unverified. A complete 750B GPU import from a clean commit persisted and
   reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A
   2-GPU structural MoE/MTP proxy also completed three
@@ -16,18 +16,18 @@ summary: >
   78 Hugging Face decoder layers for a Korean prompt; Megatron matched its
   next token with 0.999993 cosine similarity. Complete-model deterministic
   inference generated and independently confirmed exactly 16 new tokens. The
-  implementation fixes are committed; GPU export remains unverified pending
-  its own clean-commit rerun and exact audit.
+  implementation fixes are committed, and complete distributed CPU and GPU
+  exports are verified by clean-commit exact audits and native reloads.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -72,19 +72,34 @@ items:
       unexpected, duplicate, shape, dtype, or value mismatches.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 578e777ccb07180c7805c7cfeb619c7119602cb9  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 6 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0
+      --exclusive --hf-model LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
+      --hf-revision 4bb394fd12f57be7174be7c80c30cc05472bf9e1
+      --megatron-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000
+      --hf-path work/model-verification/k-exaone-2/cpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 3 --ep 16 --etp 1
+      --trust-remote-code --distributed-timeout-minutes 240
+      --distributed-save --save-every-n-ranks 1 --no-progress
+    last_verified: 2026-08-26
     expected_result: >
-      No CPU Megatron-to-Hugging-Face conversion result is claimed. Future
-      verification depends on a complete CPU import and must export, strictly
-      reload, and compare all lossless tensors against the pinned source
-      revision.
+      The 48-process distributed CPU export exits successfully and writes 17
+      safetensors shards containing exactly 59,396 indexed keys. Every
+      exported tensor matches the pinned source bitwise across
+      749,357,484,800 values and 1,498,715,008,512 payload bytes, including
+      every FP32 expert-score correction bias. The configuration and tokenizer
+      reload successfully, and Transformers strictly reloads the output as
+      ExaoneMoeForCausalLM with all 1,165 state tensors and no loading
+      discrepancies.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 9cd9f6dc7d5b48ed74e7dadd24866542db637a2d  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 6 --gpus-per-node 8
@@ -95,15 +110,16 @@ items:
       --torch-dtype bfloat16 --tp 1 --pp 3 --ep 16 --etp 1
       --distributed-timeout-minutes 180 --distributed-save
       --save-every-n-ranks 1 --no-progress
-    last_verified: null
+    last_verified: 2026-08-26
     expected_result: >
       A complete distributed export produced 59,396 indexed keys in 17
       safetensors shards. Every exported tensor matches the pinned source
       bitwise across 1,498,715,008,512 payload bytes, and the corrected
-      config/tokenizer reload successfully. The run exposed and fixed
+      config and tokenizer reload successfully. Transformers strictly reloads
+      the output as ExaoneMoeForCausalLM with all 1,165 state tensors and no
+      loading discrepancies. The run exposed and fixed
       preservation of one physical repeated MTP layer across four speculative
-      steps. The config fix is committed; this item remains unverified until
-      the clean-commit export and exact audit rerun complete.
+      steps, and preserves every FP32 expert-score correction bias.
 
   manual_forward_pass:
     status: verified
