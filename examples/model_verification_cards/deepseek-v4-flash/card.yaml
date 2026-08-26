@@ -8,9 +8,13 @@ summary: >
   Timing and throughput metrics from functional training items are sanity
   checks rather than optimized performance results.
 
-  DeepSeek-V4-Flash support verification covers GPU conversion, training, and
-  checkpoint resume on GB200. CPU conversion remains unverified because full
-  BF16 materialization requires a high-memory CPU node. Optimized Megatron
+  Historical DeepSeek-V4-Flash results cover training and checkpoint resume on
+  GB200, but the conversion claims are not reproducible from the recorded
+  public Bridge revision. Both that revision and current main pin Megatron-Core
+  revisions that reject experimental_attention_variant=dsv4_hybrid before
+  tensor conversion begins. CPU and GPU conversion therefore remain unverified
+  until Bridge pins a compatible upstream Megatron-Core revision and the exact
+  public commands are rerun. Optimized Megatron
   KV-cache inference is unavailable for DSv4HybridAttention, while the
   maintained non-cached full-prefix compatibility path remains unverified for
   this model. PEFT also remains unverified because no exact model recipe is
@@ -18,6 +22,10 @@ summary: >
   and the Bridge fix for stream_weights_megatron_to_hf None-task handling.
 
   Known issues tracked for follow-up PRs:
+  - The recorded Bridge commit pins Megatron-Core 6513e3e23, which does not
+    implement dsv4_hybrid. Current main pins 731b791469, which also lacks it.
+    Earlier conversion evidence relied on an unrecorded Megatron-Core patch and
+    cannot support a verified model-card leaf.
   - DSv4ExpertGatedMLPMapping: moe_grouped_gemm=True export produces malformed expert
     weight shapes due to apply_swiglu_sharded_factory shard reassembly in the export path.
     Workaround: use moe_grouped_gemm=False for export. Training with moe_grouped_gemm=True
@@ -27,12 +35,11 @@ summary: >
 
 verification_index:
   model_level:
-    verified:
-      - hf_to_megatron_gpu
-      - megatron_to_hf_gpu
     unverified:
       - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
       - inference
       - manual_forward_pass
   training:
@@ -65,14 +72,13 @@ items:
       --torch-dtype bfloat16 --trust-remote-code
     last_verified: null
     expected_result: >
-      CPU import requires approximately 570 GB merely for the full BF16 weight
-      materialization, plus conversion overhead. Prior attempts exhausted the
-      available node memory, but that resource limit does not establish a
-      product-level lack of support. A high-memory-node run must complete and
-      produce a reloadable checkpoint before this item is promoted.
+      Blocked before weight materialization: the recorded public runtime rejects
+      dsv4_hybrid while finalizing the Megatron provider. After Bridge pins a
+      compatible Megatron-Core revision, a high-memory-node run must complete
+      and produce a reloadable checkpoint before this item is promoted.
 
   hf_to_megatron_gpu:
-    status: verified
+    status: unverified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -80,10 +86,13 @@ items:
       --hf-model deepseek-ai/DeepSeek-V4-Flash
       --megatron-path work/model-verification/dsv4-flash/import-gpu
       --torch-dtype bfloat16 --trust-remote-code
-    last_verified: 2026-08-04
+    last_verified: null
     expected_result: >
-      The command exits successfully and creates iter_0000000. The checkpoint
-      is reloadable and paired GPU export produces correct HF weights.
+      Reproduction with both the recorded Bridge commit and current main exits
+      before weight conversion with "Invalid experimental attention variant:
+      dsv4_hybrid". The previous pass depended on an unrecorded Megatron-Core
+      patch. Promotion requires a public compatible dependency pin, a complete
+      import, and an exact paired export audit.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -97,14 +106,13 @@ items:
       --torch-dtype bfloat16 --trust-remote-code
     last_verified: null
     expected_result: >
-      CPU export requires approximately 570 GB merely for the full BF16 weight
-      set, plus tensor-merging overhead. Prior attempts exhausted the available
-      node memory, but that resource limit does not establish a product-level
-      lack of support. A high-memory-node run must complete and produce a
-      reloadable Hugging Face checkpoint before this item is promoted.
+      Blocked before checkpoint loading because the recorded public runtime
+      rejects dsv4_hybrid while finalizing the Megatron provider. After Bridge
+      pins a compatible Megatron-Core revision, the high-memory CPU export must
+      complete an exhaustive tensor audit and strict native HF reload.
 
   megatron_to_hf_gpu:
-    status: verified
+    status: unverified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -113,11 +121,12 @@ items:
       --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000
       --hf-path work/model-verification/dsv4-flash/export-gpu
       --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code
-    last_verified: 2026-08-05
+    last_verified: null
     expected_result: >
-      The command exits successfully and writes 46 BF16 safetensors shards covering
-      all transformer-layer parameters. The export completes 4176/4176 weight
-      conversions with zero errors.
+      The earlier 46-shard result is not reproducible from the recorded public
+      dependency graph because its Megatron-Core pin lacks dsv4_hybrid. After a
+      compatible public dependency bump, the export must complete all mappings,
+      match the pinned source projection, and strictly reload before promotion.
 
   manual_forward_pass:
     status: unverified
