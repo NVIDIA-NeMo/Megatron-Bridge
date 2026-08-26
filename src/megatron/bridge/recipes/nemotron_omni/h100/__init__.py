@@ -18,7 +18,9 @@ from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import *  # noqa: 
 __all__ = [
     "nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config",
+    "nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config",
+    "nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config",
     "nemotron_omni_valor32k_peft_4gpu_h100_bf16_config",
     "nemotron_omni_valor32k_sft_4gpu_h100_bf16_config",
 ]
