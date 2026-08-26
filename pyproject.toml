@@ -158,10 +158,27 @@ name = "flash-mla"
 version = "1.0.0+b7643bd"
 requires-dist = []
 
+# Mirror metadata and sources from the selected MCore dev pin so lock generation is build-free.
+[[tool.uv.dependency-metadata]]
+name = "transformer-engine"
+version = "2.14.0+f031cf87"
+requires-dist = [
+    "einops",
+    "importlib-metadata",
+    "nvdlfw-inspect",
+    "onnx",
+    "onnxscript",
+    "packaging",
+    "pydantic",
+    "torch",
+]
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
+nvidia-cudnn-frontend = { git = "https://github.com/NVIDIA/cudnn-frontend.git", rev = "0a14b7181d129d30e7bad34b8c3ed0a0c995e23d" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "f031cf87bd054c7558b887df7bed93975456667f" }
 
 [project.optional-dependencies]
 recipes = [
@@ -174,7 +191,7 @@ tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
 ]
 te = [
-    "megatron-core[te]",
+    "transformer-engine[pytorch,core_cu13]",
 ]
 ssm = [
     "mamba-ssm",
