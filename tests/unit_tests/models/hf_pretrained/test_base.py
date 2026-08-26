@@ -255,6 +255,38 @@ def test_save_artifacts_preserves_auto_map_with_trust_remote_code():
         }
 
 
+def test_save_artifacts_strips_nested_quantization_config(tmp_path):
+    """Test plain artifact saves remove quantization metadata from nested configs."""
+    base = MockPreTrainedBase()
+    config = PretrainedConfig()
+    config.quantization_config = {"quant_method": "root"}
+    config.text_config = PretrainedConfig()
+    config.text_config.quantization_config = {"quant_method": "mxfp4"}
+    base._config = config
+
+    base.save_artifacts(tmp_path)
+
+    saved_config = json.loads((tmp_path / "config.json").read_text())
+    assert "quantization_config" not in saved_config
+    assert "quantization_config" not in saved_config["text_config"]
+    assert config.quantization_config == {"quant_method": "root"}
+    assert config.text_config.quantization_config == {"quant_method": "mxfp4"}
+
+
+def test_save_artifacts_preserves_nested_quantization_config_for_quantized_export(tmp_path):
+    """Test quantized artifact saves retain nested quantization metadata."""
+    base = MockPreTrainedBase()
+    config = PretrainedConfig()
+    config.text_config = PretrainedConfig()
+    config.text_config.quantization_config = {"quant_method": "mxfp4"}
+    base._config = config
+
+    base.save_artifacts(tmp_path, strip_quantization_config=False)
+
+    saved_config = json.loads((tmp_path / "config.json").read_text())
+    assert saved_config["text_config"]["quantization_config"] == {"quant_method": "mxfp4"}
+
+
 def test_save_artifacts_without_model_name_or_path():
     """Test save_artifacts handles missing model_name_or_path gracefully."""
     with tempfile.TemporaryDirectory() as tmp_dir:

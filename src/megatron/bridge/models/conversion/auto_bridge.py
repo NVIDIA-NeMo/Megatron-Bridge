@@ -49,6 +49,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hf_pretrained.base import _strip_quantization_config
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
@@ -1107,6 +1108,7 @@ class AutoBridge(Generic[MegatronModelT]):
                         path,
                         original_source_path=source_path,
                         additional_files=additional_files,
+                        strip_quantization_config=weight_dtype is not None,
                     )
                 else:
                     import json
@@ -1114,6 +1116,8 @@ class AutoBridge(Generic[MegatronModelT]):
                     # A bridge built directly from a config has no reference artifacts to preserve.
                     Path(path).mkdir(parents=True, exist_ok=True)
                     config_dict = self.hf_pretrained.to_dict()
+                    if weight_dtype is not None:
+                        _strip_quantization_config(config_dict)
                     if not self.trust_remote_code:
                         config_dict.pop("auto_map", None)
                     with open(Path(path) / "config.json", "w") as _f:
@@ -1123,7 +1127,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured
                 additional_files = getattr(self._model_bridge, "ADDITIONAL_FILE_PATTERNS", None) or None
                 self.hf_pretrained.save_artifacts(
-                    path, original_source_path=source_path, additional_files=additional_files
+                    path,
+                    original_source_path=source_path,
+                    additional_files=additional_files,
+                    strip_quantization_config=weight_dtype is not None,
                 )
 
             if model_bridge is not None:

@@ -1335,7 +1335,10 @@ class TestAutoBridge:
 
                 # Check artifacts were saved on rank 0
                 mock_hf_model.save_artifacts.assert_called_once_with(
-                    "./output_dir", original_source_path=None, additional_files=None
+                    "./output_dir",
+                    original_source_path=None,
+                    additional_files=None,
+                    strip_quantization_config=False,
                 )
                 mock_save_hf_weights.assert_called_once_with(
                     mock_megatron_model,
@@ -1385,6 +1388,24 @@ class TestAutoBridge:
 
         assert (tmp_path / "config.json").exists()
         mock_save_hf_weights.assert_called_once()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only_strips_nested_quantization_for_plain_export(
+        self, _mock_dist_avail, _mock_dist_init, tmp_path
+    ):
+        """Config-only plain exports remove nested quantization metadata."""
+        config = PretrainedConfig()
+        config.text_config = PretrainedConfig()
+        config.text_config.quantization_config = {"quant_method": "mxfp4"}
+        bridge = AutoBridge(config)
+
+        with patch.object(AutoBridge, "save_hf_weights"):
+            bridge.save_hf_pretrained([Mock()], str(tmp_path), weight_dtype=torch.bfloat16)
+
+        saved_config = json.loads((tmp_path / "config.json").read_text())
+        assert "quantization_config" not in saved_config["text_config"]
+        assert config.text_config.quantization_config == {"quant_method": "mxfp4"}
 
     @pytest.mark.parametrize("tie_word_embeddings", [True, False])
     def test_save_hf_pretrained_truncates_vocab_padding(self, tmp_path, tie_word_embeddings):
@@ -1532,6 +1553,7 @@ class TestAutoBridge:
             "./output_dir",
             original_source_path="./custom_files",
             additional_files=["chat_template.jinja"],
+            strip_quantization_config=False,
         )
 
     @patch("torch.distributed.is_initialized", return_value=False)

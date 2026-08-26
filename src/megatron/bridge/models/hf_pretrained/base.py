@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import shutil
 from abc import ABC, abstractmethod
@@ -20,12 +21,35 @@ from pathlib import Path
 from typing import ClassVar, Dict, List, Optional, Union
 
 import torch
-from transformers import AutoConfig, PreTrainedModel
+from transformers import AutoConfig, PretrainedConfig, PreTrainedModel
 
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
 
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_quantization_config(value: object, seen: set[int] | None = None) -> None:
+    """Recursively remove Hugging Face quantization metadata in place."""
+    if seen is None:
+        seen = set()
+    value_id = id(value)
+    if value_id in seen:
+        return
+    seen.add(value_id)
+
+    if isinstance(value, dict):
+        value.pop("quantization_config", None)
+        for nested_value in value.values():
+            _strip_quantization_config(nested_value, seen)
+    elif isinstance(value, (list, tuple)):
+        for nested_value in value:
+            _strip_quantization_config(nested_value, seen)
+    elif isinstance(value, PretrainedConfig):
+        if "quantization_config" in vars(value):
+            delattr(value, "quantization_config")
+        for nested_value in vars(value).values():
+            _strip_quantization_config(nested_value, seen)
 
 
 class PreTrainedBase(ABC):
@@ -167,6 +191,8 @@ class PreTrainedBase(ABC):
         save_directory: Union[str, Path],
         original_source_path: Optional[Union[str, Path]] = None,
         additional_files: Optional[List[str]] = None,
+        *,
+        strip_quantization_config: bool = True,
     ):
         """
         Saves all loaded, generic artifacts that have a `save_pretrained` method
@@ -182,6 +208,9 @@ class PreTrainedBase(ABC):
             additional_files: Optional list of additional file names or patterns to download/copy
                 from the source. Supports both exact file names (e.g., "vocab.json") and glob
                 patterns (e.g., "*.json"). These files will be copied from the source path.
+            strip_quantization_config: Remove quantization metadata from the saved config,
+                including nested text or vision configs. Plain-weight exports must enable this;
+                quantized exports must disable it.
         """
         save_path = Path(save_directory)
         save_path.mkdir(parents=True, exist_ok=True)
@@ -190,19 +219,17 @@ class PreTrainedBase(ABC):
 
         _ = getattr(self, "config")  # trigger lazy loading of config
         if hasattr(self, "_config") and self._config is not None:
-            if hasattr(self._config, "quantization_config"):
-                # quantized export is not supported currently
-                del self._config.quantization_config
+            config_to_save = self._config
+            if isinstance(config_to_save, PretrainedConfig):
+                config_to_save = copy.deepcopy(config_to_save)
+                if strip_quantization_config:
+                    _strip_quantization_config(config_to_save)
             auto_map_missing = object()
-            auto_map = vars(self._config).get("auto_map", auto_map_missing)
+            auto_map = vars(config_to_save).get("auto_map", auto_map_missing)
             strip_auto_map = auto_map is not auto_map_missing and getattr(self, "trust_remote_code", False) is not True
             if strip_auto_map:
-                delattr(self._config, "auto_map")
-            try:
-                self._config.save_pretrained(save_path)
-            finally:
-                if strip_auto_map:
-                    self._config.auto_map = auto_map
+                delattr(config_to_save, "auto_map")
+            config_to_save.save_pretrained(save_path)
 
         # Iterate over required artifacts to save them in a predictable order
         for name in self.ARTIFACTS:
