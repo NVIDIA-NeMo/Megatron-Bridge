@@ -31,6 +31,7 @@ from torch import nn
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
     _pixel_shuffle_dynamic_resolution,
+    _project_multimodal_embeddings,
 )
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
@@ -100,6 +101,17 @@ class _SoundEncoderBoundaryModel(NemotronOmniModel):
         self.sound_projection = nn.Linear(2, 2, bias=False, dtype=torch.bfloat16)
         with torch.no_grad():
             self.sound_projection.weight.copy_(torch.eye(2, dtype=torch.bfloat16))
+
+
+class _RecordingProjection(nn.Module):
+    def __init__(self, *, fp8: bool):
+        super().__init__()
+        self.config = SimpleNamespace(fp8="hybrid" if fp8 else None, fp8_recipe="tensorwise")
+        self.input_shape = None
+
+    def forward(self, hidden_states):
+        self.input_shape = hidden_states.shape
+        return hidden_states * 2
 
 
 @dataclass
@@ -249,6 +261,47 @@ def test_vision_projection_matches_hf_and_vllm_activation():
 
     assert vision_projection_config.activation_func is squared_relu
     assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
+
+
+def test_vision_backbone_fp8_policy_does_not_disable_language_or_projection_fp8():
+    provider = NemotronOmniModelProvider(
+        fp8="hybrid",
+        fp8_param=True,
+        use_vision_backbone_fp8_arch=False,
+    )
+
+    vision_config = provider._build_vision_config(provider)
+    vision_projection_config = provider._build_vision_projection_config(provider)
+
+    assert vision_config.fp8 is None
+    assert vision_config.fp8_param is False
+    assert provider.fp8 == "hybrid"
+    assert provider.fp8_param is True
+    assert vision_projection_config.fp8 == "hybrid"
+    assert vision_projection_config.fp8_param is True
+
+
+def test_multimodal_projection_pads_only_temporary_fp8_rows():
+    projection = _RecordingProjection(fp8=True)
+    embeddings = torch.arange(7 * 2 * 3, dtype=torch.float32).reshape(7, 2, 3).requires_grad_()
+
+    projected = _project_multimodal_embeddings(projection, embeddings)
+    projected.sum().backward()
+
+    assert projection.input_shape == (16, 1, 3)
+    assert projected.shape == embeddings.shape
+    assert torch.equal(projected, embeddings * 2)
+    assert torch.equal(embeddings.grad, torch.full_like(embeddings, 2))
+
+
+def test_multimodal_projection_does_not_pad_bf16_rows():
+    projection = _RecordingProjection(fp8=False)
+    embeddings = torch.arange(7 * 2 * 3, dtype=torch.float32).reshape(7, 2, 3)
+
+    projected = _project_multimodal_embeddings(projection, embeddings)
+
+    assert projection.input_shape == (14, 1, 3)
+    assert torch.equal(projected, embeddings * 2)
 
 
 def test_radio_cpe_uses_square_interpolate_then_crop_by_default():
@@ -559,6 +612,48 @@ def test_padded_placeholder_is_not_treated_as_media():
 
     assert torch.equal(output[1, 0], media_embedding[0])
     assert torch.equal(output[3, 0], torch.zeros(3))
+
+
+def test_text_containing_the_placeholder_trains_with_a_caller_mask():
+    """A row with no media may still spell the placeholder in ordinary prose.
+
+    The media token is a normal vocabulary entry, so text can contain it -- a
+    problem statement quoting ``<image>``, for instance. Derived masks answer
+    "is this a real token", which cannot distinguish that from an anchor, so
+    without a caller-supplied mask the merge demands a feature that was never
+    meant to exist.
+    """
+    model = _BoundaryModel(torch.empty(0, 3))
+    input_ids = torch.tensor([[7, 18, 9]])
+
+    with pytest.raises(ValueError, match="1 valid placeholders for 0 projected features"):
+        model(input_ids=input_ids)
+
+    output = model(
+        input_ids=input_ids,
+        media_token_validity_mask=torch.tensor([[True, False, True]]),
+    )
+
+    # The spared placeholder keeps the language embedding the forward gave it.
+    # That embedding is of token id 0, because the forward masks media tokens
+    # out of the text before embedding regardless of the validity mask.
+    assert torch.equal(output, torch.tensor([[[7.0] * 3], [[0.0] * 3], [[9.0] * 3]]))
+
+
+def test_caller_mask_takes_precedence_over_the_derived_one():
+    """An explicit mask must win, or the caller cannot express this at all."""
+    model = _BoundaryModel(torch.empty(0, 3))
+    input_ids = torch.tensor([[7, 18, 9]])
+
+    # A padding mask marks every position valid, so on its own it would treat
+    # the placeholder as an anchor and raise.
+    output = model(
+        input_ids=input_ids,
+        padding_mask=torch.zeros(1, 3, dtype=torch.bool),
+        media_token_validity_mask=torch.tensor([[True, False, True]]),
+    )
+
+    assert output.shape == (3, 1, 3)
 
 
 def test_media_merge_supports_backward_for_batch_size_one():

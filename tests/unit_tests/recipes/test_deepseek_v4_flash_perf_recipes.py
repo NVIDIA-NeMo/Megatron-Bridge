@@ -50,7 +50,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is True
-    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["mla_up_proj"]
@@ -121,4 +122,6 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.recompute_modules == ["mla_up_proj"]
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)

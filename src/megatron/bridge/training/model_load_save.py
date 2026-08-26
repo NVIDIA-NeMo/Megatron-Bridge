@@ -605,6 +605,32 @@ def save_megatron_model(
         dist=None,
     )
 
+    # Complete tokenizer construction and persistence before save_checkpoint publishes
+    # the root selectors for this checkpoint.
+    if tokenizer_config is not None:
+        from megatron.bridge.training.checkpointing import (
+            get_checkpoint_name,
+            save_tokenizer_assets,
+        )
+
+        tokenizer_error: Exception | None = None
+        try:
+            tokenizer = build_tokenizer(tokenizer_config)
+            checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
+            save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name, raise_on_error=True)
+        except Exception as error:
+            tokenizer_error = error
+
+        if torch.distributed.is_initialized():
+            tokenizer_errors: list[str | None] = [None] * torch.distributed.get_world_size()
+            local_error = None if tokenizer_error is None else f"{type(tokenizer_error).__name__}: {tokenizer_error}"
+            torch.distributed.all_gather_object(tokenizer_errors, local_error)
+            failures = [error for error in tokenizer_errors if error is not None]
+            if failures:
+                raise RuntimeError(f"Failed to save tokenizer assets on one or more ranks: {failures}")
+        elif tokenizer_error is not None:
+            raise tokenizer_error
+
     if low_memory_save:
         # Low-memory save flow: process factories incrementally, freeing memory as we go
         import gc
@@ -622,17 +648,13 @@ def save_megatron_model(
         from megatron.bridge.training.checkpointing import (
             _build_sharded_state_dict_metadata,
             generate_state_dict,
-            get_rng_state,
         )
         from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
         logger.info("[LOW_MEMORY_SAVE] Generating state dict...")
 
-        # Get RNG state (minimal, since save_rng=False)
+        # Conversion checkpoints intentionally omit RNG state.
         pg_collection = get_pg_collection(model)
-        rng_state = get_rng_state(
-            data_parallel_random_init=False, ckpt_format=ckpt_format, pg_collection=pg_collection
-        )
 
         # Build sharded state dict metadata
         sharded_sd_metadata = _build_sharded_state_dict_metadata(False, state.cfg.checkpoint)
@@ -643,7 +665,7 @@ def save_megatron_model(
             model,
             optimizer=None,
             opt_param_scheduler=None,
-            rng_state=rng_state,
+            rng_state=None,
             iteration=0,
             optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
             model_sd_kwargs=dict(metadata=sharded_sd_metadata),
@@ -779,22 +801,6 @@ def save_megatron_model(
             num_floating_point_operations_so_far=0,
             callback_manager=None,
         )
-
-    # Save tokenizer files separately if tokenizer config is provided
-    if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import (
-            get_checkpoint_name,
-            save_tokenizer_assets,
-        )
-
-        # Build the tokenizer
-        tokenizer = build_tokenizer(tokenizer_config)
-
-        # Get the checkpoint name for step 0
-        checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
-
-        # Save tokenizer files
-        save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name)
 
 
 def dtype_from_str(dtype: str) -> torch.dtype:

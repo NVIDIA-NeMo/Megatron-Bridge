@@ -27,6 +27,7 @@ from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import get_language_mlp_submodules
@@ -100,6 +101,9 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
     def _build_vision_config(self, language_cfg):
         """Build RADIO ViT-H vision encoder config from a language config copy."""
         vision_cfg = copy.deepcopy(language_cfg)
+        if not self.use_vision_backbone_fp8_arch:
+            vision_cfg.fp8 = None
+            vision_cfg.fp8_param = False
         vision_cfg.sequence_parallel = False
         vision_cfg.context_parallel_size = 1
         vision_cfg.tp_comm_overlap = False
@@ -329,6 +333,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             language_transformer_layer_spec=language_spec,
             language_vocab_size=self.vocab_size,
             language_max_sequence_length=self.seq_length,
+            **logit_dtype_kwarg(LLaVAModel, self.logit_dtype),
             vision_transformer_config=vision_cfg,
             vision_transformer_layer_spec=vision_spec,
             drop_vision_class_token=True,

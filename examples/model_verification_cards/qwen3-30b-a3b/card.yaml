@@ -4,9 +4,12 @@
 title: qwen3_30b_a3b
 summary: >
   Performance scope: pretrain_performance.H100 and pretrain_performance.GB200
-  use tuned canonical performance recipes; timing and throughput metrics from
-  functional training items remain sanity checks rather than optimized
-  performance results.
+  and pretrain_performance.GB300 use tuned canonical performance recipes;
+  timing and throughput metrics from functional
+  training items remain sanity checks rather than optimized performance
+  results.
+  Weak-scaling scope: pretrain_weak_scaling.GB300 records measured scaling
+  from 8 through 256 GPUs with constant token slots per GPU per step.
   Qwen3-30B-A3B support verification covers conversion, inference, and training.
 verification_index:
   model_level:
@@ -26,6 +29,9 @@ verification_index:
   performance:
     H100: verified
     GB200: verified
+    GB300: verified
+  weak_scaling:
+    GB300: verified
 model:
   hf_id: Qwen/Qwen3-30B-A3B
   hf_revision: ad44e777bcd18fa416d9da3bd8f70d33ebb85d39  # pragma: allowlist secret
@@ -170,13 +176,14 @@ items:
         final_loss: 6.139116
         last_10_steps_step_time_ms_avg: 30289.550
         last_10_steps_model_tflops_per_gpu_avg: 199.120
+        last_10_steps_tokens_per_second_per_gpu_avg: 8654.602
       expected_result: >
         On 16x H100, the public alias resolves to the 16-GPU recipe and completes
         exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP16/ETP1,
         DP16, SP off, GBS/MBS 1024/1, and 64-way gradient accumulation. Natural
         routing, HybridEP, and Transformer Engine CUDA graphs for moe_router and
         moe_preprocess remain active. Loss is finite from 12.41145 to 6.139116
-        with no skipped or NaN iterations, all four metrics are recorded, and
+        with no skipped or NaN iterations, all five metrics are recorded, and
         complete iter_0000050 and iter_0000100 checkpoints are saved.
 
     GB200:
@@ -215,6 +222,7 @@ items:
         final_loss: 6.183484
         last_10_steps_step_time_ms_avg: 12362.340
         last_10_steps_model_tflops_per_gpu_avg: 487.880
+        last_10_steps_tokens_per_second_per_gpu_avg: 21205.047
       expected_result: >
         On 8x GB200, this support-verification workload completes exactly 100
         bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off,
@@ -222,7 +230,7 @@ items:
         routing, HybridEP, Transformer Engine CUDA graphs for moe_router and
         moe_preprocess, communication overlap, functional safety checks, and
         MXFP8 parameter all-gather remain active. Loss is finite from 12.41293
-        to 6.183484 with no skipped or NaN iterations, all four metrics are
+        to 6.183484 with no skipped or NaN iterations, all five metrics are
         recorded, and complete eight-shard iter_0000050 and iter_0000100
         checkpoints are saved. Timing and throughput are support sanity checks,
         not cross-model convergence or tuned performance claims.
@@ -262,13 +270,14 @@ items:
         final_loss: 0.9030643
         last_10_steps_step_time_ms_avg: 1206.320
         last_10_steps_model_tflops_per_gpu_avg: 64.020
+        last_10_steps_tokens_per_second_per_gpu_avg: 3395.451
       expected_result: >
         The immutable-revision 16-GPU run completes exactly 100 full-SFT steps
         at TP1/PP1/CP1/EP16/ETP1, DP16, SP off, GBS/MBS 32/1, and two-way
         gradient accumulation with natural routing. Pad-1 offline packing is
         99.30% efficient, and the sampled 6,553,600 token slots contain
         4,350,004 supervised tokens after label masking. LM loss is finite from
-        1.704380 to 0.9030643 with no skipped or NaN iterations, all four metrics
+        1.704380 to 0.9030643 with no skipped or NaN iterations, all five metrics
         are recorded, and the complete sixteen-shard iter_0000100 full-model
         checkpoint reloads successfully.
 
@@ -342,6 +351,7 @@ items:
         final_loss: 1.468103
         last_10_steps_step_time_ms_avg: 142663.710
         last_10_steps_model_tflops_per_gpu_avg: 26.120
+        last_10_steps_tokens_per_second_per_gpu_avg: 459.374
       expected_result: >
         The immutable-revision 16-GPU run completes exactly 20 Tulu3 SFT steps at
         sequence length 32768 with TP8/PP1/CP2/EP8/SP-on, DeepEP, and explicit
@@ -387,6 +397,7 @@ items:
         final_loss: 1.113119
         last_10_steps_step_time_ms_avg: 22347.640
         last_10_steps_model_tflops_per_gpu_avg: 13.840
+        last_10_steps_tokens_per_second_per_gpu_avg: 733.142
       expected_result: >
         The immutable-revision 4-GPU run completes exactly 100 PEFT steps at
         TP4/PP1/CP1/EP4/ETP1, DP1, SP on, GBS/MBS 32/1, and 32-way gradient
@@ -395,7 +406,7 @@ items:
         4,332,480 supervised tokens after label masking. Only rank-8, alpha-16,
         zero-dropout LoRA on linear_qkv and linear_proj is trainable. LM loss is
         finite from 1.575987 to 1.113119 with no skipped or NaN iterations, all
-        four metrics are recorded, and the complete four-shard iter_0000100
+        five metrics are recorded, and the complete four-shard iter_0000100
         adapter checkpoint covers all 192 expected adapter entries.
 
   checkpoint_resume:
@@ -432,6 +443,7 @@ items:
         final_loss: 6.145390
         last_10_steps_step_time_ms_avg: 31142.650
         last_10_steps_model_tflops_per_gpu_avg: 193.640
+        last_10_steps_tokens_per_second_per_gpu_avg: 8417.524
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -445,7 +457,7 @@ items:
         unused cached memory after optimizer steps is execution-only. Step-51 loss
         6.989006 matches the uninterrupted reference exactly; step-100 loss
         6.145390 differs from reference 6.139116 by 0.102197%, within the declared
-        one-percent gate, so both sentinels match and all four metrics are recorded.
+        one-percent gate, so both sentinels match and all five metrics are recorded.
 
     GB200:
       status: verified
@@ -482,6 +494,7 @@ items:
         final_loss: 6.187264
         last_10_steps_step_time_ms_avg: 18694.970
         last_10_steps_model_tflops_per_gpu_avg: 322.620
+        last_10_steps_tokens_per_second_per_gpu_avg: 14022.167
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -496,7 +509,7 @@ items:
         iterations. Step-51 loss 6.774675 matches the uninterrupted reference
         exactly; step-100 loss 6.187264 differs from reference 6.183484 by
         0.061131%, within the declared one-percent gate. Both sentinels match,
-        all four metrics are recorded, and a complete iter_0000100 checkpoint
+        all five metrics are recorded, and a complete iter_0000100 checkpoint
         is saved.
 
   pretrain_performance:
@@ -514,10 +527,11 @@ items:
         final_loss: 8.145514
         last_10_steps_step_time_ms_avg: 20147.290
         last_10_steps_model_tflops_per_gpu_avg: 299.352
+        last_10_steps_tokens_per_second_per_gpu_avg: 13011.378
       expected_result: >
         On two nodes with 16x H100, the exact mock-data performance recipe
         completes exactly 50 steps with finite losses, no skipped or NaN
-        iterations, and all four metrics recorded. HybridEP permute fusion uses
+        iterations, and all five metrics recorded. HybridEP permute fusion uses
         32 SMs and 64-token combine chunks, expert-parallel communication
         overlap is active with delayed weight-gradient compute disabled, and
         Transformer Engine CUDA graph capture completes for all 48 graphable
@@ -538,10 +552,102 @@ items:
         final_loss: 8.112733
         last_10_steps_step_time_ms_avg: 6501.120
         last_10_steps_model_tflops_per_gpu_avg: 927.680
+        last_10_steps_tokens_per_second_per_gpu_avg: 40322.898
       expected_result: >
         On two nodes with 8x GB200, the exact mock-data performance recipe
         completes exactly 50 steps with finite losses, no skipped or NaN
-        iterations, and all four metrics recorded. The benchmark uses forced
+        iterations, and all five metrics recorded. The benchmark uses forced
         load balancing, HybridEP, MXFP8, and full-iteration CUDA graphs. Over
         steps 41-50, the run averages at most 7 seconds per step and at least
         900 model TFLOP/s/GPU.
+
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
+        --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/qwen3-30b-a3b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-18
+      metrics:
+        initial_loss: 12.34753
+        final_loss: 8.125566
+        last_10_steps_step_time_ms_avg: 5854.910
+        last_10_steps_model_tflops_per_gpu_avg: 1030.070
+        last_10_steps_tokens_per_second_per_gpu_avg: 44773.361
+      expected_result: >
+        On exactly 8 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP8/ETP1, GBS/MBS 512/8,
+        and sequence length 4096. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.34753 to 8.125566; the
+        final ten steps average 5854.910 ms, 1030.070 TFLOP/s/GPU, and
+        44773.361 tokens/s/GPU. The resolved configuration persists.
+
+  pretrain_weak_scaling:
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: fbb7570cf7eec94fd2e6064454d84f7fad07fbfa  # pragma: allowlist secret
+      last_verified: 2026-08-15
+      points:
+        - num_gpus: 8
+          global_batch_size: 512
+          command: >
+            ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 512
+          metrics:
+            initial_loss: 12.347530
+            final_loss: 8.131992
+            last_10_steps_step_time_ms_avg: 5889.420
+            last_10_steps_model_tflops_per_gpu_avg: 1024.020
+            last_10_steps_tokens_per_second_per_gpu_avg: 44511.004
+        - num_gpus: 32
+          global_batch_size: 2048
+          command: >
+            ./scripts/training/train.sh --nodes 8 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 2048
+          metrics:
+            initial_loss: 12.347100
+            final_loss: 8.131451
+            last_10_steps_step_time_ms_avg: 5814.290
+            last_10_steps_model_tflops_per_gpu_avg: 1037.270
+            last_10_steps_tokens_per_second_per_gpu_avg: 45086.158
+        - num_gpus: 128
+          global_batch_size: 8192
+          command: >
+            ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 8192
+          metrics:
+            initial_loss: 12.346790
+            final_loss: 8.126566
+            last_10_steps_step_time_ms_avg: 5831.720
+            last_10_steps_model_tflops_per_gpu_avg: 1034.180
+            last_10_steps_tokens_per_second_per_gpu_avg: 44951.404
+        - num_gpus: 256
+          global_batch_size: 16384
+          command: >
+            ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 16384
+          metrics:
+            initial_loss: 12.346980
+            final_loss: 8.129371
+            last_10_steps_step_time_ms_avg: 5818.620
+            last_10_steps_model_tflops_per_gpu_avg: 1036.490
+            last_10_steps_tokens_per_second_per_gpu_avg: 45052.607
+      expected_result: >
+        On GB300, the exact mock-data MXFP8 recipe completes 50 steps at each
+        of 8, 32, 128, and 256 GPUs with TP1/PP1/CP1/EP8/ETP1, MBS8, sequence
+        length 4096, and GBS proportional to GPU count. Every point has finite
+        losses and performance values, zero skipped or NaN iterations, a
+        persisted post-setup runtime config, and all five metrics recorded from
+        complete keyed optimizer-step rows.

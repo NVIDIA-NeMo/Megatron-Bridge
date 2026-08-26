@@ -4,12 +4,13 @@
 title: nemotron_3_super_120b_a12b
 summary: >
   Performance scope: pretrain_performance.H100 and pretrain_performance.GB200
-  track tuned canonical 64-GPU performance recipes. Timing and throughput from
+  and pretrain_performance.GB300 track tuned canonical 64-GPU performance
+  recipes, with NVFP4 on GB300. Timing and throughput from
   functional H100 and GB200 training are support-verification sanity checks
   rather than optimized performance results. Hardware evidence is scoped
   strictly by accelerator. Nemotron 3 Super 120B-A12B verification covers
   conversion, inference, bounded real-data training, checkpoint resume, and
-  canonical H100 and GB200 benchmarks.
+  canonical H100, GB200, and GB300 benchmarks.
 verification_index:
   model_level:
     verified:
@@ -30,6 +31,7 @@ verification_index:
   performance:
     H100: verified
     GB200: verified
+    GB300: verified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
   hf_revision: d51eab0d1f979ebc26b546e634a04f450d99158e  # pragma: allowlist secret
@@ -178,6 +180,7 @@ items:
         final_loss: 5.706429
         last_10_steps_step_time_ms_avg: 29368.690
         last_10_steps_model_tflops_per_gpu_avg: 236.330
+        last_10_steps_tokens_per_second_per_gpu_avg: 2789.365
       expected_result: >
         On exactly 64 H100s, the BF16 support run completes 100 bounded RP2
         optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural
@@ -222,6 +225,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         On 16 GB200s, the BF16 support run must complete exactly 100 bounded RP2
         optimizer steps at TP8/PP1/CP1/EP16/ETP1 and the recipe's cohort
@@ -271,6 +275,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps
         on 16 H100s at sequence length 8192, TP8/EP16, the recipe's cohort
@@ -318,6 +323,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps
         on 16 GB200s at sequence length 8192, TP8/EP16, the recipe's cohort
@@ -425,6 +431,7 @@ items:
         final_loss: 1.008992
         last_10_steps_step_time_ms_avg: 132859.580
         last_10_steps_model_tflops_per_gpu_avg: 5.580
+        last_10_steps_tokens_per_second_per_gpu_avg: 30.830
       expected_result: >
         On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly
         ten packed 32K SFT steps with pad-4 alignment, full recompute, and full
@@ -457,9 +464,10 @@ items:
         final_loss: 6.406034
         last_10_steps_step_time_ms_avg: 21544.740
         last_10_steps_model_tflops_per_gpu_avg: 15.930
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         A dedicated GB200 run must complete at least ten packed 32K SFT steps
-        with CP2, finite loss, no skipped or NaN iterations, all four metrics,
+        with CP2, finite loss, no skipped or NaN iterations, all five metrics,
         a persisted resolved configuration, and a reloadable final checkpoint.
 
   peft:
@@ -496,6 +504,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         H100 training has completed 100 finite LoRA steps and saved an adapter,
         but this leaf remains unverified until the exported adapter reloads
@@ -536,10 +545,11 @@ items:
         final_loss: 0.8878498
         last_10_steps_step_time_ms_avg: 12699.460
         last_10_steps_model_tflops_per_gpu_avg: 54.120
+        last_10_steps_tokens_per_second_per_gpu_avg: 645.067
       expected_result: >
         On 16 GB200s, the immutable-revision Tulu3 run completes exactly 100
         pad-8 packed LoRA steps with finite loss from 1.23861 to 0.8878498, no
-        skipped or NaN iterations, all four metrics, and a final adapter
+        skipped or NaN iterations, all five metrics, and a final adapter
         checkpoint. The adapter contains only 82,304 LoRA tensors targeting
         linear_qkv, linear_proj, linear_fc1, linear_fc2, in_proj, and out_proj.
         Native PEFT reload over the pinned base succeeds; all logits are finite
@@ -581,11 +591,12 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         A direct H100 continuation must restore model, optimizer, scheduler,
         data-order, and RNG state from iter_0000050, execute exactly steps
         51-100 into a distinct output root, match both declared loss sentinels,
-        record all four metrics, and save a complete iter_0000100 checkpoint.
+        record all five metrics, and save a complete iter_0000100 checkpoint.
 
     GB200:
       status: unverified
@@ -626,6 +637,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The direct GB200 continuation must restore full model, optimizer,
         scheduler, data-order, and RNG state from iter_0000050 and execute
@@ -652,6 +664,7 @@ items:
         final_loss: 0.006422824
         last_10_steps_step_time_ms_avg: 27588.580
         last_10_steps_model_tflops_per_gpu_avg: 248.610
+        last_10_steps_tokens_per_second_per_gpu_avg: 2969.345
       expected_result: >
         On exactly 64 H100s, the canonical BF16 performance recipe must
         complete 50 mock-data steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1,
@@ -680,6 +693,7 @@ items:
         final_loss: 0.01120061
         last_10_steps_step_time_ms_avg: 9926.350
         last_10_steps_model_tflops_per_gpu_avg: 559.390
+        last_10_steps_tokens_per_second_per_gpu_avg: 3301.113
       expected_result: >
         On exactly 64 GB200s, the canonical BF16 performance recipe completes
         50 mock-data steps at TP2/PP1/CP1/EP64, GBS/MBS 512/1, HybridEP flex
@@ -690,4 +704,30 @@ items:
         11000 ms and at least 500 TFLOP/s/GPU, and the resolved configuration
         is persisted. Mock data and forced routing make the loss a finiteness
         check rather than convergence evidence. These numbers are GB200-only
-        evidence and make no GB300 performance claim.
+        evidence.
+
+    GB300:
+      status: verified
+      precision: nvfp4
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
+        --recipe nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config
+        --mode pretrain --max_steps 50 --seq_length 8192
+        logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-18
+      metrics:
+        initial_loss: 12.17656
+        final_loss: 0.01398012
+        last_10_steps_step_time_ms_avg: 6357.940
+        last_10_steps_model_tflops_per_gpu_avg: 873.330
+        last_10_steps_tokens_per_second_per_gpu_avg: 10307.741
+      expected_result: >
+        On exactly 64 GB300s, the canonical NVFP4 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 512/1,
+        and sequence length 8192. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.17656 to 0.01398012; the
+        final ten steps average 6357.940 ms, 873.330 TFLOP/s/GPU, and
+        10307.741 tokens/s/GPU. The resolved configuration persists. Mock data
+        and forced routing make the loss a finiteness check rather than
+        convergence evidence.
