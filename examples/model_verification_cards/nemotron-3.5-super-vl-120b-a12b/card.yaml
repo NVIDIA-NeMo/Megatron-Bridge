@@ -3,12 +3,11 @@
 
 title: nemotron_3_5_super_vl_120b_a12b
 summary: >
-  Performance scope: pretrain_performance.H100 is unverified. An initial
-  64-H100 BF16 recipe and a six-step fixed-512 real-video memory-fit screen
-  exist, but processor-sized dynamic-video verification and the canonical
-  50-step run remain pending; reported timing is a bring-up sanity check, not
-  an optimized performance result. The pinned eight-GPU BF16 import and
-  distributed export are verified:
+  Performance scope: pretrain_performance.H100 is verified on 64 H100s with
+  processor-sized dynamic video. The canonical 50-step BF16 run sustains
+  123.210 TFLOP/s/GPU and 1,556.736 tokens/s/GPU over steps 41-50, with
+  47.734/55.363 GiB peak allocated/reserved memory. The pinned eight-GPU BF16
+  import and distributed export are also verified:
   the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
   the immutable HF source bitwise, and the exported package reloaded natively
   through Transformers on eight H100s. CPU conversion, deterministic
@@ -31,7 +30,7 @@ verification_index:
       unverified: [sft, sft_export_inference]
       unsupported: [pretrain, sft_long_context, peft, checkpoint_resume]
   performance:
-    H100: unverified
+    H100: verified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
   hf_revision: e86197a3bad449de618a5835f26835ce770c6f10  # pragma: allowlist secret
@@ -159,38 +158,41 @@ items:
 
   pretrain_performance:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: b809ee2004cefc9853f5d938d87afb86d1f2c125  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
         --recipe nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config
-        --mode pretrain
+        --mode pretrain --max_steps 50
         dataset.path=work/data/nemotron-3.5-super-vl/energon
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-performance/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-25
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-        peak_allocated_memory_gib: null
-        peak_reserved_memory_gib: null
+        initial_loss: 13.14093
+        final_loss: 0.0
+        last_10_steps_step_time_ms_avg: 52622.920
+        last_10_steps_model_tflops_per_gpu_avg: 123.210
+        last_10_steps_tokens_per_second_per_gpu_avg: 1556.736
+        peak_allocated_memory_gib: 47.734
+        peak_reserved_memory_gib: 55.363
       expected_result: >
         On exactly 64 H100s, the canonical BF16 real-video performance recipe
-        must complete 50 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS
-        1280/1, with the audio-free Nemotron Omni vision/projector/temporal
-        stack fully trainable, checkpoint-native one-layer MTP, forced routing,
-        HybridEP flex dispatch with 1.10x fixed expert capacity, eager
-        execution, and the same selective recompute modules as Nemotron 3
-        Super. Every video must use processor-sized post-resize grids and exact
-        per-tubelet placeholder counts. Loss must remain finite with zero
-        skipped or NaN iterations, the final ten-step timing/throughput window
-        and peak allocated/reserved memory must be recorded, and the resolved
-        configuration must persist. The current fixed-512 six-step screen is
-        memory-fit evidence only and does not satisfy this item.
+        completes 50 optimizer steps at TP2/PP2/CP1/EP32/ETP1 with sequence
+        parallelism, GBS/MBS 1280/1, and the audio-free Nemotron Omni
+        vision/projector/temporal stack fully trainable. It retains the
+        checkpoint-native one-layer MTP, forced routing, HybridEP flex dispatch
+        with 1.10x fixed expert capacity, eager execution, and the Nemotron 3
+        Super selective recompute modules. Every video uses processor-sized
+        post-resize grids and exact per-tubelet visual-token counts. All 50 keyed
+        rows have finite loss and throughput with zero skipped or NaN
+        iterations. Steps 41-50 average 52,622.920 ms, 123.210 model
+        TFLOP/s/GPU, and 1,556.736 tokens/s/GPU. Peak device memory is 47.734
+        GiB allocated and 55.363 GiB reserved, and the resolved configuration
+        persists. The repeated real-video performance dataset and forced
+        routing make loss a finiteness check rather than convergence evidence.
 
   sft:
     H100:
