@@ -130,6 +130,8 @@ navigation:
       path: ./nightly/pages/models/nemotron/nemotron3-super.mdx
     - page: Nemotron 3.5 Lightning
       path: ./nightly/pages/models/nemotron/nemotron3.5-lightning.mdx
+    - page: Nemotron 3 Ultra
+      path: ./nightly/pages/models/nemotron/nemotron3-ultra.mdx
     - page: Nemotron Nano V2 VL
       path: ./nightly/pages/models/nemotron/nemotron-nano-v2-vl.mdx
     - page: Nemotron-3 Nano Omni

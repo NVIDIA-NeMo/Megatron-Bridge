@@ -176,6 +176,7 @@ def test_catalog_is_a_simple_model_directory(generator: ModuleType, catalog: dic
     assert "never combined into synthetic commands" in page
     assert 'href="deepseek/deepseek-v3.html#verified-deepseek-v3"' in page
     assert "NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->" in page
+    assert "NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16</strong> <!-- pragma: allowlist secret -->" in page
     assert "# Supported Models" in page
     assert "data-model-explorer" not in page
     assert "verification-catalog-filters" not in page
@@ -269,6 +270,7 @@ def test_models_map_to_canonical_guides(generator: ModuleType, catalog: dict[str
     assert paths["gpt-oss-120b"] == "models/gpt_oss/gpt-oss-120b.md"
     assert paths["nemotron-3-nano-4b"] == "models/nemotron/nemotron3-nano-4b.md"
     assert paths["nemotron-3-super-120b-a12b"] == "models/nemotron/nemotron3-super.md"
+    assert paths["nemotron-3-ultra-550b-a55b"] == "models/nemotron/nemotron3-ultra.md"
     assert paths["qwen3.8-27b"] == "models/qwen/qwen3.8-27b.md"
 
 
@@ -305,6 +307,7 @@ def test_generated_outputs_and_navigation_are_current(generator: ModuleType, cat
     assert 'href="gpt_oss/gpt-oss-120b.html#verified-gpt-oss-120b"' in supported_models
     assert "./nightly/pages/models/gpt_oss/gpt-oss-20b.mdx" in nav
     assert "./nightly/pages/models/gpt_oss/gpt-oss-120b.mdx" in nav
+    assert "./nightly/pages/models/nemotron/nemotron3-ultra.mdx" in nav
     for retired_doc in generator.RETIRED_COMBINED_MODEL_DOCS:
         assert not (REPO_ROOT / "docs" / retired_doc).exists()
         assert not (REPO_ROOT / "docs/fern/versions/nightly/pages" / Path(retired_doc).with_suffix(".mdx")).exists()

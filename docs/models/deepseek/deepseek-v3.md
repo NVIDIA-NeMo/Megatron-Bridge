@@ -51,10 +51,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="deepseek-v3-hf-to-megatron-gpu" aria-controls="deepseek-v3-hf-to-megatron-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="deepseek-v3-hf-to-megatron-gpu" aria-controls="deepseek-v3-hf-to-megatron-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -65,10 +65,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="deepseek-v3-megatron-to-hf-gpu" aria-controls="deepseek-v3-megatron-to-hf-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="deepseek-v3-megatron-to-hf-gpu" aria-controls="deepseek-v3-megatron-to-hf-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -146,20 +146,26 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="deepseek-v3-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="deepseek-v3-hf-to-megatron-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 8 --hf-model deepseek-ai/DeepSeek-V3 --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb --megatron-path work/model-verification/deepseek-v3/imported-megatron --torch-dtype bfloat16 --low-memory-save --distributed-timeout-minutes 240 --tp 1 --pp 4 --ep 8 --etp 1</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A distributed GPU import of the pinned blockwise-FP8 Hugging Face checkpoint must complete every mapping, persist a reloadable Megatron checkpoint, and pass a complete tensor audit. This workflow is deferred by this card.
+        <p>The 32-GPU import completed all 4,583 mapping tasks, blockwise-dequantized the pinned FP8 source into BF16, and persisted a reloadable 32-shard distributed Megatron checkpoint. A strict paired export subsequently matched all 46,183 model tensors and 684,489,845,504 values exactly.
 </p>
       </section>
     </article>
@@ -186,20 +192,26 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="deepseek-v3-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="deepseek-v3-megatron-to-hf-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 8 --hf-model deepseek-ai/DeepSeek-V3 --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb --megatron-path work/model-verification/deepseek-v3/imported-megatron/iter_0000000 --hf-path work/model-verification/deepseek-v3/hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --save-every-n-ranks 1 --distributed-timeout-minutes 240 --tp 1 --pp 4 --ep 8 --etp 1</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A distributed GPU export from a verified Megatron checkpoint must preserve every mapped tensor and strictly reload as DeepseekV3ForCausalLM. This workflow is deferred by this card.
+        <p>The command exited successfully and wrote all 163 source-shaped shards. The index contained exactly 46,183 BF16 model tensors; an exhaustive 32-rank audit matched all 684,489,845,504 values against the pinned source after blockwise dequantization of all 45,808 FP8 tensors. The exported configuration instantiated natively as DeepseekV3ForCausalLM.
 </p>
       </section>
     </article>

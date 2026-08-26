@@ -79,7 +79,12 @@ OWNER_LABELS = {
     "stepfun-ai": "StepFun",
     "zai-org": "Z.ai",
 }
-DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset({"NVIDIA-Nemotron-3-Super-120B-A12B-BF16"})
+DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset(
+    {
+        "NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+        "NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+    }
+)
 MODEL_PAGE_PATHS = {
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
@@ -97,6 +102,7 @@ MODEL_PAGE_PATHS = {
     "nemotron-3-nano-4b": "models/nemotron/nemotron3-nano-4b.md",
     "nemotron-3-nano-omni-30b-a3b-reasoning": "models/nemotron/nemotron-3-omni.md",
     "nemotron-3-super-120b-a12b": "models/nemotron/nemotron3-super.md",
+    "nemotron-3-ultra-550b-a55b": "models/nemotron/nemotron3-ultra.md",
     "nemotron-3.5-lightning": "models/nemotron/nemotron3.5-lightning.md",
     "qwen3-235b-a22b": "models/qwen/qwen3-235b-a22b.md",
     "qwen3-30b-a3b": "models/qwen/qwen3-30b-a3b.md",

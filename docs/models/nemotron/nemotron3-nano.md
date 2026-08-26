@@ -59,10 +59,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" aria-controls="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" aria-controls="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -140,20 +140,26 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-hf-to-megatron-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517 --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --distributed-timeout-minutes 120 --trust-remote-code --low-memory-save</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a public run against the pinned Hugging Face revision with all applicable verification gates.
+        <p>The pinned one-node 8-H100 import exits successfully at TP1/PP1/EP8/ETP1, persists iter_0000000, and reloads it for inference. A separate public GPU round-trip at the same topology exhaustively compares all 6,243 exported BF16 weights against the immutable source: 6,243 of 6,243 match with no skipped FP8 tensors or mismatches.
 </p>
       </section>
     </article>

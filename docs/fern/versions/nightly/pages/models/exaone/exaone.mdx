@@ -62,10 +62,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="k-exaone-2-hf-to-megatron-gpu" aria-controls="k-exaone-2-hf-to-megatron-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="k-exaone-2-hf-to-megatron-gpu" aria-controls="k-exaone-2-hf-to-megatron-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -136,12 +136,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="k-exaone-2-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="k-exaone-2-hf-to-megatron-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-24</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -155,7 +155,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned 59,396-tensor BF16 checkpoint imported and persisted iter_0000000 on 48 H100 GPUs, and that artifact subsequently reloaded for a full GPU export. A distributed audit compared all 59,396 tensors and 1,498,715,008,512 payload bytes with zero missing, unexpected, shape, dtype, or value mismatches. This item remains unverified only because its clean-commit import/reload rerun is still in progress.
+        <p>The pinned 59,396-tensor BF16 checkpoint imported and persisted iter_0000000 on 48 H100 GPUs, and that artifact subsequently reloaded for a full distributed GPU re-export audit. The audit compared all 59,396 tensors and 1,498,715,010,176 payload bytes with zero missing, unexpected, duplicate, shape, dtype, or value mismatches.
 </p>
       </section>
     </article>

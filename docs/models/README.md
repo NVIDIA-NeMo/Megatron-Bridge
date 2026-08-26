@@ -4,7 +4,7 @@
 
 Choose a model to open its interactive import/export and training configurations. Every option comes directly from an authoritative YAML verification card; independent fields are never combined into synthetic commands.
 
-Current inventory: **23 model cards** and **325 concrete configurations**.
+Current inventory: **24 model cards** and **345 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
@@ -88,7 +88,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
       <strong>NVIDIA</strong>
-      <span>5 models</span>
+      <span>6 models</span>
     </header>
     <div class="verification-provider-models">
       <a class="verification-model-link" href="nemotron/nemotron-3-omni.html#verified-nemotron-3-nano-omni-30b-a3b-reasoning">
@@ -105,6 +105,10 @@ Choose a model to inspect its recorded import/export, training, and precision co
       </a>
       <a class="verification-model-link" href="nemotron/nemotron3-super.html#verified-nemotron-3-super-120b-a12b">
         <strong title="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16">NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+      </a>
+      <a class="verification-model-link" href="nemotron/nemotron3-ultra.html#verified-nemotron-3-ultra-550b-a55b">
+        <strong title="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16">NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16</strong> <!-- pragma: allowlist secret -->
         <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
       <a class="verification-model-link" href="nemotron/nemotron3.5-lightning.html#verified-nemotron-3.5-lightning">

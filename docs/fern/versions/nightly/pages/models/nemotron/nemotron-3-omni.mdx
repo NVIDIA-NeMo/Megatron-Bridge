@@ -105,10 +105,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-nano-omni-30b-a3b-reasoning-sft-long-context-h100" aria-controls="nemotron-3-nano-omni-30b-a3b-reasoning-sft-long-context-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-nano-omni-30b-a3b-reasoning-sft-long-context-h100" aria-controls="nemotron-3-nano-omni-30b-a3b-reasoning-sft-long-context-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · H100</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -278,30 +278,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-30</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-12</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.123339</dd>
+            <dd>1.281308</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.4893276</dd>
+            <dd>0.03330838</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>24,454.110 ms</dd>
+            <dd>3,603.670 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>60.730 TFLOP/s/GPU</dd>
+            <dd>197.100 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>669.990 tokens/s/GPU</dd>
+            <dd>9,092.952 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -312,47 +312,47 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config --mode sft --step_func nemotron_omni_step --pretrained_checkpoint work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000 --max_steps 10 --tensor_model_parallel_size 2 --pipeline_model_parallel_size 2 --expert_model_parallel_size 4 --expert_tensor_parallel_size 1 --save_dir work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-checkpoints-clean --save_interval 10 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; dataset.do_validation=false dataset.do_test=false validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null logger.log_interval=1 logger.log_throughput=true rng.seed=5678</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8 --recipe nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config --mode sft --step_func nemotron_omni_step --pretrained_checkpoint work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000 --max_steps 100 --save_dir work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-4k-checkpoints --save_interval 50 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; dataset.do_validation=false dataset.do_test=false validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null logger.log_interval=1 logger.log_throughput=true rng.seed=5678</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision CORD v2 run completes exactly 10 full-SFT optimizer steps on 16 H100 GPUs at TP2/PP2/CP1/EP4/ETP1, GBS/MBS 64/1. LM loss is finite from 1.123339 to 0.4893276, all ten recorded steps average 24,454.11 ms and 60.73 TFLOP/s/GPU including first-step compilation, no iteration is skipped or NaN, and a complete iter_0000010 checkpoint is saved.
+        <p>The immutable-revision, real image-text CORD v2 run completes exactly 100 full-SFT optimizer steps on eight H100 GPUs at TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/4 with natural-routing HybridEP. Execution uses selective MoE/layernorm recompute, fused attention, TE cross entropy, fused weighted squared-ReLU, and router fusion without changing the image-text objective or routing policy. Model parameters, main gradients, and Adam moments use BF16; optimizer main parameters use scaled FP16 without parameter remainders. LM loss is finite from 1.281308 to 0.03330838, the final ten steps average 3,603.67 ms and 197.10 TFLOP/s/GPU, sampled peak memory is 76,349 MiB, and no iteration is skipped or NaN. Complete optimizer and RNG checkpoints are saved at steps 50 and 100. Direct step-50 resume loads the complete state and reaches step 100 at 197.07 final-ten TFLOP/s/GPU with finite loss and zero skipped or NaN iterations.
 </p>
       </section>
     </article>
     <article id="nemotron-3-nano-omni-30b-a3b-reasoning-sft-long-context-h100" class="verification-model-detail" data-entry-detail="nemotron-3-nano-omni-30b-a3b-reasoning-sft-long-context-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · H100</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-11</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.251364</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.01020405</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>15,577.900 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>93.730 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>4,206.986 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -363,12 +363,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config --mode sft --step_func nemotron_omni_step --pretrained_checkpoint work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000 --max_steps 10 --save_dir work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/long-context-checkpoints-clean --save_interval 10 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; dataset.do_validation=false dataset.do_test=false validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null logger.log_interval=1 logger.log_throughput=true rng.seed=5678</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8 --recipe nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config --mode sft --step_func nemotron_omni_step --pretrained_checkpoint work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000 --max_steps 100 --save_dir work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-8k-packed-checkpoints --save_interval 50 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; dataset.do_validation=false dataset.do_test=false validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null logger.log_interval=1 logger.log_throughput=true rng.seed=5678</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 8K TP4/PP1/CP2/EP1/ETP4, MBS2 in-batch-packing run uses precision-aware Adam with FP16 main parameters and stored FP32 remainders, BF16 gradients, and BF16 moments. Step 1 completes with finite LM loss 1.142561 in 170,179.0 ms at 8.6 TFLOP/s/GPU with no skipped or NaN iteration, but step 2 encounters rank-divergent H100 memory exhaustion and does not produce the required 10-step checkpoint.
+        <p>The immutable-revision, real image-text CORD v2 run completes exactly 100 full-SFT optimizer steps on eight H100 GPUs at TP4/PP1/CP2/EP8/ETP1 and GBS/MBS 64/2 with 8K in-batch packing and the standard all-to-all dispatcher. Model parameters, main gradients, and Adam moments use BF16; optimizer main parameters use scaled FP16 without parameter remainders. LM loss is finite from 1.251364 to 0.01020405, the final ten steps average 15,577.9 ms and 93.73 TFLOP/s/GPU, sampled peak memory is 75,197 MiB, and no iteration is skipped or NaN. Complete optimizer and RNG checkpoints are saved at steps 50 and 100. Direct step-50 resume loads the complete state and reaches step 100 with finite loss and zero skipped or NaN iterations.
 </p>
       </section>
     </article>
@@ -380,30 +380,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-30</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-11</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.098394</dd>
+            <dd>1.282941</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.3166811</dd>
+            <dd>0.02634745</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>41,897.410 ms</dd>
+            <dd>11,621.420 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>22.220 TFLOP/s/GPU</dd>
+            <dd>61.250 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>782.101 tokens/s/GPU</dd>
+            <dd>2,819.621 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -414,12 +414,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config --mode lora --step_func nemotron_omni_step --pretrained_checkpoint work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000 --max_steps 10 --save_dir work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/peft-checkpoints-clean --save_interval 10 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; dataset.do_validation=false dataset.do_test=false validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null logger.log_interval=1 logger.log_throughput=true rng.seed=5678</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8 --recipe nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config --mode lora --step_func nemotron_omni_step --pretrained_checkpoint work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000 --max_steps 100 --save_dir work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/peft-checkpoints --save_interval 50 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; dataset.do_validation=false dataset.do_test=false validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null logger.log_interval=1 logger.log_throughput=true rng.seed=5678</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The ten-step TP4/PP1/CP1/EP1 LoRA run exits successfully and saves a complete eight-shard iter_0000010 adapter checkpoint. LM loss is finite from 1.098394 to 0.3166811, all ten steps average 41,897.41 ms and 22.22 TFLOP/s/GPU including first-step compilation, and no iteration is skipped or NaN.
+        <p>The immutable-revision, real image-text CORD v2 run completes exactly 100 LoRA optimizer steps on eight H100 GPUs at TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/1 with natural-routing HybridEP. Model parameters, main gradients, and Adam moments use BF16; optimizer main parameters use scaled FP16 without parameter remainders. LM loss is finite from 1.282941 to 0.02634745, the final ten steps average 11,621.42 ms and 61.25 TFLOP/s/GPU, sampled peak memory is 44,873 MiB, and no iteration is skipped or NaN. Complete optimizer and RNG checkpoints are saved at steps 50 and 100. Direct step-50 resume loads the complete state and reaches step 100 with finite loss and zero skipped or NaN iterations.
 </p>
       </section>
     </article>
