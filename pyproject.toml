@@ -169,6 +169,9 @@ name = "fast-hadamard-transform"
 version = "1.0.4.post1"
 requires-dist = ["torch", "packaging", "ninja"]
 
+# Source provenance: NVIDIA/Megatron-LM#6701, merged as
+# ab5e2c9de62182b3544f1cd2884a4b146d64803c, reviewed revision
+# 9bc9a442e6d108c7b7903def199896a005143aaf.
 [[tool.uv.dependency-metadata]]
 name = "torch-memory-saver"
 version = "0.0.10b1"
