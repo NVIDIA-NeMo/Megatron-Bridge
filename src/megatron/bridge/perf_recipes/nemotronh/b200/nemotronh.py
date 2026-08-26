@@ -393,7 +393,11 @@ def nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
 
 def nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× B200, MXFP8."""
-    return _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config())
+    cfg = _apply_nemotron_3_5_lightning_defaults(nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config())
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
+    return cfg
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:

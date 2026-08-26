@@ -75,6 +75,16 @@ _B300_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config,
 )
+_B_MXFP8_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b300_fp8mx_config,
+)
+_B_NON_MXFP8_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b300_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_b300_nvfp4_config,
+)
 _GB200_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
@@ -303,11 +313,33 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
-    if recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
+    if recipe_factory in _B_MXFP8_RECIPES:
+        assert cfg.env_vars == {**base_cfg.env_vars, "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1}
+    elif recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
         assert cfg.env_vars == base_cfg.env_vars
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
     assert cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
     assert cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model
+
+
+@pytest.mark.parametrize("recipe_factory", _B_MXFP8_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_b_mxfp8_enables_cutedsl_fusion_and_fp8_attention(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """The non-FSDP Lightning B-series MXFP8 recipes enable the measured fusions."""
+    cfg = recipe_factory()
+
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+
+
+@pytest.mark.parametrize("recipe_factory", _B_NON_MXFP8_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_b_non_mxfp8_skips_cutedsl_fusion_and_fp8_attention(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """The Lightning B-series BF16 and NVFP4 recipes remain outside the MXFP8 tuning scope."""
+    cfg = recipe_factory()
+
+    assert cfg.model.use_transformer_engine_op_fuser is False
+    assert cfg.mixed_precision.fp8_dot_product_attention is False
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 
 
 @pytest.mark.parametrize(
