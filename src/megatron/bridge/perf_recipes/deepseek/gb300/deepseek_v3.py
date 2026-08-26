@@ -200,7 +200,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    # cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.model.cuda_graph_scope = []
     cfg.ddp.overlap_grad_reduce = True
@@ -210,9 +210,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=False, fp8_output_proj=False)
-    # cfg.model.moe_hybridep_num_sms_preprocessing = 108
-    # cfg.model.high_priority_a2a_comm_stream = False
-    # cfg.model.mla_down_proj_fusion = True
+    cfg.model.mla_down_proj_fusion = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -245,9 +243,8 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
 def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 8× GB300, NVFP4."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
-    # cfg.model.mla_down_proj_fusion = True
-    cfg.model.num_layers = 4
-    # cfg.model.moe_layer_freq = cfg.model.moe_layer_freq[: cfg.model.num_layers]
+    cfg.model.num_layers = 5
+    cfg.model.moe_layer_freq = [0, 0, 0, 1, 1]
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -255,9 +252,7 @@ def deepseek_v3_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|t|t|tmL")
-    num_dense_layers = cfg.model.moe_layer_freq.count(0)
-    cfg.model.moe_layer_freq = [0] * num_dense_layers + [1] * (cfg.model.num_layers - num_dense_layers)
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|t|t*2|tmL")
 
     cfg.train.global_batch_size = 128
     cfg.validation.eval_global_batch_size = 128
