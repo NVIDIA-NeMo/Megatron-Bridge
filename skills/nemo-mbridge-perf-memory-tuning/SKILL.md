@@ -1,8 +1,12 @@
 ---
 name: nemo-mbridge-perf-memory-tuning
-description: Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, PEFT + SP input re-gather, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes.
+description: >-
+  Techniques for reducing peak GPU memory in Megatron Bridge, including
+  expandable segments, PEFT plus sequence-parallel input re-gather,
+  parallelism resizing, activation recompute, CPU offloading constraints, and
+  common OOM fixes. Use for GPU OOMs, inadequate memory headroom, LoRA or PEFT
+  activation pressure, memory fragmentation, and memory regressions.
 license: Apache-2.0
-when_to_use: GPU OOM errors, reducing peak memory, reducing LoRA or PEFT activation memory with sequence parallelism, or tracing an OOM regression to a specific commit or config change; 'out of memory', 'OOM', 'memory fragmentation', 'expandable_segments', 'reduce GPU memory', 'LoRA memory', 'PEFT memory', 'sequence_parallel_input_regather', 'PYTORCH_CUDA_ALLOC_CONF'.
 ---
 
 # Memory Tuning
@@ -66,6 +70,26 @@ When a training run OOMs or is close to the memory limit:
 6. Consider `mlp` recompute if still OOM. Saves ~3 GB but costs ~16% GPU
    utilization on large dense models (Llama3 70B).
 7. CPU offloading is **blocked when PP > 1**.
+
+## After The First Configuration Fits
+
+Do not stop tuning at the first non-OOM layout. Run through optimizer-state
+initialization and several steady steps. Inspect W&B memory, then confirm every
+rank's peak allocated and reserved memory in the runtime logs; rank 0 can miss
+the hot EP or PP rank.
+
+If the hot rank has safe headroom, change one variable at a time:
+
+1. Lower TP by one legal step. This increases per-rank dense state, but can
+   remove expensive TP communication and improve efficiency when it still fits.
+2. Increase MBS. Adjust gradient accumulation so GBS, data order, and optimizer
+   boundaries remain fixed; otherwise this is a convergence change, not a pure
+   execution comparison.
+
+Accept the change only when end-to-end tokens/s/GPU or step time improves and
+loss remains finite with no skipped/NaN iterations. Do not target 100% reported
+memory use: keep margin for checkpoint/eval transients, MoE routing imbalance,
+dispatcher workspaces, and CUDA-graph private pools.
 
 ## Enablement
 
@@ -300,6 +324,8 @@ model_config = GPTModelProvider(
   profiling or CUDA memory reports
 - LoRA input re-gather does not cover row-parallel or expert adapters and may
   have negligible benefit when few eligible LoRA-A activations dominate memory
+- W&B or logger memory is an observation surface, not an automatic optimizer;
+  TP and MBS candidates still require matched steady-state validation
 
 ## Verification
 

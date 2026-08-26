@@ -16,6 +16,9 @@ import importlib
 
 import pytest
 
+from megatron.bridge.perf_recipes.nemotronh import (
+    nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     NEMOTRON_3_ULTRA_TOKENIZER_NAME,
     nemotron_3_ultra_peft_openmathinstruct2_packed_config,
@@ -81,6 +84,31 @@ def test_pretrain_uses_initial_parallelism_values() -> None:
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.seq_length == 8192
     assert cfg.dataset.blend is None
+
+
+@pytest.mark.unit
+def test_vr200_perf_recipe_uses_nvl72_ultra_topology() -> None:
+    """VR200 Ultra preserves the GB300 execution layout with explicit NVL72 settings."""
+    cfg = nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.num_distributed_optimizer_instances == 4
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["USE_MNNVL"] == 1
 
 
 @pytest.mark.unit

@@ -125,8 +125,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tp_group = None
             self._etp_group = None
 
-        # if a param mapping class takes in modified HF weight name from maybe_modify_loaded_hf_weight,
-        # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
+        # Set allow_hf_name_mismatch to True when the declared HF name will not be found verbatim
+        # in the checkpoint's key set. That covers two cases: a name that is rewritten or
+        # synthesized (see maybe_modify_loaded_hf_weight), and a weight that is legitimately
+        # absent for some layers or configurations. Both bypass the hf_keys check in
+        # `build_conversion_tasks`, which raises otherwise.
         self.allow_hf_name_mismatch = False
 
     def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
@@ -843,6 +846,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
             to the corresponding expert tensors gathered from each EP rank.
         """
+        if self.ep_size == 1:
+            return {str(hf_param_name): megatron_weights}
+
         if megatron_module is None:
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
         else:
