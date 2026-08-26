@@ -390,6 +390,19 @@ def test_nemotron_omni_export_preserves_source_only_buffers():
         assert torch.equal(exported_buffers[name], source_tensor)
 
 
+def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
+    modeling_path = tmp_path / "modeling.py"
+    modeling_path.write_text("from .configuration import NemotronOmniConfig\n")
+    bridge = NemotronOmniBridge()
+
+    bridge.postprocess_hf_export_artifacts(tmp_path)
+    bridge.postprocess_hf_export_artifacts(tmp_path)
+
+    modeling_source = modeling_path.read_text()
+    assert modeling_source.count("from .configuration_nemotron_h import NemotronHConfig") == 1
+    assert modeling_source.count("from .configuration_radio import RADIOConfig") == 1
+
+
 def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):
     bridge = NemotronOmniBridge()
     source_tensors = {
