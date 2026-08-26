@@ -49,8 +49,8 @@ _ROUNDTRIP_RTOL = 1e-5
 _CONSOLE = Console()
 
 
-def _ensure_distributed_initialized(timeout_minutes: int | None) -> None:
-    """Initialize NCCL from NeMo Run's torchrun or Slurm task environment."""
+def _ensure_distributed_initialized(timeout_minutes: int | None, *, use_cpu: bool = False) -> None:
+    """Initialize a distributed process group from torchrun or Slurm task state."""
     if torch.distributed.is_initialized():
         return
     if os.environ.get("WORLD_SIZE") is None and os.environ.get("SLURM_NTASKS") is not None:
@@ -64,10 +64,11 @@ def _ensure_distributed_initialized(timeout_minutes: int | None) -> None:
         if master_port is not None:
             os.environ["MASTER_PORT"] = str(master_port)
     if os.environ.get("WORLD_SIZE") is None:
-        raise RuntimeError("GPU conversion must be launched through NeMo Run's local or Slurm executor.")
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    torch.cuda.set_device(local_rank)
-    kwargs: dict[str, object] = {"backend": "nccl"}
+        raise RuntimeError("Distributed conversion must be launched through NeMo Run's local or Slurm executor.")
+    if not use_cpu:
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        torch.cuda.set_device(local_rank)
+    kwargs: dict[str, object] = {"backend": "gloo" if use_cpu else "nccl"}
     if timeout_minutes is not None:
         kwargs["timeout"] = datetime.timedelta(minutes=timeout_minutes)
     torch.distributed.init_process_group(**kwargs)
@@ -166,6 +167,7 @@ def _configure_model_provider(
     ep: int,
     etp: int,
     dtype: torch.dtype,
+    use_cpu: bool = False,
 ) -> None:
     """Apply distributed parallelism and dtype settings to a model provider."""
     model_provider.tensor_model_parallel_size = tp
@@ -174,6 +176,8 @@ def _configure_model_provider(
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = dtype
     model_provider.params_dtype = dtype
+    if use_cpu:
+        model_provider.use_cpu_initialization = True
 
 
 def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
@@ -349,6 +353,7 @@ def export_checkpoint(
     distributed_timeout_minutes: int | None,
     export_weight_dtype: str | None,
     overwrite: bool,
+    use_cpu: bool = False,
 ) -> None:
     """Export a distributed Megatron checkpoint to Hugging Face format.
 
@@ -369,14 +374,19 @@ def export_checkpoint(
         distributed_timeout_minutes: Process-group timeout in minutes.
         export_weight_dtype: Optional dtype for exported weights.
         overwrite: Delete a non-empty destination before conversion.
+        use_cpu: Use Gloo and CPU model initialization instead of NCCL/CUDA.
     """
-    _ensure_distributed_initialized(distributed_timeout_minutes)
+    if use_cpu:
+        _ensure_distributed_initialized(distributed_timeout_minutes, use_cpu=True)
+    else:
+        _ensure_distributed_initialized(distributed_timeout_minutes)
     if not Path(megatron_path).exists():
         raise FileNotFoundError(f"Megatron checkpoint does not exist: {megatron_path}")
     _prepare_distributed_output(hf_path, overwrite=overwrite, source_paths=[megatron_path, hf_model])
     dtype = parse_dtype(torch_dtype)
 
-    print_rank_0(f"GPU export: {megatron_path} -> {hf_path}")
+    device_label = "CPU" if use_cpu else "GPU"
+    print_rank_0(f"Distributed {device_label} export: {megatron_path} -> {hf_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     bridge = AutoBridge.from_hf_pretrained(
@@ -393,7 +403,7 @@ def export_checkpoint(
     # exporting the checkpoint-derived architecture and vocabulary configuration.
     bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     model_provider = bridge.to_megatron_provider(load_weights=False)
-    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
     _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
     resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
     model_provider.finalize()
@@ -424,7 +434,7 @@ def export_checkpoint(
         save_every_n_ranks=save_every_n_ranks,
         weight_dtype=parse_dtype(export_weight_dtype) if export_weight_dtype else None,
     )
-    print_rank_0(f"GPU export complete: {hf_path}")
+    print_rank_0(f"Distributed {device_label} export complete: {hf_path}")
 
 
 @torchrun_main

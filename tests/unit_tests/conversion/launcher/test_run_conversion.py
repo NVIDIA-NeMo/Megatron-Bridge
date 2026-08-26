@@ -211,6 +211,34 @@ def test_gpu_export_enables_distributed_save_by_default():
     assert calls[0]["hf_path"] == "/hf"
 
 
+def test_distributed_cpu_export_uses_gloo_backend(monkeypatch):
+    module, cpu_backend, gpu_backend = _load_run_conversion_module()
+    calls = []
+    cpu_backend.export_checkpoint = lambda **kwargs: pytest.fail("must not use the single-process backend")
+    gpu_backend.export_checkpoint = lambda **kwargs: calls.append(kwargs)
+    monkeypatch.setenv("WORLD_SIZE", "2")
+
+    module.main(
+        [
+            "export",
+            "--device",
+            "cpu",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/megatron",
+            "--hf-path",
+            "/hf",
+            "--ep",
+            "2",
+            "--distributed-save",
+        ]
+    )
+
+    assert calls[0]["distributed_save"] is True
+    assert calls[0]["use_cpu"] is True
+
+
 def test_gpu_roundtrip_dispatches_to_gpu_backend():
     module, _, gpu_backend = _load_run_conversion_module()
     calls = []
