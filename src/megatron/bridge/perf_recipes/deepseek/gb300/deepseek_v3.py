@@ -210,8 +210,8 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=False, fp8_output_proj=False)
-    cfg.model.moe_hybridep_num_sms_preprocessing = 108
-    cfg.model.high_priority_a2a_comm_stream = False
+    # cfg.model.moe_hybridep_num_sms_preprocessing = 108
+    # cfg.model.high_priority_a2a_comm_stream = False
     # cfg.model.mla_down_proj_fusion = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
