@@ -532,12 +532,15 @@ def load_megatron_model(
     if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
         model_cfg.pipeline_model_parallel_layout = None
 
-    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
+    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export.
+    # Shared-expert overlap is only valid with alltoall/flex and must follow that fallback.
     if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
         tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
         ep = getattr(model_cfg, "expert_model_parallel_size", 1)
         if tp * ep == 1:
             model_cfg.moe_token_dispatcher_type = "allgather"
+            if getattr(model_cfg, "moe_shared_expert_overlap", False):
+                model_cfg.moe_shared_expert_overlap = False
 
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
