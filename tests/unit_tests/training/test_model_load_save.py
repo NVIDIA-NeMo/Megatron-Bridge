@@ -750,6 +750,32 @@ class TestLoadMegatronModel:
 
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_load_megatron_model_disables_shared_expert_overlap_on_flex_fallback(
+        self, mock_load_model_config, mock_build_and_load
+    ):
+        """Verify single-rank flex fallback also disables its incompatible overlap."""
+        cfg = SimpleNamespace(
+            tensor_model_parallel_size=8,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+            expert_tensor_parallel_size=1,
+            sequence_parallel=True,
+            virtual_pipeline_model_parallel_size=None,
+            hierarchical_context_parallel_sizes=None,
+            moe_token_dispatcher_type="flex",
+            moe_shared_expert_overlap=True,
+        )
+        mock_load_model_config.return_value = (cfg, None)
+        mock_build_and_load.return_value = Mock()
+
+        load_megatron_model("/ckpt")
+
+        assert cfg.moe_token_dispatcher_type == "allgather"
+        assert cfg.moe_shared_expert_overlap is False
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
     def test_load_megatron_model_disables_cuda_graphs_for_hybrid_configs(
         self, mock_load_model_config, mock_build_and_load
     ):
