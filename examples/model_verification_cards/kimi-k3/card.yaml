@@ -7,19 +7,19 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. This card covers the Kimi K3 language backbone in the published
   multimodal checkpoint. It does not claim support for the vision tower or
-  multimodal inputs. Full-checkpoint GPU import and deterministic Megatron
-  greedy text generation are verified. CPU conversion, GPU export,
-  full-model Hugging Face/Megatron forward correlation, and every training
-  workflow remain unverified.
+  multimodal inputs. Full-checkpoint GPU import, deterministic Megatron greedy
+  text generation, and complete distributed CPU and GPU exports are verified.
+  CPU import, full-model Hugging Face/Megatron forward correlation, and every
+  training workflow remain unverified.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
   training:
     GB300:
@@ -67,39 +67,73 @@ items:
       parity is tracked separately by megatron_to_hf_gpu.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 5336903ad2095bcc6308f41216f8551068d39ba3  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 16 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0
+      --exclusive --hf-model moonshotai/Kimi-K3
+      --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
+      --megatron-path work/model-verification/kimi-k3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/kimi-k3/cpu-hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --tp 4 --pp 4 --ep 8 --etp 4 --trust-remote-code
+      --distributed-timeout-minutes 240 --distributed-save
+      --save-every-n-ranks 1 --no-progress
+    last_verified: 2026-08-26
     expected_result: >
-      No CPU Megatron-to-Hugging-Face conversion result is claimed. Future
-      verification depends on a complete persisted Megatron import and must
-      write, strictly reload, and exactly audit the exported Hugging Face
-      language-backbone weights against the pinned source revision.
+      The 128-process distributed CPU export writes a plain BF16 language
+      backbone with exactly 249,924 indexed keys and 2,779,931,837,184 values.
+      An exhaustive audit matches every value exactly after reference
+      dequantization of all 247,296 source MXFP4 expert weights and 506 declared
+      FP32-to-BF16 dtype normalizations among the other 2,628 tensors: 92 MoE
+      gate correction biases, plus 69 each for A_log, dt_bias, k_conv1d,
+      q_conv1d, v_conv1d, and o_norm. The exported configuration contains no
+      quantization_config. Under
+      Transformers 4.56.2, a strict metadata reload instantiates the plain
+      architecture and tokenizer. It validates the documented 69 A_log
+      checkpoint tensors with 96 active plus 32 zero padding values against the
+      runtime's 96-value shapes, and every other exported state key and shape
+      matches exactly. A scoped Transformers 4.56.2 compatibility override
+      registers the exported eight-item extra_special_tokens list as additional
+      special tokens, and a tokenizer encode/decode round trip is exact;
+      exhaustive tensor values are covered by the independent audit above.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 619c5a75ec40ce5e6b9dc7074ffb774bf3bc91aa  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 16 --gpus-per-node 8 --hf-model moonshotai/Kimi-K3
+      --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
+      --megatron-path work/model-verification/kimi-k3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/kimi-k3/gpu-hf-export
+      --torch-dtype bfloat16 --tp 4 --pp 4 --ep 8 --etp 4
+      --trust-remote-code --distributed-timeout-minutes 240
+      --distributed-save --save-every-n-ranks 1 --no-progress
+    last_verified: 2026-08-26
     expected_result: >
-      No GPU Megatron-to-Hugging-Face conversion result is claimed. All 69
-      source KDA A_log tensors were audited: each stores 96 active heads plus
-      32 zero-valued inactive entries, for 2,208 checked padding values.
-      Import validation drops only this zero padding, and export unit tests
-      restore it with zeros. A four-layer diagnostic proxy completed
-      low-memory GPU import and distributed streaming export. Its seven
-      safetensors shards and index, totaling 58,482,941,904 bytes, were
-      byte-identical to an export from the previous default-save import; this
-      validates the low-memory I/O behavior, not full-model parity. Against the
-      published proxy source, all 16,402 keys and shapes matched and A_log
-      padding was valid. Three o_norm tensors changed from FP32 to BF16, and
-      16,128 value mismatches were concentrated in MXFP4 expert packed weights
-      and scales because import dequantizes them to BF16 before export
-      requantizes them. Full verification therefore still requires the pinned
-      complete model to export and strictly reload, exact comparison of
-      lossless tensors, and a declared numerical criterion for lossy MXFP4
-      reconstruction.
+      The complete 128-GPU distributed export writes 96 safetensors shards and
+      all 497,220 source keys. All 2,628 non-MXFP4 tensors and
+      57,191,006,976 values match exactly after 69 declared FP32-to-BF16 dtype
+      normalizations. All 247,296 re-quantized MXFP4 expert pairs and
+      2,722,740,830,208 dequantized values also match exactly: minimum and
+      aggregate cosine similarity are both 1.0, with zero normalized RMSE and
+      zero maximum absolute error. Under the model's pinned Transformers 4.56.2
+      runtime, a strict metadata reload instantiates the configuration,
+      tokenizer, and ModelOpt-compressed architecture. It accounts for the 371
+      dense checkpoint weights that ModelOpt represents as 742 packed/scale
+      runtime states and validates their MXFP4 geometry. It also validates the
+      69 A_log tensors whose checkpoint shapes contain 96 active values plus 32
+      zero padding values while the runtime exposes only the active values;
+      every other state key and shape matches exactly. The model compatibility
+      guard skips meta initialization for Linear weights ModelOpt has already
+      replaced. A scoped Transformers 4.56.2 compatibility override registers
+      the exported eight-item extra_special_tokens list as additional special
+      tokens, and a tokenizer encode/decode round trip is exact; exhaustive
+      tensor values are covered by the independent audit above.
 
   manual_forward_pass:
     status: unverified
