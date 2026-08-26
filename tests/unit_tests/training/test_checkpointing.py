@@ -23,6 +23,7 @@ from unittest.mock import Mock, mock_open, patch
 import numpy as np
 import pytest
 import torch
+from megatron.core.dist_checkpointing.mapping import ShardedTensor, ShardedTensorFactory
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
@@ -47,6 +48,7 @@ from megatron.bridge.training.checkpointing import (
     _record_dataloader_state_dir,
     _save_hf_adapter_weights,
     _save_hf_weights,
+    _strip_sharded_tensor_data,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
     create_checkpoint_manager,
@@ -3380,6 +3382,48 @@ class TestLoadModelStateDictHelper:
 
         with pytest.raises(Exception):
             _load_model_state_dict(module, {"w": 1}, strict=False)
+
+    def test_load_model_state_dict_assigns_into_meta_module(self):
+        """Assignment materializes a meta module without copying checkpoint storage."""
+        module = torch.nn.Linear(3, 2, device="meta")
+        state_dict = {
+            "weight": torch.randn(2, 3),
+            "bias": torch.randn(2),
+        }
+
+        _load_model_state_dict(module, state_dict, strict=True, assign=True)
+
+        assert module.weight.device.type == "cpu"
+        assert module.bias.device.type == "cpu"
+        assert module.weight.data_ptr() == state_dict["weight"].data_ptr()
+        assert module.bias.data_ptr() == state_dict["bias"].data_ptr()
+
+
+class TestStripShardedTensorData:
+    """Tests for low-memory distributed checkpoint load metadata."""
+
+    def test_strips_direct_sharded_tensor_data(self):
+        tensor = ShardedTensor.from_rank_offsets("weight", torch.empty(2, 3, device="meta"))
+
+        result = _strip_sharded_tensor_data({"model": {"weight": tensor}})
+
+        assert result["model"]["weight"].data is None
+
+    def test_factory_builds_sharded_tensors_without_data(self):
+        data = torch.empty(2, 3, device="meta")
+        factory = ShardedTensorFactory(
+            key="weight",
+            data=data,
+            build_fn=lambda key, tensor, replica_id, flattened_range: ShardedTensor.from_rank_offsets(key, tensor),
+            merge_fn=lambda value: value,
+        )
+
+        result = _strip_sharded_tensor_data({"model": {"weight": factory}})
+        stripped_factory = result["model"]["weight"]
+        built = stripped_factory.build()
+
+        assert stripped_factory.data.is_meta
+        assert built.data is None
 
 
 class TestMegatronLMCompatibility:

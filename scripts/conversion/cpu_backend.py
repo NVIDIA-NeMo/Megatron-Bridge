@@ -21,6 +21,7 @@ from utils import parse_dtype, prepare_output_directory
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.training.model_load_save import low_memory_model_load_context
 
 
 logger = logging.getLogger(__name__)
@@ -117,12 +118,13 @@ def export_checkpoint(
     # families with packed HF weights export in their canonical representation.
     bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     try:
-        bridge.export_ckpt(
-            megatron_path=megatron_path,
-            hf_path=hf_path,
-            show_progress=show_progress,
-            strict=strict,
-        )
+        with low_memory_model_load_context():
+            bridge.export_ckpt(
+                megatron_path=megatron_path,
+                hf_path=hf_path,
+                show_progress=show_progress,
+                strict=strict,
+            )
     except Exception as error:
         if strict:
             shutil.rmtree(Path(hf_path), ignore_errors=True)

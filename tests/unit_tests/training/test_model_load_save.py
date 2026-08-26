@@ -33,7 +33,9 @@ from megatron.bridge.training.model_load_save import (
     load_megatron_model,
     load_model_config,
     load_tokenizer,
+    low_memory_model_load_context,
     megatron_cpu_init_context,
+    megatron_meta_init_context,
     save_megatron_model,
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
@@ -152,6 +154,15 @@ class TestMegatronCpuInitContext:
             assert config.use_cpu_initialization is True
 
         assert config.use_cpu_initialization is False
+
+    def test_meta_context_disables_cpu_master_weight_initialization(self):
+        """Meta construction must not allocate or copy temporary CPU master weights."""
+        config = SimpleNamespace(use_cpu_initialization=True)
+
+        with megatron_meta_init_context(config):
+            assert config.use_cpu_initialization is False
+
+        assert config.use_cpu_initialization is True
 
     def test_megatron_cpu_init_context_with_already_true(self):
         """Test context manager when use_cpu_initialization is already True."""
@@ -747,6 +758,31 @@ class TestLoadMegatronModel:
         assert cfg.sequence_parallel is False
         assert cfg.virtual_pipeline_model_parallel_size is None
         assert cfg.hierarchical_context_parallel_sizes is None
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_low_memory_context_enables_meta_device_for_cpu_load(self, mock_load_model_config, mock_build_and_load):
+        """Verify the CPU-export context builds checkpoint models on meta."""
+        cfg = SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=1,
+            sequence_parallel=False,
+            virtual_pipeline_model_parallel_size=None,
+            hierarchical_context_parallel_sizes=None,
+            init_model_with_meta_device=False,
+            fp8=None,
+            fp8_param=False,
+        )
+        mock_load_model_config.return_value = (cfg, None)
+        mock_build_and_load.return_value = Mock()
+
+        with low_memory_model_load_context():
+            load_megatron_model("/ckpt", use_cpu_init=True)
+
+        assert cfg.init_model_with_meta_device is True
 
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
