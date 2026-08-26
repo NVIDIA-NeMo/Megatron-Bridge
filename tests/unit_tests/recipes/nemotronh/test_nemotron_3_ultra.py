@@ -186,7 +186,7 @@ def test_gb200_mxfp8_fsdp_pretrain_adopts_execution_config_without_benchmark_pol
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.context_parallel_size == 2
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1

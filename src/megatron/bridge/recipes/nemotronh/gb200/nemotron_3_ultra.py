@@ -103,9 +103,10 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContaine
 
     The execution policy adopts the canonical TP2/PP1/EP64 Megatron-FSDP
     configuration with HybridEP, targeted expert-activation offload, and
-    selective routed-expert, shared-expert, and layernorm recompute. It retains
-    the library recipe's natural routing, numerical checks, optimizer,
-    scheduler, and training objective instead of benchmark-only policy.
+    selective routed-expert, shared-expert, and layernorm recompute. CP2 keeps
+    naturally routed real-data batches within GB200 HBM. It retains natural
+    routing, numerical checks, the library optimizer and scheduler, and the
+    training objective instead of benchmark-only policy.
 
     Returns:
         GB200 MXFP8 Megatron-FSDP pretraining configuration.
@@ -118,7 +119,10 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContaine
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 1
+    # Unlike the force-balanced benchmark workload, natural routing can create
+    # transient expert-token hotspots. CP2 reduces the per-rank 8K activation
+    # footprint so those batches retain enough grouped-MLP backward workspace.
+    cfg.model.context_parallel_size = 2
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
