@@ -158,8 +158,10 @@ name = "flash-mla"
 version = "1.0.0+9edee0c"
 requires-dist = []
 
-# torch-memory-saver requires CUDA environment variables even to inspect its build metadata.
-# Pin the metadata from the active MCore checkout so lock generation stays build-free.
+# torch-memory-saver is pinned by the active MCore checkout to audited commit
+# 9bc9a442e6d108c7b7903def199896a005143aaf. That source has no runtime
+# dependencies; declaring its metadata keeps lock generation from executing setup.py,
+# whose extension build requires TMS_CUDA_MAJOR.
 [[tool.uv.dependency-metadata]]
 name = "torch-memory-saver"
 version = "0.0.10b1"
