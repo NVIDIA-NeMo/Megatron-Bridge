@@ -130,7 +130,12 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
     ]
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
-        """Make transitive Omni configuration modules discoverable on local reload."""
+        """Make transitive Omni configuration modules discoverable on local reload.
+
+        The pinned Nemotron Omni Hugging Face repositories expose ``modeling.py``
+        as their ``auto_map`` entrypoint. Fail explicitly if that required export
+        artifact is absent so an incomplete checkpoint is never reported as saved.
+        """
         modeling_path = path / "modeling.py"
         if not modeling_path.is_file():
             raise FileNotFoundError(f"Nemotron Omni export is missing required artifact: {modeling_path}")

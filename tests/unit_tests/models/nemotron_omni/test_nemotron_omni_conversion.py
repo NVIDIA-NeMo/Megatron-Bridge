@@ -403,6 +403,13 @@ def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
     assert modeling_source.count("from .configuration_radio import RADIOConfig") == 1
 
 
+def test_nemotron_omni_export_requires_modeling_entrypoint(tmp_path):
+    bridge = NemotronOmniBridge()
+
+    with pytest.raises(FileNotFoundError, match="missing required artifact.*modeling.py"):
+        bridge.postprocess_hf_export_artifacts(tmp_path)
+
+
 def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):
     bridge = NemotronOmniBridge()
     source_tensors = {
