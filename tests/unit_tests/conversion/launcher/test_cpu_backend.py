@@ -178,3 +178,25 @@ def test_export_honors_file_backed_staging_directory(tmp_path, monkeypatch):
     )
 
     assert ("low_memory_model_load", "enter", {"mmap_directory": staging}) in calls
+
+
+def test_export_creates_default_staging_directory(tmp_path):
+    module, calls = _load_cpu_backend()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "run_config.yaml").touch()
+    staging = tmp_path / "nested"
+
+    module.export_checkpoint(
+        hf_model="hf/model",
+        hf_revision=None,
+        megatron_path=str(checkpoint),
+        hf_path=str(staging / "hf-export"),
+        show_progress=False,
+        strict=True,
+        trust_remote_code=False,
+        overwrite=False,
+    )
+
+    assert staging.is_dir()
+    assert ("low_memory_model_load", "enter", {"mmap_directory": staging}) in calls

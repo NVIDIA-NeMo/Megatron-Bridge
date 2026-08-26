@@ -55,8 +55,8 @@ cannot be loaded on one host within the available memory or wall-time limit.
 Single-process CPU export stages file-backed tensors next to `--hf-path` by
 default. Set `MEGATRON_BRIDGE_CPU_EXPORT_MMAP_DIRECTORY` to a directory on a
 larger or faster local filesystem when the output filesystem does not have
-enough temporary space. The staging files are removed after each tensor is
-loaded.
+enough temporary space. The staging files are removed when the export
+completes.
 
 ## Distributed GPU conversion on Slurm
 

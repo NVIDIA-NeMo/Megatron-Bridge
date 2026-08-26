@@ -49,7 +49,9 @@ def _find_run_config(checkpoint_path: Path) -> Path:
 def _cpu_export_mmap_directory(hf_path: str) -> Path:
     """Return an explicit staging directory or default to the output parent."""
     override = os.environ.get(_CPU_EXPORT_MMAP_DIRECTORY_ENV)
-    return Path(override).expanduser() if override else Path(hf_path).parent
+    mmap_directory = Path(override).expanduser() if override else Path(hf_path).parent
+    mmap_directory.mkdir(parents=True, exist_ok=True)
+    return mmap_directory
 
 
 def import_checkpoint(
