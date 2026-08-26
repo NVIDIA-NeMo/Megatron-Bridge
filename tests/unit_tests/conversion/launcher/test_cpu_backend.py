@@ -168,6 +168,7 @@ def test_export_honors_file_backed_staging_directory(tmp_path, monkeypatch):
 
     module.export_checkpoint(
         hf_model="hf/model",
+        hf_revision=None,
         megatron_path=str(checkpoint),
         hf_path=str(tmp_path / "hf-export"),
         show_progress=False,
