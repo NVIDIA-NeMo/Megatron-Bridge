@@ -92,8 +92,8 @@ items:
       unsloth/gpt-oss-120b-BF16 reference covers all 615 tensors and
       116,829,156,672 values with exact keys, shapes, dtypes, and bitwise-equal
       values. Transformers strictly reloads all 615 state tensors natively as
-      GptOssForCausalLM with no loading discrepancies, and the tokenizer also
-      reloads successfully.
+      GptOssForCausalLM with attention_bias=true and no loading discrepancies,
+      and the tokenizer also reloads successfully.
 
   megatron_to_hf_gpu:
     status: verified
