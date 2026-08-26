@@ -1075,8 +1075,9 @@ class TestConfigContainerValidation:
         """Test validation error when micro_batch_size == 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1225,8 +1226,9 @@ class TestConfigContainerValidation:
             calculate_per_token_loss=True,
         )
         train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=8,
@@ -1756,6 +1758,7 @@ class TestConfigContainerValidation:
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3053,6 +3056,54 @@ class TestRerunConfigValidation:
 
 class TestCheckpointConfig:
     """Tests for CheckpointConfig class."""
+
+    @pytest.mark.parametrize(
+        "config_overrides, error_message",
+        [
+            ({"save_interval": 10, "save_retain_interval": 0}, "save_retain_interval must be positive"),
+            (
+                {"save_interval": None, "save_retain_interval": 20},
+                "save_retain_interval requires a positive save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 15},
+                "save_retain_interval must be divisible by save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 20, "most_recent_k": 1},
+                "save_retain_interval and most_recent_k cannot be enabled together",
+            ),
+        ],
+    )
+    def test_save_retain_interval_validation(self, config_overrides, error_message):
+        """Retain intervals require one valid, unambiguous persistent retention policy."""
+        ckpt_cfg = create_test_checkpoint_config(**config_overrides)
+
+        with pytest.raises(ValueError, match=error_message):
+            ckpt_cfg.finalize()
+
+    def test_save_retain_interval_accepts_multiple_of_save_interval(self):
+        """A positive retain interval divisible by the save interval is valid."""
+        ckpt_cfg = create_test_checkpoint_config(save_interval=10, save_retain_interval=20)
+
+        ckpt_cfg.finalize()
+
+    def test_precision_aware_optimizer_cpu_staging_defaults_off(self):
+        ckpt_cfg = create_test_checkpoint_config()
+
+        assert ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu is False
+
+    def test_precision_aware_optimizer_cpu_staging_requires_torch_dist(self):
+        ckpt_cfg = create_test_checkpoint_config(
+            ckpt_format="torch",
+            stage_precision_aware_optimizer_state_on_cpu=True,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'",
+        ):
+            ckpt_cfg.finalize()
 
     @pytest.mark.parametrize(
         "load_main_params_from_ckpt, load_optim, expect_assertion_error",

@@ -1,8 +1,12 @@
 ---
 name: nemo-mbridge-perf-moe-dispatcher-selection
-description: Select and validate an MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for a fixed workload and runtime. Covers backend availability, topology, matched A/B evidence, routing semantics, and failure diagnosis.
+description: >-
+  Select and validate an MoE token dispatcher (`alltoall`, DeepEP, or
+  HybridEP) for a fixed workload and runtime. Covers backend availability,
+  topology, matched A/B evidence, routing semantics, and failure diagnosis.
+  Use when choosing a dispatcher or tracing a regression or crash to the MoE
+  dispatcher configuration.
 license: Apache-2.0
-when_to_use: Choosing a MoE token dispatcher, or tracing a MoE regression or crash to a dispatcher config change; 'which dispatcher', 'alltoall vs DeepEP', 'HybridEP', 'MoE dispatcher', 'flex backend', 'EP dispatcher selection'.
 ---
 
 # MoE Dispatcher Selection Guide
@@ -32,6 +36,10 @@ timing window fixed during the comparison.
 | Small EP | Dispatcher choice may be second-order; start with `alltoall` |
 | Medium EP | Profile first, then A/B the installed flex backends |
 | Large EP | Prioritize topology-aware candidates, but still require a matched A/B |
+
+On one NVL8 domain in BF16, treat `alltoall` and HybridEP as matched candidates:
+their throughput can be close once the full stack is held fixed. HybridEP is a
+high-priority tuning path, not a reason to skip the correctness baseline.
 
 ## Model-Family Patterns
 
@@ -190,6 +198,8 @@ winner again with natural routing.
 - NVL8 systems when the package supports the topology and a matched A/B wins
 - large EP degrees
 - memory headroom matters in addition to throughput
+- an NVL8 BF16 matched A/B beats or materially improves headroom over
+  `alltoall`; a small or negative delta is a valid reason to keep `alltoall`
 
 ## Pitfalls
 

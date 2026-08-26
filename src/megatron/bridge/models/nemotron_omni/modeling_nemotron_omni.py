@@ -32,6 +32,7 @@ from typing import Optional
 
 import torch
 from megatron.core import tensor_parallel
+from megatron.core.fp8_utils import get_fp8_align_size
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.models.multimodal.llava_model import pixel_shuffle
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
@@ -105,6 +106,28 @@ def _pixel_shuffle_dynamic_resolution(
     shuffled = shuffled.reshape(batch, width // 2, height // 2, hidden * 4)
     shuffled = shuffled.permute(0, 2, 1, 3).contiguous()
     return shuffled.reshape(batch, (height * width) // 4, hidden * 4)
+
+
+def _project_multimodal_embeddings(
+    projection: torch.nn.Module,
+    embeddings: torch.Tensor,
+) -> torch.Tensor:
+    """Project media rows, padding only the temporary FP8 compute input."""
+    input_shape = embeddings.shape[:-1]
+    flat_embeddings = embeddings.reshape(-1, 1, embeddings.shape[-1])
+    num_embeddings = flat_embeddings.shape[0]
+    projection_config = getattr(projection, "config", None)
+    if getattr(projection_config, "fp8", None):
+        alignment = get_fp8_align_size(projection_config.fp8_recipe)
+        padding = -num_embeddings % alignment
+        if padding:
+            flat_embeddings = torch.cat(
+                (flat_embeddings, flat_embeddings.new_zeros((padding, 1, flat_embeddings.shape[-1]))),
+                dim=0,
+            )
+
+    projected = projection(flat_embeddings)[:num_embeddings]
+    return projected.reshape(*input_shape, projected.shape[-1])
 
 
 class NemotronOmniModel(MegatronModule):
@@ -389,8 +412,7 @@ class NemotronOmniModel(MegatronModule):
             encoded = encoded[:, class_tokens:, :]
             encoded = pixel_shuffle(encoded).reshape(-1, encoded.shape[-1] * 4)
 
-        projected = self.vision_projection(encoded.unsqueeze(1))
-        return projected.squeeze(1).contiguous()
+        return _project_multimodal_embeddings(self.vision_projection, encoded).contiguous()
 
     def _encode_sound(self, sound_clips: torch.Tensor, sound_length: Optional[torch.Tensor]) -> torch.Tensor:
         """Encode mel features and return valid projected rows in sample order."""
@@ -419,7 +441,10 @@ class NemotronOmniModel(MegatronModule):
         projection_parameter = next(self.sound_projection.parameters(), None)
         if projection_parameter is not None:
             sound_embeddings = sound_embeddings.to(dtype=projection_parameter.dtype)
-        projected = self.sound_projection(sound_embeddings.permute(1, 0, 2).contiguous()).contiguous()
+        projected = _project_multimodal_embeddings(
+            self.sound_projection,
+            sound_embeddings.permute(1, 0, 2).contiguous(),
+        ).contiguous()
         projected_by_sample = projected.permute(1, 0, 2)
         if getattr(getattr(self.sound_model, "config", None), "sound_pad_to_clip_duration", False):
             return projected_by_sample.reshape(-1, projected.shape[-1]).contiguous()

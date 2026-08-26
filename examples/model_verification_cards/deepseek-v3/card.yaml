@@ -1,0 +1,326 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: deepseek_v3
+summary: >
+  Distributed H100 GPU import, BF16 export, and deterministic inference are
+  verified against the pinned blockwise-FP8 checkpoint. The canonical
+  pretrain_performance.H100 1024-GPU BF16, pretrain_performance.GB200 256-GPU
+  MXFP8, and pretrain_performance.GB300 256-GPU MXFP8 recipes are also verified.
+  Timing and throughput metrics from future functional training items remain
+  sanity checks rather than optimized performance results. CPU conversion,
+  forward correlation, functional training, fine-tuning, and checkpoint-resume
+  verification remain deferred.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - megatron_to_hf_gpu
+      - inference
+    unverified:
+      - hf_to_megatron_cpu
+      - megatron_to_hf_cpu
+      - manual_forward_pass
+  training:
+    GB300:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    H100: verified
+    GB200: verified
+    GB300: verified
+model:
+  hf_id: deepseek-ai/DeepSeek-V3
+  hf_revision: e815299b0bcbac849fa540c768ef21845365c9eb  # pragma: allowlist secret
+  architecture: DeepseekV3ForCausalLM
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: c3836699a2e006528a1338902874f96da0f5d219  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A CPU import of the pinned blockwise-FP8 Hugging Face checkpoint must
+      dequantize every mapped weight correctly, persist a reloadable Megatron
+      checkpoint, and pass a complete tensor audit. This workflow is deferred
+      by this card.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8
+      --hf-model deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron-path work/model-verification/deepseek-v3/imported-megatron
+      --torch-dtype bfloat16 --low-memory-save
+      --distributed-timeout-minutes 240
+      --tp 1 --pp 4 --ep 8 --etp 1
+    last_verified: 2026-08-25
+    expected_result: >
+      The 32-GPU import completed all 4,583 mapping tasks, blockwise-dequantized
+      the pinned FP8 source into BF16, and persisted a reloadable 32-shard
+      distributed Megatron checkpoint. A strict paired export subsequently
+      matched all 46,183 model tensors and 684,489,845,504 values exactly.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A CPU export from a verified Megatron checkpoint must preserve every
+      mapped tensor and strictly reload as DeepseekV3ForCausalLM. This workflow
+      is deferred by this card.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8
+      --hf-model deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron-path work/model-verification/deepseek-v3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/deepseek-v3/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --save-every-n-ranks 1
+      --distributed-timeout-minutes 240
+      --tp 1 --pp 4 --ep 8 --etp 1
+    last_verified: 2026-08-25
+    expected_result: >
+      The command exited successfully and wrote all 163 source-shaped shards.
+      The index contained exactly 46,183 BF16 model tensors; an exhaustive
+      32-rank audit matched all 684,489,845,504 values against the pinned source
+      after blockwise dequantization of all 45,808 FP8 tensors. The exported
+      configuration instantiated natively as DeepseekV3ForCausalLM.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A pinned first-token Hugging Face versus Megatron comparison must match
+      the argmax token, reach cosine similarity of at least 0.99, and report
+      maximum and mean absolute logit differences. This workflow is deferred
+      by this card.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      --task legacy-full-prefix-generation
+      --hf_model_path deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron_model_path work/model-verification/deepseek-v3/imported-megatron/iter_0000000
+      --tp 1 --pp 4 --ep 8 --etp 1
+      --prompt "Explain why the sky appears blue in one sentence."
+      --max_new_tokens 32 --apply-chat-template --thinking-mode disabled
+      --legacy-full-prefix
+    last_verified: 2026-08-25
+    expected_result: >
+      The distributed Megatron execution reloaded the verified BF16 checkpoint,
+      produced finite logits, and generated exactly 32 tokens with deterministic
+      greedy decoding, without an earlier EOS. The literal completion was "The sky appears
+      blue because shorter blue wavelengths of sunlight are scattered more
+      effectively by the Earth's atmosphere than longer red wavelengths, a
+      phenomenon known as Rayleigh scattering."
+
+  pretrain:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A bounded public-data DeepSeek V3 pretraining run must complete with
+        finite loss, zero skipped or NaN iterations, all five metrics, a saved
+        post-setup configuration, and a reloadable final checkpoint. Functional
+        training is deferred by this card.
+
+  sft:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A pinned-data full-SFT run must finish with finite loss, zero skipped or
+        NaN iterations, all five metrics, a saved post-setup configuration, and
+        a reloadable final checkpoint. Fine-tuning is deferred by this card.
+
+  sft_export_inference:
+    GB300:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        A verified full-SFT checkpoint must export to Hugging Face, strictly
+        reload, and produce a recorded deterministic checkpoint-backed
+        completion. Training and post-SFT export verification are deferred by
+        this card.
+
+  sft_long_context:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A dedicated packed long-context SFT run must complete with context
+        parallelism, finite loss, zero skipped or NaN iterations, all five
+        metrics, and a reloadable checkpoint. This workflow is deferred by this
+        card.
+
+  peft:
+    GB300:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A DeepSeek V3 PEFT recipe with an audited model-native attention adapter
+        target set must complete with finite loss, zero skipped or NaN
+        iterations, all five metrics, and a reloadable adapter checkpoint. This
+        workflow is deferred by this card.
+
+  checkpoint_resume:
+    GB300:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A direct continuation must restore model, optimizer, scheduler,
+        data-order, and RNG state, match declared sentinel losses, and save a
+        reloadable checkpoint to a distinct output root. Resume verification is
+        deferred by this card.
+
+  pretrain_performance:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 79308d0d99fb8c09b3f1a22baa68a4ffa4f4ce1e  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 128 --gpus-per-node 8
+        --recipe deepseek_v3_pretrain_1024gpu_h100_bf16_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/deepseek-v3/h100-performance/ConfigContainer.yaml
+      last_verified: 2026-08-15
+      metrics:
+        initial_loss: 11.89496
+        final_loss: 6.815285
+        last_10_steps_step_time_ms_avg: 61756.130
+        last_10_steps_model_tflops_per_gpu_avg: 276.030
+        last_10_steps_tokens_per_second_per_gpu_avg: 1061.206
+      expected_result: >
+        On exactly 1,024 H100 GPUs, the canonical 50-step mock-data BF16 recipe
+        completed at TP2/PP8/VP4/CP1/EP64/ETP1 and GBS/MBS 16384/1. All 50
+        keyed rows had finite loss and throughput with zero skipped or NaN
+        iterations, and the resolved configuration was saved. Steps 41-50
+        averaged 61,756.130 ms and 276.030 model TFLOP/s/GPU, passing gates of
+        at most 62,000 ms and at least 275 TFLOP/s/GPU. Mock data and forced
+        expert balancing make this benchmark-only evidence, not convergence
+        evidence.
+
+    GB200:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 79308d0d99fb8c09b3f1a22baa68a4ffa4f4ce1e  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe deepseek_v3_pretrain_256gpu_gb200_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/deepseek-v3/gb200-performance/ConfigContainer.yaml
+      last_verified: 2026-08-14
+      metrics:
+        initial_loss: 11.89246
+        final_loss: 6.311604
+        last_10_steps_step_time_ms_avg: 13841.180
+        last_10_steps_model_tflops_per_gpu_avg: 1231.040
+        last_10_steps_tokens_per_second_per_gpu_avg: 4734.856
+      expected_result: >
+        On exactly 256 GB200 GPUs, the canonical 50-step mock-data MXFP8 recipe
+        completed at TP1/PP4/VP4/CP1/EP64/ETP1 and GBS/MBS 4096/1. All 50 keyed
+        rows had finite loss and throughput with zero skipped or NaN iterations,
+        and the resolved configuration was saved. Steps 41-50 averaged
+        13,841.180 ms and 1,231.040 model TFLOP/s/GPU, passing gates of at most
+        14,000 ms and at least 1,200 TFLOP/s/GPU. Mock data, forced expert
+        balancing, and reduced-precision optimizer moments make this
+        benchmark-only evidence, not convergence evidence.
+
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 79308d0d99fb8c09b3f1a22baa68a4ffa4f4ce1e  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe deepseek_v3_pretrain_256gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/deepseek-v3/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-14
+      metrics:
+        initial_loss: 11.89526
+        final_loss: 6.236621
+        last_10_steps_step_time_ms_avg: 10667.300
+        last_10_steps_model_tflops_per_gpu_avg: 1597.310
+        last_10_steps_tokens_per_second_per_gpu_avg: 6143.635
+      expected_result: >
+        On exactly 256 GB300 GPUs, the canonical 50-step mock-data MXFP8 recipe
+        completed at TP1/PP2/VP8/CP1/EP32/ETP1 and GBS/MBS 4096/1. All 50 keyed
+        rows had finite loss and throughput with zero skipped or NaN iterations,
+        and the resolved configuration was saved. Steps 41-50 averaged
+        10,667.300 ms and 1,597.310 model TFLOP/s/GPU, passing gates of at most
+        11,000 ms and at least 1,550 TFLOP/s/GPU. Mock data, forced expert
+        balancing, and reduced-precision optimizer moments make this
+        benchmark-only evidence, not convergence evidence.
