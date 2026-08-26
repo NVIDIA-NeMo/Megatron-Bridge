@@ -125,16 +125,17 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     # provider. Non-model benchmark settings are idempotent.
     cfg.model.moe_router_force_load_balancing = True
     _benchmark_common(cfg)
+    # The trainable vision stack needs an additional model-parallel shard on
+    # 80 GiB H100s. Keep PP/EP unchanged and place TP=2 within each NVLink
+    # domain so the 64-GPU layout remains valid with EP=32.
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.sequence_parallel = True
     cfg.ddp.overlap_param_gather = False
     cfg.model.moe_hybridep_num_sms = None
     cfg.checkpoint.async_save = False
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
-    # Dynamic-resolution VLM batches leave shape-specific cached allocations
-    # after the optimizer step. Release those blocks before the next forward
-    # pass so they cannot strand otherwise reusable memory.
-    cfg.train.empty_unused_memory_level = 2
     return cfg
 
 

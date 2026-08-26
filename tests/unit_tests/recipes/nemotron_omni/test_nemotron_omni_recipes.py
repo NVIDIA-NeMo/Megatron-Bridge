@@ -362,12 +362,12 @@ def test_super_vl_pretrain_recipe_reuses_super_benchmark_policy(fake_processor):
     assert cfg.model.freeze_vision_model is False
     assert cfg.model.freeze_vision_projection is False
 
-    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 32
     assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
+    assert cfg.model.sequence_parallel is True
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is True
@@ -382,7 +382,6 @@ def test_super_vl_pretrain_recipe_reuses_super_benchmark_policy(fake_processor):
     assert cfg.train.global_batch_size == 1280
     assert cfg.train.micro_batch_size == 1
     assert cfg.train.train_iters == 50
-    assert cfg.train.empty_unused_memory_level == 2
     assert cfg.train.eval_iters == 0
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
     assert cfg.checkpoint.save is None
