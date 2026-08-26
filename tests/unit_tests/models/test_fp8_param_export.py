@@ -42,6 +42,7 @@ def _make_qkv_mapping_type(global_name: str = _QKV_GLOBAL):
     class MegatronQkvMapping:
         hf_param = "hf.qkv.weight"
         megatron_param = global_name
+        allow_hf_name_mismatch = False
 
         def resolve(self, _captures):
             return MegatronQkvMapping()
@@ -340,41 +341,19 @@ class TestFp8ParamExport:
         monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", _ag1)
         assert bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv") == {}
 
-    @pytest.mark.parametrize(
-        "mode",
-        [
-            pytest.param("remote_pp", id="remote_pp"),
-            pytest.param("scale_lookup_none", id="scale_lookup_none"),
-        ],
-    )
-    def test_build_export_fp8_tasks_placeholder(self, monkeypatch, caplog, mode):
-        caplog.set_level(logging.WARNING, logger="megatron.bridge.models.conversion.model_bridge")
+    def test_build_export_fp8_tasks_remote_pp_tasks_are_concrete(self, monkeypatch):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
         MappingT = _make_qkv_mapping_type(gname)
-
-        if mode == "remote_pp":
-            _patch_export_task_context(
-                monkeypatch,
-                bridge,
-                gname,
-                registry_factory=lambda: MegatronMappingRegistry(MappingT()),
-                pp_rank=1,
-                pp_size=2,
-                detect_fp8=lambda *_a, **_k: {gname: 1},
-            )
-        else:
-            n = {"c": 0}
-
-            class Reg(MegatronMappingRegistry):
-                def __init__(self):
-                    super().__init__(MappingT())
-
-                def megatron_to_hf_lookup(self, _n):
-                    n["c"] += 1
-                    return super().megatron_to_hf_lookup(_n) if n["c"] == 1 else None
-
-            _patch_export_task_context(monkeypatch, bridge, gname, registry_factory=lambda: Reg())
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            gname,
+            registry_factory=lambda: MegatronMappingRegistry(MappingT()),
+            pp_rank=1,
+            pp_size=2,
+            detect_fp8=lambda *_a, **_k: {gname: 1},
+        )
 
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
@@ -384,15 +363,28 @@ class TestFp8ParamExport:
             SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
         )
         assert len(tasks) == 2
-        if mode == "remote_pp":
-            assert tasks[0] and tasks[1]
-            assert tasks[0].megatron_module is None and isinstance(tasks[0].mapping, MappingT)
-            assert isinstance(tasks[1].mapping, _HFNameSuffixMapping)
-            assert tasks[1].mapping.scale_block_size == 1
-        else:
-            assert tasks[0] and tasks[0].global_param_name == gname
-            assert tasks[1] is None
-            assert "No mapping found for global_name" in caplog.text
+        assert tasks[0].megatron_module is None and isinstance(tasks[0].mapping, MappingT)
+        assert tasks[1].megatron_module is None and isinstance(tasks[1].mapping, _HFNameSuffixMapping)
+        assert tasks[1].mapping.scale_block_size == 1
+
+    def test_build_export_fp8_tasks_rejects_missing_mapping_on_remote_pp_rank(self, monkeypatch):
+        bridge = DummyBridge()
+        gname = _QKV_GLOBAL
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            gname,
+            registry_factory=MegatronMappingRegistry,
+            pp_rank=1,
+            pp_size=2,
+        )
+        model = SimpleNamespace(
+            config=SimpleNamespace(share_embeddings_and_output_weights=False),
+            named_parameters=lambda: [],
+        )
+
+        with pytest.raises(ValueError, match=gname.replace(".", r"\.")):
+            bridge.build_export_fp8_tasks(SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model])
 
     @pytest.mark.parametrize(
         "hidden_size, last_dim, expected_shapes, expected_error",

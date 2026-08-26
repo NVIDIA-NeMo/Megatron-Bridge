@@ -418,3 +418,32 @@ class TestGatedMLPMappingQuant:
         assert torch.equal(result["up.weight"], q_up)
         assert torch.equal(result["gate.weight_scale_inv"], scale_gate)
         assert torch.equal(result["up.weight_scale_inv"], scale_up)
+
+    def test_megatron_to_hf_quant_skips_missing_singleton_ep_group(self, mock_distributed_env):
+        """Logical EP=1 must not fall through to the default WORLD group."""
+        _, mock_dist = mock_distributed_env()
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+            gate="model.layers.0.mlp.experts.0.gate_proj.weight",
+            up="model.layers.0.mlp.experts.0.up_proj.weight",
+        )
+        mapping.pp_group = None
+        mapping.ep_group = None
+        mapping._tp_group = None
+        mapping._etp_group = None
+        merged_weight = torch.randn(16, 4)
+        megatron_module = MockModule(types.SimpleNamespace(num_moe_experts=1), weight_shape=(16, 4))
+
+        result = mapping.megatron_to_hf_quant(
+            merged_weight,
+            megatron_module,
+            quantization_checker=dummy_quantization_checker,
+            quant_fn=scaled_fp8_blockwise,
+            quant_block_size=(2, 2),
+        )
+
+        assert result["model.layers.0.mlp.experts.0.gate_proj.weight"].shape == (8, 4)
+        assert result["model.layers.0.mlp.experts.0.up_proj.weight"].shape == (8, 4)
+        assert result["model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv"].shape == (4, 2, 1)
+        assert result["model.layers.0.mlp.experts.0.up_proj.weight_scale_inv"].shape == (4, 2, 1)
+        mock_dist.all_gather.assert_not_called()

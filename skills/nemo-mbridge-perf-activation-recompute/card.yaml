@@ -335,3 +335,10 @@ follow_up_validation:
   - Add matched GDN measurements.
   - Measure context-parallel communication replay for attention and GDN boundaries.
   - Validate representative selective boundaries under the supported CUDA-graph scopes and FP8 recipes.
+
+guidance_updated_on: "2026-08-25"
+operational_guidance:
+  qwen35_gdn: >
+    Test gdn_norm_out on the exact revision; core_attn alone does not cover the
+    GDN normalization output. Use full-layer recompute when targeted boundaries
+    still do not make the complete optimizer step fit.
