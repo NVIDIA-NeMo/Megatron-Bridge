@@ -28,12 +28,14 @@ from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+
 try:
     from megatron.core.models.backends import get_backend
 except ImportError:
     from megatron.core.extensions.transformer_engine_spec_provider import TESpecProvider
 
     def get_backend(transformer_impl: str) -> BackendSpecProvider:
+        """Resolve a backend provider on MCore revisions without the shared selector."""
         if transformer_impl == "transformer_engine":
             return TESpecProvider()
         if transformer_impl == "inference_optimized":
