@@ -101,16 +101,17 @@ items:
       --hf-revision 8efa61729e24bd65b1d152b5ab5409052aa80e65
       --megatron_model_path
       work/model-verification/qwen3-235b-a22b/imported-megatron/iter_0000000
-      --tp 2 --pp 1 --ep 8 --etp 2
+      --tp 1 --pp 2 --ep 8 --etp 1
       --prompt "Explain why the sky appears blue in one sentence."
       --max_new_tokens 32 --legacy-full-prefix
     last_verified: 2026-08-25
     expected_result: >
-      The 16-H100 TP2/PP1/EP8/ETP2 run reloaded the imported BF16 checkpoint,
-      produced finite logits, generated exactly 32 greedy tokens without an
-      earlier EOS, and exited successfully. The JSON-escaped literal completion
-      was " The high sky half and the the way the the sky is blue lcm and the
-      blue is way sky is the skyy\n\n the sky the blue is sky is".
+      The 16-H100 TP1/PP2/EP8/ETP1 run reloaded the imported BF16 checkpoint,
+      generated exactly 32 greedy tokens without an earlier EOS, and exited
+      successfully. The literal completion was " The sky appears blue because
+      Earth's atmosphere scatters shorter wavelengths of sunlight (blue and
+      violet) more effectively than longer wavelengths, a phenomenon known as
+      Rayleigh scattering".
 
   pretrain:
     H100:
