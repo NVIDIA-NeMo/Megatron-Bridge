@@ -17,6 +17,7 @@ import logging
 import os
 import socket
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Generator, Literal, Optional, Union
 
@@ -41,12 +42,24 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 logger = logging.getLogger(__name__)
 
+_LOW_MEMORY_MODEL_LOAD = ContextVar("_LOW_MEMORY_MODEL_LOAD", default=False)
+
 HF_BASED_TOKENIZERS = [
     "BertWordPieceLowerCase",
     "BertWordPieceCase",
     "GPT2BPETokenizer",
     "HuggingFaceTokenizer",
 ]
+
+
+@contextmanager
+def low_memory_model_load_context() -> Generator[None, None, None]:
+    """Build CPU-loaded models on meta and assign checkpoint tensors directly."""
+    token = _LOW_MEMORY_MODEL_LOAD.set(True)
+    try:
+        yield
+    finally:
+        _LOW_MEMORY_MODEL_LOAD.reset(token)
 
 
 def _uses_hybrid_rng_tracker(model_cfg: Any) -> bool:
@@ -107,6 +120,17 @@ def megatron_cpu_init_context(config: Any) -> Generator[None, None, None]:
     original_use_cpu_initialization = config.use_cpu_initialization
     config.use_cpu_initialization = True
 
+    try:
+        yield
+    finally:
+        config.use_cpu_initialization = original_use_cpu_initialization
+
+
+@contextmanager
+def megatron_meta_init_context(config: Any) -> Generator[None, None, None]:
+    """Disable CPU master-weight initialization while constructing on meta."""
+    original_use_cpu_initialization = config.use_cpu_initialization
+    config.use_cpu_initialization = False
     try:
         yield
     finally:
@@ -347,10 +371,14 @@ def build_and_load_model(
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
+        use_meta_init = getattr(model_cfg, "init_model_with_meta_device", False) is True
         if isinstance(model_cfg, ModelProviderMixin):
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
-            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
+            return model_cfg.provide_distributed_model(
+                wrap_with_ddp=False,
+                use_cpu_initialization=use_cpu_init and not use_meta_init,
+            )
         elif isinstance(model_cfg, ModelConfig):
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
@@ -396,7 +424,12 @@ def build_and_load_model(
             model_cfg.params_dtype = target_dtype
 
         if use_cpu_init:
-            with megatron_cpu_init_context(model_cfg):
+            init_context = (
+                megatron_meta_init_context(model_cfg)
+                if getattr(model_cfg, "init_model_with_meta_device", False) is True
+                else megatron_cpu_init_context(model_cfg)
+            )
+            with init_context:
                 model = _call_model_provider(model_cfg)
         else:
             model = _call_model_provider(model_cfg)
@@ -408,9 +441,10 @@ def build_and_load_model(
 
             load_modelopt_state(model, checkpoint_path)
 
-        maybe_state_dict = _load_model_weights_from_checkpoint(
-            checkpoint_path, model, return_state_dict=return_state_dict
-        )
+        load_kwargs = {"return_state_dict": return_state_dict}
+        if getattr(model_cfg, "init_model_with_meta_device", False) is True:
+            load_kwargs["assign_loaded_tensors"] = True
+        maybe_state_dict = _load_model_weights_from_checkpoint(checkpoint_path, model, **load_kwargs)
 
         if return_state_dict:
             del model
@@ -478,6 +512,8 @@ def load_megatron_model(
     if use_cpu_init:
         model_cfg.fp8 = None
         model_cfg.fp8_param = False
+        if _LOW_MEMORY_MODEL_LOAD.get():
+            model_cfg.init_model_with_meta_device = True
 
     # Apply model-parallel overrides if provided
     if mp_overrides:

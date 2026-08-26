@@ -34,7 +34,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from megatron.core import dist_checkpointing, tensor_parallel
-from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
+from megatron.core.dist_checkpointing.dict_utils import dict_list_map_inplace
+from megatron.core.dist_checkpointing.mapping import (
+    ShardedObject,
+    ShardedStateDict,
+    ShardedTensor,
+    ShardedTensorFactory,
+)
 from megatron.core.dist_checkpointing.serialization import StateDict
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
 from megatron.core.dist_checkpointing.strategies.fully_parallel import (
@@ -2334,6 +2340,7 @@ def _load_model_weights_from_checkpoint(
         "ignore_all",
     ] = "assume_ok_unexpected",
     strict: bool = True,
+    assign_loaded_tensors: bool = False,
 ) -> Optional[Union[StateDict, tuple[StateDict, set[str], set[str]]]]:
     """Load model weights from a checkpoint.
 
@@ -2349,6 +2356,8 @@ def _load_model_weights_from_checkpoint(
             itself. Default False.
         dist_ckpt_strictness: Determine handling of key mismatch during checkpoint load.
         strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
+        assign_loaded_tensors: Load into a meta-device model by assigning the
+            checkpoint tensors instead of copying them into existing storage.
     """
 
     state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
@@ -2365,6 +2374,9 @@ def _load_model_weights_from_checkpoint(
     pg_collection = get_pg_collection(model)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
 
+    if assign_loaded_tensors:
+        sharded_state_dict = _strip_sharded_tensor_data(sharded_state_dict)
+
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
         pg_collection = get_pg_collection(model)
@@ -2378,8 +2390,9 @@ def _load_model_weights_from_checkpoint(
     if return_state_dict:
         return state_dict
 
+    load_kwargs = {"assign": True} if assign_loaded_tensors else {}
     if len(model) == 1:
-        _load_model_state_dict(model[0], state_dict["model"], strict)
+        _load_model_state_dict(model[0], state_dict["model"], strict, **load_kwargs)
     else:
         for i in range(len(model)):
             # If there is no corresponding model in the state_dict, it will be ignored.
@@ -2387,7 +2400,7 @@ def _load_model_weights_from_checkpoint(
             model_key = "model%d" % i
             if model_key not in state_dict:
                 continue
-            _load_model_state_dict(model[i], state_dict[model_key], strict)
+            _load_model_state_dict(model[i], state_dict[model_key], strict, **load_kwargs)
 
     # The loaded state dict can own checkpoint staging tensors distinct from
     # the model parameters. Release both state-dict structures before the
@@ -2724,7 +2737,35 @@ def _process_state_dict_for_model_glu_interleaving(
     return model_state_dict
 
 
-def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
+def _strip_sharded_tensor_data(sharded_state_dict: ShardedStateDict) -> ShardedStateDict:
+    """Remove meta tensor data so distributed checkpoint load allocates CPU tensors."""
+
+    def strip_data(value: Any) -> Any:
+        if isinstance(value, ShardedTensor):
+            return value.without_data()
+        if isinstance(value, ShardedTensorFactory):
+            original_build_fn = value.build_fn
+
+            def build_without_data(key: str, data: torch.Tensor, replica_id: Any, flattened_range: Any) -> Any:
+                result = original_build_fn(key, data, replica_id, flattened_range)
+                return dict_list_map_inplace(strip_data, result)
+
+            factory_data = value.data
+            if factory_data is not None and not factory_data.is_meta:
+                factory_data = torch.empty_like(factory_data, device="meta")
+            return replace(value, data=factory_data, build_fn=build_without_data)
+        return value
+
+    return dict_list_map_inplace(strip_data, sharded_state_dict)
+
+
+def _load_model_state_dict(
+    module: torch.nn.Module,
+    state_dict: dict[str, Any],
+    strict: bool,
+    *,
+    assign: bool = False,
+) -> None:
     """Helper function to load state dict with fallback for missing extra states."""
     if HAVE_MEGATRON_FSDP and isinstance(module, MegatronFSDP):
         # Because the state dictionary was generated from the nested module of Megatron-FSDP,
@@ -2732,12 +2773,13 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
         # In Megatron-LM, handled via adapter: FullyShardedDataParallel.load_state_dict().
         for key in list(state_dict.keys()):
             state_dict[f"module.{key}"] = state_dict.pop(key)
+    load_kwargs = {"assign": True} if assign else {}
     try:
-        module.load_state_dict(state_dict, strict=strict)
+        module.load_state_dict(state_dict, strict=strict, **load_kwargs)
     except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
-            load_return = module.load_state_dict(state_dict, strict=False)
+            load_return = module.load_state_dict(state_dict, strict=False, **load_kwargs)
             missing = load_return.missing_keys
             unexpected = load_return.unexpected_keys
             non_extra = [k for k in missing + unexpected if not k.endswith("._extra_state")]

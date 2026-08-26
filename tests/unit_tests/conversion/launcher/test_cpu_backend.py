@@ -5,6 +5,7 @@
 import importlib.util
 import sys
 import types
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -37,16 +38,27 @@ def _load_cpu_backend():
             calls.append(("from_auto_config", args, kwargs))
             return types.SimpleNamespace(hf_pretrained="checkpoint-config")
 
+    @contextmanager
+    def low_memory_model_load_context():
+        calls.append(("low_memory_model_load", "enter"))
+        try:
+            yield
+        finally:
+            calls.append(("low_memory_model_load", "exit"))
+
     modules = {
         "megatron": types.ModuleType("megatron"),
         "megatron.bridge": types.ModuleType("megatron.bridge"),
         "megatron.bridge.models": types.ModuleType("megatron.bridge.models"),
         "megatron.bridge.models.hf_pretrained": types.ModuleType("megatron.bridge.models.hf_pretrained"),
         "megatron.bridge.models.hf_pretrained.utils": types.ModuleType("megatron.bridge.models.hf_pretrained.utils"),
+        "megatron.bridge.training": types.ModuleType("megatron.bridge.training"),
+        "megatron.bridge.training.model_load_save": types.ModuleType("megatron.bridge.training.model_load_save"),
         "utils": types.ModuleType("utils"),
     }
     modules["megatron.bridge"].AutoBridge = AutoBridge
     modules["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = lambda **kwargs: kwargs["trust_remote_code"]
+    modules["megatron.bridge.training.model_load_save"].low_memory_model_load_context = low_memory_model_load_context
     modules["utils"].parse_dtype = lambda value: f"dtype:{value}"
     modules["utils"].prepare_output_directory = lambda *args, **kwargs: calls.append(
         ("prepare_output_directory", args, kwargs)
@@ -130,6 +142,7 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
             (str(checkpoint), "hf/model@0123456789abcdef"),  # pragma: allowlist secret
             {"trust_remote_code": False},
         ),
+        ("low_memory_model_load", "enter"),
         (
             "export_ckpt",
             "checkpoint-config",
@@ -140,4 +153,5 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
                 "strict": True,
             },
         ),
+        ("low_memory_model_load", "exit"),
     ]
