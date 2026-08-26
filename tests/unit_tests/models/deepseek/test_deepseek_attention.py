@@ -189,6 +189,10 @@ class TestSpecBuilderContract:
         assert "vp_stage" in inspect.signature(bound).parameters
 
 
+@pytest.mark.skipif(
+    not hasattr(MLASelfAttention, "_resolve_qk_norm_config"),
+    reason="This MCore pin consumes MLA submodule specs directly in __init__",
+)
 class TestLocalBackend:
     """The local backend cannot express this architecture; say so, and say it clearly."""
 
