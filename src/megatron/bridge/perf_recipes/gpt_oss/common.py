@@ -21,12 +21,11 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
-def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) -> None:
-    """Swap the recipe's flex dispatcher for NCCL EP, static-shape on MXFP8 and eager on BF16.
+def _enable_ncclep_bf16(cfg: ConfigContainer) -> None:
+    """Swap the recipe's flex dispatcher for eager NCCL EP on BF16.
 
     Only the dispatch stack changes. Parallelism, batch sizes, precision, recompute and the CUDA
-    graph mode are left exactly as the parent recipe set them, so each variant stays comparable
-    to the HybridEP/DeepEP recipe it derives from.
+    graph mode are left exactly as the parent recipe set them.
     """
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
@@ -38,45 +37,17 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = moe_a2a_overlap
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     cfg.comm_overlap.delay_wgrad_compute = False
 
     cfg.model.offload_modules = []
     cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
 
-    if mxfp8:
-        # Static shapes hand the experts the whole receive buffer, so the grouped GEMM has to
-        # consume the ragged per-expert counts on device and never read the slack tail. That is
-        # the CuTe DSL fused grouped MLP, which exists only for MXFP8/FP4.
-        cfg.model.moe_grouped_gemm = True
-        cfg.model.use_transformer_engine_op_fuser = True
-        cfg.model.moe_mlp_glu_interleave_size = 32
-        cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
-        cfg.model.moe_router_padding_for_quantization = True
-        # Matches the HybridEP parent's 1.5 so this arm differs from its baseline in the dispatcher
-        # alone. The receive buffer is capacity_factor x the ideal token count and every MoE
-        # activation saved for backward inherits that padding, so 1.5 costs memory a tighter factor
-        # would not; PagedStashRunner still replays the step dropless and grows the budget if a
-        # routing ever exceeds it.
-        cfg.model.moe_expert_rank_capacity_factor = 1.5
-        # The stash pool is sized independently of the capacity factor, so it is a variable of its
-        # own. Track the HybridEP parent's 1.2 / 1.0 rather than undersizing the pool here, which
-        # would make this arm look cheaper on memory for a reason that has nothing to do with the
-        # dispatcher.
-        cfg.model.moe_paged_stash = True
-        cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-        cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    else:
-        # BF16 has no CuTe DSL fused grouped MLP. Forcing the op fuser here makes TE reject
-        # GPT-OSS's clamped quick-GeLU outright ("ScaledClampedQGeGLU(...) requires the fused
-        # grouped MLP path") when moe_act recompute is on, and run ~9x slower when it is not.
-        # Run eager NCCL EP instead: TE sizes the receive buffer per step, which needs neither the
-        # fused grouped GEMM nor a static capacity factor, and keeps this arm a clean
-        # dispatcher-only ablation against the parent recipe.
-        cfg.model.use_transformer_engine_op_fuser = False
-        cfg.model.moe_expert_rank_capacity_factor = None
-        # Paged stashing requires the capacity factor, and only captures quantized grouped tensors.
-        cfg.model.moe_paged_stash = False
+    # GPT-OSS's clamped quick-GeLU does not have a BF16 op-fuser kernel. Eager NCCL EP sizes the
+    # receive buffer per step, so it needs neither the op fuser nor a static capacity factor.
+    cfg.model.use_transformer_engine_op_fuser = False
+    cfg.model.moe_expert_rank_capacity_factor = None
+    cfg.model.moe_paged_stash = False
 
 
 def _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg: ConfigContainer) -> None:

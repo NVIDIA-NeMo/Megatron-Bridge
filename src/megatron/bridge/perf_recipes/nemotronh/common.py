@@ -63,8 +63,8 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
     return cfg
 
 
-def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) -> None:
-    """Enable static-shape NCCL EP while preserving the recipe's partial TE graphs."""
+def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
+    """Enable static-shape NCCL EP for an MXFP8 recipe."""
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
     cfg.model.moe_shared_expert_overlap = False
@@ -73,34 +73,22 @@ def _enable_ncclep(cfg: ConfigContainer, *, mxfp8: bool, moe_a2a_overlap: bool) 
     cfg.model.moe_flex_dispatcher_num_sms = None
     cfg.model.moe_ncclep_zero_copy = False
 
-    # Kept on for BF16 as well as MXFP8, deliberately. The CuTe DSL fused grouped MLP behind
-    # NVTE_CUTEDSL_FUSED_GROUPED_MLP is MXFP8/FP4-only, but on BF16 the op fuser falls back to the
-    # GroupedLinear grouped-tensor path, which these SwiGLU models do execute and which is a net
-    # ~5-8 GB memory *saving* over the unfused path -- enough that dropping it OOMs the GB200 BF16
-    # runs. GPT-OSS is the exception: its clamped quick-GeLU has no BF16 fuser kernel, so
-    # gpt_oss/common.py runs BF16 eager instead.
     cfg.model.moe_grouped_gemm = True
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
 
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = moe_a2a_overlap
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.comm_overlap.delay_wgrad_compute = False
 
     cfg.model.offload_modules = []
-    # The static receive buffer is sized at capacity_factor x the ideal token count, and every MoE
-    # activation saved for backward inherits that padding. These recipes force-balance the router,
-    # so the measured worst case is only 1.008x ideal; 1.5 padded all of it by 50%. PagedStashRunner
-    # replays the step dropless and grows the budget if a routing ever exceeds this.
     cfg.model.moe_expert_rank_capacity_factor = 1.05
-    # Paged stashing only captures TE's quantized grouped tensors, so it is a no-op outside MXFP8.
-    cfg.model.moe_paged_stash = mxfp8
+    cfg.model.moe_paged_stash = True
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
     cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
     cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
-    if mxfp8:
-        cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_router_padding_for_quantization = True
 
 
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:

@@ -23,17 +23,14 @@ import torch
 
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_ncclep_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_ncclep_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
     nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config,
     nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
-    nemotron_3_nano_pretrain_8gpu_gb300_bf16_ncclep_config,
     nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config,
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
@@ -57,18 +54,6 @@ _GB200_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config,
 )
 _GB200_FSDP_RECIPES = (nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,)
-_GB200_NCCLEP_RECIPES = (
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_ncclep_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_ncclep_config,
-)
-_NEMOTRON_3_NANO_NCCLEP_RECIPES = (
-    nemotron_3_nano_pretrain_8gpu_gb300_bf16_ncclep_config,
-    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config,
-)
-_NCCLEP_RECIPES = (
-    *_NEMOTRON_3_NANO_NCCLEP_RECIPES,
-    *_GB200_NCCLEP_RECIPES,
-)
 _HYBRID_EP_ENV_NAMES = {
     "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
     "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
@@ -117,10 +102,6 @@ _NEMOTRON_NANO_PERF_FACTORIES = (
     ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config"),
     ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config"),
     ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
-    (
-        "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
-        "nemotron_3_nano_pretrain_8gpu_gb300_bf16_ncclep_config",
-    ),
     ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"),
     (
         "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
@@ -144,15 +125,7 @@ _NEMOTRON_NANO_PERF_FACTORIES = (
     ),
     (
         "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
-        "nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_ncclep_config",
-    ),
-    (
-        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config",
-    ),
-    (
-        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
-        "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_ncclep_config",
     ),
     (
         "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
@@ -187,7 +160,7 @@ def test_standard_perf_recipes_do_not_expose_mtp_flag(recipe_factory: Callable[[
 
 @pytest.mark.parametrize(
     "recipe_factory",
-    (*_H100_RECIPES, *_GB200_RECIPES, *_GB200_FSDP_RECIPES, *_GB200_NCCLEP_RECIPES),
+    (*_H100_RECIPES, *_GB200_RECIPES, *_GB200_FSDP_RECIPES),
     ids=lambda recipe: recipe.__name__,
 )
 def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) -> None:
@@ -200,18 +173,16 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.keep_mtp_spec_in_bf16 is True
     assert cfg.model.mtp_loss_scaling_factor == 0.3
     assert cfg.model.moe_router_force_load_balancing is True
-    expected_dispatcher = "ncclep" if recipe_factory in _GB200_NCCLEP_RECIPES else "hybridep"
-    assert cfg.model.moe_flex_dispatcher_backend == expected_dispatcher
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.hf_model_id == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
 
 
-@pytest.mark.parametrize("recipe_factory", _NCCLEP_RECIPES, ids=lambda recipe: recipe.__name__)
-def test_ncclep_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContainer]) -> None:
-    """NCCL EP variants use static fused dispatch with partial TE graphs and no HybridEP environment."""
-    cfg = recipe_factory()
+def test_nemotron_3_nano_gb300_mxfp8_ncclep_defaults() -> None:
+    """The MXFP8 example uses static fused NCCL EP and no HybridEP environment."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config()
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
@@ -237,21 +208,10 @@ def test_ncclep_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContaine
     assert cfg.env_vars.keys().isdisjoint(_HYBRID_EP_ENV_NAMES)
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
 
-    if recipe_factory in _NEMOTRON_3_NANO_NCCLEP_RECIPES:
-        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
-    else:
-        # MCore A2A overlap supports at most one MTP layer; Lightning preserves MTP=2.
-        assert cfg.model.mtp_num_layers == 2
-        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
-
-    if "fp8mx" in recipe_factory.__name__:
-        assert cfg.model.moe_router_padding_for_quantization is True
-        assert cfg.model.moe_paged_stash is True
-    else:
-        assert cfg.model.moe_router_padding_for_quantization is False
-        # Paged stashing only captures TE's quantized grouped tensors, so it is a no-op in BF16.
-        assert cfg.model.moe_paged_stash is False
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.moe_paged_stash is True
 
 
 @pytest.mark.parametrize(
