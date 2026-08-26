@@ -4,17 +4,19 @@
 title: deepseek_v4_flash
 summary: >
   Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300
-  use their tuned canonical 128-GPU MXFP8 recipes.
-  Timing and throughput metrics from functional training items are sanity
-  checks rather than optimized performance results.
+  use tuned canonical 128-GPU MXFP8 recipes, but both evidence leaves are
+  unverified. Historical functional and performance runs cannot support public
+  model-card claims because their recorded Bridge dependency graphs are
+  incompatible with this model.
 
-  Historical DeepSeek-V4-Flash results cover training and checkpoint resume on
-  GB200, but the conversion claims are not reproducible from the recorded
-  public Bridge revision. Both that revision and current main pin Megatron-Core
-  revisions that reject experimental_attention_variant=dsv4_hybrid before
-  tensor conversion begins. CPU and GPU conversion therefore remain unverified
-  until Bridge pins a compatible upstream Megatron-Core revision and the exact
-  public commands are rerun. Optimized Megatron
+  Historical DeepSeek-V4-Flash results were recorded for training, checkpoint
+  resume, and performance on GB200 and GB300, but none of those claims are
+  reproducible from their recorded public Bridge revisions. The top-level
+  revision pins Megatron-Core 6513e3e23, while the GB300 performance override
+  pins cd4afffa6; both reject experimental_attention_variant=dsv4_hybrid while
+  finalizing the provider. Conversion and all training leaves therefore remain
+  unverified until Bridge pins a compatible upstream Megatron-Core revision and
+  the exact public commands are rerun. Optimized Megatron
   KV-cache inference is unavailable for DSv4HybridAttention, while the
   maintained non-cached full-prefix compatibility path remains unverified for
   this model. PEFT also remains unverified because no exact model recipe is
@@ -22,10 +24,11 @@ summary: >
   and the Bridge fix for stream_weights_megatron_to_hf None-task handling.
 
   Known issues tracked for follow-up PRs:
-  - The recorded Bridge commit pins Megatron-Core 6513e3e23, which does not
-    implement dsv4_hybrid. Current main pins 731b791469, which also lacks it.
-    Earlier conversion evidence relied on an unrecorded Megatron-Core patch and
-    cannot support a verified model-card leaf.
+  - The recorded Bridge commit pins Megatron-Core 6513e3e23, and the GB300
+    performance override pins cd4afffa6; neither implements dsv4_hybrid.
+    Current main pins 731b791469, which also lacks it. Earlier conversion and
+    training evidence relied on an unrecorded Megatron-Core patch and cannot
+    support a verified model-card leaf.
   - DSv4ExpertGatedMLPMapping: moe_grouped_gemm=True export produces malformed expert
     weight shapes due to apply_swiglu_sharded_factory shard reassembly in the export path.
     Workaround: use moe_grouped_gemm=False for export. Training with moe_grouped_gemm=True
@@ -44,11 +47,10 @@ verification_index:
       - manual_forward_pass
   training:
     GB200:
-      verified: [pretrain, sft, sft_long_context, sft_export_inference, checkpoint_resume]
-      unverified: [peft]
+      unverified: [pretrain, sft, sft_long_context, sft_export_inference, peft, checkpoint_resume]
   performance:
-    GB200: verified
-    GB300: verified
+    GB200: unverified
+    GB300: unverified
 
 model:
   hf_id: deepseek-ai/DeepSeek-V4-Flash
@@ -167,7 +169,7 @@ items:
 
   pretrain:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features: {}
       command: >
@@ -186,24 +188,23 @@ items:
         --save_interval 50
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=60
-      last_verified: 2026-08-04
+      last_verified: null
       metrics:
-        initial_loss: 12.64786
-        final_loss: 6.05023
-        last_10_steps_step_time_ms_avg: 10415.760
-        last_10_steps_model_tflops_per_gpu_avg: 142.910
-        last_10_steps_tokens_per_second_per_gpu_avg: 1573.001
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        On 64 GB200 (16 nodes x 4 GPUs), the recipe runs with TP=1/PP=8/EP=8/CP=1/DP=1
-        and GBS/MBS 256/1. Data is RP2 tokenized with Llama SentencePiece (token IDs
-        0-31999 are within DSV4 vocab 0-129279; NullTokenizer is used). The run
-        completes 100 steps from random initialisation with finite loss, no skipped or
-        NaN iterations, and complete checkpoints at steps 50 and 100. Note: set
-        dataset.num_workers=0 to avoid an NCCL pipeline timeout during data loading.
+        The recorded public dependency pin rejects dsv4_hybrid before model
+        construction. Promotion requires rerunning all 100 optimizer steps on a
+        compatible public dependency graph with finite loss, no skipped or NaN
+        iterations, a persisted resolved configuration, and complete checkpoints
+        at steps 50 and 100.
 
   sft:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -232,27 +233,23 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-07
+      last_verified: null
       metrics:
-        initial_loss: 0.94383
-        final_loss: 0.28370
-        last_10_steps_step_time_ms_avg: 13806.500
-        last_10_steps_model_tflops_per_gpu_avg: 13.620
-        last_10_steps_tokens_per_second_per_gpu_avg: 148.336
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        On 64 GB200 (16 nodes x 4 GPUs), TP=1/PP=4/EP=8/CP=2/DP=1, GBS/MBS 128/1.
-        OpenMathInstruct-2 thinking data with offline packing, seq_length=1024.
-        Full recompute (granularity=full) is required to fit in memory at seq=1024
-        with CP=2. HybridEP dispatcher and DSA kernel fusion are enabled via the
-        GB200-specific recipe. The run completes 100 steps with finite LM and MTP
-        losses, no skipped or NaN iterations, and a complete step-100 checkpoint.
-        moe_grouped_gemm=False is preserved for export compatibility.
-        dist.distributed_timeout_minutes must be 180 or above to allow offline data
-        packing (approximately 63 minutes) before training begins.
+        The recorded public dependency pin rejects dsv4_hybrid before model
+        construction. Promotion requires a compatible public pin and a fresh
+        100-step packed SFT run with finite LM and MTP losses, no skipped or NaN
+        iterations, a persisted resolved configuration, and a complete step-100
+        checkpoint.
 
   sft_export_inference:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: sft
       commands:
@@ -270,17 +267,16 @@ items:
           --hf-model work/model-verification/dsv4-flash/sft-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template --disable-thinking
-      last_verified: 2026-08-06
+      last_verified: null
       expected_result: >
-        The exported BF16 SFT checkpoint reloads successfully as DeepseekV4ForCausalLM.
-        Two independent greedy runs produce byte-identical token IDs and exactly 32 new
-        tokens with this literal completion: "Paris is important to France because it is
-        the country's capital and a major center for politics, culture, and economy. It
-        is also a symbol of French history"
+        This item depends on the unverified SFT leaf and the same incompatible
+        dependency graph. After SFT is rerun on a compatible public pin, the
+        step-100 checkpoint must export, strictly reload as
+        DeepseekV4ForCausalLM, and complete one deterministic greedy generation.
 
   sft_long_context:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -309,18 +305,18 @@ items:
         ddp.overlap_grad_reduce=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=180
-      last_verified: 2026-08-07
+      last_verified: null
       metrics:
-        initial_loss: 0.94383
-        final_loss: 0.28370
-        last_10_steps_step_time_ms_avg: 13806.500
-        last_10_steps_model_tflops_per_gpu_avg: 13.620
-        last_10_steps_tokens_per_second_per_gpu_avg: 148.336
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Same run as sft.GB200. CP=2 with contiguous partitioning and offline-packed
-        OpenMathInstruct-2 at seq_length=1024 demonstrates sequence packing and
-        context parallelism working together over 100 training steps with finite loss
-        and no skipped or NaN iterations.
+        The recorded public dependency pin rejects dsv4_hybrid before model
+        construction. Promotion requires a compatible public pin and a fresh
+        100-step run demonstrating CP=2 contiguous partitioning together with
+        offline packing, finite loss, and no skipped or NaN iterations.
 
   peft:
     GB200:
@@ -342,7 +338,7 @@ items:
 
   checkpoint_resume:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: pretrain
       command: >
@@ -363,30 +359,28 @@ items:
         --save_interval 50 checkpoint.ckpt_step=50
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=60
-      last_verified: 2026-08-04
+      last_verified: null
       metrics:
-        initial_loss: 6.76733
-        final_loss: 6.05425
-        last_10_steps_step_time_ms_avg: 14648.110
-        last_10_steps_model_tflops_per_gpu_avg: 101.560
-        last_10_steps_tokens_per_second_per_gpu_avg: 1118.506
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: true
+        sentinels_match: false
       expected_result: >
-        The command restores optimizer, scheduler, data-order, and RNG state from
-        pretrain-ref step 50 and runs steps 51-100 in a separate output root.
-        Step-51 loss 6.767332 matches the uninterrupted reference 6.767334 exactly
-        (absolute delta 0.000002, 0.00003%). Step-100 loss 6.054250 matches reference
-        6.050228 with delta 0.004022 (0.066%), within the declared 1% tolerance.
-        Both sentinels match and all five metrics are recorded.
+        This item depends on the unverified pretrain leaf. After pretraining is
+        rerun on a compatible public dependency graph, the command must resume
+        directly from step 50 and match the uninterrupted step-51 and step-100
+        losses within the declared tolerance.
 
   pretrain_performance:
     GB200:
-      status: verified
+      status: unverified
       precision: fp8_mx
       command: >
         ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
@@ -397,43 +391,37 @@ items:
         checkpoint.exit_on_missing_checkpoint=false
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=120
-      last_verified: 2026-08-06
+      last_verified: null
       metrics:
-        initial_loss: 13.58750
-        final_loss: 3.62683
-        last_10_steps_step_time_ms_avg: 8134.600
-        last_10_steps_model_tflops_per_gpu_avg: 731.400
-        last_10_steps_tokens_per_second_per_gpu_avg: 8056.450
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        On 128 GB200 (32 nodes x 4 GPUs, --segment=16 for NVLink locality),
-        PP=1/EP=64/CP=1/TP=1/DP=2, GBS/MBS 2048/1, FP8-MX with HybridEP dispatcher
-        and full-iteration CUDA graphs. The 50-step run completes with finite losses,
-        no skipped or NaN iterations, and all five metrics recorded. First iteration
-        takes approximately 24 minutes for CUDA graph compilation and kernel warmup;
-        subsequent iterations run at approximately 8.1 seconds per step at steady state.
-        The --segment=16 flag is required to ensure nodes are allocated within NVLink
-        domains for MNNVL communication.
+        The recorded public dependency pin rejects dsv4_hybrid before model
+        construction. Promotion requires a fresh 50-step canonical GB200
+        performance run on a compatible public pin with finite losses, no skipped
+        or NaN iterations, persisted resolved configuration, and complete metrics.
 
     GB300:
-      status: verified
+      status: unverified
       precision: fp8_mx
-      bridge_commit: c93251151adeeadbae3ff2a2bf5ee7a1c34cff01  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --wait --nodes 32 --gpus-per-node 4
         --recipe deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config
         --mode pretrain --max_steps 50 --seq_length 4096
         logger.save_config_filepath=work/model-verification/deepseek-v4-flash/gb300-performance/ConfigContainer.yaml
-      last_verified: 2026-08-13
+      last_verified: null
       metrics:
-        initial_loss: 12.59616
-        final_loss: 3.160061
-        last_10_steps_step_time_ms_avg: 7840.320
-        last_10_steps_model_tflops_per_gpu_avg: 759.280
-        last_10_steps_tokens_per_second_per_gpu_avg: 8358.842
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        On exactly 128 GB300s, the canonical MXFP8 mock-data recipe completes
-        exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 2048/1,
-        and sequence length 4096. All 50 keyed rows have finite loss with zero
-        skipped or NaN iterations. Loss moves from 12.59616 to 3.160061; the
-        final ten steps average 7840.320 ms, 759.280 TFLOP/s/GPU, and 8358.842
-        tokens/s/GPU. The resolved configuration persists.
+        The prior override commit pins Megatron-Core cd4afffa6, which also
+        rejects dsv4_hybrid before model construction. Promotion requires a
+        fresh 50-step canonical GB300 performance run on a compatible public
+        pin with finite losses, no skipped or NaN iterations, persisted resolved
+        configuration, and complete metrics.
