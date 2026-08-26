@@ -105,8 +105,8 @@ items:
       checkpoint. All 6,243 source keys and shapes match across 31,577,940,288
       values. The 69 source FP32 tensors cast to BF16 are the same 46 mixer
       A_log and D tensors plus 23 per-layer mixer gate
-      e_score_correction_bias tensors. The legacy distributed GPU import path
-      materialized those gate biases in BF16, while the CPU export source kept
+      e_score_correction_bias tensors. The legacy distributed GPU export model
+      wrapper downcast those gate biases to BF16, while the CPU export preserved
       them in FP32; all 69 equal the export exactly after this declared cast,
       and every remaining tensor matches exactly at zero tolerance. Native
       loading succeeds as NemotronHForCausalLM with no missing, unexpected,
