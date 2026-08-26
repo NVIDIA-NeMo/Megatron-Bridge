@@ -63,6 +63,7 @@ def _load_cpu_backend():
     modules["utils"].prepare_output_directory = lambda *args, **kwargs: calls.append(
         ("prepare_output_directory", args, kwargs)
     )
+    modules["utils"].resolve_hf_model_revision = lambda model, revision: f"{model}@{revision}" if revision else model
 
     previous_modules = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)
@@ -116,6 +117,7 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
 
     module.export_checkpoint(
         hf_model="hf/model",
+        hf_revision="0123456789abcdef",  # pragma: allowlist secret
         megatron_path=str(checkpoint),
         hf_path="/hf-export",
         show_progress=False,
@@ -130,8 +132,16 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
             ("/hf-export",),
             {"overwrite": False, "source_paths": [str(checkpoint), "hf/model"]},
         ),
-        ("from_hf_pretrained", ("hf/model",), {"trust_remote_code": False}),
-        ("from_auto_config", (str(checkpoint), "hf/model"), {"trust_remote_code": False}),
+        (
+            "from_hf_pretrained",
+            ("hf/model",),
+            {"trust_remote_code": False, "revision": "0123456789abcdef"},  # pragma: allowlist secret
+        ),
+        (
+            "from_auto_config",
+            (str(checkpoint), "hf/model@0123456789abcdef"),  # pragma: allowlist secret
+            {"trust_remote_code": False},
+        ),
         ("low_memory_model_load", "enter", {"mmap_directory": Path("/")}),
         (
             "export_ckpt",
@@ -145,3 +155,26 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
         ),
         ("low_memory_model_load", "exit"),
     ]
+
+
+def test_export_honors_file_backed_staging_directory(tmp_path, monkeypatch):
+    module, calls = _load_cpu_backend()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "run_config.yaml").touch()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    monkeypatch.setenv("MEGATRON_BRIDGE_CPU_EXPORT_MMAP_DIRECTORY", str(staging))
+
+    module.export_checkpoint(
+        hf_model="hf/model",
+        hf_revision=None,
+        megatron_path=str(checkpoint),
+        hf_path=str(tmp_path / "hf-export"),
+        show_progress=False,
+        strict=True,
+        trust_remote_code=False,
+        overwrite=False,
+    )
+
+    assert ("low_memory_model_load", "enter", {"mmap_directory": staging}) in calls

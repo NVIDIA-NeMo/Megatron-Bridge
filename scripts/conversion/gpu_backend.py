@@ -21,7 +21,7 @@ from pathlib import Path
 import torch
 import yaml
 from rich.console import Console
-from utils import parse_dtype, prepare_output_directory, validate_output_path
+from utils import parse_dtype, prepare_output_directory, resolve_hf_model_revision, validate_output_path
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
@@ -338,6 +338,7 @@ def import_checkpoint(
 def export_checkpoint(
     *,
     hf_model: str,
+    hf_revision: str | None,
     megatron_path: str,
     hf_path: str,
     tp: int,
@@ -359,6 +360,7 @@ def export_checkpoint(
 
     Args:
         hf_model: Hugging Face model ID or local config reference.
+        hf_revision: Immutable Hugging Face Hub revision to load.
         megatron_path: Source Megatron checkpoint path.
         hf_path: Destination Hugging Face checkpoint path.
         tp: Tensor parallelism size.
@@ -389,14 +391,17 @@ def export_checkpoint(
     print_rank_0(f"Distributed {device_label} export: {megatron_path} -> {hf_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
+    revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=trusted,
         torch_dtype=dtype,
+        **revision_kwargs,
     )
+    reference_model = resolve_hf_model_revision(hf_model, hf_revision)
     checkpoint_config_bridge = AutoBridge.from_auto_config(
         megatron_path,
-        hf_model,
+        reference_model,
         trust_remote_code=trusted,
     )
     # Preserve the reference wrapper's streaming state source and shard map while

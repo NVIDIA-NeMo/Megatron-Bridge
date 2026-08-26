@@ -184,6 +184,11 @@ class TestImportHfToMegatron:
             lambda *args, **kwargs: prepared_outputs.append((args, kwargs)),
         )
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
+        monkeypatch.setattr(
+            cli,
+            "resolve_hf_model_revision",
+            lambda model, revision: f"{model}@{revision}" if revision else model,
+        )
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
 
         cli.import_checkpoint.__wrapped__(
@@ -261,6 +266,11 @@ class TestExportMegatronToHf:
             lambda *args, **kwargs: prepared_outputs.append((args, kwargs)),
         )
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
+        monkeypatch.setattr(
+            cli,
+            "resolve_hf_model_revision",
+            lambda model, revision: f"{model}@{revision}" if revision else model,
+        )
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
         monkeypatch.setattr(cli.AutoBridge, "from_auto_config", fake_from_auto_config)
 
@@ -268,6 +278,7 @@ class TestExportMegatronToHf:
         checkpoint_path.mkdir()
         cli.export_checkpoint.__wrapped__(
             hf_model="hf",
+            hf_revision="0123456789abcdef",  # pragma: allowlist secret
             megatron_path=str(checkpoint_path),
             hf_path="/hf-export",
             tp=1,
@@ -291,10 +302,14 @@ class TestExportMegatronToHf:
 
         reference_call = next(call for call in calls if call[0] == "from_hf_pretrained")
         assert reference_call[1] == ("hf",)
-        assert reference_call[2] == {"trust_remote_code": True, "torch_dtype": torch.bfloat16}
+        assert reference_call[2] == {
+            "trust_remote_code": True,
+            "torch_dtype": torch.bfloat16,
+            "revision": "0123456789abcdef",  # pragma: allowlist secret
+        }
 
         bridge_call = next(call for call in calls if call[0] == "from_auto_config")
-        assert bridge_call[1] == (str(checkpoint_path), "hf")
+        assert bridge_call[1] == (str(checkpoint_path), "hf@0123456789abcdef")  # pragma: allowlist secret
         assert bridge_call[2] == {"trust_remote_code": True}
         assert FakeStateBackedBridge.hf_pretrained is reference_pretrained
         assert reference_pretrained.config is checkpoint_config
