@@ -159,6 +159,8 @@ version = "1.0.0+b7643bd"
 requires-dist = []
 
 # Lane-specific metadata for VCS packages that otherwise compile CUDA extensions during lock.
+# Transformer Engine 2.14 at f031cf87 is the MCore dev source selected and
+# reviewed upstream by NVIDIA/Megatron-LM#4332 (commit ac6ca5b299dad4b82c9805077e64dda23fb25784).
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
 version = "2.14.0+f031cf87"
