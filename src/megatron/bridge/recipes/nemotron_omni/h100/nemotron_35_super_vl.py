@@ -131,6 +131,10 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+    # Dynamic-resolution VLM batches leave shape-specific cached allocations
+    # after the optimizer step. Release those blocks before the next forward
+    # pass so they cannot strand otherwise reusable memory.
+    cfg.train.empty_unused_memory_level = 2
     return cfg
 
 
