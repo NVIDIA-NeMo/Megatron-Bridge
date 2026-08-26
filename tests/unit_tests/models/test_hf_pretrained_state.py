@@ -298,6 +298,46 @@ def test_distributed_save_generator_writes_shard_before_generator_is_exhausted(t
     ]
 
 
+def test_distributed_save_defers_single_shard_per_saver_until_generator_is_exhausted(tmp_path, monkeypatch) -> None:
+    first_shard = "model-00001-of-00002.safetensors"
+    second_shard = "model-00002-of-00002.safetensors"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            "model.first": first_shard,
+            "model.second": second_shard,
+        },
+    )
+    source = SafeTensorsStateSource(tmp_path)
+    saved_shards: list[tuple[str, set[str]]] = []
+
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    def gather_rank_zero(output: list[object | None], value: object) -> None:
+        output[0] = value
+        output[1] = (0, 0, None, ())
+
+    def record_save(tensors: dict[str, torch.Tensor], output_file: str | Path) -> None:
+        saved_shards.append((str(output_file), set(tensors)))
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_rank_zero)
+    monkeypatch.setattr("safetensors.torch.save_file", record_save)
+
+    def tensors() -> Iterator[tuple[str, torch.Tensor]]:
+        yield "model.first", torch.ones(1)
+        assert saved_shards == []
+        yield "model.second", torch.full((1,), 2.0)
+        assert saved_shards == []
+
+    source.save_generator(tensors(), tmp_path / "output", distributed_save=True)
+
+    assert saved_shards == [(str(tmp_path / "output" / first_shard), {"model.first"})]
+
+
 def test_distributed_save_strict_rejects_incomplete_multi_key_shard(tmp_path, monkeypatch) -> None:
     shard_filename = "model-00001-of-00001.safetensors"
     _write_safetensors_index(

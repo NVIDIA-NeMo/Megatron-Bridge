@@ -1009,6 +1009,11 @@ class SafeTensorsStateSource(StateSource):
         else:
             all_filenames = []
 
+        # When every saver owns at most one shard, keep that shard buffered
+        # until the generator is drained. Writing inside the lockstep generator
+        # would otherwise serialize all ranks behind each saver rank's I/O.
+        defer_complete_shard_writes = is_saver_rank and num_savers >= len(all_filenames)
+
         # Distribute files among saver ranks (one per node)
         if is_saver_rank:
             assigned_filenames = [fname for idx, fname in enumerate(all_filenames) if idx % num_savers == saver_index]
@@ -1026,6 +1031,7 @@ class SafeTensorsStateSource(StateSource):
         files_to_save = {fname: filename_to_keys_map[fname] for fname in assigned_filenames}
         remaining_keys_by_file = {fname: set(keys) for fname, keys in files_to_save.items()}
         buffered_tensors: Dict[str, torch.Tensor] = {}
+        deferred_shards: Dict[str, Dict[str, torch.Tensor]] = {}
         local_saved_tensor_bytes = 0
         local_saved_filenames: Set[str] = set()
         local_export_error: str | None = None
@@ -1088,12 +1094,28 @@ class SafeTensorsStateSource(StateSource):
                 if not remaining_keys:
                     keys_for_file = files_to_save[fname]
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
-                    if write_shard(fname, tensors_to_save):
+                    if defer_complete_shard_writes:
+                        deferred_shards[fname] = tensors_to_save
                         for key in keys_for_file:
                             del buffered_tensors[key]
                         del files_to_save[fname]
                         del remaining_keys_by_file[fname]
-                    del tensors_to_save
+                    else:
+                        if write_shard(fname, tensors_to_save):
+                            for key in keys_for_file:
+                                del buffered_tensors[key]
+                            del files_to_save[fname]
+                            del remaining_keys_by_file[fname]
+                        del tensors_to_save
+
+        # All ranks have now consumed the conversion generator, so saver ranks
+        # can write their single assigned shard concurrently without stalling
+        # collectives needed by other ranks.
+        if deferred_shards:
+            for fname, tensors_to_save in deferred_shards.items():
+                if not write_shard(fname, tensors_to_save):
+                    break
+            deferred_shards.clear()
 
         missing_keys = set().union(*remaining_keys_by_file.values()) if remaining_keys_by_file else set()
         if is_saver_rank and missing_keys:
