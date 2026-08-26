@@ -310,6 +310,56 @@ class TestLoadMegatronModel:
 
         assert built_layer_count == provider.num_layers
 
+    @pytest.mark.parametrize(
+        ("mp_overrides", "expect_saved_layout"),
+        [
+            ({"pipeline_model_parallel_size": 2}, True),
+            ({"pipeline_model_parallel_size": 4}, False),
+            (
+                {
+                    "pipeline_model_parallel_size": 2,
+                    "pipeline_model_parallel_layout": None,
+                },
+                False,
+            ),
+        ],
+        ids=["same-pp", "changed-pp", "explicit-clear"],
+    )
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_pipeline_override_does_not_reuse_incompatible_saved_layout(
+        self,
+        mock_load_model_config,
+        mock_build_and_load_model,
+        mp_overrides,
+        expect_saved_layout,
+    ):
+        """A saved PP layout is retained only for a compatible requested topology."""
+        provider = GPTModelProvider(
+            num_layers=4,
+            hidden_size=16,
+            num_attention_heads=2,
+            pipeline_model_parallel_size=2,
+            pipeline_model_parallel_layout=[
+                ["embedding", "decoder", "decoder"],
+                ["decoder", "decoder", "loss"],
+            ],
+        )
+        mock_load_model_config.return_value = (provider, None)
+
+        def _finalized_layout(checkpoint_path, model_cfg, *args):
+            model_cfg.finalize()
+            return model_cfg.pipeline_model_parallel_layout
+
+        mock_build_and_load_model.side_effect = _finalized_layout
+
+        result = load_megatron_model("/ckpt", mp_overrides=mp_overrides)
+
+        if expect_saved_layout:
+            assert isinstance(result, PipelineParallelLayerLayout)
+        else:
+            assert result is None
+
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
@@ -1033,8 +1083,125 @@ class TestSaveMegatronModel:
         mock_build_tokenizer.assert_called_once()
         mock_get_checkpoint_name.assert_called_once()
         mock_save_tokenizer_assets.assert_called_once_with(
-            mock_tokenizer, tokenizer_config, "/fake/checkpoint/iter_0000000"
+            mock_tokenizer,
+            tokenizer_config,
+            "/fake/checkpoint/iter_0000000",
+            raise_on_error=True,
         )
+
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_tokenizer_failure_does_not_publish_incomplete_checkpoint(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+        tmp_path,
+    ):
+        """A failed tokenizer save must leave automatic resume on the previous checkpoint."""
+
+        class MockModelConfig(ModelProviderMixin, Mock):
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                return Mock()
+
+            def finalize(self) -> None:
+                pass
+
+        mock_get_model_config.return_value = MockModelConfig()
+        mock_global_state.return_value = Mock()
+        mock_config_container.return_value = Mock()
+
+        latest_train_state = tmp_path / "latest_train_state.pt"
+        latest_train_state.write_text("500")
+
+        def publish_selector(**kwargs):
+            latest_train_state.write_text("0")
+
+        mock_save_checkpoint.side_effect = publish_selector
+
+        tokenizer = Mock()
+        tokenizer.save_pretrained.side_effect = OSError("tokenizer write failed")
+        checkpoint_name = tmp_path / "iter_0000000"
+
+        with (
+            patch("megatron.bridge.training.model_load_save.build_tokenizer", return_value=tokenizer),
+            patch(
+                "megatron.bridge.training.checkpointing.get_checkpoint_name",
+                return_value=str(checkpoint_name),
+            ),
+            pytest.raises(OSError, match="tokenizer write failed"),
+        ):
+            save_megatron_model(
+                [Mock()],
+                tmp_path,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="org/model",
+                low_memory_save=False,
+            )
+
+        assert latest_train_state.read_text() == "500"
+
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_tokenizer_failure_stops_all_ranks_before_checkpoint_save(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+        tmp_path,
+    ):
+        """Every rank must observe a tokenizer failure before entering checkpoint save."""
+
+        class MockModelConfig(ModelProviderMixin, Mock):
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                return Mock()
+
+            def finalize(self) -> None:
+                pass
+
+        mock_get_model_config.return_value = MockModelConfig()
+        mock_global_state.return_value = Mock()
+        mock_config_container.return_value = Mock()
+
+        def gather_rank_zero_error(errors, local_error):
+            assert local_error is None
+            errors[:] = ["OSError: tokenizer write failed", None]
+
+        with (
+            patch("megatron.bridge.training.model_load_save.build_tokenizer", return_value=Mock()),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=1),
+            patch("torch.distributed.get_world_size", return_value=2),
+            patch("torch.distributed.all_gather_object", side_effect=gather_rank_zero_error),
+            pytest.raises(RuntimeError, match="tokenizer write failed"),
+        ):
+            save_megatron_model(
+                [Mock()],
+                tmp_path,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="org/model",
+                low_memory_save=False,
+            )
+
+        mock_save_checkpoint.assert_not_called()
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")

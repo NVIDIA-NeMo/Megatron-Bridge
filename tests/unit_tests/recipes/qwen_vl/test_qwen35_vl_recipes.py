@@ -27,6 +27,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -104,6 +105,7 @@ _QWEN35_VL_H100_PEFT_FUNCS = [
 ]
 
 _QWEN35_VL_GB200_FUNCS = [
+    _qwen35_vl_gb200_module.qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config,
     _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config,
     _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config,
 ]
@@ -217,6 +219,15 @@ def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
     assert hasattr(cfg.peft, "alpha")
 
 
+def test_qwen35_vl_model_selector_supports_dora(monkeypatch: pytest.MonkeyPatch):
+    """Qwen3.5-VL model selectors should honor the requested DoRA scheme."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config(peft_scheme="dora")
+
+    assert isinstance(cfg.peft, DoRA)
+
+
 # ---------------------------------------------------------------------------
 # Recipe API shape
 # ---------------------------------------------------------------------------
@@ -228,13 +239,20 @@ def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
     + _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS
     + _QWEN35_VL_SFT_FUNCS
     + _QWEN35_VL_H100_SFT_FUNCS
-    + _QWEN35_VL_PEFT_FUNCS
-    + _QWEN35_VL_H100_PEFT_FUNCS
+    + [_qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config]
     + _QWEN35_VL_GB200_FUNCS,
 )
 def test_qwen35_vl_recipe_entry_points_are_parameterless(recipe_func: Callable):
     """Qwen3.5-VL public recipe entry points should be fixed configs."""
     assert not inspect.signature(recipe_func).parameters
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_PEFT_FUNCS)
+def test_qwen35_vl_selectable_peft_recipes_accept_a_peft_scheme(recipe_func: Callable):
+    """Model-selectable PEFT recipes should accept an optional PEFT scheme."""
+    parameter = inspect.signature(recipe_func).parameters["peft_scheme"]
+
+    assert parameter.default == "lora"
 
 
 def test_qwen35_vl_h100_module_has_no_parameterized_recipe_helpers():
@@ -628,6 +646,59 @@ def test_qwen35_vl_35b_a3b_peft_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPa
     assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
 
 
+def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The dense GB200 pretrain recipe should retain its measured execution policy."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb200_module.qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_dtype is None
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.calculate_per_token_loss is True
+
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 2
+
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.comm_overlap.overlap_grad_reduce is False
+    assert cfg.comm_overlap.overlap_param_gather is False
+
+    assert cfg.dataset.do_validation is False
+    assert cfg.dataset.pad_to_max_length is True
+    assert cfg.train.eval_interval == 0
+    assert cfg.train.eval_iters == 0
+    assert cfg.validation.eval_interval == 0
+    assert cfg.validation.eval_iters == 0
+    assert cfg.checkpoint.load is None
+    assert cfg.checkpoint.save is None
+    assert cfg.logger.log_interval == 1
+    assert cfg.logger.log_throughput is True
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+
+
 @pytest.mark.parametrize(
     ("recipe_func", "expected_lr", "is_peft"),
     [
@@ -985,7 +1056,8 @@ def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
-    assert cfg.model.freeze_language_model is True
+    expected_language_freeze = recipe_func is not _qwen35_vl_module.qwen35_vl_27b_pretrain_mock_config
+    assert cfg.model.freeze_language_model is expected_language_freeze
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is False
 
@@ -1036,6 +1108,9 @@ def test_qwen35_vl_27b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.pipeline_dtype is not None
     assert cfg.model.expert_model_parallel_size == 1
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
 
 
 def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
