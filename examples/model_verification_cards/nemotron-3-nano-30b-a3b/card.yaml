@@ -78,11 +78,13 @@ items:
     last_verified: 2026-08-25
     expected_result: >
       The synchronous CPU export writes a complete indexed checkpoint. All
-      6,243 source keys and shapes match across 31,577,940,288 values; 46 FP32
-      state tensors equal the source exactly after the requested BF16 cast and
-      every remaining tensor matches exactly at zero tolerance. Native loading
-      succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched,
-      or errored weights, and the tokenizer reloads from the export.
+      6,243 source keys and shapes match across 31,577,940,288 values. The 46
+      source FP32 tensors cast to BF16 are the 23 per-layer mixer A_log tensors
+      and 23 per-layer mixer D tensors; each equals the export exactly after
+      that declared cast, and every remaining tensor matches exactly at zero
+      tolerance. Native loading succeeds as NemotronHForCausalLM with no
+      missing, unexpected, mismatched, or errored weights, and the tokenizer
+      reloads from the export.
 
   megatron_to_hf_gpu:
     status: verified
@@ -101,11 +103,14 @@ items:
     expected_result: >
       The synchronous TP1/PP1/EP8/ETP1 export writes a complete indexed
       checkpoint. All 6,243 source keys and shapes match across 31,577,940,288
-      values; 69 FP32 state tensors equal the source exactly after the requested
-      BF16 cast and every remaining tensor matches exactly at zero tolerance.
-      Native loading succeeds as NemotronHForCausalLM with no missing,
-      unexpected, mismatched, or errored weights, and the tokenizer reloads
-      from the export.
+      values. The 69 source FP32 tensors cast to BF16 are the same 46 mixer
+      A_log and D tensors plus 23 per-layer mixer gate
+      e_score_correction_bias tensors. The legacy distributed GPU import path
+      materialized those gate biases in BF16, while the CPU export source kept
+      them in FP32; all 69 equal the export exactly after this declared cast,
+      and every remaining tensor matches exactly at zero tolerance. Native
+      loading succeeds as NemotronHForCausalLM with no missing, unexpected,
+      mismatched, or errored weights, and the tokenizer reloads from the export.
 
   manual_forward_pass:
     status: unverified
