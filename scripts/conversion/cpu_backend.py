@@ -118,7 +118,7 @@ def export_checkpoint(
     # families with packed HF weights export in their canonical representation.
     bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     try:
-        with low_memory_model_load_context():
+        with low_memory_model_load_context(mmap_directory=Path(hf_path).parent):
             bridge.export_ckpt(
                 megatron_path=megatron_path,
                 hf_path=hf_path,

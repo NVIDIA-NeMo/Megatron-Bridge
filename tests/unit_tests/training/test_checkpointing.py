@@ -37,6 +37,7 @@ from megatron.bridge.training.checkpointing import (
     _build_auto_bridge_for_save,
     _clear_auto_bridge_cache,
     _extract_megatron_lm_args_from_state_dict,
+    _FileBackedTensorAllocator,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
     _has_global_non_persistent_checkpoint,
@@ -46,6 +47,8 @@ from megatron.bridge.training.checkpointing import (
     _load_model_state_dict,
     _load_non_persistent_base_checkpoint,
     _record_dataloader_state_dir,
+    _replace_sharded_tensor_data_with_file_backed,
+    _requires_file_backed_checkpoint_load,
     _save_hf_adapter_weights,
     _save_hf_weights,
     _strip_sharded_tensor_data,
@@ -3424,6 +3427,56 @@ class TestStripShardedTensorData:
 
         assert stripped_factory.data.is_meta
         assert built.data is None
+
+
+class TestFileBackedCheckpointTensors:
+    """Tests for oversized CPU checkpoint storage backed by sparse files."""
+
+    def test_allocator_reuses_sparse_storage_block(self, tmp_path):
+        allocator = _FileBackedTensorAllocator(tmp_path, block_bytes=4096)
+
+        first = allocator.allocate_like(torch.empty(2, 3, dtype=torch.float32, device="meta"))
+        second = allocator.allocate_like(torch.empty(4, dtype=torch.bfloat16, device="meta"))
+        first.copy_(torch.arange(6, dtype=torch.float32).view(2, 3))
+        second.fill_(2)
+
+        assert first.device.type == "cpu"
+        assert second.device.type == "cpu"
+        assert len(allocator.blocks) == 1
+        assert (tmp_path / "block-00000.bin").stat().st_size == 4096
+        assert first.tolist() == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
+        assert second.tolist() == [2.0, 2.0, 2.0, 2.0]
+
+    def test_factory_build_and_merge_results_are_file_backed(self, tmp_path):
+        allocator = _FileBackedTensorAllocator(tmp_path, block_bytes=4096)
+        data = torch.empty(2, 3, device="meta")
+        factory = ShardedTensorFactory(
+            key="weight",
+            data=data,
+            build_fn=lambda key, tensor, replica_id, flattened_range: ShardedTensor.from_rank_offsets(key, tensor),
+            merge_fn=lambda value: value,
+        )
+
+        result = _replace_sharded_tensor_data_with_file_backed({"model": {"weight": factory}}, allocator)
+        mapped_factory = result["model"]["weight"]
+        built = mapped_factory.build()
+        merged = mapped_factory.merge_fn(torch.full((2, 3), 7.0))
+
+        assert mapped_factory.data.is_meta
+        assert built.data.device.type == "cpu"
+        assert merged.device.type == "cpu"
+        assert merged.tolist() == [[7.0, 7.0, 7.0], [7.0, 7.0, 7.0]]
+        assert len(allocator.blocks) == 1
+
+    def test_large_model_selects_file_backed_load(self, monkeypatch):
+        model = [torch.nn.Linear(4, 4, device="meta")]
+        model_bytes = sum(tensor.numel() * tensor.element_size() for tensor in model[0].parameters())
+        monkeypatch.setattr(
+            "megatron.bridge.training.checkpointing._available_memory_bytes",
+            lambda: model_bytes,
+        )
+
+        assert _requires_file_backed_checkpoint_load(model)
 
 
 class TestMegatronLMCompatibility:
