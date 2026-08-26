@@ -3,8 +3,9 @@
 
 title: qwen3_235b_a22b
 summary: >
-  H100 GPU import and deterministic Megatron inference are verified in BF16
-  against the pinned Hugging Face revision. Performance scope:
+  H100 GPU import, CPU and distributed GPU export, and deterministic Megatron
+  inference are verified in BF16 against the pinned Hugging Face revision.
+  CPU import and manual forward parity remain unverified. Performance scope:
   pretrain_performance.GB200 and pretrain_performance.GB300 are verified with
   their tuned canonical 256-GPU MXFP8 recipes. Other model-level and functional
   training workflows remain unverified in this card.
@@ -12,11 +13,11 @@ verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
   training:
     H100:
@@ -65,22 +66,48 @@ items:
       reloaded successfully in the subsequent verified inference workload.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model Qwen/Qwen3-235B-A22B
+      --hf-revision 8efa61729e24bd65b1d152b5ab5409052aa80e65
+      --megatron-path
+      work/model-verification/qwen3-235b-a22b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3-235b-a22b/cpu-hf-export
+      --torch-dtype bfloat16 --distributed-timeout-minutes 240
+    last_verified: 2026-08-25
     expected_result: >
-      This workflow remains unverified and requires a public run against the
-      pinned Hugging Face revision with all applicable verification gates.
+      The single-process CPU export exits successfully and writes all 36,945
+      tensors, 235,093,634,560 values, and 470,187,269,120 tensor-payload
+      bytes. Keys, shapes, dtypes, and values are bitwise identical to the
+      pinned BF16 source with no dtype conversions. Transformers strictly
+      reloads the output natively as Qwen3MoeForCausalLM with all 1,037 state
+      tensors and no loading discrepancies.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model Qwen/Qwen3-235B-A22B
+      --hf-revision 8efa61729e24bd65b1d152b5ab5409052aa80e65
+      --megatron-path
+      work/model-verification/qwen3-235b-a22b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3-235b-a22b/gpu-hf-export
+      --torch-dtype bfloat16 --distributed-save
+      --tp 1 --pp 1 --ep 8 --etp 1 --distributed-timeout-minutes 240
+    last_verified: 2026-08-25
     expected_result: >
-      This workflow remains unverified and requires a public run against the
-      pinned Hugging Face revision with all applicable verification gates.
+      The eight-H100 distributed export exits successfully and writes all
+      36,945 tensors, 235,093,634,560 values, and 470,187,269,120
+      tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise
+      identical to the pinned BF16 source with no dtype conversions.
+      Transformers strictly reloads the output natively as
+      Qwen3MoeForCausalLM with all 1,037 state tensors and no loading
+      discrepancies.
 
   manual_forward_pass:
     status: unverified
