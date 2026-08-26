@@ -135,6 +135,36 @@ def test_distributed_cpu_export_accepts_compatible_topology():
     module._validate_args(args)
 
 
+@pytest.mark.parametrize(
+    ("parallelism_args", "message"),
+    [
+        (["--pp", "3"], r"nodes\*cpu-processes-per-node must be divisible by TP\*PP"),
+        (["--ep", "3"], r"nodes\*cpu-processes-per-node must be divisible by ETP\*EP\*PP"),
+    ],
+)
+def test_distributed_cpu_export_rejects_incompatible_topology(parallelism_args, message):
+    module = _load_setup_conversion_module()
+    args = _parse_export(
+        module,
+        "--executor",
+        "slurm",
+        "--nodes",
+        "2",
+        "--cpu-processes-per-node",
+        "4",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        *parallelism_args,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_args(args)
+
+
 def test_distributed_cpu_export_rejects_non_export_command():
     module = _load_setup_conversion_module()
     args = _parse(module, "--cpu-processes-per-node", "2")

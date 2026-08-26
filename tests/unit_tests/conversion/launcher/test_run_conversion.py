@@ -269,6 +269,35 @@ def test_distributed_cpu_export_uses_gloo_backend(monkeypatch):
     assert calls[0]["use_cpu"] is True
 
 
+@pytest.mark.parametrize(
+    ("parallelism_args", "message"),
+    [
+        (["--tp", "3"], r"WORLD_SIZE must be divisible by TP\*PP"),
+        (["--ep", "3"], r"WORLD_SIZE must be divisible by ETP\*EP\*PP"),
+    ],
+)
+def test_distributed_cpu_export_rejects_incompatible_world_size(monkeypatch, parallelism_args, message):
+    module, _, _ = _load_run_conversion_module()
+    monkeypatch.setenv("WORLD_SIZE", "4")
+
+    with pytest.raises(ValueError, match=message):
+        module.main(
+            [
+                "export",
+                "--device",
+                "cpu",
+                "--hf-model",
+                "hf/model",
+                "--megatron-path",
+                "/megatron",
+                "--hf-path",
+                "/hf",
+                "--distributed-save",
+                *parallelism_args,
+            ]
+        )
+
+
 def test_gpu_roundtrip_dispatches_to_gpu_backend():
     module, _, gpu_backend = _load_run_conversion_module()
     calls = []
