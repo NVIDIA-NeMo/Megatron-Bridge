@@ -6,10 +6,9 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Gemma 3 4B Instruct exact-checkpoint CPU and TP2/PP2 GPU import,
-  TP2/PP2 GPU export, manual multimodal forward parity, and deterministic
-  TP2/PP2 inference are verified. CPU export remains unverified because its
-  vision namespace gate does not pass; SFT, post-SFT export/inference, and
-  PEFT remain pending. Pretraining and checkpoint resume are unsupported
+  CPU and TP2/PP2 GPU export, manual multimodal forward parity, and
+  deterministic TP2/PP2 inference are verified. SFT, post-SFT
+  export/inference, and PEFT remain pending. Pretraining and checkpoint resume are unsupported
   because there is no public exact-model pretraining recipe. Long-context SFT
   is unsupported because the required dense local/global attention biases
   currently exclude context parallelism and in-batch THD packing. Existing
@@ -19,11 +18,10 @@ verification_index:
     verified:
       - hf_to_megatron_cpu
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
-    unverified:
-      - megatron_to_hf_cpu
   training:
     H100:
       unverified: [sft, sft_export_inference, peft]
@@ -74,7 +72,8 @@ items:
       FusedAttention and matched all 883 mapped tensors exactly.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
@@ -83,15 +82,15 @@ items:
       --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron/iter_0000000
       --hf-path work/model-verification/gemma-3-4b-it/cpu-hf-export
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-08-26
     expected_result: >
-      A fresh exact-revision CPU import and export from Bridge commit
-      2d0175b116af6cb785bb8efab7ee053435496266 completed on 2026-07-24, but
-      the source/export key gate reported 437 missing legacy
-      vision_tower.vision_model.* keys and 437 extra flat vision_tower.* keys.
-      This leaf remains unverified pending a source-namespace-preserving design;
-      changing the general config-only export path would regress pruned and
-      custom checkpoint exports.
+      The exact-revision CPU export exits successfully and writes all 883
+      tensors, 4,300,079,472 values, and 8,600,158,944 tensor-payload bytes.
+      Keys, shapes, dtypes, and values are bitwise identical to the pinned BF16
+      source with no dtype conversions, including all 437 legacy
+      vision_tower.vision_model.* tensors. Transformers strictly reloads the
+      output natively as Gemma3ForConditionalGeneration with all 884 state
+      entries and no loading discrepancies.
 
   megatron_to_hf_gpu:
     status: verified
