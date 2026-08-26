@@ -102,6 +102,21 @@ def _apply_qwen35_moe_config(provider: GPTModelProvider, text_config) -> None:
     provider.moe_permute_fusion = True
 
 
+def _apply_qwen35_moe_text_config(provider: GPTModelProvider, text_config) -> None:
+    """Apply the Qwen3.5 MoE text-model provider settings."""
+    _apply_qwen35_moe_config(provider, text_config)
+
+    provider.position_embedding_type = "rope"
+    provider.autocast_dtype = torch.bfloat16
+    provider.share_embeddings_and_output_weights = getattr(text_config, "tie_word_embeddings", False)
+    provider.bos_token_id = getattr(text_config, "bos_token_id", 248045)
+    provider.eos_token_id = getattr(text_config, "eos_token_id", 248046)
+    provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
+
+    # Heterogeneous checkpointing for mixed attention layers
+    provider.hetereogenous_dist_checkpoint = True
+
+
 def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, transpose_on_export=False):
     """Routed-expert mappings for a MoE decoder, for both the grouped-GEMM and SequentialMLP layouts.
 
@@ -396,22 +411,7 @@ class Qwen35MoEBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3.5 text model config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
-
-        # --- LM-specific parameters ---
-        _apply_qwen35_moe_config(provider, hf_config)
-
-        # --- LM-specific overrides ---
-        provider.position_embedding_type = "rope"
-        provider.autocast_dtype = torch.bfloat16
-        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
-        provider.bos_token_id = getattr(hf_config, "bos_token_id", 248045)
-        provider.eos_token_id = getattr(hf_config, "eos_token_id", 248046)
-        provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
-
-        # Heterogeneous checkpointing for mixed attention layers
-        provider.hetereogenous_dist_checkpoint = True
-
+        _apply_qwen35_moe_text_config(provider, hf_pretrained.config)
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
