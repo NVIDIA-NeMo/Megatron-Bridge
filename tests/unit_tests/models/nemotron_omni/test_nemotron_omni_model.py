@@ -31,6 +31,7 @@ from torch import nn
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
     _pixel_shuffle_dynamic_resolution,
+    _project_multimodal_embeddings,
 )
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
@@ -100,6 +101,17 @@ class _SoundEncoderBoundaryModel(NemotronOmniModel):
         self.sound_projection = nn.Linear(2, 2, bias=False, dtype=torch.bfloat16)
         with torch.no_grad():
             self.sound_projection.weight.copy_(torch.eye(2, dtype=torch.bfloat16))
+
+
+class _RecordingProjection(nn.Module):
+    def __init__(self, *, fp8: bool):
+        super().__init__()
+        self.config = SimpleNamespace(fp8="hybrid" if fp8 else None, fp8_recipe="tensorwise")
+        self.input_shape = None
+
+    def forward(self, hidden_states):
+        self.input_shape = hidden_states.shape
+        return hidden_states * 2
 
 
 @dataclass
@@ -249,6 +261,47 @@ def test_vision_projection_matches_hf_and_vllm_activation():
 
     assert vision_projection_config.activation_func is squared_relu
     assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
+
+
+def test_vision_backbone_fp8_policy_does_not_disable_language_or_projection_fp8():
+    provider = NemotronOmniModelProvider(
+        fp8="hybrid",
+        fp8_param=True,
+        use_vision_backbone_fp8_arch=False,
+    )
+
+    vision_config = provider._build_vision_config(provider)
+    vision_projection_config = provider._build_vision_projection_config(provider)
+
+    assert vision_config.fp8 is None
+    assert vision_config.fp8_param is False
+    assert provider.fp8 == "hybrid"
+    assert provider.fp8_param is True
+    assert vision_projection_config.fp8 == "hybrid"
+    assert vision_projection_config.fp8_param is True
+
+
+def test_multimodal_projection_pads_only_temporary_fp8_rows():
+    projection = _RecordingProjection(fp8=True)
+    embeddings = torch.arange(7 * 2 * 3, dtype=torch.float32).reshape(7, 2, 3).requires_grad_()
+
+    projected = _project_multimodal_embeddings(projection, embeddings)
+    projected.sum().backward()
+
+    assert projection.input_shape == (16, 1, 3)
+    assert projected.shape == embeddings.shape
+    assert torch.equal(projected, embeddings * 2)
+    assert torch.equal(embeddings.grad, torch.full_like(embeddings, 2))
+
+
+def test_multimodal_projection_does_not_pad_bf16_rows():
+    projection = _RecordingProjection(fp8=False)
+    embeddings = torch.arange(7 * 2 * 3, dtype=torch.float32).reshape(7, 2, 3)
+
+    projected = _project_multimodal_embeddings(projection, embeddings)
+
+    assert projection.input_shape == (14, 1, 3)
+    assert torch.equal(projected, embeddings * 2)
 
 
 def test_radio_cpe_uses_square_interpolate_then_crop_by_default():

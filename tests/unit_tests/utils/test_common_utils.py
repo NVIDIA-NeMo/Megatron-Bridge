@@ -73,12 +73,22 @@ class TestGetRankSafe:
         mock_is_initialized.assert_called_once()
 
     @patch("torch.distributed.is_initialized")
-    @patch.dict(os.environ, {"RANK": "invalid"})
+    @patch.dict(os.environ, {"RANK": "invalid"}, clear=True)
     def test_invalid_rank_env_var(self, mock_is_initialized):
-        """Test get_rank_safe falls back to 0 when RANK is malformed."""
+        """Test get_rank_safe propagates an actionable error when RANK is malformed."""
         mock_is_initialized.return_value = False
 
-        assert get_rank_safe() == 0
+        with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
+            get_rank_safe()
+
+    @patch("torch.distributed.is_initialized")
+    @patch.dict(os.environ, {"SLURM_NTASKS": "8", "SLURM_PROCID": "invalid"}, clear=True)
+    def test_invalid_slurm_rank_env_var(self, mock_is_initialized):
+        """Test get_rank_safe propagates an actionable error when SLURM_PROCID is malformed."""
+        mock_is_initialized.return_value = False
+
+        with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
+            get_rank_safe()
 
 
 class TestGetWorldSizeSafe:

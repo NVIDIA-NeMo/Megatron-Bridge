@@ -152,6 +152,7 @@ class TestPackBatchSequences:
         assert packed["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
         assert packed["cu_seqlens_q"].tolist() == [0, 3, 5]
         assert packed["cu_seqlens_q_padded"].tolist() == [0, 3, 8]
+        assert packed["pad_between_seqs"] is True
         assert packed["max_seqlen_q"].item() == 5
         assert packed["total_tokens"] == 8
 
@@ -231,6 +232,7 @@ class TestPackBatchSequences:
         assert batch["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
         assert batch["cu_seqlens_q"].tolist() == [0, 3, 5]
         assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+        assert batch["pad_between_seqs"] is True
 
     def test_packing_removes_stale_padding_mask_when_not_emitted(self):
         """Packing without mask emission removes an incompatible input mask."""
