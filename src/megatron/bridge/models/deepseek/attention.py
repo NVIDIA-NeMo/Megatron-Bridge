@@ -17,12 +17,30 @@
 from dataclasses import replace
 from typing import Optional
 
-from megatron.core.models.backends import get_backend
+from megatron.core.models.backends import (
+    BackendSpecProvider,
+    InferenceSpecProvider,
+    LocalSpecProvider,
+)
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
+
+try:
+    from megatron.core.models.backends import get_backend
+except ImportError:
+    from megatron.core.extensions.transformer_engine_spec_provider import TESpecProvider
+
+    def get_backend(transformer_impl: str) -> BackendSpecProvider:
+        if transformer_impl == "transformer_engine":
+            return TESpecProvider()
+        if transformer_impl == "inference_optimized":
+            return InferenceSpecProvider()
+        if transformer_impl == "local":
+            return LocalSpecProvider()
+        raise ValueError(f"unknown transformer_impl={transformer_impl!r}")
 
 
 class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
