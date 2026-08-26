@@ -14,6 +14,7 @@
 """Single-process CPU checkpoint conversion backend."""
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from megatron.bridge.training.model_load_save import low_memory_model_load_conte
 
 
 logger = logging.getLogger(__name__)
+_CPU_EXPORT_MMAP_DIRECTORY_ENV = "MEGATRON_BRIDGE_CPU_EXPORT_MMAP_DIRECTORY"
 
 
 def _find_run_config(checkpoint_path: Path) -> Path:
@@ -42,6 +44,12 @@ def _find_run_config(checkpoint_path: Path) -> Path:
     raise FileNotFoundError(
         f"Could not find run_config.yaml in {checkpoint_path}. Ensure this is a valid Megatron checkpoint."
     )
+
+
+def _cpu_export_mmap_directory(hf_path: str) -> Path:
+    """Return an explicit staging directory or default to the output parent."""
+    override = os.environ.get(_CPU_EXPORT_MMAP_DIRECTORY_ENV)
+    return Path(override).expanduser() if override else Path(hf_path).parent
 
 
 def import_checkpoint(
@@ -121,8 +129,10 @@ def export_checkpoint(
     # Preserve the reference wrapper's state source and shard map so model
     # families with packed HF weights export in their canonical representation.
     bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
+    mmap_directory = _cpu_export_mmap_directory(hf_path)
+    logger.info("Using CPU export mmap directory: %s", mmap_directory)
     try:
-        with low_memory_model_load_context(mmap_directory=Path(hf_path).parent):
+        with low_memory_model_load_context(mmap_directory=mmap_directory):
             bridge.export_ckpt(
                 megatron_path=megatron_path,
                 hf_path=hf_path,
