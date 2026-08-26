@@ -30,6 +30,8 @@ from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
 def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, BF16 (alias of GB300)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config()
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -84,6 +86,8 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, NVFP4 (alias of GB300)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config()
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
