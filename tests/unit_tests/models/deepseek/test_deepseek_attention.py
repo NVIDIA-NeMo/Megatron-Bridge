@@ -64,6 +64,18 @@ def _resolve(q_lora_rank):
     return attention._resolve_qk_norm_config(_mla_submodules())
 
 
+class TestBackendCompatibility:
+    """Bridge supports both MCore's current and unreleased backend-selection APIs."""
+
+    def test_transformer_engine_backend_uses_the_public_provider(self, monkeypatch):
+        monkeypatch.setattr(attention_module, "find_spec", lambda _name: None)
+
+        backend = attention_module._get_backend("transformer_engine")
+
+        assert backend.column_parallel_layer_norm_linear() is not None
+        assert backend.column_parallel_linear() is not None
+
+
 class TestMLASelfAttentionWithoutQueryNorm:
     """DeepSeek MLA must not gain a query norm the HF architecture does not define."""
 
