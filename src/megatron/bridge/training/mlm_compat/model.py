@@ -42,6 +42,7 @@ from megatron.core.transformer.spec_utils import import_module
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
+from megatron.bridge.models.model_provider import _apply_mixed_precision_wrapper
 from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
 from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 
@@ -318,7 +319,7 @@ def _get_model(
     # Fp16 conversion.
     if args.fp16 or args.bf16:
         config = get_model_config(model[0])
-        model = [Float16Module(config, model_module) for model_module in model]
+        model = _apply_mixed_precision_wrapper(model, config, Float16Module)
 
     # Before TE2.x: The model_module.bfloat16()/model_module.half() above will call the inplace
     #               copy of TE's Float8Tensor, which will write an unwanted value (amax calculated

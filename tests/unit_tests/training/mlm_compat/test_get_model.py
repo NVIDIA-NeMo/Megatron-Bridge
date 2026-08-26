@@ -16,6 +16,7 @@ import argparse
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+import torch
 from megatron.core.enums import ModelType
 from megatron.core.transformer import TransformerConfig
 
@@ -347,6 +348,49 @@ class TestGetModel:
 
         # Verify Float16Module was created
         mock_float16_module.assert_called_once_with(mock_config, mock_model)
+
+    @patch("megatron.bridge.training.mlm_compat.model.mpu")
+    @patch("megatron.bridge.training.mlm_compat.model.tensor_parallel")
+    @patch("megatron.bridge.training.mlm_compat.model.get_model_config")
+    @patch("megatron.bridge.training.mlm_compat.model.correct_amax_history_if_needed")
+    def test_get_model_bf16_preserves_float32_expert_bias(
+        self,
+        mock_correct_amax,
+        mock_get_model_config,
+        mock_tensor_parallel,
+        mock_mpu,
+        mock_args,
+        mock_config,
+    ):
+        """The legacy checkpoint path must preserve the router bias in FP32."""
+        mock_args.bf16 = True
+        mock_mpu.get_pipeline_model_parallel_world_size.return_value = 1
+        mock_mpu.is_pipeline_first_stage.return_value = True
+        mock_mpu.is_pipeline_last_stage.return_value = True
+        mock_mpu.get_data_parallel_rank.return_value = 0
+        mock_mpu.get_context_parallel_rank.return_value = 0
+        mock_mpu.get_tensor_model_parallel_rank.return_value = 0
+        mock_mpu.get_pipeline_model_parallel_rank.return_value = 0
+
+        router = torch.nn.Module()
+        router._maintain_float32_expert_bias = True
+        router.expert_bias = torch.nn.Parameter(torch.tensor([0.1, -0.2], dtype=torch.float32))
+        model = torch.nn.Module()
+        model.router = router
+        model.model_type = ModelType.encoder_or_decoder
+        model.cuda = MagicMock(return_value=model)
+        provider = MagicMock(return_value=model)
+        mock_get_model_config.return_value = mock_config
+
+        class BFloat16Wrapper(torch.nn.Module):
+            def __init__(self, config, module):
+                super().__init__()
+                self.module = module.bfloat16()
+
+        with patch("megatron.bridge.training.mlm_compat.model.Float16Module", BFloat16Wrapper):
+            result = _get_model(mock_args, provider, mock_config)
+
+        assert result[0].module.router.expert_bias.dtype is torch.float32
 
     @patch("megatron.bridge.training.mlm_compat.model.mpu")
     @patch("megatron.bridge.training.mlm_compat.model.tensor_parallel")
