@@ -122,6 +122,39 @@ class _FakeHfPretrained:
     config = type("Config", (), {"num_hidden_layers": 1, "num_nextn_predict_layers": 0})()
 
 
+def test_distributed_cpu_initialization_uses_gloo(cli, monkeypatch):
+    calls = []
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setattr(cli.torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(cli.torch.distributed, "init_process_group", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(
+        cli.torch.cuda,
+        "set_device",
+        lambda *_args, **_kwargs: pytest.fail("distributed CPU export must not initialize CUDA"),
+    )
+
+    cli._ensure_distributed_initialized(45, use_cpu=True)
+
+    assert calls[0]["backend"] == "gloo"
+    assert calls[0]["timeout"].total_seconds() == 45 * 60
+
+
+def test_distributed_cpu_provider_uses_cpu_initialization(cli):
+    provider = _FakeProvider([])
+
+    cli._configure_model_provider(
+        provider,
+        tp=1,
+        pp=2,
+        ep=4,
+        etp=1,
+        dtype=torch.bfloat16,
+        use_cpu=True,
+    )
+
+    assert provider.use_cpu_initialization is True
+
+
 class TestImportHfToMegatron:
     @pytest.mark.parametrize("low_memory_save", [False, True])
     def test_import_saves_megatron_checkpoint_with_tokenizer_metadata(self, cli, monkeypatch, low_memory_save):

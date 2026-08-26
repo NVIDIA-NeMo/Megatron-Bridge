@@ -16,6 +16,7 @@
 
 import argparse
 import logging
+import os
 
 import cpu_backend
 import gpu_backend
@@ -24,6 +25,11 @@ from utils import resolve_hf_commit_revision, resolve_hf_model_revision
 
 
 logger = logging.getLogger(__name__)
+
+
+def _distributed_world_size() -> int:
+    """Return the launcher-provided world size, defaulting to one process."""
+    return int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", "1")))
 
 
 def _configure_logging() -> None:
@@ -39,16 +45,33 @@ def _validate_args(args: argparse.Namespace) -> None:
     distributed_timeout_minutes = getattr(args, "distributed_timeout_minutes", None)
     if distributed_timeout_minutes is not None and distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
-    if args.device == "cpu" and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
+    distributed_cpu = args.device == "cpu" and _distributed_world_size() > 1
+    if (
+        args.device == "cpu"
+        and not distributed_cpu
+        and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp"))
+    ):
         raise ValueError("CPU conversion requires TP=PP=EP=ETP=1.")
+    if distributed_cpu and args.command != "export":
+        raise ValueError("Distributed CPU conversion currently supports export only.")
+    if distributed_cpu:
+        world_size = _distributed_world_size()
+        if world_size % (args.tp * args.pp) != 0:
+            raise ValueError("WORLD_SIZE must be divisible by TP*PP for distributed CPU export.")
+        if world_size % (args.etp * args.ep * args.pp) != 0:
+            raise ValueError("WORLD_SIZE must be divisible by ETP*EP*PP for distributed CPU export.")
     if args.command == "import" and args.device == "cpu" and args.low_memory_save:
         raise ValueError("--low-memory-save is only supported by the GPU backend.")
     if args.command == "export":
         if args.save_every_n_ranks < 1:
             raise ValueError("--save-every-n-ranks must be at least 1.")
-        distributed_save = args.distributed_save if args.distributed_save is not None else args.device == "gpu"
-        if args.device == "cpu" and distributed_save:
-            raise ValueError("--distributed-save is only supported by the GPU backend.")
+        distributed_save = (
+            args.distributed_save if args.distributed_save is not None else (args.device == "gpu" or distributed_cpu)
+        )
+        if args.device == "cpu" and distributed_save and not distributed_cpu:
+            raise ValueError("--distributed-save requires distributed CPU export or the GPU backend.")
+        if distributed_cpu and not distributed_save:
+            raise ValueError("Distributed CPU export requires --distributed-save.")
         if not distributed_save and args.save_every_n_ranks != 1:
             raise ValueError("--save-every-n-ranks requires --distributed-save.")
         if args.device == "cpu" and args.export_weight_dtype is not None:
@@ -90,7 +113,8 @@ def _run_export(args: argparse.Namespace) -> None:
         "trust_remote_code": args.trust_remote_code,
         "overwrite": args.overwrite,
     }
-    if args.device == "cpu":
+    distributed_cpu = args.device == "cpu" and _distributed_world_size() > 1
+    if args.device == "cpu" and not distributed_cpu:
         cpu_backend.export_checkpoint(**common_args)
         return
     distributed_save = args.distributed_save if args.distributed_save is not None else True
@@ -105,6 +129,7 @@ def _run_export(args: argparse.Namespace) -> None:
         save_every_n_ranks=args.save_every_n_ranks,
         distributed_timeout_minutes=args.distributed_timeout_minutes,
         export_weight_dtype=args.export_weight_dtype,
+        use_cpu=distributed_cpu,
     )
 
 
