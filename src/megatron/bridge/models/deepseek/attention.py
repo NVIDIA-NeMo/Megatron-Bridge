@@ -19,7 +19,6 @@ from typing import Optional
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer.identity_op import IdentityOp
-from megatron.core.transformer.mla_qk_norm_config import get_backend
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -55,8 +54,30 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
         exists to do, so the rejection would fire on a configuration this class already
         knows how to satisfy.
         """
+        parent_resolver = getattr(super(), "_resolve_qk_norm_config", None)
+        if parent_resolver is None:
+            if self.config.q_lora_rank is None and self.config.transformer_impl != "transformer_engine":
+                raise ValueError(
+                    "DeepSeek without a query LoRA (`q_lora_rank=None`) requires "
+                    f"`transformer_impl='transformer_engine'`; `{self.config.transformer_impl}` "
+                    "provides no fused KV norm+linear projection."
+                )
+            # Older MCore already takes every projection from the MLA submodule spec. Its
+            # TE spec selects a plain ``linear_q_proj`` and a fused ``linear_kv_up_proj``.
+            if self.config.q_lora_rank is None and submodules.q_layernorm not in (None, IdentityOp):
+                submodules = replace(submodules, q_layernorm=IdentityOp)
+            return {
+                "linear_q_proj": submodules.linear_q_proj,
+                "linear_q_up_proj": submodules.linear_q_up_proj,
+                "linear_kv_up_proj": submodules.linear_kv_up_proj,
+                "q_layernorm": submodules.q_layernorm,
+                "kv_layernorm": submodules.kv_layernorm,
+            }
+
         if self.config.q_lora_rank is not None:
-            return super()._resolve_qk_norm_config(submodules)
+            return parent_resolver(submodules)
+
+        from megatron.core.models.backends import get_backend
 
         backend = get_backend(self.config.transformer_impl)
         if backend.column_parallel_layer_norm_linear() is None:
