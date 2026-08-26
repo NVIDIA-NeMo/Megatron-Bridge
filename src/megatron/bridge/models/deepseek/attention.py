@@ -17,9 +17,12 @@
 from dataclasses import replace
 from typing import Optional
 
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TELayerNormColumnParallelLinear,
+)
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer.identity_op import IdentityOp
-from megatron.core.transformer.mla_qk_norm_config import get_backend
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -45,35 +48,42 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
     message rather than an internal one.
     """
 
-    def _resolve_qk_norm_config(self, submodules):
-        """Replace the fused query projection with a plain one when there is no query LoRA.
+    def __init__(self, config, submodules, *args, **kwargs):
+        """Build a plain query projection with both supported MCore MLA layouts."""
+        if config.q_lora_rank is not None:
+            super().__init__(config, submodules, *args, **kwargs)
+            return
 
-        The standalone-``q_layernorm`` case is neutralised *before* delegating: an MLA spec
-        may set ``q_layernorm`` to a real norm whenever ``qk_layernorm`` is on, and the
-        parent resolver rejects that outright when there is no query LoRA to consume it
-        (``_raise_unused_q_norm``). Dropping the query norm is exactly what this class
-        exists to do, so the rejection would fire on a configuration this class already
-        knows how to satisfy.
-        """
+        if config.transformer_impl != "transformer_engine":
+            raise ValueError(
+                "DeepSeek without a query LoRA (`q_lora_rank=None`) requires "
+                f"`transformer_impl='transformer_engine'`; `{config.transformer_impl}` "
+                "provides no fused norm+linear projection. DeepSeek needs `qk_layernorm` "
+                "for `kv_a_layernorm`, while the query projection must remain unfused."
+            )
+
+        # Newer MCore resolves these entries in ``_resolve_qk_norm_config``. Older MCore
+        # consumes the spec directly in ``__init__``. Making the spec valid for both lets
+        # the parent choose its native path without importing a version-specific helper.
+        submodules = replace(
+            submodules,
+            q_layernorm=IdentityOp,
+            linear_q_proj=TEColumnParallelLinear,
+        )
+        super().__init__(config, submodules, *args, **kwargs)
+
+    def _resolve_qk_norm_config(self, submodules):
+        """Keep newer MCore's KV resolver while replacing only the query projection."""
         if self.config.q_lora_rank is not None:
             return super()._resolve_qk_norm_config(submodules)
 
-        backend = get_backend(self.config.transformer_impl)
-        if backend.column_parallel_layer_norm_linear() is None:
-            raise ValueError(
-                "DeepSeek without a query LoRA (`q_lora_rank=None`) requires "
-                f"`transformer_impl='transformer_engine'`; `{self.config.transformer_impl}` "
-                "provides no fused norm+linear projection. MCore's MLA resolver builds "
-                "`linear_q_proj` from that fused implementation whenever `qk_layernorm` is "
-                "on, and DeepSeek needs `qk_layernorm` on for `kv_a_layernorm`, so this "
-                "backend cannot express the architecture."
-            )
-
-        if submodules.q_layernorm not in (None, IdentityOp):
-            submodules = replace(submodules, q_layernorm=IdentityOp)
-
+        submodules = replace(
+            submodules,
+            q_layernorm=IdentityOp,
+            linear_q_proj=TELayerNormColumnParallelLinear,
+        )
         layer_classes = super()._resolve_qk_norm_config(submodules)
-        layer_classes["linear_q_proj"] = backend.column_parallel_linear()
+        layer_classes["linear_q_proj"] = TEColumnParallelLinear
         return layer_classes
 
 
