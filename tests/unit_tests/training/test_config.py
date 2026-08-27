@@ -915,9 +915,9 @@ class TestConfigContainerValidation:
         "profile_step_start, profile_step_end, expect_assertion_error, expected_error_match",
         [
             (10, 20, False, None),  # Valid: end > start
-            (10, 10, False, None),  # Valid: end == start (single step)
+            (10, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: empty range
             (0, 5, False, None),  # Valid: start at 0
-            (20, 10, True, "profile_step_end .* must be >= profile_step_start"),  # Invalid: end < start
+            (20, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: end < start
             (-1, 10, True, "profile_step_start must be >= 0"),  # Invalid: start < 0
             (10, -1, True, "profile_step_end must be >= 0"),  # Invalid: end < 0
             (-5, -1, True, "profile_step_start must be >= 0"),  # Invalid: both < 0

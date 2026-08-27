@@ -3,20 +3,22 @@
 
 title: nemotron_3_nano_30b_a3b
 summary: >
-  The pinned BF16 checkpoint has verified one-node GPU import and
-  checkpoint-backed deterministic inference. Performance scope:
+  The pinned checkpoint has verified one-node GPU import, independent CPU and
+  distributed GPU BF16 export, and checkpoint-backed deterministic inference.
+  Both exports strictly reload with Transformers and exhaustively match the
+  source after the explicitly requested BF16 casts. Performance scope:
   pretrain_performance.GB300 uses the tuned canonical 8-GPU MXFP8 recipe.
-  CPU conversion, GPU export, manual forward, and functional training
-  workflows remain unverified in this card.
+  CPU import, manual forward, and functional training workflows remain
+  unverified in this card.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
   training:
     H100:
@@ -63,22 +65,47 @@ items:
       6,243 of 6,243 match with no skipped FP8 tensors or mismatches.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000
+      --hf-path work/model-verification/nemotron-3-nano-30b-a3b/cpu-hf-export
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-08-25
     expected_result: >
-      This workflow remains unverified and requires a public run against the
-      pinned Hugging Face revision with all applicable verification gates.
+      The synchronous CPU export writes a complete indexed checkpoint. All
+      6,243 source keys and shapes match across 31,577,940,288 values; 46 FP32
+      state tensors equal the source exactly after the requested BF16 cast and
+      every remaining tensor matches exactly at zero tolerance. Native loading
+      succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched,
+      or errored weights, and the tokenizer reloads from the export.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000
+      --hf-path work/model-verification/nemotron-3-nano-30b-a3b/gpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --distributed-save --save-every-n-ranks 1 --trust-remote-code
+    last_verified: 2026-08-25
     expected_result: >
-      This workflow remains unverified and requires a public run against the
-      pinned Hugging Face revision with all applicable verification gates.
+      The synchronous TP1/PP1/EP8/ETP1 export writes a complete indexed
+      checkpoint. All 6,243 source keys and shapes match across 31,577,940,288
+      values; 69 FP32 state tensors equal the source exactly after the requested
+      BF16 cast and every remaining tensor matches exactly at zero tolerance.
+      Native loading succeeds as NemotronHForCausalLM with no missing,
+      unexpected, mismatched, or errored weights, and the tokenizer reloads
+      from the export.
 
   manual_forward_pass:
     status: unverified
