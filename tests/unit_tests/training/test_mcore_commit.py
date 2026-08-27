@@ -37,6 +37,13 @@ def _get_submodule_commit() -> str:
     return result.stdout.split()[2]
 
 
+def is_mcore_dev_branch() -> bool:
+    """Return whether the gitlink selects the recorded MCore dev commit."""
+    main_commit = _read_commit_file(".main.commit")
+    dev_commit = _read_commit_file(".dev.commit")
+    return _get_submodule_commit() == dev_commit and dev_commit != main_commit
+
+
 class TestMCoreCommitFiles:
     def test_main_commit_file_exists(self):
         assert (REPO_ROOT / ".main.commit").is_file()
@@ -67,3 +74,9 @@ class TestMCoreCommitFiles:
             + (f" or .dev.commit ({dev_commit[:12]})" if dev_commit else "")
             + f". Run: echo {submodule_commit} > .main.commit"
         )
+
+
+def test_is_mcore_dev_branch():
+    expected = _get_submodule_commit() == _read_commit_file(".dev.commit")
+    expected = expected and _read_commit_file(".dev.commit") != _read_commit_file(".main.commit")
+    assert is_mcore_dev_branch() is expected
