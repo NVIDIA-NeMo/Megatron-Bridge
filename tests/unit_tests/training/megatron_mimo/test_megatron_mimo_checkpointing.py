@@ -16,6 +16,7 @@ from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +296,7 @@ class TestPretrainMegatronMIMOSetup:
         cfg.model = Mock()
         cfg.model.fp16 = False
         cfg.model.bf16 = True
+        cfg.optimizer = MCoreOptimizerConfig(lr=1e-4)
 
         global_state = Mock()
         global_state.start_time = time.time()
@@ -328,7 +330,10 @@ class TestPretrainMegatronMIMOSetup:
             result = setup_megatron_mimo(state=global_state)
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
-        mock_get_mimo_optimizer.assert_called_once_with(unwrapped, cfg.optimizer)
+        mock_get_mimo_optimizer.assert_called_once()
+        optimizer_config = mock_get_mimo_optimizer.call_args.args[1]
+        assert type(optimizer_config) is MCoreOptimizerConfig
+        assert hasattr(optimizer_config, "use_precision_aware_optimizer_no_fp8_or_ds_fp8")
         global_state.initialize_async_checkpoint_worker.assert_called_once()
         assert result.checkpoint_manager is mock_mgr_instance
 

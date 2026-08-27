@@ -13,10 +13,11 @@ Key components:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional
 
 import torch.distributed as dist
+from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
@@ -222,8 +223,12 @@ def setup_megatron_mimo(
     logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
     from megatron.core.models.mimo.optimizer import get_mimo_optimizer
 
-    # cfg.optimizer already finalized by megatron_mimo_runtime_config_update().
-    optimizer = get_mimo_optimizer(unwrapped_model, cfg.optimizer)
+    # MCore's MIMO optimizer derives per-module configs with ``dataclasses.replace``.
+    # Bridge defers OptimizerConfig.__post_init__, so use MCore's concrete class for
+    # the disposable source passed into those per-module replacements.
+    optimizer_config = replace(cfg.optimizer)
+    optimizer_config.__class__ = MCoreOptimizerConfig
+    optimizer = get_mimo_optimizer(unwrapped_model, optimizer_config)
 
     # Auto-create per-module LR schedulers
     cfg._calculate_scheduler_steps()

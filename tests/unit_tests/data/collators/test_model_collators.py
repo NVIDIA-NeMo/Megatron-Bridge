@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -2142,19 +2143,21 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         _language_max_sequence_length=32,
         context_parallel_lm=1,
     )
-    final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
-        pp_model,
-        image_embeddings=torch.ones(1, 5, hidden_size),
-        language_embeddings=torch.ones(1, batch["input_ids"].shape[1], hidden_size),
-        input_ids=batch["input_ids"],
-        loss_mask=batch["loss_mask"],
-        labels=batch["labels"],
-        use_inference_kv_cache=False,
-        inference_context=None,
-        image_token_index=NEMO_IMAGE_TOKEN_ID,
-        num_image_tiles=batch["num_image_tiles"],
-        is_packed_dynamic_res=True,
-    )
+    preprocess_kwargs = {
+        "image_embeddings": torch.ones(1, 5, hidden_size),
+        "language_embeddings": torch.ones(1, batch["input_ids"].shape[1], hidden_size),
+        "input_ids": batch["input_ids"],
+        "loss_mask": batch["loss_mask"],
+        "labels": batch["labels"],
+        "use_inference_kv_cache": False,
+        "inference_context": None,
+        "image_token_index": NEMO_IMAGE_TOKEN_ID,
+        "num_image_tiles": batch["num_image_tiles"],
+    }
+    if "is_packed_dynamic_res" in inspect.signature(LLaVAModel._preprocess_data).parameters:
+        preprocess_kwargs["is_packed_dynamic_res"] = True
+
+    final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(pp_model, **preprocess_kwargs)
 
     assert final_embedding.shape == (32, 1, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (1, 32)
