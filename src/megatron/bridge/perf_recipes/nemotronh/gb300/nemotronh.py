@@ -416,6 +416,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         # op fuser + fused weighted squared-ReLU with moe_act activation recompute
         # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
 
