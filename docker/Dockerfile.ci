@@ -198,7 +198,7 @@ COPY --chown=1000:1000 . /opt/Megatron-Bridge
 # UID/GID 65532, so make that identity explicit and grant it ownership without broad permissions.
 RUN printf 'mbridge:x:65532:65532:Megatron Bridge:/home/mbridge:/bin/bash\n' >> /etc/passwd && \
     printf 'mbridge:x:65532:\n' >> /etc/group && \
-    install -d -o 65532 -g 65532 -m 0755 /nemo_run /home/mbridge /home/mbridge/.cache && \
+    install -d -o 65532 -g 65532 -m 0755 /nemo_run /home/mbridge /home/mbridge/.cache /home/ubuntu /home/ubuntu/.cache && \
     chown -R 65532:65532 /opt/venv /opt/Megatron-Bridge
 
 ENV HOME=/home/mbridge
