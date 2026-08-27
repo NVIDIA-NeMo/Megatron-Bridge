@@ -17,7 +17,6 @@
 from dataclasses import replace
 from typing import Optional
 
-from megatron.core.models.backends import get_backend
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
@@ -48,18 +47,24 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
     def _resolve_qk_norm_config(self, submodules):
         """Replace the fused query projection with a plain one when there is no query LoRA.
 
-        The standalone-``q_layernorm`` case is neutralised *before* delegating: an MLA spec
-        may set ``q_layernorm`` to a real norm whenever ``qk_layernorm`` is on, and the
-        parent resolver rejects that outright when there is no query LoRA to consume it
-        (``_raise_unused_q_norm``). Dropping the query norm is exactly what this class
-        exists to do, so the rejection would fire on a configuration this class already
-        knows how to satisfy.
+        MCore main resolves QK norm implementations in this method, while MCore dev
+        still consumes the spec submodules directly. Return the same mapping for the
+        older implementation so one Bridge class supports both layouts.
         """
+        fields = (
+            "linear_q_proj",
+            "linear_q_up_proj",
+            "linear_kv_up_proj",
+            "q_layernorm",
+            "kv_layernorm",
+        )
+        parent_resolver = getattr(super(), "_resolve_qk_norm_config", None)
         if self.config.q_lora_rank is not None:
-            return super()._resolve_qk_norm_config(submodules)
+            if parent_resolver is None:
+                return {field: getattr(submodules, field) for field in fields}
+            return parent_resolver(submodules)
 
-        backend = get_backend(self.config.transformer_impl)
-        if backend.column_parallel_layer_norm_linear() is None:
+        if self.config.transformer_impl != "transformer_engine":
             raise ValueError(
                 "DeepSeek without a query LoRA (`q_lora_rank=None`) requires "
                 f"`transformer_impl='transformer_engine'`; `{self.config.transformer_impl}` "
@@ -69,11 +74,15 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
                 "backend cannot express the architecture."
             )
 
+        linear_q_proj = submodules.linear_q_proj
         if submodules.q_layernorm not in (None, IdentityOp):
             submodules = replace(submodules, q_layernorm=IdentityOp)
 
-        layer_classes = super()._resolve_qk_norm_config(submodules)
-        layer_classes["linear_q_proj"] = backend.column_parallel_linear()
+        if parent_resolver is None:
+            return {field: getattr(submodules, field) for field in fields}
+
+        layer_classes = parent_resolver(submodules)
+        layer_classes["linear_q_proj"] = linear_q_proj
         return layer_classes
 
 
