@@ -85,6 +85,19 @@ class TestEnableSafeHybridepDispatch:
 
         _enable_safe_hybridep_dispatch(cfg)
 
+    def test_equal_dispatch_input_contract_preserves_disabled_padding(self):
+        cfg = SimpleNamespace(
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_hybridep_pad_variable_tokens=False,
+            moe_hybridep_assume_equal_dispatch_inputs=True,
+            cuda_graph_impl="none",
+        )
+
+        _enable_safe_hybridep_dispatch(cfg)
+
+        assert cfg.moe_hybridep_pad_variable_tokens is False
+
 
 # ---------------------------------------------------------------------------
 # _resolve_string_fields

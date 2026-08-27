@@ -98,40 +98,100 @@ def _nemotron_35_super_vl_base() -> ConfigContainer:
     return cfg
 
 
+def _apply_performance_measurement_policy(cfg: ConfigContainer) -> ConfigContainer:
+    """Apply fixed-shape throughput measurement settings without a perf-recipe dependency."""
+    cfg.train.train_iters = 50
+    cfg.train.eval_iters = 0
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.dataset.pad_to_max_length = True
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
+    cfg.checkpoint.save = None
+    cfg.checkpoint.load = None
+    cfg.checkpoint.async_save = False
+    cfg.logger.log_interval = 1
+    cfg.logger.tensorboard_dir = None
+
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.ddp.check_for_large_grads = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+    cfg.optimizer.lr = 4.5e-4
+    cfg.optimizer.min_lr = 4.5e-6
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.scheduler.start_weight_decay = 0.1
+    cfg.scheduler.end_weight_decay = 0.1
+    cfg.scheduler.lr_decay_style = "WSD"
+    cfg.scheduler.lr_decay_iters = cfg.train.train_iters
+    cfg.scheduler.lr_warmup_iters = 10
+
+    cfg.model.apply_rope_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.use_transformer_engine_op_fuser = False
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    return cfg
+
+
 def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """Return the 64-H100 BF16 performance pretraining config for Super VL.
 
-    The benchmark policy is inherited directly from the corresponding
-    Nemotron 3 Super recipe. Only the model, multimodal dataset, and tokenizer
-    are replaced with their Super-VL counterparts, and all present model
-    stacks remain trainable.
+    The language stack starts from the Nemotron 3 Super H100 recipe, then uses
+    the measured Super-VL pipeline balance, selective recompute, and HybridEP
+    policy needed by the trainable vision stack. All present model stacks
+    remain trainable.
 
     Returns:
         The Super-VL performance pretraining configuration.
     """
-    # Keep this import local so importing the public library recipe package
-    # does not eagerly import the separate performance-recipe package.
-    from megatron.bridge.perf_recipes._common import _benchmark_common
-    from megatron.bridge.perf_recipes.nemotronh.h100.nemotronh import (
-        nemotron_3_super_pretrain_64gpu_h100_bf16_config,
-    )
-
-    cfg = nemotron_3_super_pretrain_64gpu_h100_bf16_config()
-    vl_cfg = nemotron_35_super_vl_sft_64gpu_h100_bf16_config()
-    cfg.model = vl_cfg.model
-    cfg.dataset = vl_cfg.dataset
-    cfg.tokenizer = vl_cfg.tokenizer
-    # Reapply model-level benchmark settings after replacing the text-only
-    # provider. Non-model benchmark settings are idempotent.
+    cfg = nemotron_35_super_vl_sft_64gpu_h100_bf16_config()
     cfg.model.moe_router_force_load_balancing = True
-    _benchmark_common(cfg)
-    # The trainable vision stack needs an additional model-parallel shard on
-    # 80 GiB H100s. Keep PP/EP unchanged and place TP=2 within each NVLink
-    # domain so the 64-GPU layout remains valid with EP=32.
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.sequence_parallel = True
+    _apply_performance_measurement_policy(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.num_layers_in_first_pipeline_stage = 38
+    cfg.model.num_layers_in_last_pipeline_stage = None
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.mamba_chunk_size = 128
+
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = ["layernorm", "moe"]
+    cfg.model.recompute_vision = True
+    cfg.model.radio_force_eval_mode = False
+    cfg.model.vision_recompute_granularity = "selective"
+    cfg.model.vision_recompute_modules = ["core_attn"]
+    cfg.model.vision_recompute_method = None
+    cfg.model.vision_recompute_num_layers = None
+
+    cfg.model.moe_expert_capacity_factor = None
+    cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.moe_hybridep_assume_equal_dispatch_inputs = True
+    cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.ddp.overlap_param_gather = False
     cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_hybridep_num_sms_preprocessing = 108
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_permute_fusion_into_hybridep = True
+    cfg.model.use_fused_weighted_squared_relu = True
+    cfg.model.overlap_moe_expert_parallel_comm = False
+    cfg.model.delay_wgrad_compute = False
+    cfg.model.overlap_p2p_comm = False
+    cfg.model.batch_p2p_comm = True
+    cfg.model.batch_p2p_sync = False
+
+    cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = 0
+    cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = 0
     cfg.checkpoint.async_save = False
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False

@@ -345,7 +345,7 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
 
 
-def test_super_vl_pretrain_recipe_reuses_super_benchmark_policy(fake_processor):
+def test_super_vl_pretrain_recipe_uses_tuned_h100_policy(fake_processor):
     cfg = _build_config(
         _super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
         fake_processor,
@@ -355,6 +355,7 @@ def test_super_vl_pretrain_recipe_reuses_super_benchmark_policy(fake_processor):
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
     assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
+    assert cfg.dataset.pad_to_max_length is True
     assert cfg.model.has_sound is False
     assert cfg.model.separate_video_embedder is True
     assert cfg.model.mtp_num_layers == 1
@@ -362,20 +363,48 @@ def test_super_vl_pretrain_recipe_reuses_super_benchmark_policy(fake_processor):
     assert cfg.model.freeze_vision_model is False
     assert cfg.model.freeze_vision_projection is False
 
-    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 38
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 32
     assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
+    assert cfg.model.sequence_parallel is False
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is True
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+    assert cfg.model.moe_hybridep_assume_equal_dispatch_inputs is True
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
-    assert cfg.model.recompute_modules == ["layernorm", "moe_act", "moe", "core_attn"]
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules == ["layernorm", "moe"]
+    assert cfg.model.recompute_vision is True
+    assert cfg.model.radio_force_eval_mode is False
+    assert cfg.model.vision_recompute_granularity == "selective"
+    assert cfg.model.vision_recompute_modules == ["core_attn"]
+    assert cfg.model.vision_recompute_method is None
+    assert cfg.model.vision_recompute_num_layers is None
     assert cfg.model.apply_rope_fusion is True
     assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.model.use_te_rng_tracker is False
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_permute_fusion is True
+    assert cfg.model.moe_permute_fusion_into_hybridep is True
+    assert cfg.model.use_fused_weighted_squared_relu is True
+    assert cfg.model.overlap_moe_expert_parallel_comm is False
+    assert cfg.model.delay_wgrad_compute is False
+    assert cfg.model.overlap_p2p_comm is False
+    assert cfg.model.batch_p2p_comm is True
+    assert cfg.model.batch_p2p_sync is False
 
     assert cfg.model.seq_length == 4096
     assert cfg.dataset.seq_length == 4096
@@ -409,6 +438,6 @@ def test_super_vl_pretrain_recipe_reuses_super_benchmark_policy(fake_processor):
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
     }

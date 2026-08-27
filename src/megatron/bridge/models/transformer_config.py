@@ -94,8 +94,9 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
     Bridge model configs are finalized before runtime batches expose whether their
     THD token counts differ by rank. HybridEP requires equal dispatch shapes, so use
     Megatron Core's padding path for eager Bridge-configured HybridEP dispatchers.
-    CUDA-graph configs retain their explicit setting because the padding path's host
-    scalar synchronization is not capture-safe; those configs require equal inputs.
+    CUDA-graph configs and configs that explicitly guarantee equal dispatch inputs
+    retain their padding setting. The padding path's host scalar synchronization is
+    not capture-safe, and the explicit opt-out is intended for fixed-shape workloads.
     """
 
     def _uses_legacy_full_iteration(value: object) -> bool:
@@ -119,6 +120,7 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
         config.moe_token_dispatcher_type != "flex"
         or config.moe_flex_dispatcher_backend != "hybridep"
         or cuda_graphs_enabled
+        or getattr(config, "moe_hybridep_assume_equal_dispatch_inputs", False)
     ):
         return
 
@@ -150,6 +152,9 @@ class TransformerConfig(MCoreTransformerConfig):
         # Finalize to compute derived fields
         config.finalize()
     """
+
+    moe_hybridep_assume_equal_dispatch_inputs: bool = False
+    """Keep HybridEP uneven-input padding disabled for fixed-shape eager workloads."""
 
     _NO_COPY_KEYS = {"_pg_collection"}
 

@@ -241,6 +241,12 @@ path performs a host scalar synchronization that is not capture-safe. They must
 provide equal per-rank dispatch shapes. Disable CUDA graphs when runtime token
 counts can differ so Bridge can enable safe padding.
 
+Fixed-shape eager workloads may set
+`moe_hybridep_assume_equal_dispatch_inputs=true` to preserve an explicitly
+disabled padding setting and avoid the safety collective. This is a strict
+runtime contract: every rank in the HybridEP group must dispatch the same token
+count. Do not enable it for variable-length or dynamically packed batches.
+
 **GPU Architecture Requirements:**
 
 - **DeepEP**: Ampere (SM 8.x), Hopper (SM 9.x), B200, B300
