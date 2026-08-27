@@ -20,8 +20,8 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     _benchmark_common,
     _perf_precision,
     _qwen35_vl_common,
-    _qwen35_vl_post_clear_scope_with_overlap,
-    _qwen35_vl_post_with_overlap,
+    _qwen35_vl_post,
+    _qwen35_vl_post_clear_scope,
     qwen35_vl_35b_a3b_pretrain_mock_config,
     qwen35_vl_122b_a10b_pretrain_mock_config,
     qwen35_vl_397b_a17b_pretrain_mock_config,
@@ -58,7 +58,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_post_with_overlap(cfg)
+    _qwen35_vl_post(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -104,7 +104,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -150,7 +150,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -218,7 +218,7 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
