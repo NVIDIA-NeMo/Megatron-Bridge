@@ -119,7 +119,7 @@ jobs:
 
   manual-review:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@1fc7b2f024bac423b1825a57182f3628c5fcb1f1 # v1.7.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@6f6f50631fadf4a3f7b813926e80322fb82bfccc # v1.9.0 + review authorization hardening
     with:
       model: ${{ vars.CLAUDE_MODEL }}
       prompt: |
