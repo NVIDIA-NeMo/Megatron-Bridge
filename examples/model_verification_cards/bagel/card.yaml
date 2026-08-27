@@ -1,0 +1,256 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: bagel_7b_mot
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. The H100 FSDP leaf records a standalone real-data BAGEL training
+  run. It must not be compared directly with the official BAGEL run: Bridge
+  used block-23 language-model recompute without EMA, while the official run
+  used full recompute and performed an EMA update. This card currently claims
+  BAGEL pretraining performance verification only; conversion, inference,
+  fine-tuning, and checkpoint-resume verification remain incomplete or
+  unsupported by maintained public workflows.
+verification_index:
+  model_level:
+    unverified:
+      - manual_forward_pass
+    unsupported:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, checkpoint_resume]
+      unsupported: [sft_export_inference, sft_long_context, peft]
+  fsdp:
+    H100: verified
+model:
+  hf_id: ByteDance-Seed/BAGEL-7B-MoT
+  hf_revision: 5019f57d168e5816e8f3f701b17cc816bb7cf24b  # pragma: allowlist secret
+  architecture: BagelForConditionalGeneration
+  min_transformers_version: "5.12.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.04
+  bridge_commit: 54591dff22c78e91230c88fde6cd1bb463d0240a  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      BAGEL native-checkpoint initialization currently runs as part of GPU
+      model construction and is not registered with the maintained public
+      CPU conversion launcher.
+
+  hf_to_megatron_gpu:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      The BAGEL checkpoint adapter initializes a training model from native
+      assets, but no maintained convert.sh import workflow currently writes a
+      standalone Megatron checkpoint from the pinned Hugging Face revision.
+
+  megatron_to_hf_cpu:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging
+      Face checkpoint is not implemented by the public CPU converter.
+
+  megatron_to_hf_gpu:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging
+      Face checkpoint is not implemented by the public GPU converter.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A maintained model-comparison workflow must run the pinned native and
+      Megatron checkpoints on identical multimodal inputs and satisfy the
+      repository's output-correlation gate. Existing component and loss tests
+      do not constitute this end-to-end comparison.
+
+  inference:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      This Bridge integration exposes BAGEL training but does not provide a
+      maintained public deterministic generation or understanding launcher.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        A bounded public-data pretraining workflow must complete with finite
+        CE, MSE, and total losses, no skipped or NaN iterations, a persisted
+        post-setup configuration, and reloadable checkpoints. The existing
+        alignment run is retained as PR evidence but does not satisfy every
+        verification-card artifact requirement.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The BAGEL fine-tuning recipe must complete a bounded pinned-data run
+        with finite losses, all required metrics, and a reloadable checkpoint.
+
+  sft_export_inference:
+    H100:
+      status: unsupported
+      precision: null
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        Post-fine-tuning export and deterministic Hugging Face inference are
+        unavailable because complete Megatron-to-Hugging-Face BAGEL export is
+        not implemented.
+
+  sft_long_context:
+    H100:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The current BAGEL integration does not expose a maintained packed
+        long-context fine-tuning recipe with context parallelism.
+
+  peft:
+    H100:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        BAGEL LoRA and other parameter-efficient fine-tuning workflows are not
+        implemented by the current integration.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A direct continuation must restore model, optimizer, scheduler,
+        per-rank data order, and RNG state, then match declared loss sentinels
+        and save to a distinct reloadable output root. Loader-only restore
+        checks do not complete this verification item.
+
+  pretrain_fsdp:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: bb3d95306020e7413ab781d57db0c347ea28f774  # pragma: allowlist secret
+      enabled_features:
+        megatron_fsdp: optim_grads_params
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
+        --recipe bagel_7b_pretrain_32gpu_h100_bf16_config --mode pretrain
+        --max_steps 20
+        model.bagel_repo=work/dependencies/Bagel
+        model.model_path=work/model-verification/bagel/native
+        model.vae_path=work/model-verification/bagel/native/ae.safetensors
+        model.reference_training_seed=1344
+        model.reference_training_world_size=32
+        model.reset_reference_training_rng=true
+        dataset.dataset_root=work/data/bagel-wds
+        dataset.bagel_repo=work/dependencies/Bagel
+        dataset.tokenizer_model=work/model-verification/bagel/native
+        dataset.seed=42 dataset.data_seed=42 rng.seed=42
+        checkpoint.load=work/model-verification/bagel/seed42-mcore-init
+        checkpoint.load_optim=true checkpoint.load_rng=true
+        dataset.dataloader_load=work/model-verification/bagel/seed42-mcore-init
+        ddp.overlap_grad_reduce=true ddp.overlap_param_gather=true
+        ddp.fsdp_double_buffer=false
+        checkpoint.save=null checkpoint.save_interval=0
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.log_throughput=true
+      last_verified: 2026-08-20
+      metrics:
+        initial_loss: 14.683310
+        final_loss: 11.797620
+        last_10_steps_step_time_ms_avg: 7710.980
+        last_10_steps_model_tflops_per_gpu_avg: 309.000
+        last_10_steps_tokens_per_second_per_gpu_avg: 4419.417
+        peak_allocated_memory_gib: 57.572
+        peak_reserved_memory_gib: 60.734
+      expected_result: >
+        The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 20 BF16
+        steps at GBS/MBS 32/1 with one microbatch, block-23 language-model
+        recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total
+        losses, and no skipped or NaN iterations. Steps 11-20 average
+        7,710.980 ms, 309.000 model TFLOP/s/GPU, and 4,419.417 logical
+        tokens/GPU/s from 1,090,497.2 logical tokens per step; logical tokens
+        include text, ViT, VAE-latent, and special tokens and exclude physical
+        padding. Peak allocated/reserved memory is 57.572/60.734 GiB. Do not
+        compare this result directly with the official BAGEL full-recompute
+        run because that run also performs an EMA update, while this one does
+        neither full language-model recompute nor EMA.
