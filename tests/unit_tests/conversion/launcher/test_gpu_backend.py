@@ -139,6 +139,26 @@ def test_distributed_cpu_initialization_uses_gloo(cli, monkeypatch):
     assert calls[0]["timeout"].total_seconds() == 45 * 60
 
 
+def test_distributed_cpu_output_barrier_does_not_query_cuda(cli, monkeypatch, tmp_path):
+    barrier_calls = []
+    monkeypatch.setattr(cli.torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(cli.torch.distributed, "get_backend", lambda: "gloo")
+    monkeypatch.setattr(
+        cli.torch.distributed,
+        "barrier",
+        lambda *args, **kwargs: barrier_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        cli.torch.cuda,
+        "current_device",
+        lambda: pytest.fail("distributed CPU export must not query CUDA"),
+    )
+
+    cli._prepare_distributed_output(str(tmp_path / "output"), overwrite=False)
+
+    assert barrier_calls == [((), {})]
+
+
 def test_distributed_cpu_provider_uses_cpu_initialization(cli):
     provider = _FakeProvider([])
 

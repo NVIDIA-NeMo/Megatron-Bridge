@@ -89,7 +89,10 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
     # torch.cuda.set_device in _ensure_distributed_initialized) avoids the
     # guess, matching the pattern used by training/initialize.py's own
     # first post-init barrier.
-    torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
+    if torch.distributed.get_backend() == "gloo":
+        torch.distributed.barrier()
+    else:
+        torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
