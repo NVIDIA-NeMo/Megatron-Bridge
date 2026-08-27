@@ -207,7 +207,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*5|(t*4|)*14mL")
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=False, fp8_output_proj=False)
+    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=False)
     cfg.model.mla_down_proj_fusion = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -234,6 +234,8 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
+        "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
     return cfg
 
