@@ -161,8 +161,8 @@ requires-dist = []
 # Lane-specific metadata for VCS packages that otherwise compile CUDA extensions during lock.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.14.0+f031cf87"
-requires-dist = ["einops", "importlib-metadata", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic", "torch"]
+version = "2.17.1+4329ff84"
+requires-dist = ["pydantic<2.14", "importlib-metadata>=1.0", "packaging", "torch>=2.1", "einops", "onnxscript", "onnx", "nvdlfw-inspect"]
 
 [[tool.uv.dependency-metadata]]
 name = "fast-hadamard-transform"
@@ -185,7 +185,7 @@ tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
 ]
 te = [
-    "transformer-engine[pytorch,core_cu13]",
+    "megatron-core[te]",
 ]
 ssm = [
     "mamba-ssm",
