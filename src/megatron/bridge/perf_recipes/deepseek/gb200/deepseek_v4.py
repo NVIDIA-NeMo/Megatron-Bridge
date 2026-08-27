@@ -102,8 +102,9 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.average_in_collective = False
     cfg.comm_overlap.overlap_grad_reduce = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.model.moe_shared_expert_overlap = False
 
     cfg.checkpoint.load_optim = False
     cfg.checkpoint.load_rng = False

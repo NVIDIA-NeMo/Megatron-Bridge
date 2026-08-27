@@ -29,6 +29,9 @@ from megatron.bridge.training.config import ConfigContainer
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
+
+    cfg.model.expert_model_parallel_size = 32
+
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
