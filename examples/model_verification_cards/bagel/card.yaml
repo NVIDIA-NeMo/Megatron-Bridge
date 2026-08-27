@@ -35,7 +35,7 @@ model:
   min_transformers_version: "5.12.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.04
-  bridge_commit: 54591dff22c78e91230c88fde6cd1bb463d0240a  # pragma: allowlist secret
+  bridge_commit: 9352d97a805559271561556cf27d93bfdb607fe7  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -208,13 +208,12 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: bb3d95306020e7413ab781d57db0c347ea28f774  # pragma: allowlist secret
       enabled_features:
         megatron_fsdp: optim_grads_params
       command: >
         ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
         --recipe bagel_7b_pretrain_32gpu_h100_bf16_config --mode pretrain
-        --max_steps 20
+        --max_steps 30
         model.bagel_repo=work/dependencies/Bagel
         model.model_path=work/model-verification/bagel/native
         model.vae_path=work/model-verification/bagel/native/ae.safetensors
@@ -233,24 +232,24 @@ items:
         checkpoint.save=null checkpoint.save_interval=0
         validation.eval_iters=0 validation.eval_interval=0
         logger.log_interval=1 logger.log_throughput=true
-      last_verified: 2026-08-20
+      last_verified: 2026-08-26
       metrics:
         initial_loss: 14.683310
-        final_loss: 11.797620
-        last_10_steps_step_time_ms_avg: 7710.980
-        last_10_steps_model_tflops_per_gpu_avg: 309.000
-        last_10_steps_tokens_per_second_per_gpu_avg: 4419.417
-        peak_allocated_memory_gib: 57.572
+        final_loss: 10.809910
+        last_10_steps_step_time_ms_avg: 7736.130
+        last_10_steps_model_tflops_per_gpu_avg: 308.100
+        last_10_steps_tokens_per_second_per_gpu_avg: 4406.500
+        peak_allocated_memory_gib: 57.678
         peak_reserved_memory_gib: 60.734
       expected_result: >
-        The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 20 BF16
+        The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16
         steps at GBS/MBS 32/1 with one microbatch, block-23 language-model
         recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total
-        losses, and no skipped or NaN iterations. Steps 11-20 average
-        7,710.980 ms, 309.000 model TFLOP/s/GPU, and 4,419.417 logical
-        tokens/GPU/s from 1,090,497.2 logical tokens per step; logical tokens
+        losses, and no skipped or NaN iterations. Steps 21-30 average
+        7,736.130 ms, 308.100 model TFLOP/s/GPU, and 4,406.500 logical
+        tokens/GPU/s from 1,090,856.3 logical tokens per step; logical tokens
         include text, ViT, VAE-latent, and special tokens and exclude physical
-        padding. Peak allocated/reserved memory is 57.572/60.734 GiB. Do not
+        padding. Peak allocated/reserved memory is 57.678/60.734 GiB. Do not
         compare this result directly with the official BAGEL full-recompute
         run because that run also performs an EMA update, while this one does
         neither full language-model recompute nor EMA.
