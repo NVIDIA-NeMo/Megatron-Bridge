@@ -235,21 +235,21 @@ items:
       last_verified: 2026-08-26
       metrics:
         initial_loss: 14.683310
-        final_loss: 10.809910
-        last_10_steps_step_time_ms_avg: 7736.130
-        last_10_steps_model_tflops_per_gpu_avg: 308.100
-        last_10_steps_tokens_per_second_per_gpu_avg: 4406.500
-        peak_allocated_memory_gib: 57.678
-        peak_reserved_memory_gib: 60.734
+        final_loss: 10.810520
+        last_10_steps_step_time_ms_avg: 7751.820
+        last_10_steps_model_tflops_per_gpu_avg: 307.500
+        last_10_steps_tokens_per_second_per_gpu_avg: 4397.581
+        peak_allocated_memory_gib: 58.933
+        peak_reserved_memory_gib: 61.648
       expected_result: >
         The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16
         steps at GBS/MBS 32/1 with one microbatch, block-23 language-model
         recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total
         losses, and no skipped or NaN iterations. Steps 21-30 average
-        7,736.130 ms, 308.100 model TFLOP/s/GPU, and 4,406.500 logical
+        7,751.820 ms, 307.500 model TFLOP/s/GPU, and 4,397.581 logical
         tokens/GPU/s from 1,090,856.3 logical tokens per step; logical tokens
         include text, ViT, VAE-latent, and special tokens and exclude physical
-        padding. Peak allocated/reserved memory is 57.678/60.734 GiB. Do not
+        padding. Peak allocated/reserved memory is 58.933/61.648 GiB. Do not
         compare this result directly with the official BAGEL full-recompute
         run because that run also performs an EMA update, while this one does
         neither full language-model recompute nor EMA.

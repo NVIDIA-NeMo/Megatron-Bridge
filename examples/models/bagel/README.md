@@ -1,0 +1,54 @@
+# BAGEL Training
+
+Megatron Bridge supports BAGEL-7B-MoT pretraining and fine-tuning through
+Megatron MIMO. The integration covers the T2I, Editing, and VLM objectives,
+native BAGEL checkpoint initialization, Megatron FSDP training, and loader
+checkpoint restore.
+
+## Requirements
+
+- A Megatron-LM revision containing
+  [NVIDIA/Megatron-LM#3635](https://github.com/NVIDIA/Megatron-LM/pull/3635).
+- The official BAGEL repository at revision
+  `a2fa77dd8caeefc41e6607ae0ec17408d3f4ee9f`.
+- The `ByteDance-Seed/BAGEL-7B-MoT` model assets, including
+  `ae.safetensors` and tokenizer files.
+- BAGEL data converted and prepared as described in the
+  [BAGEL data tutorial](../../../tutorials/data/bagel/README.md).
+
+The BAGEL checkout is a runtime dependency because Bridge calls its tokenizer,
+image transforms, and flow-matching utilities directly. Keep its revision
+pinned so data and loss behavior remain reproducible.
+
+## Launch Pretraining
+
+The following example uses the 32-GPU H100 recipe and a previously initialized
+Megatron checkpoint. Paths under `work/` are user-managed inputs:
+
+```bash
+./scripts/training/train.sh --nodes 4 --gpus-per-node 8 \
+  --recipe bagel_7b_pretrain_32gpu_h100_bf16_config --mode pretrain \
+  --max_steps 30 \
+  model.bagel_repo=work/dependencies/Bagel \
+  model.model_path=work/models/BAGEL-7B-MoT \
+  model.vae_path=work/models/BAGEL-7B-MoT/ae.safetensors \
+  dataset.dataset_root=work/data/bagel-wds \
+  dataset.bagel_repo=work/dependencies/Bagel \
+  dataset.tokenizer_model=work/models/BAGEL-7B-MoT \
+  checkpoint.load=work/checkpoints/bagel-mcore-init \
+  dataset.dataloader_load=work/checkpoints/bagel-mcore-init
+```
+
+Use `bagel_7b_pretrain_8gpu_h100_bf16_config` for the 8-GPU pretraining
+configuration or `bagel_7b_finetune_8gpu_h100_bf16_config` for fine-tuning.
+The lower-level `pretrain_bagel.py` example additionally supports initializing
+from a native BAGEL checkpoint and recording loss-alignment traces.
+
+## Current Limitations
+
+- Tensor, pipeline, and context parallel sizes must all be one.
+- The maintained recipes use Megatron FSDP with data parallelism.
+- Generation, understanding inference, and Hugging Face export are not
+  provided by this training integration.
+- Official and Bridge throughput results are not directly comparable when
+  recompute or EMA settings differ.
