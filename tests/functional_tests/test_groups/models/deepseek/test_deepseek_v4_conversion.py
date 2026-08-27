@@ -33,15 +33,22 @@ def _has_dsv4_in_transformers() -> bool:
 
 def _has_dsv4_in_mcore() -> bool:
     try:
-        return all(
+        if not all(
             importlib.util.find_spec(mod) is not None
             for mod in (
                 "megatron.core.transformer.hyper_connection",
                 "megatron.core.transformer.experimental_attention_variant.csa",
                 "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
             )
-        )
-    except ModuleNotFoundError:
+        ):
+            return False
+        # The DSv4 HybridModel stack spec ships in the "Enable DeepSeek-v4 hybrid_model"
+        # megatron-core series; older cores have the attention modules above but not this,
+        # so the DSv4 hybrid model cannot be built. Skip rather than fail on such cores.
+        from megatron.core.models.hybrid import hybrid_layer_specs
+
+        return hasattr(hybrid_layer_specs, "hybrid_dsv4_stack_spec")
+    except (ImportError, ValueError):
         return False
 
 

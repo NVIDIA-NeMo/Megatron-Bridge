@@ -31,17 +31,22 @@ from megatron.bridge.models.conversion.param_mapping import AutoMapping, Replica
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     DeepSeekV4Bridge,
     _dsv4_compress_ratios,
+    _dsv4_hybrid_csa_compress_ratios,
+    _dsv4_hybrid_layer_pattern,
     _dsv4_num_hash_layers,
     deepseek_v4_supports_fused_dsa_kernels,
 )
+from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
 @pytest.fixture
 def bridge_with_mtp():
     """A DSv4 bridge with hf_config stubbed for a single MTP layer."""
     bridge = DeepSeekV4Bridge()
-    # mapping_registry only reads num_nextn_predict_layers from hf_config.
-    bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=1)
+    # mapping_registry reads num_hidden_layers and num_nextn_predict_layers from hf_config.
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=1)
     return bridge
 
 
@@ -49,7 +54,7 @@ def bridge_with_mtp():
 def bridge_without_mtp():
     """A DSv4 bridge with hf_config that has zero MTP layers."""
     bridge = DeepSeekV4Bridge()
-    bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=0)
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=0)
     return bridge
 
 
@@ -439,10 +444,14 @@ class TestDeepSeekV4QuantizedExport:
 
 
 def test_sequential_expert_mappings_present(bridge_with_mtp):
-    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning)."""
+    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning).
+
+    On the hybrid layout the MoE for logical layer 0 lives at hybrid layer index 1, under
+    the HyperConnectionHybridLayer ``inner_layer`` wrapper.
+    """
     params = _by_megatron(bridge_with_mtp.mapping_registry())
-    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight" in params
-    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight" in params
+    assert "decoder.layers.1.inner_layer.mlp.experts.local_experts.*.linear_fc1.weight" in params
+    assert "decoder.layers.1.inner_layer.mlp.experts.local_experts.*.linear_fc2.weight" in params
 
 
 class TestDecoderHCHeadMappings:
@@ -575,19 +584,20 @@ class TestDeepSeekV4HardwareCapabilities:
 
 
 class TestDeepSeekV4HardwareDefaults:
-    """DSv4 Blackwell-only fused kernels must not default on for Hopper."""
+    """DSv4 defaults cuDNN CSA on Hopper+ while fused mHC remains Blackwell-only."""
 
     @pytest.mark.parametrize(
-        ("capability", "expected"),
+        ("capability", "expected_dsa_backend", "expected_fused_mhc"),
         [
-            ((9, 0), False),
-            ((10, 0), True),
+            ((8, 0), "none", False),
+            ((9, 0), "cudnn", False),
+            ((10, 0), "cudnn", True),
         ],
     )
-    def test_provider_bridge_gates_blackwell_only_fusions(self, capability, expected):
+    def test_provider_bridge_gates_fusions_by_hardware(self, capability, expected_dsa_backend, expected_fused_mhc):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
+        provider = _provider_with_fields("enable_mhc_connections", "mhc_num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -601,36 +611,15 @@ class TestDeepSeekV4HardwareDefaults:
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
-        assert out.dsa_kernel_backend == ("cudnn" if expected else "none")
-        assert out.apply_dsa_kernel_fusion is expected
-        assert out.enable_hyper_connections is True
-        assert out.num_residual_streams == hf_pretrained.config.hc_mult
-        assert out.use_fused_mhc is expected
+        assert out.dsa_kernel_backend == expected_dsa_backend
+        assert out.enable_mhc_connections is True
+        assert out.mhc_num_residual_streams == hf_pretrained.config.hc_mult
+        assert out.use_fused_mhc is expected_fused_mhc
 
-    def test_provider_bridge_sets_main_mhc_fields_and_disables_dsa(self):
+    def test_provider_bridge_disables_fusions_without_cuda(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
         provider = _provider_with_fields("enable_mhc_connections", "mhc_num_residual_streams")
-
-        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
-        with (
-            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
-            patch(
-                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_blackwell_fused_kernels",
-                return_value=True,
-            ),
-        ):
-            out = bridge.provider_bridge(hf_pretrained)
-
-        assert out.dsa_kernel_backend == "none"
-        assert out.enable_mhc_connections is True
-        assert out.mhc_num_residual_streams == hf_pretrained.config.hc_mult
-        assert out.use_fused_mhc is True
-
-    def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):
-        hf_pretrained = MagicMock()
-        hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -640,14 +629,13 @@ class TestDeepSeekV4HardwareDefaults:
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.dsa_kernel_backend == "none"
-        assert out.apply_dsa_kernel_fusion is False
-        assert out.enable_hyper_connections is True
+        assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is False
 
     def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
+        provider = _provider_with_fields("enable_mhc_connections", "mhc_num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -662,8 +650,7 @@ class TestDeepSeekV4HardwareDefaults:
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.dsa_kernel_backend == "none"
-        assert out.apply_dsa_kernel_fusion is False
-        assert out.enable_hyper_connections is True
+        assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is True
 
 
@@ -721,3 +708,99 @@ class TestDeepSeekV4ExportWeightDtype:
         out = bridge.maybe_modify_converted_hf_weight(task, {"a.weight": torch.ones(1)}, {})
 
         assert called.get("hit") and "quantized" in out
+
+
+class TestDeepSeekV4HybridPattern:
+    """DSv4 helper functions that translate the flat GPT-form recipe into a hybrid pattern."""
+
+    def test_layer_pattern_maps_ratios_to_symbols(self):
+        # 0 -> W (window), 4 -> C (CSA), 128 -> H (HCA); each logical layer gains a trailing E.
+        assert _dsv4_hybrid_layer_pattern([0, 4, 128, 4], 4) == "WECEHECE"
+
+    def test_layer_pattern_respects_num_hidden_layers(self):
+        assert _dsv4_hybrid_layer_pattern([0, 4, 128, 4, 0], 3) == "WECEHE"
+
+    def test_layer_pattern_rejects_unknown_ratio(self):
+        with pytest.raises(ValueError, match="compression ratio"):
+            _dsv4_hybrid_layer_pattern([7], 1)
+
+    def test_csa_ratios_double_and_append_mtp(self):
+        # Main "WECEHECE" -> [0,0,4,0,128,0,4,0]; one "/WE" MTP depth -> [0,0].
+        assert _dsv4_hybrid_csa_compress_ratios("WECEHECE", "WE", 1) == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
+
+    def test_csa_ratios_no_mtp(self):
+        assert _dsv4_hybrid_csa_compress_ratios("WECE", "", 0) == [0, 0, 4, 0]
+
+
+class TestDeepSeekV4HybridProvider:
+    """The provider must be both an MLA config carrier and a HybridModel builder."""
+
+    def test_provider_is_both_mla_and_hybrid(self):
+        assert issubclass(DeepSeekV4HybridModelProvider, MLAModelProvider)
+        assert issubclass(DeepSeekV4HybridModelProvider, HybridModelProvider)
+
+    def test_hybrid_provide_wins_in_mro(self):
+        # HybridModelProvider must precede the GPT-model provider so provide()/finalize()
+        # build a HybridModel and derive num_layers from hybrid_layer_pattern.
+        assert DeepSeekV4HybridModelProvider.provide is HybridModelProvider.provide
+        assert DeepSeekV4HybridModelProvider.finalize is HybridModelProvider.finalize
+
+
+class TestDeepSeekV4ProviderBridgeHybridConfig:
+    """provider_bridge must translate the DSv4 HF config into the hybrid layer pattern."""
+
+    def test_provider_bridge_builds_hybrid_pattern(self):
+        # Import via the bridge module so this resolves to None on an older megatron-core
+        # (which lacks hybrid_dsv4_stack_spec) instead of raising at import.
+        from megatron.bridge.models.deepseek.deepseek_v4_bridge import hybrid_dsv4_stack_spec
+
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = MagicMock()
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with patch.object(MegatronModelBridge, "provider_bridge", return_value=provider):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        # compress_ratios [0,4,128,4] over 4 layers -> WECEHECE.
+        assert out.hybrid_layer_pattern == "WECEHECE"
+        assert out.num_layers == 8
+        assert out.mtp_hybrid_override_pattern == "WE"
+        assert out.hybrid_stack_spec is hybrid_dsv4_stack_spec
+        # 3 leading hash-routed logical layers -> first 6 hybrid layers.
+        assert out.moe_n_hash_layers == 6
+        # Doubled per-hybrid-layer ratios (main) + one MTP depth [0, 0].
+        assert out.csa_compress_ratios == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
+
+
+class TestDeepSeekV4HybridMappingLayout:
+    """Each logical HF layer must split across attention (2*i) and MoE (2*i+1) hybrid layers."""
+
+    def test_mapping_splits_hf_layer_across_attention_and_moe(self, bridge_with_mtp):
+        registry = bridge_with_mtp.mapping_registry()
+
+        attn = registry.hf_to_megatron_lookup("layers.3.attn.wo_b.weight")
+        moe = registry.hf_to_megatron_lookup("layers.3.ffn.gate.weight")
+        attn_hc = registry.hf_to_megatron_lookup("layers.3.hc_attn_fn")
+        moe_hc = registry.hf_to_megatron_lookup("layers.3.hc_ffn_fn")
+
+        assert attn.megatron_param == "decoder.layers.6.inner_layer.self_attention.linear_proj.weight"
+        assert moe.megatron_param == "decoder.layers.7.inner_layer.mlp.router.weight"
+        assert attn_hc.megatron_param == "decoder.layers.6.hyper_connection.mapping_proj.weight"
+        assert moe_hc.megatron_param == "decoder.layers.7.hyper_connection.mapping_proj.weight"
+
+    def test_mapping_resolves_hybrid_final_norm(self, bridge_with_mtp):
+        registry = bridge_with_mtp.mapping_registry()
+        final_norm = registry.megatron_to_hf_lookup("decoder.final_norm.weight")
+        assert final_norm.hf_param == "norm.weight"
+
+    def test_mtp_inner_layers_nest_under_hybrid_stack(self, bridge_with_mtp):
+        registry = bridge_with_mtp.mapping_registry()
+
+        mtp_attn = registry.hf_to_megatron_lookup("mtp.0.attn.wo_b.weight")
+        mtp_moe = registry.hf_to_megatron_lookup("mtp.0.ffn.gate.weight")
+
+        assert mtp_attn.megatron_param == (
+            "mtp.layers.0.mtp_model_layer.layers.0.inner_layer.self_attention.linear_proj.weight"
+        )
+        assert mtp_moe.megatron_param == "mtp.layers.0.mtp_model_layer.layers.1.inner_layer.mlp.router.weight"
