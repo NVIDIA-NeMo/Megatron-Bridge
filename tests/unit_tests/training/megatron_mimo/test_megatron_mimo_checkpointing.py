@@ -916,9 +916,27 @@ class TestMimoOptimizerLoadCompat:
         opt_a = MagicMock()
         opt_b = MagicMock()
 
+        def process_group_collection():
+            pg_collection = Mock()
+            pg_collection.tp.rank.return_value = 0
+            pg_collection.pp.rank.return_value = 0
+            pg_collection.dp_cp.rank.return_value = 0
+            pg_collection.gtp_remat = None
+            return pg_collection
+
         module_infos = {
-            "language": ModuleOptimizerInfo(optimizer=opt_a, grid=Mock(), pg_collection=Mock(), is_active=True),
-            "vision": ModuleOptimizerInfo(optimizer=opt_b, grid=Mock(), pg_collection=Mock(), is_active=True),
+            "language": ModuleOptimizerInfo(
+                optimizer=opt_a,
+                grid=Mock(),
+                pg_collection=process_group_collection(),
+                is_active=True,
+            ),
+            "vision": ModuleOptimizerInfo(
+                optimizer=opt_b,
+                grid=Mock(),
+                pg_collection=process_group_collection(),
+                is_active=True,
+            ),
         }
         config = MagicMock()
         return MimoOptimizer(module_infos, config), opt_a, opt_b
