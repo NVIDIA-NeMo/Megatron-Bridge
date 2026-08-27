@@ -196,6 +196,7 @@ te = [
 ssm = [
     "mamba-ssm",
     "causal-conv1d",
+    "tilelang>=0.1.9",
 ]
 audio = [
     "librosa",
