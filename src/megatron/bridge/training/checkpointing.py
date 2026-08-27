@@ -1475,6 +1475,22 @@ def save_checkpoint(
             train_state_dict = train_state.state_dict()
 
             def train_state_finalize_fn() -> None:
+                previous_step = 0
+                if (
+                    ckpt_cfg.save_retain_interval is not None
+                    and not is_global_non_persistent_ckpt
+                    and file_exists(tracker_filename)
+                ):
+                    if MultiStorageClientFeature.is_enabled():
+                        msc = MultiStorageClientFeature.import_package()
+                        open_file = msc.open
+                    else:
+                        open_file = open
+                    with open_file(tracker_filename, "r") as f:
+                        previous_metadata = f.read().strip()
+                        if previous_metadata != "release":
+                            previous_step = int(previous_metadata)
+
                 train_state_dict["floating_point_operations_so_far"] = torch.tensor(
                     num_floating_point_operations_so_far, dtype=torch.float32
                 )
@@ -1503,6 +1519,35 @@ def save_checkpoint(
                     # Write Megatron-LM tracker file for compatibility
                     with open(tracker_filename, "w") as f:
                         f.write(str(step))
+
+                if (
+                    ckpt_cfg.save_retain_interval is not None
+                    and not is_global_non_persistent_ckpt
+                    and previous_step > 0
+                    and previous_step != step
+                    and previous_step % ckpt_cfg.save_retain_interval != 0
+                ):
+                    previous_checkpoint = get_checkpoint_name(save_dir, previous_step)
+                    if os.path.islink(previous_checkpoint):
+                        print_rank_0(
+                            f"  skipping deleting checkpoint from iteration {previous_step:7d} "
+                            f"at {ckpt_cfg.save} since it is a symbolic link"
+                        )
+                    else:
+
+                        def remove_previous_checkpoint() -> None:
+                            with _CHECKPOINT_CLEANUP_LOCK:
+                                if MultiStorageClientFeature.is_enabled():
+                                    msc = MultiStorageClientFeature.import_package()
+                                    if msc.os.path.exists(previous_checkpoint):
+                                        msc.delete(previous_checkpoint, recursive=True)
+                                elif os.path.isdir(previous_checkpoint):
+                                    shutil.rmtree(previous_checkpoint)
+
+                        if ckpt_cfg.async_save:
+                            threading.Thread(target=remove_previous_checkpoint).start()
+                        else:
+                            remove_previous_checkpoint()
 
                 tp_rank = (tensor_rank if tensor_rank is not None else pg_collection.tp.rank()) + 1
                 tp_world_size = pg_collection.tp.size()

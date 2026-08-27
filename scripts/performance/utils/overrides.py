@@ -681,7 +681,15 @@ def set_post_overrides(
     )
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     # NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
-    if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
+    # Full-iteration CUDA graphs also cannot capture the dependency on the param gather
+    # dispatched from the preceding optimizer step.
+    if (
+        dp > 1
+        and pp > 1
+        and vp > 1
+        and compute_dtype not in ("fp8_mx", "nvfp4")
+        and not is_full_iteration_cuda_graph(recipe.model)
+    ):
         # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
         if recipe.optimizer.optimizer != "dist_muon":
             recipe.optimizer.overlap_param_gather_with_optimizer_step = True
