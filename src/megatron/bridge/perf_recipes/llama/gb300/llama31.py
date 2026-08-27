@@ -19,6 +19,7 @@ from megatron.bridge.perf_recipes.llama.common import (
     _enable_overlap_param_gather_with_optimizer_step,
     _llama_benchmark_common,
     _perf_precision,
+    llama31_8b_pretrain_config,
     llama31_405b_pretrain_config,
     userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
     userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,

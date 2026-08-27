@@ -27,6 +27,7 @@ from megatron.bridge.recipes.llama.llama3 import (
     llama3_70b_peft_config,
     llama3_70b_pretrain_config,
     llama3_70b_sft_config,
+    llama31_8b_pretrain_config,
     llama31_405b_pretrain_config,
 )
 from megatron.bridge.training.comm_overlap import (
