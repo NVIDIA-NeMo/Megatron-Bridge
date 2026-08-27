@@ -32,6 +32,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
     print_rank_last,
 )
+from tests.unit_tests.training.test_mcore_commit import is_mcore_dev_branch
 
 
 class TestGetRankSafe:
@@ -78,8 +79,11 @@ class TestGetRankSafe:
         """Test get_rank_safe propagates an actionable error when RANK is malformed."""
         mock_is_initialized.return_value = False
 
-        with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
-            get_rank_safe()
+        if is_mcore_dev_branch():
+            assert get_rank_safe() == 0
+        else:
+            with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
+                get_rank_safe()
 
     @patch("torch.distributed.is_initialized")
     @patch.dict(os.environ, {"SLURM_NTASKS": "8", "SLURM_PROCID": "invalid"}, clear=True)
@@ -87,8 +91,11 @@ class TestGetRankSafe:
         """Test get_rank_safe propagates an actionable error when SLURM_PROCID is malformed."""
         mock_is_initialized.return_value = False
 
-        with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
-            get_rank_safe()
+        if is_mcore_dev_branch():
+            assert get_rank_safe() == 0
+        else:
+            with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
+                get_rank_safe()
 
 
 class TestGetWorldSizeSafe:

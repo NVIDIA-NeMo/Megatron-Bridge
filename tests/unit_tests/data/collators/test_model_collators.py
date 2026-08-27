@@ -2142,6 +2142,7 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         _language_max_sequence_length=32,
         context_parallel_lm=1,
     )
+    pp_model.img_seq_len = 1
     final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
         pp_model,
         image_embeddings=torch.ones(1, 5, hidden_size),
@@ -2153,7 +2154,6 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        is_packed_dynamic_res=True,
     )
 
     assert final_embedding.shape == (32, 1, hidden_size)
@@ -2526,6 +2526,7 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         _language_max_sequence_length=32,
         context_parallel_lm=1,
     )
+    pp_model.img_seq_len = 1
     final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
         pp_model,
         image_embeddings=torch.ones(1, 5, hidden_size),
@@ -2537,7 +2538,6 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        is_packed_dynamic_res=True,
     )
 
     assert final_embedding.shape == (32, 3, hidden_size)
