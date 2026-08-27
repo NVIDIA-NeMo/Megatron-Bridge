@@ -242,14 +242,14 @@ if "$temporary_dir/revision-validator" "$revision_repo" not-a-full-sha; then
   exit 1
 fi
 
-if ! grep -A1 '^te = \[$' pyproject.toml | grep -Fxq '    "megatron-core[te]",'; then
-  echo "Bridge's TE extra must enable the selected MCore ref's TE extra" >&2
+if ! grep -A1 '^te = \[$' pyproject.toml | grep -Fxq '    "transformer-engine[pytorch,core_cu13]",'; then
+  echo "Bridge's TE extra must install TransformerEngine's PyTorch and CUDA 13 packages" >&2
   exit 1
 fi
 if ! grep -Fq \
-  '{ name = "megatron-core", extras = ["te"], marker = "extra == '\''te'\''", editable = "3rdparty/Megatron-LM" }' \
+  '{ name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == '\''te'\''" }' \
   uv.lock; then
-  echo "Bridge's lock metadata must preserve the MCore TE extra" >&2
+  echo "Bridge's lock metadata must preserve the direct TransformerEngine extras" >&2
   exit 1
 fi
 if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml; then
