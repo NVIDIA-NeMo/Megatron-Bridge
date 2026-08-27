@@ -556,6 +556,20 @@ def get_rng_state(
     return rng_state_list
 
 
+def _checkpoint_has_per_dp_rng_states(run_config: dict[str, Any]) -> bool:
+    """Return whether a checkpoint stores one RNG state per DP/CP rank."""
+    return run_config.get("checkpoint", {}).get("save_rng_state_per_dp_rank", False) or run_config.get("rng", {}).get(
+        "data_parallel_random_init", False
+    )
+
+
+def _select_rng_state(
+    rng_state_list: list[dict[str, Any]], per_dp_rank: bool, pg_collection: ProcessGroupCollection
+) -> dict[str, Any]:
+    """Select the RNG state matching the saved checkpoint layout."""
+    return rng_state_list[pg_collection.dp_cp.rank() if per_dp_rank else 0]
+
+
 class CheckpointType(Enum):
     """Types of checkpoints to save."""
 
@@ -2796,9 +2810,7 @@ def _load_checkpoint_from_path(
                 print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
                 run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
 
-        load_dp_rng_states = run_config.get("checkpoint", {}).get(
-            "save_rng_state_per_dp_rank", False
-        ) or run_config.get("rng", {}).get("data_parallel_random_init", False)
+        load_dp_rng_states = _checkpoint_has_per_dp_rng_states(run_config)
 
         # MegatronMIMO manages per-module parallelism via MegatronMIMOParallelismConfig,
         # so there is no single global (TP, PP) to compare.  Skip the
@@ -2941,9 +2953,7 @@ def _load_checkpoint_from_path(
                 )
                 tp_pp_match = ckpt_tp_pp == run_tp_pp
 
-                load_dp_rng_states = run_config.get("checkpoint", {}).get(
-                    "save_rng_state_per_dp_rank", False
-                ) or run_config.get("rng", {}).get("data_parallel_random_init", False)
+                load_dp_rng_states = _checkpoint_has_per_dp_rng_states(run_config)
 
             reader = _get_filesystem_reader(checkpoint_name)
             try:
@@ -3191,11 +3201,11 @@ def _load_checkpoint_from_path(
                     else:
                         print_rank_0("WARNING: RNG state not found for current TP/PP rank")
                         rng_state_list = next(iter(state_dict["rng_state"].values()))
-                    rng_state = rng_state_list[pg_collection.dp_cp.rank()] if load_dp_rng_states else rng_state_list[0]
+                    rng_state = _select_rng_state(rng_state_list, load_dp_rng_states, pg_collection)
                 else:
                     # torch_dist format: ShardedObject
                     rng_state_list = state_dict["rng_state"]
-                    rng_state = rng_state_list[pg_collection.dp_cp.rank()] if load_dp_rng_states else rng_state_list[0]
+                    rng_state = _select_rng_state(rng_state_list, load_dp_rng_states, pg_collection)
 
                 random.setstate(rng_state["random_rng_state"])
                 np.random.set_state(rng_state["np_rng_state"])

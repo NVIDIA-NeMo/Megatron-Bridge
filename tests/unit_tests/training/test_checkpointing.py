@@ -33,6 +33,7 @@ from megatron.bridge.training.checkpointing import (
     CheckpointType,
     DefaultCheckpointManager,
     _build_auto_bridge_for_save,
+    _checkpoint_has_per_dp_rng_states,
     _clear_auto_bridge_cache,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
@@ -46,6 +47,7 @@ from megatron.bridge.training.checkpointing import (
     _record_dataloader_state_dir,
     _save_hf_adapter_weights,
     _save_hf_weights,
+    _select_rng_state,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
     create_checkpoint_manager,
@@ -412,6 +414,27 @@ class TestRNGState:
         all_gather.assert_called_once()
         assert len(result.data) == 2
         assert result.data[1] == {"rank": 1}
+
+    @pytest.mark.parametrize(
+        ("run_config", "expected"),
+        [
+            ({}, False),
+            ({"rng": {"data_parallel_random_init": True}}, True),
+            ({"checkpoint": {"save_rng_state_per_dp_rank": True}}, True),
+        ],
+    )
+    def test_checkpoint_has_per_dp_rng_states(self, run_config, expected):
+        """Recognize new and legacy per-DP RNG checkpoint metadata."""
+        assert _checkpoint_has_per_dp_rng_states(run_config) is expected
+
+    def test_select_rng_state_uses_saved_layout(self):
+        """Select rank zero or the current DP/CP rank according to checkpoint metadata."""
+        pg_collection = Mock()
+        pg_collection.dp_cp.rank.return_value = 2
+        states = [{"rank": 0}, {"rank": 1}, {"rank": 2}]
+
+        assert _select_rng_state(states, False, pg_collection) == {"rank": 0}
+        assert _select_rng_state(states, True, pg_collection) == {"rank": 2}
 
     @patch("megatron.bridge.training.checkpointing.get_pg_size")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
