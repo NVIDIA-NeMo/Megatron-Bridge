@@ -189,6 +189,56 @@ def test_shipped_qwen_weak_scaling_card_validates_in_process():
     assert validator._validate_card(yaml.safe_load(raw), raw, ()) == []
 
 
+def test_card_without_performance_uses_current_disclaimer():
+    validator = _load_validator()
+    card_path = REPO_ROOT / "examples" / "model_verification_cards" / "qwen3.6-35b-a3b" / "card.yaml"
+    raw = card_path.read_text(encoding="utf-8")
+    card = yaml.safe_load(raw)
+
+    assert card["summary"].startswith(validator.NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER)
+    assert validator._validate_card(card, raw, ()) == []
+
+
+def test_card_without_performance_accepts_legacy_disclaimer():
+    validator = _load_validator()
+    card_path = REPO_ROOT / "examples" / "model_verification_cards" / "qwen3.6-35b-a3b" / "card.yaml"
+    card = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    card["summary"] = card["summary"].replace(
+        validator.NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER,
+        validator.LEGACY_UNTUNED_PERFORMANCE_DISCLAIMER,
+        1,
+    )
+    raw = yaml.safe_dump(card, sort_keys=False)
+
+    assert validator._validate_card(card, raw, ()) == []
+
+
+def test_card_without_performance_rejects_missing_disclaimer():
+    validator = _load_validator()
+    card_path = REPO_ROOT / "examples" / "model_verification_cards" / "qwen3.6-35b-a3b" / "card.yaml"
+    card = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    card["summary"] = card["summary"].removeprefix(validator.NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER).lstrip()
+    raw = yaml.safe_dump(card, sort_keys=False)
+
+    assert (
+        "/summary: cards without a canonical pretrain_performance recipe must start with the "
+        "no-canonical-performance-result disclaimer"
+    ) in validator._validate_card(card, raw, ())
+
+
+def test_card_with_performance_rejects_performance_disclaimer():
+    validator = _load_validator()
+    card_path = REPO_ROOT / "examples" / "model_verification_cards" / "qwen3-30b-a3b" / "card.yaml"
+    card = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+    card["summary"] = f"{validator.NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER} {card['summary']}"
+    raw = yaml.safe_dump(card, sort_keys=False)
+
+    assert (
+        "/summary: remove the performance disclaimer when a canonical pretrain_performance recipe exists"
+        in validator._validate_card(card, raw, ())
+    )
+
+
 def test_weak_scaling_index_mirrors_concrete_hardware_leaf():
     validator = _load_validator()
     verification_index, items, hardware_groups = _complete_index_inputs(validator)

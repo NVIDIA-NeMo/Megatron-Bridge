@@ -464,6 +464,18 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
 
 
+def test_qwen35_vl_35b_a3b_legacy_pretrain_name_remains_compatible(monkeypatch: pytest.MonkeyPatch):
+    """The historical full-pretrain name should delegate to the maintained library recipe."""
+    sentinel = object()
+    monkeypatch.setattr(_qwen35_vl_h100_module, "qwen35_vl_35b_a3b_pretrain_config", lambda: sentinel)
+
+    legacy_name = "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config"
+    recipes_package = importlib.import_module("megatron.bridge.recipes")
+    assert legacy_name in _qwen35_vl_h100_module.__all__
+    assert getattr(recipes_package, legacy_name) is getattr(_qwen35_vl_h100_module, legacy_name)
+    assert getattr(_qwen35_vl_h100_module, legacy_name)() is sentinel
+
+
 def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Shared Qwen3.5/Qwen3.6 35B-A3B SFT should have tuned H100 defaults."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)

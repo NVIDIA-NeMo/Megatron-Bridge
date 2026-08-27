@@ -149,8 +149,13 @@ start `summary` with this exact disclaimer before the functional-support
 summary:
 
 ```text
-Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results.
+Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
 ```
+
+This wording describes the evidence recorded by the card, not whether the
+model has ever been tuned elsewhere. The validator continues to accept the
+older untuned-model wording on existing cards for backward compatibility, but
+new and updated cards must use the wording above.
 
 Omit `pretrain_performance` entirely when no canonical recipe exists; do not
 add an `all` terminal placeholder. Routine timing and throughput metrics in
@@ -860,7 +865,7 @@ an item verified merely to make validation pass.
 - Include `pretrain_weak_scaling` only after at least two proportional-GBS
   points complete on the same public hardware, recipe, precision, sequence
   length, step count, and GPUs-per-node layout; otherwise omit it.
-- Start the summary with the exact untuned performance disclaimer unless at
+- Start the summary with the exact no-canonical-performance-result disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
 - Put the verified workload precision on every direct item or hardware leaf;

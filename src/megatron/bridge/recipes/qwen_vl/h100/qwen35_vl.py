@@ -329,6 +329,11 @@ def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
+def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigContainer:
+    """Return the Qwen3.5/Qwen3.6-VL 35B-A3B pretrain config under its legacy name."""
+    return qwen35_vl_35b_a3b_pretrain_config()
+
+
 def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 122B-A10B (MoE)."""
     cfg = _pretrain_common()
@@ -2394,6 +2399,7 @@ __all__ = [
     "qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config",
     "qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
+    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config",
     "qwen35_vl_35b_a3b_pretrain_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",
