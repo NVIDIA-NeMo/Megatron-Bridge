@@ -25,6 +25,182 @@ from megatron.bridge.perf_recipes.llama.common import (
 )
 
 
+def llama31_8b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Llama3.1 8B pretrain: 8× GB200, NVFP4."""
+    cfg = llama31_8b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.mixed_precision = precision_config
+    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
+    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
+    cfg.mixed_precision.first_last_layers_bf16 = False
+    cfg.mixed_precision.fp4_param_gather = False
+    cfg.mixed_precision.fp4_param = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 16
+    cfg.train.micro_batch_size = 2
+
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+
+    _llama31_8b_common(cfg)
+    cfg.optimizer.lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
+    cfg.model.tp_comm_bootstrap_backend = 'mpi'
+    cfg.model.fp8_dot_product_attention = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.validation.eval_interval = 768
+    cfg.validation.eval_iters = 64
+    cfg.train.eval_iters = 64
+    cfg.scheduler.lr_decay_iters = 1199984
+    cfg.scheduler.lr_decay_steps = 19199744
+    cfg.scheduler.lr_warmup_iters = 16
+    cfg.scheduler.lr_warmup_steps = 256
+    cfg.scheduler.wd_incr_steps = 19200000
+    cfg.load_main_params_from_ckpt = False
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 0,
+    }
+    return cfg
+
+
+def llama31_8b_pretrain_72gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Llama3.1 8B pretrain: 72× GB300, NVFP4."""
+    cfg = llama31_8b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.mixed_precision = precision_config
+    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
+    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
+    cfg.mixed_precision.first_last_layers_bf16 = False
+    cfg.mixed_precision.fp4_param_gather = False
+    cfg.mixed_precision.fp4_param = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 16
+    cfg.train.micro_batch_size = 2
+
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+
+    _llama31_8b_common(cfg)
+    cfg.optimizer.lr = 0.0008
+    cfg.optimizer.min_lr = 8e-05
+    cfg.model.tp_comm_bootstrap_backend = 'mpi'
+    cfg.model.fp8_dot_product_attention = True
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.validation.eval_interval = 171
+    cfg.validation.eval_iters = 15
+    cfg.train.eval_iters = 15
+    cfg.scheduler.lr_decay_iters = 1199936
+    cfg.scheduler.lr_decay_steps = 86395392
+    cfg.scheduler.lr_warmup_iters = 64
+    cfg.scheduler.lr_warmup_steps = 4608
+    cfg.scheduler.wd_incr_steps = 86400000
+    cfg.load_main_params_from_ckpt = False
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 0,
+    }
+    return cfg
+
+
+def llama31_8b_pretrain_512gpu_gb300_fp8cs_config() -> ConfigContainer:
+    """Llama3.1 8B pretrain: 512× GB300, FP8 current-scaling."""
+    cfg = llama31_8b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_cs")
+    cfg.mixed_precision = precision_config
+    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
+    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
+    cfg.mixed_precision.first_last_layers_bf16 = False
+    cfg.mixed_precision.fp4_param_gather = False
+    cfg.mixed_precision.fp4_param = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 16
+    cfg.train.micro_batch_size = 2
+
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+
+    _llama31_8b_common(cfg)
+    cfg.optimizer.lr = 0.0008
+    cfg.optimizer.min_lr = 8e-05
+    cfg.ddp.fp8_param_gather = True
+    cfg.model.tp_comm_bootstrap_backend = 'gloo'
+    cfg.model.tp_comm_overlap = True
+    cfg.validation.eval_interval = 192
+    cfg.validation.eval_iters = 16
+    cfg.train.eval_iters = 16
+    cfg.scheduler.lr_decay_iters = 1199936
+    cfg.scheduler.lr_decay_steps = 76795904
+    cfg.scheduler.lr_warmup_iters = 64
+    cfg.scheduler.lr_warmup_steps = 4096
+    cfg.scheduler.wd_incr_steps = 76800000
+    cfg.load_main_params_from_ckpt = True
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 0,
+    }
+    return cfg
+
+
 def llama31_405b_pretrain_128gpu_gb300_bf16_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 128× GB300, BF16, FSDP."""
     cfg = llama31_405b_pretrain_config()
