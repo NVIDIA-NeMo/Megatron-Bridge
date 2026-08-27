@@ -6,46 +6,39 @@ The bridge supports four published variants out of the same code path. The on-di
 
 ## MCore Checkout
 
-The pretraining recipes were tested with Megatron-LM `dev` commit `35f36c7c9dba` plus PR [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839) (`f04b762406f0` in the OCI test checkout). The Megatron-LM copy inside the current NeMo FW container is not expected to work for these recipes.
+The HybridModel path targets Megatron-LM `main` after the DeepSeek-V4 feature series
+[#6402](https://github.com/NVIDIA/Megatron-LM/pull/6402),
+[#6403](https://github.com/NVIDIA/Megatron-LM/pull/6403),
+[#6404](https://github.com/NVIDIA/Megatron-LM/pull/6404), and
+[#6405](https://github.com/NVIDIA/Megatron-LM/pull/6405). Use the Megatron Bridge
+main-branch MCore pin once it contains that series; the old dev-only DSv4 implementation
+has a different provider and kernel API and is not supported by this path.
 
 The NeMo Framework container uses one shared `/opt/venv` for several source
 projects. A plain `uv sync` is exact by default and removes packages that are
 not in the Megatron Bridge dependency graph, including container-provided
-packages such as NeMo Run. When switching MCore in this container, preserve
-those packages and then restore the aggregate container pins:
+packages such as NeMo Run. When syncing the main-branch MCore pin in this
+container, preserve those packages and then restore the aggregate container pins:
 
 ```bash
-./scripts/switch_mcore.sh dev
-uv sync --inexact
+./scripts/switch_mcore.sh main
+uv sync --locked --inexact
 (cd /opt/NeMo-FW && uv sync --locked --all-groups --inexact)
 export UV_NO_SYNC=1
 ```
 
 Keep `UV_NO_SYNC=1` set while running the examples. It makes `uv run` calls,
 including those inside the example wrapper scripts, skip the implicit exact
-sync. The unlocked dev sync updates `uv.lock`; do not commit that generated
-change. From a clean checkout, return to the pinned main-branch submodule with:
-
-```bash
-./scripts/switch_mcore.sh main
-git restore uv.lock
-uv sync --locked --inexact
-(cd /opt/NeMo-FW && uv sync --locked --all-groups --inexact)
-export UV_NO_SYNC=1
-```
-
-In a standalone Megatron Bridge environment with its own virtual environment,
-exact sync is appropriate: use `uv sync` after switching to dev and restore the
-tracked lock file followed by `uv sync --locked` when switching back to main.
+sync. In a standalone Megatron Bridge environment with its own virtual environment,
+exact sync is appropriate: use `./scripts/switch_mcore.sh main && uv sync --locked`.
 
 The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` performance
-recipe preserves the stack validated by Megatron Bridge PR
+recipe's historical performance result used the stack recorded by Megatron Bridge PR
 [#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824):
 `nvcr.io/nvidia/nemo:26.06.01` with Megatron-LM dev commit
 `9d46c924dce3818f2b5f894f7380712c780d1801` and the capability-check patch
-documented in that PR. The Megatron-LM commit pinned by the current
-Megatron Bridge `main` branch does not provide the required DeepSeek V4
-performance features, so it is not a supported runtime for that recipe.
+documented in that PR. That is validation provenance, not a requirement for the
+main-branch HybridModel implementation described here.
 
 | Variant | HF path | Quant scheme | Validation |
 |---------|---------|--------------|------------|
@@ -74,17 +67,66 @@ retain their independently qualified dispatcher overrides.
 
 Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected environment variables and `#SBATCH` directives to edit before submitting.
 
+## Training with the HybridModel provider
+
+DeepSeek-V4 is built on Megatron-Core's `HybridModel`. `AutoBridge` turns the HF config into a
+`DeepSeekV4HybridModelProvider` — a hybrid-model provider that also carries the MLA configuration —
+so no manual model wiring is needed:
+
+```python
+from megatron.bridge import AutoBridge
+
+bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V4-Flash", trust_remote_code=True)
+provider = bridge.to_megatron_provider(load_weights=False)  # random init for pretraining
+```
+
+Each logical DeepSeek-V4 layer is expressed as **two** hybrid layers — an attention-only layer
+whose symbol encodes the per-layer compression (`W` sliding-window / ratio 0, `C` CSA / ratio 4,
+`H` HCA / ratio 128) followed by a MoE-only layer (`E`) — plus one `/WE` MTP depth per
+next-token-prediction layer. From the HF config the bridge derives the `hybrid_layer_pattern`
+(e.g. `WEWECEHE…CE/WE`), the per-hybrid-layer `csa_compress_ratios`, and `moe_n_hash_layers`, and
+selects [`hybrid_dsv4_stack_spec`](../../../src/megatron/bridge/models/deepseek/deepseek_v4_bridge.py)
+as the stack builder. This path requires a megatron-core that ships the DSv4 hybrid_model series
+(see [MCore Checkout](#mcore-checkout)); on an older core the bridge still imports, but building the
+model fails — and the DSv4 functional tests skip automatically.
+
+### Launch a pretraining run
+
+The recipes build the full model through `AutoBridge`; launch them with
+`scripts/training/run_recipe.py` and the built-in mock dataset. DSv4 requires **TP=1**; scale with
+expert/pipeline parallelism (the full model has 256 experts, so it needs enough ranks for expert
+parallelism — the recipe defaults to `TP=1, PP=4, EP=8` = 32 GPUs).
+
+```bash
+./scripts/switch_mcore.sh main && uv sync --locked
+
+# DeepSeek-V4-Flash, BF16/Adam, mock data. Launch across nodes to reach the recipe's 32 GPUs.
+uv run python -m torch.distributed.run --nnodes=<N> --nproc_per_node=<gpus_per_node> \
+    scripts/training/run_recipe.py \
+    --recipe deepseek_v4_flash_pretrain_config \
+    --dataset llm-pretrain-mock \
+    --step_func gpt_step \
+    train.train_iters=10 train.global_batch_size=8 train.micro_batch_size=1 \
+    model.seq_length=4096 dataset.seq_length=4096
+```
+
+Swap `--recipe` for `deepseek_v4_flash_pretrain_mxfp8_config` (MXFP8) or
+`deepseek_v4_flash_pretrain_muon_config` (Muon). For a ready-made multi-node GB200 launcher use
+[`slurm_pretrain.sh`](slurm_pretrain.sh); see [Parallelism Configurations](#parallelism-configurations)
+for EP/PP sizing.
+
 ## Pretraining Recipes
 
 See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the Slurm launcher and [`deepseek_v4.py`](../../../src/megatron/bridge/recipes/deepseek/deepseek_v4.py) for recipe definitions.
 
 Available Blackwell pretraining recipes:
 
+- `deepseek_v4_flash_pretrain_config`: Adam BF16
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
 - `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config`: 256-GPU GB300
-  performance configuration (requires the PR #4824 container and dev-MCore
-  stack described above)
+  performance configuration (the historical result used the PR #4824 stack
+  described above)
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 
@@ -106,7 +148,7 @@ Full-parameter SFT of DeepSeek-V4-Flash. See [`slurm_sft.sh`](slurm_sft.sh) for 
 | `deepseek_v4_flash_sft_config` | on | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
 | `deepseek_v4_flash_no_mtp_sft_config` | off | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
 
-Both recipes enable fused mHC and fused rope (`use_fused_mhc=True`, `apply_rope_fusion=True`), matching the pretrain recipes. The historical "fused-kernel SFT NaN" reports are both resolved: the fused-mHC report was a confound, and the fused-rope NaN was a bridge config-mapping bug (`partial_rotary_factor` double-applied) fixed by `rotary_percent=1.0` in #4271 — with that fix, full-model (43-layer, real weights) SFT with rope fusion on 8×GB300 matches the unfused control's loss trajectory. The fused mHC cuTile kernel is **sm_100 (Blackwell)**; on Hopper set `use_fused_mhc=False`. The `no_mtp` variant drops the MTP layer and trims `csa_compress_ratios` back to `num_layers` (the bridge appends an MTP-layer ratio that `transformer_config` would otherwise reject).
+Both recipes enable fused mHC and fused rope (`use_fused_mhc=True`, `apply_rope_fusion=True`), matching the pretrain recipes. The historical "fused-kernel SFT NaN" reports are both resolved: the fused-mHC report was a confound, and the fused-rope NaN was a bridge config-mapping bug (`partial_rotary_factor` double-applied) fixed by `rotary_percent=1.0` in #4271 — with that fix, full-model (43-layer, real weights) SFT with rope fusion on 8×GB300 matches the unfused control's loss trajectory. The fused mHC cuTile kernel is **sm_100 (Blackwell)**; on Hopper set `use_fused_mhc=False`. The `no_mtp` variant drops the `/WE` MTP depth and trims its two compression-ratio entries from `csa_compress_ratios`.
 
 > There are intentionally **no MXFP8 or Muon SFT recipes**: both were prototyped (mirroring the pretrain recipes) but fail in full-model DSv4-Flash SFT — see Blockers. SFT ships **Adam/bf16**; the pretrain MXFP8/Muon recipes are unaffected.
 
@@ -142,7 +184,7 @@ Already incorporated in the pinned mcore (no action): dense-loss + per-layer rop
 
 ## Container Image
 
-Run inside a container that has the DSv4 prerequisites: Megatron-Bridge on a **`main2dev`** Megatron-LM commit (validated on `ed6b1f65502aec7f2fe27e14a1245c29e435c2a6`; has both `safe_get_world_size` and the DSv4 `csa.py`/`dsa.py`), the DSA dependency `fast_hadamard_transform`, and a pre-built `helpers_cpp`. The [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo) — or an image built from `docker/Dockerfile.ci` with the submodule checked out to a `main2dev` commit — provides this. Set `slurm_sft.sh`'s `CONTAINER_IMAGE` to the resulting `.sqsh`.
+Run inside a container that has the DSv4 prerequisites: the Megatron-LM `main` feature series listed in [MCore Checkout](#mcore-checkout), the DSA dependency `fast_hadamard_transform`, and a pre-built `helpers_cpp`. The [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo) — or an image built from `docker/Dockerfile.ci` with the submodule on the corresponding main-branch pin — provides this. Set `slurm_sft.sh`'s `CONTAINER_IMAGE` to the resulting `.sqsh`.
 
 The first import downloads ~285B of HF weights, so point `HF_HOME` at shared scratch (e.g. `/home/scratch.<user>/HF_HOME`) before submitting so the download persists across jobs, and set `HF_TOKEN` if the repo is gated.
 

@@ -72,7 +72,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
-    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = use_fused_mhc
     cfg.model.dsa_indexer_loss_coeff = 0.01
@@ -146,7 +146,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config()
 
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.recompute_modules = ["mla_up_proj"]

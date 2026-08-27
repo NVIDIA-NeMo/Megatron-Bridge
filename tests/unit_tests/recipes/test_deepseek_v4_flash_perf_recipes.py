@@ -75,7 +75,7 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
 
     assert cfg.model.csa_compress_rotary_base == 40_000
     assert cfg.model.rotary_scaling_factor == 4
-    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.dsa_indexer_loss_coeff == 0.01
     assert cfg.model.dsa_indexer_use_sparse_loss is True
     assert cfg.model.cross_entropy_fusion_impl == "native"

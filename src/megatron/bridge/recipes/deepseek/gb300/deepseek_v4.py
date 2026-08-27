@@ -63,7 +63,7 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.dsa_indexer_loss_coeff = 0.0
@@ -141,7 +141,7 @@ def deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
-    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.dsa_kernel_backend = "none"
     cfg.model.apply_rope_fusion = True
     cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.dsa_indexer_loss_coeff = 0.0

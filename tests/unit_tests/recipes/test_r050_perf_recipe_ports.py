@@ -190,7 +190,7 @@ def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 0.0
 
-    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.cross_entropy_fusion_impl == "native"
     assert cfg.model.moe_mlp_glu_interleave_size == 32
