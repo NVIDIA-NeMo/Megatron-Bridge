@@ -2351,7 +2351,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'training'" },
     { name = "torch", specifier = ">=2.6.0" },
     { name = "tqdm", marker = "extra == 'dev'" },
-    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=e7c550c5f80636cf841a8204b1d6f85a5f3f28b7" },
+    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=27486e03cfc1fa41f6932dcecdc47c71c47eac3e" },
     { name = "transformers", marker = "extra == 'mlm'" },
     { name = "transformers", marker = "extra == 'training'" },
     { name = "wandb", marker = "extra == 'mlm'" },
@@ -2386,7 +2386,7 @@ docs = [
     { name = "sphinx-copybutton" },
 ]
 linting = [
-    { name = "black", specifier = "==24.4.2" },
+    { name = "black", specifier = "==26.3.0" },
     { name = "flake8", specifier = "==7.1.0" },
     { name = "isort", specifier = "==5.13.2" },
     { name = "pylint", specifier = "==3.2.6" },
@@ -2403,7 +2403,7 @@ test = [
     { name = "nltk" },
     { name = "pydantic" },
     { name = "pygithub" },
-    { name = "pytest", specifier = "==8.3.5" },
+    { name = "pytest", specifier = "==9.1.1" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
