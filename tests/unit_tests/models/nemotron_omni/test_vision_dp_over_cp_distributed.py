@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Two-rank equivalence check for Nemotron Omni vision context parallelism.
+"""Two-rank equivalence check for Nemotron Omni vision_dp_over_cp.
 
 The sharded vision tower must return the same features on every CP rank as the
 unsharded tower would, for every split shape: fewer images than ranks (MCore
@@ -41,7 +41,7 @@ _IMAGE_COUNTS = (1, 2, 3)
 
 
 @pytest.mark.gpu
-def test_vision_context_parallel_matches_unsharded_encoder() -> None:
+def test_vision_dp_over_cp_matches_unsharded_encoder() -> None:
     if torch.cuda.device_count() < _CP_SIZE:
         pytest.skip(f"requires {_CP_SIZE} visible GPUs")
 
@@ -85,7 +85,7 @@ def _run_worker() -> None:
     provider = dataclasses.replace(
         _TinyOmniProvider(),
         context_parallel_size=_CP_SIZE,
-        vision_context_parallel=True,
+        vision_dp_over_cp=True,
         mamba_num_heads=8,
         mamba_num_groups=_CP_SIZE,
     )
@@ -106,12 +106,12 @@ def _run_worker() -> None:
         num_frames = torch.tensor([1] * num_images, dtype=torch.int32, device="cuda")
 
         with torch.no_grad():
-            model.vision_context_parallel = True
+            model.vision_dp_over_cp = True
             sharded = model._encode_images(images, imgs_sizes, None, num_frames)
 
-            model.vision_context_parallel = False
+            model.vision_dp_over_cp = False
             reference = model._encode_images(images, imgs_sizes, None, num_frames)
-        model.vision_context_parallel = True
+        model.vision_dp_over_cp = True
 
         assert sharded.shape == reference.shape, (
             f"num_images={num_images}: sharded {tuple(sharded.shape)} != reference {tuple(reference.shape)}"

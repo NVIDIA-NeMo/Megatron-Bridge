@@ -384,7 +384,7 @@ def test_odd_patch_grid_padding_keeps_real_patches_differentiable():
     assert torch.count_nonzero(features.grad) == features.numel()
 
 
-def test_vision_context_parallel_rejects_process_group_mismatch():
+def test_vision_dp_over_cp_rejects_process_group_mismatch():
     # The MCore splitter resolves the CP group from the global parallel state,
     # so a pg_collection that disagrees with the config would shard against the
     # wrong ranks instead of failing.
@@ -439,7 +439,7 @@ def test_sharded_encode_projects_locally_then_gathers_the_global_features():
     nn.Module.__init__(model)
     model.patch_dim = patch_dim
     model.context_parallel_lm = 2
-    model.vision_context_parallel = True
+    model.vision_dp_over_cp = True
     model.config = SimpleNamespace(fp8_recipe=None)
     model.pg_collection = SimpleNamespace(cp=SimpleNamespace(size=lambda: 2))
     model.vision_model = _FakeDynamicVisionModel(hidden_size, patch_dim)
@@ -487,16 +487,16 @@ def test_sharded_encode_projects_locally_then_gathers_the_global_features():
 
 
 @pytest.mark.gpu
-def test_vision_context_parallel_is_disabled_when_cp_is_one(single_rank_model_parallel):
+def test_vision_dp_over_cp_is_disabled_when_cp_is_one(single_rank_model_parallel):
     # Sharding images over a one-rank CP group is a no-op wrapped in two
     # collectives, so the model must ignore the request rather than pay for it.
-    provider = _TinyOmniProvider(vision_context_parallel=True)
+    provider = _TinyOmniProvider(vision_dp_over_cp=True)
     provider.finalize()
 
     model = provider.provide()
 
-    assert provider.vision_context_parallel is True
-    assert model.vision_context_parallel is False
+    assert provider.vision_dp_over_cp is True
+    assert model.vision_dp_over_cp is False
 
 
 def test_image_forward_replaces_expanded_placeholders_without_changing_length():

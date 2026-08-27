@@ -182,7 +182,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     # The vision tower is replicated, so this is data parallelism borrowing the
     # CP group, not sequence sharding: RADIO already attends per image.
     # No-op at CP=1, so defaulting it on only changes CP>1 runs.
-    vision_context_parallel: bool = True
+    vision_dp_over_cp: bool = True
 
     # This field is serialized in run_config.yaml. It prevents an older
     # checkpoint whose provider had the same class name but LLaVA semantics
@@ -469,7 +469,7 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
             temporal_patch_dim=self.temporal_patch_dim,
             separate_video_embedder=self.separate_video_embedder,
             temporal_ckpt_compat=self.temporal_ckpt_compat,
-            vision_context_parallel=self.vision_context_parallel,
+            vision_dp_over_cp=self.vision_dp_over_cp,
             sound_model=sound_model,
             sound_projection=sound_projection,
             sound_token_index=self.sound_context_token_id,

@@ -206,7 +206,7 @@ class NemotronOmniModel(MegatronModule):
         temporal_patch_dim: int = 1,
         separate_video_embedder: bool = False,
         temporal_ckpt_compat: bool = False,
-        vision_context_parallel: bool = False,
+        vision_dp_over_cp: bool = False,
         sound_model: Optional[torch.nn.Module] = None,
         sound_projection: Optional[torch.nn.Module] = None,
         sound_token_index: int = 0,
@@ -225,7 +225,7 @@ class NemotronOmniModel(MegatronModule):
         self.dynamic_resolution = dynamic_resolution
         self.sequence_parallel_lm = language_transformer_config.sequence_parallel
         self.context_parallel_lm = language_transformer_config.context_parallel_size
-        self.vision_context_parallel = vision_context_parallel and self.context_parallel_lm > 1
+        self.vision_dp_over_cp = vision_dp_over_cp and self.context_parallel_lm > 1
         self.share_embeddings_and_output_weights = share_embeddings_and_output_weights
         self.encoder_hidden_state = None
 
@@ -395,7 +395,7 @@ class NemotronOmniModel(MegatronModule):
         # against the wrong ranks.
         if self.pg_collection.cp.size() != self.context_parallel_lm:
             raise ValueError(
-                "Nemotron Omni vision context parallelism does not match its process group: "
+                "Nemotron Omni vision_dp_over_cp does not match its process group: "
                 f"config={self.context_parallel_lm}, group={self.pg_collection.cp.size()}."
             )
 
@@ -436,7 +436,7 @@ class NemotronOmniModel(MegatronModule):
                     "provide one entry per image or video item."
                 )
 
-            shard_vision = self.vision_context_parallel
+            shard_vision = self.vision_dp_over_cp
             num_padded_ranks = 0
             if shard_vision:
                 (
