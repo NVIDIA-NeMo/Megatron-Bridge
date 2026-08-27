@@ -175,7 +175,7 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config
+        --recipe qwen35_vl_35b_a3b_pretrain_config
         --dataset energon
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
@@ -199,33 +199,15 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: 135.610
         last_10_steps_tokens_per_second_per_gpu_avg: 5885.264
       expected_result: >
-        The historical compatibility recipe name and logical output path
-        preserve the identity of the 16-H100 workload that completed all 50
-        DataComp Energon steps at
-        TP1/PP2/CP1/EP8/ETP1, a 16/24 language-layer pipeline split, and
-        MBS1/GBS512. The reusable recipe left the pretrained checkpoint unset;
-        the command warm-started all trainable weights from the immutable
-        imported Qwen3.6 checkpoint for representative natural router traffic.
-        The persisted config confirmed the 248,320-token model vocabulary,
-        HybridEP, selective core-attention, GDN output-norm, and MoE-activation
-        recompute, scoped Transformer Engine CUDA graphs for language
-        attention/router/preprocessing, a graph-free variable-shape vision
-        encoder, and Transformer Engine fused cross entropy. Loss remained
-        finite from 3.604611 to 3.458849 with zero skipped or NaN iterations.
-        Steps 41-50 averaged 22,271.220 ms and 135.610 model TFLOP/s/GPU,
-        approximately 136, and the process exited successfully without
-        checkpoint output. The public command omits the historical invocation's
-        redundant `checkpoint.save=null`; the persisted recipe configuration
-        already left checkpoint saving unset. This verifies bounded full-model
-        DataComp training, not canonical DataComp/CLIP convergence or checkpoint
-        resume. The data
-        was prepared from the official DataComp downloader at commit
-        4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, and
-        img2dataset 1.40.0. The converter selected the first 525,000 valid,
-        UID-deduplicated samples from sorted shards and produced a deterministic
-        519,827/5,173 train/validation split with preparation manifest
-        6e273a96a756; this 50-step run consumed 25,600 training samples without
-        wrapping.
+        The 16-H100 command completed all 50 full-model DataComp Energon steps
+        at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the
+        immutable imported checkpoint for natural routing. Loss remained finite
+        from 3.604611 to 3.458849 with zero skipped or NaN iterations. The
+        519,827/5,173 train/validation split was prepared with the official
+        DataComp downloader at commit 4a8df1992566, DataComp-1B metadata
+        revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest
+        6e273a96a756. This verifies bounded full-model training, not canonical
+        DataComp/CLIP convergence or checkpoint resume.
 
   sft:
     H100:
