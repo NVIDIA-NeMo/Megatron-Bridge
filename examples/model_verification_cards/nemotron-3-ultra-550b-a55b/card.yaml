@@ -9,20 +9,20 @@ summary: >
   main. The separately scoped
   pretrain_performance.GB200 and pretrain_performance.GB300 are verified with
   their canonical 256-GPU MXFP8 recipes.
-  Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip and
-  checkpoint-backed deterministic inference are verified. CPU conversion,
-  portable manual-forward, remaining functional training, and checkpoint
-  resume still require completed verification runs before those support claims
-  are promoted.
+  Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip,
+  single-process CPU export, and checkpoint-backed deterministic inference are
+  verified. CPU import, portable manual-forward, remaining functional
+  training, and checkpoint resume still require completed verification runs
+  before those support claims are promoted.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
       - manual_forward_pass
   training:
     H100:
@@ -81,23 +81,27 @@ items:
       shapes, dtypes, and values.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu
       --nodes 1
       --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
       --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
-      --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-megatron/iter_0000000
+      --megatron-path
+      work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
       --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-hf-export
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-08-26
     expected_result: >
-      The CPU export must write a complete source-native Hugging Face
-      checkpoint: BF16 model weights plus the source FP32 expert-score
-      correction biases. Configuration, generation configuration, tokenizer
-      assets, tensor names, shapes, dtypes, and values must match the pinned
-      source and reload natively as NemotronHForCausalLM.
+      The single-process CPU export exits successfully and writes all 51,023
+      tensors, 560,524,603,904 values, and 1,121,049,257,984 tensor-payload
+      bytes. Keys, shapes, dtypes, and values are bitwise identical to the
+      pinned source with no dtype conversions, preserving its BF16 model
+      weights and FP32 expert-score correction biases. Transformers strictly
+      reloads the output natively as NemotronHForCausalLM with all 927 state
+      tensors and no loading discrepancies.
 
   megatron_to_hf_gpu:
     status: verified
