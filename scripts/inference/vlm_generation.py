@@ -33,7 +33,7 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+from transformers import AutoConfig, AutoProcessor, AutoTokenizer, GenerationConfig
 from vlm_generation_utils import (
     decode_generated_tokens,
     pad_input_ids_to_tp_multiple,
@@ -305,7 +305,19 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     prompt_length = input_ids_raw.size(1)
     generated_ids = input_ids_raw.clone()
-    stop_tokens = [tokenizer.eos_token_id]
+    try:
+        generation_config = GenerationConfig.from_pretrained(
+            args.hf_model_path,
+            **_hf_revision_kwargs(args.hf_revision),
+        )
+    except OSError:
+        generation_config = GenerationConfig.from_model_config(config)
+    stop_token_ids = generation_config.eos_token_id
+    if stop_token_ids is None:
+        stop_token_ids = [tokenizer.eos_token_id]
+    elif isinstance(stop_token_ids, int):
+        stop_token_ids = [stop_token_ids]
+    stop_tokens = set(stop_token_ids)
 
     for step in range(args.max_new_tokens):
         with torch.no_grad():

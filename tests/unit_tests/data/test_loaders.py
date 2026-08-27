@@ -301,9 +301,9 @@ def test_multiple_validation_sets_build_time_guards(_mock_rank, _mock_world_size
 
 @pytest.mark.unit
 def test_eval_at_step_zero_reserves_pre_and_post_training_passes():
-    """eval_at_step_zero budgets the step-zero pass, plus the post-training pass in _pretrain()
-    when eval_interval is None and the base formula reserves nothing; a finite
-    dataloader_type="single" loader must be sized for both."""
+    """eval_at_step_zero budgets one extra pass on top of the base formula, which covers the
+    scheduled evals and the post-training pass in _pretrain() (with and without eval_interval);
+    a finite dataloader_type="single" loader must be sized for all of them."""
 
     def make_cfg(eval_interval):
         return SimpleNamespace(
@@ -321,9 +321,9 @@ def test_eval_at_step_zero_reserves_pre_and_post_training_passes():
     _, valid_samples, _ = get_train_valid_test_num_samples(make_cfg(eval_interval=5))
     assert valid_samples == ((10 // 5 + 1) * 2 + 2) * 4
 
-    # Without a schedule, the run still evaluates at step zero and once after training.
+    # Without a schedule, the base budgets the post-training pass; step zero is the extra.
     _, valid_samples, _ = get_train_valid_test_num_samples(make_cfg(eval_interval=None))
-    assert valid_samples == 2 * 2 * 4
+    assert valid_samples == (2 + 2) * 4
 
 
 @pytest.mark.unit

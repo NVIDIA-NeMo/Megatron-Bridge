@@ -386,7 +386,10 @@ def build_sampling_params(
     stop_words: list[str] | None,
 ) -> SamplingParams:
     """Build MCore ``SamplingParams`` from CLI-derived values."""
-    if top_k is None:
+    if temperature == 0.0:
+        top_k = 1
+        top_p = 0.0
+    elif top_k is None:
         top_k = 0 if top_p > 0.0 else 1
     if top_k > 0 and top_p > 0.0:
         raise ValueError("--top_k and --top_p cannot both be positive.")

@@ -126,16 +126,18 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         # Otherwise fallback to calculating samples based on iterations and global batch size
         train_samples = cfg.train.train_iters * cfg.train.global_batch_size
 
+    eval_iters_per_eval = cfg.validation.eval_iters or 0
     if cfg.validation.eval_interval:
-        eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
+        eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * eval_iters_per_eval
+    elif cfg.validation.eval_interval is None:
+        eval_iters = eval_iters_per_eval
     else:
         eval_iters = 0
-    # Budget the eval passes outside the eval_interval schedule: the step-zero pass,
-    # plus the post-training pass in _pretrain() when eval_interval is unset.
-    if cfg.validation.eval_at_step_zero and cfg.validation.eval_iters:
-        extra_eval_passes = 1 if cfg.validation.eval_interval else 2
-        eval_iters += extra_eval_passes * cfg.validation.eval_iters
-    test_iters = cfg.validation.eval_iters
+    # eval_at_step_zero adds one pass outside the eval_interval schedule (the branches
+    # above already budget the post-training pass).
+    if cfg.validation.eval_at_step_zero:
+        eval_iters += eval_iters_per_eval
+    test_iters = eval_iters_per_eval
 
     eval_gbs = (
         cfg.validation.eval_global_batch_size
@@ -229,6 +231,7 @@ def build_train_valid_test_data_loaders(
     from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
+    eval_iters = cfg.validation.eval_iters or 0
     if isinstance(cfg.model, MegatronMIMOProvider):
         if not isinstance(cfg.dataset, MegatronMIMODatasetProvider):
             raise ValueError(
@@ -250,8 +253,8 @@ def build_train_valid_test_data_loaders(
         # Sync train_state flags across all ranks.
         # Use all_reduce(MAX) since some ranks may not have loaders in heterogeneous MegatronMIMO.
         do_train = train_dataloader is not None and cfg.train.train_iters > 0
-        do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
-        do_test = test_dataloader is not None and cfg.validation.eval_iters > 0
+        do_valid = valid_dataloader is not None and eval_iters > 0
+        do_test = test_dataloader is not None and eval_iters > 0
         flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
         torch.distributed.all_reduce(flags, op=torch.distributed.ReduceOp.MAX)
         train_state.do_train = flags[0].item()
@@ -431,7 +434,7 @@ def build_train_valid_test_data_loaders(
 
     # Single sizing authority for the per-set counters; reset + warn on a set-count change across
     # resume (dataset identity is not tracked).
-    if cfg.validation.multiple_validation_sets and cfg.validation.eval_iters > 0 and isinstance(valid_ds, list):
+    if cfg.validation.multiple_validation_sets and eval_iters > 0 and isinstance(valid_ds, list):
         num_sets = len(valid_ds)
         restored = train_state.consumed_valid_samples_per_set
         count_changed = len(restored) != num_sets
@@ -443,9 +446,9 @@ def build_train_valid_test_data_loaders(
         if count_changed:
             train_state.consumed_valid_samples_per_set = [0] * num_sets
 
-    if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
+    if cfg.validation.skip_train and eval_iters > 0:
         valid_dataloader = _build_eval_test_dataloaders(valid_ds, 0, cfg.dataset.dataloader_type)
-    elif cfg.validation.eval_iters > 0:
+    elif eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
         if cfg.validation.multiple_validation_sets:
             # Resume each validation set from its own consumed-samples offset.
@@ -465,13 +468,13 @@ def build_train_valid_test_data_loaders(
             valid_consumed_samples = train_state.consumed_valid_samples
         valid_dataloader = _build_eval_test_dataloaders(valid_ds, valid_consumed_samples, val_dataloader_type)
 
-    if cfg.validation.eval_iters > 0:
+    if eval_iters > 0:
         test_dataloader = _build_eval_test_dataloaders(test_ds, 0, cfg.dataset.dataloader_type)
 
     # Flags to know if we need to do training/validation/testing.
     do_train = train_dataloader is not None and cfg.train.train_iters > 0
-    do_valid = valid_dataloader is not None and cfg.validation.eval_iters > 0
-    do_test = test_dataloader is not None and cfg.validation.eval_iters > 0
+    do_valid = valid_dataloader is not None and eval_iters > 0
+    do_test = test_dataloader is not None and eval_iters > 0
     flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
 
     torch.distributed.broadcast(flags, 0)
