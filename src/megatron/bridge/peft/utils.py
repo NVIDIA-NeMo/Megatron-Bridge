@@ -807,6 +807,22 @@ def init_method_kaiming_uniform(val: float) -> Callable[[torch.Tensor], torch.Te
     return init_
 
 
+def init_method_uniform(bound: float) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Create an initialization method based on uniform distribution U(-bound, bound).
+
+    Args:
+        bound: Half-width of the uniform distribution.
+
+    Returns:
+        Initialization function that applies the uniform distribution to a tensor.
+    """
+
+    def init_(tensor: torch.Tensor) -> torch.Tensor:
+        return nn.init.uniform_(tensor, -bound, bound)
+
+    return init_
+
+
 def init_method_const(val: float) -> Callable[[torch.Tensor], torch.Tensor]:
     """Create an initialization method that sets all values to a constant.
 
@@ -1075,7 +1091,7 @@ class ParallelLinearAdapter(nn.Module):
                 input_is_parallel=True,
                 skip_bias_add=True,
                 bias=False,
-                init_method=self._get_init_fn(column_init_method),
+                init_method=self._get_init_fn(column_init_method, fan_in=in_features, fan_out=dim),
                 is_expert=is_expert,
                 tp_group=self.tp_group,
             )
@@ -1086,7 +1102,7 @@ class ParallelLinearAdapter(nn.Module):
                 config=model_parallel_config,
                 bias=False,
                 gather_output=True,
-                init_method=self._get_init_fn(column_init_method),
+                init_method=self._get_init_fn(column_init_method, fan_in=in_features, fan_out=dim),
                 disable_grad_reduce=_sequence_parallel,
                 is_expert=is_expert,
                 tp_group=self.tp_group,
@@ -1115,7 +1131,7 @@ class ParallelLinearAdapter(nn.Module):
                 config=model_parallel_config,
                 bias=False,
                 gather_output=lin_out_gather_output,
-                init_method=self._get_init_fn(row_init_method),
+                init_method=self._get_init_fn(row_init_method, fan_in=dim, fan_out=out_features),
                 is_expert=is_expert,
                 tp_group=self.tp_group,
             )
@@ -1220,11 +1236,23 @@ class ParallelLinearAdapter(nn.Module):
         }
         return activation_map.get(activation, nn.Identity())
 
-    def _get_init_fn(self, init_method: str) -> Callable[[torch.Tensor], torch.Tensor]:
+    def _get_init_fn(
+        self, init_method: str, fan_in: int | None = None, fan_out: int | None = None
+    ) -> Callable[[torch.Tensor], torch.Tensor]:
         """Get initialization function by method name.
+
+        When the adapter weight is sharded across tensor-parallel ranks, Megatron
+        initializes each shard locally, so a fan-dependent init function (xavier,
+        kaiming) computed on the shard would give a distribution that depends on
+        the TP size. Passing the full (unsharded) ``fan_in``/``fan_out`` resolves
+        those methods to a fixed-scale distribution computed from the full tensor
+        dims, making initialization independent of the sharding. At TP=1 the
+        resolved distributions are identical to the tensor-derived ones.
 
         Args:
             init_method: Name of the initialization method.
+            fan_in: Full (unsharded) input dimension of the weight, if known.
+            fan_out: Full (unsharded) output dimension of the weight, if known.
 
         Returns:
             Initialization function.
@@ -1233,11 +1261,19 @@ class ParallelLinearAdapter(nn.Module):
             NotImplementedError: If init_method is not supported.
         """
         if init_method == "xavier":
-            init_fn = nn.init.xavier_normal_
+            if fan_in is not None and fan_out is not None:
+                init_fn = init_method_normal(math.sqrt(2.0 / (fan_in + fan_out)))
+            else:
+                init_fn = nn.init.xavier_normal_
         elif init_method == "normal":
             init_fn = init_method_normal(0.2)
         elif init_method == "kaiming":
-            init_fn = init_method_kaiming_uniform(math.sqrt(5))
+            if fan_in is not None:
+                # kaiming_uniform_(a=sqrt(5)) on the full fan_in:
+                # bound = sqrt(2/(1+a^2)) * sqrt(3/fan_in) = 1/sqrt(fan_in)
+                init_fn = init_method_uniform(1.0 / math.sqrt(fan_in))
+            else:
+                init_fn = init_method_kaiming_uniform(math.sqrt(5))
         elif init_method == "zero":
             init_fn = init_method_const(0.0)
         else:
