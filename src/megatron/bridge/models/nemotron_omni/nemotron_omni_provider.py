@@ -101,6 +101,9 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
     def _build_vision_config(self, language_cfg):
         """Build RADIO ViT-H vision encoder config from a language config copy."""
         vision_cfg = copy.deepcopy(language_cfg)
+        if not self.use_vision_backbone_fp8_arch:
+            vision_cfg.fp8 = None
+            vision_cfg.fp8_param = False
         vision_cfg.sequence_parallel = False
         vision_cfg.context_parallel_size = 1
         vision_cfg.tp_comm_overlap = False
@@ -173,6 +176,13 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     temporal_patch_dim: int = 1
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
+
+    # Shard images (or tubelets, when temporal compression is on) across the
+    # context-parallel group instead of encoding every image on every CP rank.
+    # The vision tower is replicated, so this is data parallelism borrowing the
+    # CP group, not sequence sharding: RADIO already attends per image.
+    # No-op at CP=1, so defaulting it on only changes CP>1 runs.
+    vision_dp_over_cp: bool = True
 
     # This field is serialized in run_config.yaml. It prevents an older
     # checkpoint whose provider had the same class name but LLaVA semantics
@@ -459,6 +469,7 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
             temporal_patch_dim=self.temporal_patch_dim,
             separate_video_embedder=self.separate_video_embedder,
             temporal_ckpt_compat=self.temporal_ckpt_compat,
+            vision_dp_over_cp=self.vision_dp_over_cp,
             sound_model=sound_model,
             sound_projection=sound_projection,
             sound_token_index=self.sound_context_token_id,

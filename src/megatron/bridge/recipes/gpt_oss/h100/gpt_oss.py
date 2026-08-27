@@ -568,6 +568,46 @@ def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def gpt_oss_120b_sft_48gpu_h100_bf16_32k_config() -> ConfigContainer:
+    """Return the 32K-context full SFT config for GPT-OSS 120B.
+
+    Default parallelism: TP=2, PP=6, CP=4, EP=4
+
+    Returns:
+        ConfigContainer with settings pre-configured for GPT-OSS 120B long-context SFT.
+    """
+    cfg = gpt_oss_120b_sft_32gpu_h100_bf16_config()
+
+    seq_length = 32768
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 8
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.sequence_parallel = True
+    cfg.model.context_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 6
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.cp_comm_type = "a2a"
+    cfg.model.calculate_per_token_loss = True
+
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.bias_activation_fusion = False
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act"]
+
+    cfg.train.global_batch_size = 4
+    cfg.train.micro_batch_size = 1
+    cfg.ddp.average_in_collective = False
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
 def gpt_oss_20b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
     """Return a full SFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
     cfg = gpt_oss_20b_sft_8gpu_h100_bf16_config()
@@ -946,6 +986,7 @@ __all__ = [
     "gpt_oss_120b_peft_8gpu_h100_bf16_config",
     "gpt_oss_120b_pretrain_64gpu_h100_bf16_config",
     "gpt_oss_120b_sft_32gpu_h100_bf16_config",
+    "gpt_oss_120b_sft_48gpu_h100_bf16_32k_config",
     "gpt_oss_20b_peft_1gpu_h100_bf16_config",
     "gpt_oss_20b_peft_1gpu_h100_fp8cs_config",
     "gpt_oss_20b_peft_1gpu_h100_fp8mx_config",

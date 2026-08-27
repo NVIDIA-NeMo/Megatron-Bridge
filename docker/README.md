@@ -132,6 +132,7 @@ docker build \
 | `FW_BASE_FINAL` | Output stage. `trtllm_install` (with TRT-LLM) or `fw_toolkit_builder` (without) |
 | `UV_VERSION` | uv version to install |
 | `VLLM_VERSION` | vLLM git tag to build |
+| `VLLM_WHEEL_SRC` | Stage supplying the vLLM wheel. `vllm_wheel_build` (default) builds it from source; `vllm_wheel_none` skips both the build and the install |
 | `TRT_LLM_COMMIT` | TensorRT-LLM git commit or tag |
 | `TRT_LLM_VERSION` | TensorRT-LLM version string embedded as an image environment variable |
 | `TRT_VER` | TensorRT version for the TRT-LLM install scripts |
