@@ -287,6 +287,7 @@ markers = [
     "gpu: marks tests requiring GPU hardware",
     "skipduringci: marks tests that are skipped ci as they are addressed by Jenkins jobs but should be run to test user setups",
     "pleasefixme: marks tests that are broken and need fixing",
+    "conversion: marks the conversion-only stack (HF<->Megatron mapping/provider/roundtrip) that MCore bumps must not break; NeMo-RL depends on this subset (select with '-m conversion')",
 ]
 
 [tool.coverage.run]
