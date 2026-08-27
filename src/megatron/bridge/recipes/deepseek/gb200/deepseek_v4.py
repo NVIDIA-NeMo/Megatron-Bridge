@@ -41,8 +41,8 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     The core 64-GPU topology completed 1k-step convergence runs with fused DSA
     indexer and loss, HybridEP, grouped GEMM, permute fusion, and selective
-    recompute. The current router fusion, native cross entropy, and activation
-    offload settings were exercised by the derived 128-GPU recipe's 100-step run.
+    recompute. The current router fusion was also exercised by the derived
+    library recipe's 64-GPU 100-step run.
 
     Note: set checkpoint.save_optim=False when using HybridEP.
     """
@@ -80,7 +80,6 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 16
-    cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_grouped_gemm = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_router_fusion = True
@@ -88,8 +87,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.cross_entropy_loss_fusion = True
-    # MCore warns of TE CE stability issues, and matched GB200 testing found no throughput or memory benefit.
-    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.cross_entropy_fusion_impl = "te"
 
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
@@ -194,24 +192,24 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigContainer:
-    """Return the real-training DeepSeek V4 Flash config for 128 GB200 GPUs.
+    """Return the scalable real-training DeepSeek V4 Flash GB200 config.
 
-    This variant uses PP1 with dense DP128, EP64, and expert DP2. Its natural-routing
-    validation completed 100 finite steps, saved a grouped-MXFP8 checkpoint, and
-    restored model, optimizer, and RNG state through step 105. Expert capacity,
-    paged stash, and CUDA graphs remain disabled to preserve natural-routing
-    training semantics.
+    The historical name is retained for compatibility. This variant uses PP4/VPP4,
+    EP16, and selective recompute without activation offload; its current
+    qualification is at 64 GPUs. Expert capacity, paged stash, CUDA graphs, and
+    forced load balancing remain disabled to preserve natural-routing training
+    semantics.
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+    cfg.model.pipeline_model_parallel_layout = "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
     cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1
 
@@ -222,10 +220,15 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigCont
     cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.recompute_modules = ["moe", "mhc", "mla_up_proj", "layernorm"]
-    cfg.model.fine_grained_activation_offloading = True
-    cfg.model.offload_modules = ["core_attn", "attn_proj"]
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+    cfg.model.recompute_modules = ["mhc", "mla_up_proj"]
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = []
+    cfg.model.fine_grained_offloading_max_inflight_offloads = None
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = False
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
     cfg.mixed_precision.fp8_param_gather = True
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
     cfg.ddp.average_in_collective = False
@@ -233,10 +236,11 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigCont
     cfg.env_vars = {
         **cfg.env_vars,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
+        "NVTE_CPU_OFFLOAD_V1": 0,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -329,8 +333,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
         "pad_to_max_length": True,
     }
 
-    # MCore warns of TE CE stability issues, and matched GB200 testing found no throughput or memory benefit.
-    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.cross_entropy_fusion_impl = "te"
     cfg.env_vars = {
         **cfg.env_vars,
         "NVTE_CPU_OFFLOAD_V1": 1,

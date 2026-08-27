@@ -58,7 +58,7 @@ def test_flash_base_recipe_enables_precision_independent_fusions() -> None:
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
     assert getattr(cfg.model, "moe_mlp_glu_interleave_size", None) is None
     assert cfg.model.use_transformer_engine_op_fuser is False
-    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.comm_overlap.overlap_grad_reduce is True
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 
@@ -131,7 +131,7 @@ def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     assert cfg.model.moe_permute_fusion is True
     assert cfg.model.moe_router_fusion is True
     assert cfg.model.moe_grouped_gemm is True
-    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.cross_entropy_fusion_impl == "te"
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
     assert cfg.model.recompute_method is None
@@ -210,21 +210,32 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.optimizer.main_grads_dtype == torch.float32
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.use_te_rng_tracker is False
+    assert cfg.rng.te_rng_tracker is False
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.moe_mlp_glu_interleave_size == 32
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_layout is None
-    assert cfg.model.recompute_modules == ["moe", "mhc", "mla_up_proj", "layernorm"]
-    assert cfg.model.fine_grained_activation_offloading is True
-    assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
-    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
+    assert getattr(cfg.model, "moe_deepep_num_sms", None) is None
+    assert getattr(cfg.model, "moe_hybridep_num_sms", None) is None
+    assert cfg.checkpoint.pretrained_checkpoint is None
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.pipeline_model_parallel_layout == (
+        "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
+    )
+    assert cfg.model.recompute_modules == ["mhc", "mla_up_proj"]
+    assert cfg.model.fine_grained_activation_offloading is False
+    assert cfg.model.offload_modules == []
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads is None
     assert getattr(cfg.model, "moe_expert_rank_capacity_factor", None) is None
     assert getattr(cfg.model, "moe_paged_stash", False) is False
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 0
 
 
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:

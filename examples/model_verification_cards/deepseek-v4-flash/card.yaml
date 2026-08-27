@@ -9,12 +9,12 @@ summary: >
   performance results.
 
   DeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision.
-  The current 128-GPU GB200 MXFP8 library pretraining recipe uses
-  PP1/EP64 with natural routing, selective recompute, attention activation offload, and
-  MXFP8 parameter gather and gradient-buffer reuse. It completed 100 finite steps,
-  saved a grouped-MXFP8 checkpoint, then restored model, optimizer, and RNG state in a
-  fresh process for finite steps 101-105. Formal checkpoint-resume verification remains
-  separate because it requires the step-50 sentinel comparison below. A capacity-1.5
+  The latest 64-GPU GB200 MXFP8 library pretraining candidate uses
+  PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused
+  cross entropy, and selective recompute without activation offload. It completed
+  100 finite steps and saved a model-only grouped-MXFP8 checkpoint at step 100.
+  Formal checkpoint-resume verification remains separate because it requires the
+  step-50 sentinel comparison below. A capacity-1.5
   performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert
   assignments and 64.23% of routing probability mass; that result is benchmark-only and
   is excluded from the natural-routing library recipe and verification metrics. CPU
@@ -50,8 +50,8 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     GB200:
-      verified: [pretrain, sft, sft_long_context, sft_export_inference, peft]
-      unverified: [checkpoint_resume]
+      verified: [sft, sft_long_context, sft_export_inference, peft]
+      unverified: [pretrain, checkpoint_resume]
   performance:
     GB200: verified
     GB300: verified
@@ -178,41 +178,49 @@ items:
 
   pretrain:
     GB200:
-      status: verified
+      status: unverified
       precision: fp8_mx
       enabled_features:
         moe_dispatcher: hybridep
       command: >
-        ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
         --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/rp2 dataset.num_workers=0
+        --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000
+        'dataset.blend=[["work/data/the-pile/my-gpt3_08_text_document"],null]'
+        dataset.path_to_cache=work/cache/the-pile dataset.num_workers=0
         dataset.random_seed=1234 rng.seed=1234
         scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
         validation.eval_interval=0 validation.eval_iters=0
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
         checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null
+        checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.save_optim=false
         --save_dir work/model-verification/dsv4-flash/pretrain-ref
         --save_interval 100
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=120
-      last_verified: 2026-08-21
+      last_verified: 2026-08-27
       metrics:
-        initial_loss: 12.59201
-        final_loss: 5.960634
-        last_10_steps_step_time_ms_avg: 5713.47
-        last_10_steps_model_tflops_per_gpu_avg: 131.36
-        last_10_steps_tokens_per_second_per_gpu_avg: 1433.804676
+        initial_loss: 7.250136
+        final_loss: 3.237480
+        last_10_steps_step_time_ms_avg: 8482.070
+        last_10_steps_model_tflops_per_gpu_avg: 175.950
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: 159.93
+        peak_reserved_memory_gib: 162.06
       expected_result: >
-        The current library recipe resolves to TP1/PP1/EP64/CP1 with dense DP128,
-        expert DP2, and GBS/MBS 256/1. It uses HybridEP natural routing, native fused
-        cross entropy, selective recompute over moe, mhc, mla_up_proj, and layernorm,
-        attention activation offload, and MXFP8 parameter gather and gradient-buffer
-        reuse. Expert capacity, paged stash, and CUDA graphs remain disabled.
-        The run completed 100 finite LM/MTP-loss steps with no skipped or NaN
-        iterations and wrote a complete grouped-MXFP8 checkpoint at step 100.
+        On 64 GB200 (16 nodes x 4 GPUs), TP1/PP4/VPP4/EP16/CP1 uses dense DP16,
+        expert DP1, and GBS/MBS 256/1. The command loads the imported model weights
+        while starting optimizer and RNG state fresh. It uses HybridEP natural routing,
+        grouped GEMM, TE fused cross entropy, selective recompute over mhc and
+        mla_up_proj, and MXFP8 parameter gather and gradient-buffer reuse without
+        activation offload. Expert capacity, paged stash, CUDA graphs, and forced
+        load balancing remain disabled. The run completed 100 finite LM/MTP-loss
+        steps with no skipped or NaN iterations and wrote a complete model-only
+        grouped-MXFP8 checkpoint at step 100. Promote this item to verified only
+        after repeating the command from a clean Bridge commit that can be pinned
+        in this leaf.
 
   sft:
     GB200:
@@ -261,8 +269,7 @@ items:
         fusion without enabling the optional DSA indexer loss. The run completed
         100 steps with finite LM and MTP losses, no skipped or NaN iterations, and a
         complete model checkpoint at step 100. A fresh process reloaded that checkpoint
-        and completed finite step 101. moe_grouped_gemm=True and native fused cross
-        entropy are recipe defaults.
+        and completed finite step 101. moe_grouped_gemm=True is a recipe default.
         dist.distributed_timeout_minutes must be 180 or above to allow offline data
         packing (approximately 63 minutes) before training begins.
 

@@ -105,23 +105,25 @@ launcher. Hardware-qualified library recipes are defined under
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config` | BF16 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config` | MXFP8 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config` | BF16 Muon |
-| GB200, 128 GPUs | `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config` | MXFP8 Adam |
+| GB200, 64 GPUs | `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config` | MXFP8 Adam |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config` | BF16 Adam |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config` | MXFP8 Adam |
 
-For example, a short generated-data run of the 128-GPU GB200 library recipe is:
+For example, a short generated-data run of the GB200 library recipe is:
 
 ```bash
-./scripts/training/train.sh --nodes 32 --gpus-per-node 4 \
+./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
   --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config \
   --mode pretrain --dataset mock --max_steps 10
 ```
 
-That recipe owns its TP/PP/EP/CP topology, global batch size, natural-routing
-semantics, recompute, offload, and checkpoint settings. Keep those defaults for
-the qualified configuration and override only the dataset, run length, logging,
-and output paths. Its 100-step real-data validation and checkpoint evidence are
-recorded in the verification card.
+The historical `128gpu` name is retained for compatibility. The recipe owns its
+TP1/PP4/VPP4/EP16/CP1 topology, global batch size, natural-routing semantics,
+recompute, offload, and checkpoint settings. Its current qualification is at 64
+GPUs; larger data-parallel scales require separate performance validation. Keep
+the recipe defaults and override only the dataset, run length, logging, pretrained
+checkpoint, and output paths. The latest 100-step real-data candidate and its
+checkpoint evidence are recorded in the verification card.
 
 Compatibility aliases such as `deepseek_v4_flash_pretrain_mxfp8_config` remain
 exported, but new launches should use the hardware-qualified names above.

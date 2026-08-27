@@ -106,6 +106,7 @@ from recipe_metadata import (  # noqa: E402
 from recipe_runner import (  # noqa: E402
     apply_cli_overrides,
     apply_determinism,
+    apply_runtime_environment,
     bootstrap_recipe_environment,
     load_forward_step,
     load_recipe,
@@ -129,6 +130,9 @@ if TYPE_CHECKING:
 
 PublicMode = Literal["pretrain", "sft", "lora", "dora"]
 TrainMode = Literal["pretrain", "finetune"]
+
+
+IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1"})
 
 
 COMMON_OVERRIDE_FIELDS = (
@@ -419,6 +423,12 @@ def _selected_recipe_name(args: argparse.Namespace) -> str:
     return args.recipe or f"{args.model}_{recipe_task(args.mode)}_config"
 
 
+def _requires_recipe_environment_bootstrap(recipe: ConfigContainer) -> bool:
+    """Return whether a recipe declares an unset import-time environment variable."""
+    recipe_env = getattr(recipe, "env_vars", None) or {}
+    return any(name in recipe_env and name not in os.environ for name in IMPORT_TIME_RECIPE_ENV_VARS)
+
+
 def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
     """Load the requested recipe by its complete name or model-derived library name."""
     peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
@@ -495,11 +505,14 @@ def main(argv: list[str] | None = None) -> None:
             world_size=benchmark_world_size,
         )
     configuration_mode = _train_mode(args.mode)
-    recipe = bootstrap_recipe_environment(
-        recipe,
-        script_path=str(Path(__file__).resolve()),
-        argv=list(argv) if argv is not None else sys.argv[1:],
-    )
+    if benchmark_metadata is not None or _requires_recipe_environment_bootstrap(recipe):
+        recipe = bootstrap_recipe_environment(
+            recipe,
+            script_path=str(Path(__file__).resolve()),
+            argv=list(argv) if argv is not None else sys.argv[1:],
+        )
+    else:
+        recipe = apply_runtime_environment(recipe)
 
     if benchmark_metadata is not None:
         execution_mode = "pretrain"
