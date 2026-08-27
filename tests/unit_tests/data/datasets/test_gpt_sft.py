@@ -516,7 +516,7 @@ class TestDataGPTSFTPackedDataset:
             {
                 "input_ids": np.array([10, 11, 12, 2, 2, 20, 21, 2, 2, 2]),
                 "seq_boundaries": [0, 5, 10],
-                "loss_mask": np.ones(10, dtype=np.int64),
+                "loss_mask": np.array([1, 1, 1, 0, 0, 1, 1, 0, 0, 0]),
             }
         ]
 
@@ -525,8 +525,29 @@ class TestDataGPTSFTPackedDataset:
         assert processed["tokens"].tolist() == [[10, 11, 12, 2, 20, 21, 2, 2]]
         assert processed["cu_seqlens_q"].tolist() == [[0, 3, 5]]
         assert processed["cu_seqlens_q_padded"].tolist() == [[0, 4, 8]]
+        assert processed["pad_between_seqs"] is True
         assert processed["padding_mask"].dtype == torch.bool
         assert processed["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
+
+    def test_collate_fn_preserves_supervised_terminal_eos(self, tmp_path):
+        """A supervised chat EOS remains part of the logical sequence."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 4
+        dataset._pad_seq_to_mult = 4
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2, 2]),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.array([1, 1, 1, 1, 0]),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"].tolist() == [[0, 4]]
+        assert processed["cu_seqlens_q_padded"].tolist() == [[0, 4]]
+        assert processed["pad_between_seqs"] is False
+        assert processed["padding_mask"].tolist() == [[False, False, False, False]]
 
     def test_collate_fn_marks_offline_trailing_padding_without_alignment(self, tmp_path):
         """Default offline packing masks padding added to reach the batch width."""

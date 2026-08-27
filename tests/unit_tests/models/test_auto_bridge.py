@@ -357,8 +357,16 @@ class TestAutoBridge:
         self._run_save_hf_weights(source, tmp_path, mtp_num_layers=1)
 
         assert source.save_generator_kwargs["ignored_source_key_prefixes"] is None
+        assert source.save_generator_kwargs["ignored_source_key_suffixes"] is None
 
-    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers):
+    def test_save_hf_weights_strips_scale_inv_for_plain_export(self, tmp_path):
+        """Plain-dtype export omits source-only FP8 scale tensors from strict shard accounting."""
+        source = _make_fake_source(present=set())
+        self._run_save_hf_weights(source, tmp_path, mtp_num_layers=1, weight_dtype=torch.bfloat16)
+
+        assert source.save_generator_kwargs["ignored_source_key_suffixes"] == ("_scale_inv",)
+
+    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers, weight_dtype=None):
         """Drive ``save_hf_weights`` with a stubbed bridge/model so the only
         behavior under test is the MTP prefix-resolution wiring.
 
@@ -391,7 +399,7 @@ class TestAutoBridge:
             patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
         ):
             mock_bridge.return_value = fake_model_bridge
-            bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
+            bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False, weight_dtype=weight_dtype)
 
     def test_can_handle_supported_model(self, llama_config_mock):
         """Test can_handle returns True for supported models."""
