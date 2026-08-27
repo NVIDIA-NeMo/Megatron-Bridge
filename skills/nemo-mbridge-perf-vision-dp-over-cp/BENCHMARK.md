@@ -1,4 +1,4 @@
-# Skill Benchmark: nemo-mbridge-perf-vision-context-parallel
+# Skill Benchmark: nemo-mbridge-perf-vision-dp-over-cp
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,7 +8,7 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `nemo-mbridge-perf-vision-context-parallel`
+- Skill: `nemo-mbridge-perf-vision-dp-over-cp`
 - Evaluation date: 2026-08-25
 - Evaluator version: `1.3.2`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
@@ -69,10 +69,10 @@ Example: `47% → 92% (+45 points)` means the skill-assisted run scored 92%, 45 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/nemo-mbridge-perf-vision-context-parallel/SKILL.md`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/nemo-mbridge-perf-vision-context-parallel/SKILL.md`)
-- **MEDIUM** SCHEMA/author_missing: Author not specified in metadata (`skills/nemo-mbridge-perf-vision-context-parallel/SKILL.md`)
-- **LOW** SCHEMA/unexpected_file: Unexpected 'card.yaml' in skill root (`skills/nemo-mbridge-perf-vision-context-parallel/card.yaml`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/nemo-mbridge-perf-vision-dp-over-cp/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/nemo-mbridge-perf-vision-dp-over-cp/SKILL.md`)
+- **MEDIUM** SCHEMA/author_missing: Author not specified in metadata (`skills/nemo-mbridge-perf-vision-dp-over-cp/SKILL.md`)
+- **LOW** SCHEMA/unexpected_file: Unexpected 'card.yaml' in skill root (`skills/nemo-mbridge-perf-vision-dp-over-cp/card.yaml`)
 
 </details>
 

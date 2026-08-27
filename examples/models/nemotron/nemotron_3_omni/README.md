@@ -263,9 +263,9 @@ Set the four flags below as a matched column — a mismatched set produces incor
 
 Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.
 
-### Vision Context Parallelism
+### Vision DP Over CP
 
-`model.vision_context_parallel` shards the microbatch's images (or
+`model.vision_dp_over_cp` shards the microbatch's images (or
 temporal tubelets) across the language model's context-parallel group, so each
 CP rank encodes `1/CP` of them instead of all of them. This is data parallelism
 over images, not ring attention — RADIO already attends within each image via
@@ -276,7 +276,7 @@ set that every rank needs to merge media into the packed text sequence.
 
 The flag defaults to `True` and is a no-op unless
 `model.context_parallel_size > 1`. Both recipes below ship with CP=1, so it only
-takes effect once you raise CP. Set `model.vision_context_parallel=False` to
+takes effect once you raise CP. Set `model.vision_dp_over_cp=False` to
 encode every image redundantly on every CP rank.
 
 Measured on 2 nodes / 16 GPUs (PP=1, DP=2, EP=8, ETP=1, MBS=2, GBS=64, GA=16),

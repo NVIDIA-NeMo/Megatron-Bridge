@@ -1,13 +1,13 @@
 ---
-name: nemo-mbridge-perf-vision-context-parallel
+name: nemo-mbridge-perf-vision-dp-over-cp
 description: Operational guide for sharding a VLM vision encoder across the language model's context-parallel ranks in Megatron-Bridge, including config knobs, code anchors, load-balance pitfalls, and measured impact.
 license: Apache-2.0
-when_to_use: The vision tower replicates work and activations on every CP rank while the language model is already sharded, or a VLM run at CP>1 OOMs in the encoder; 'vision_context_parallel', 'vision CP', 'vision DP over CP', 'image sharding across CP ranks', 'encoder replicated across CP'.
+when_to_use: The vision tower replicates work and activations on every CP rank while the language model is already sharded, or a VLM run at CP>1 OOMs in the encoder; 'vision_dp_over_cp', 'vision CP', 'vision DP over CP', 'image sharding across CP ranks', 'encoder replicated across CP'.
 ---
 
-# Vision Context Parallel Skill
+# Vision DP Over CP Skill
 
-This skill covers `vision_context_parallel`: reusing the language model's
+This skill covers `vision_dp_over_cp`: reusing the language model's
 context-parallel process group to shard the **images** (or temporal tubelets) of
 a microbatch across CP ranks, so each rank encodes `1/CP` of them instead of all
 of them.
@@ -29,7 +29,7 @@ Bridge already has a similarly named and completely different knob:
 (`src/megatron/bridge/models/qwen_vl/qwen3_vl_provider.py`, consumed in
 `src/megatron/bridge/training/initialize.py`).
 
-| | `model.vision_context_parallel` (bool) | `dist_train.vision_context_parallel_size` (int) |
+| | `model.vision_dp_over_cp` (bool) | `dist_train.vision_context_parallel_size` (int) |
 |---|---|---|
 | Ranks | Reuses the language model's CP ranks | Gives the vision tower its **own** ranks |
 | Splits | Whole images across those ranks | The vision encoder's own sequence dimension |
@@ -42,7 +42,7 @@ They are not alternatives and do not compose in any tested configuration.
 
 ```python
 cfg.model.context_parallel_size = 2      # the flag is a no-op at CP=1
-cfg.model.vision_context_parallel = False  # opt out; on by default
+cfg.model.vision_dp_over_cp = False      # opt out; on by default
 ```
 
 Defaults to `True`. It self-disables when `context_parallel_size == 1`, so a
@@ -55,7 +55,7 @@ isolate a suspected split/gather bug.
 Provider field, `src/megatron/bridge/models/nemotron_omni/nemotron_omni_provider.py`:
 
 ```python
-vision_context_parallel: bool = True
+vision_dp_over_cp: bool = True
 ```
 
 Gating, in `NemotronOmniModel.__init__`
@@ -63,7 +63,7 @@ Gating, in `NemotronOmniModel.__init__`
 
 ```python
 self.context_parallel_lm = language_transformer_config.context_parallel_size
-self.vision_context_parallel = vision_context_parallel and self.context_parallel_lm > 1
+self.vision_dp_over_cp = vision_dp_over_cp and self.context_parallel_lm > 1
 ```
 
 The split itself wraps an upstream MCore helper:
@@ -128,7 +128,7 @@ Upstream helpers (do not modify — changes go through the MCore repo):
 ## Measured Impact
 
 Nemotron-3 Nano Omni 30B-A3B, 2 nodes / 16 GPUs, PP=1 DP=2 EP=8 ETP=1 MBS=2
-GBS=64 GA=16, with only `vision_context_parallel` flipped:
+GBS=64 GA=16, with only `vision_dp_over_cp` flipped:
 
 | Dataset     | TP | CP | Step time     | Peak memory |
 |-------------|----|----|---------------|-------------|
@@ -161,7 +161,7 @@ signature described under Pitfalls, not noise.
    resolves the CP group from global parallel state, so a `ProcessGroupCollection`
    whose `cp` size disagrees with `context_parallel_size` would shard against the
    wrong ranks. Bridge raises instead:
-   `"Nemotron Omni vision context parallelism does not match its process group"`.
+   `"Nemotron Omni vision_dp_over_cp does not match its process group"`.
 4. **Odd patch grids break pixel shuffle.** Omni's factor-2 pixel shuffle rejects
    an odd grid, and MCore's `1x1` placeholder images are odd by construction.
    Without `_pad_patch_grid_to_even`, the CP>images case fails only for the
@@ -183,7 +183,7 @@ an exact split, and a remainder; it skips when fewer than two GPUs are visible:
 
 ```bash
 uv run python -m pytest tests/unit_tests/models/nemotron_omni/test_nemotron_omni_model.py -q
-uv run python -m pytest tests/unit_tests/models/nemotron_omni/test_vision_context_parallel_distributed.py -q
+uv run python -m pytest tests/unit_tests/models/nemotron_omni/test_vision_dp_over_cp_distributed.py -q
 ```
 
 Multi-GPU A/B. Run the same recipe twice at CP>1, flipping only the flag, and
@@ -194,7 +194,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
   scripts/training/run_recipe.py \
   --recipe nemotron_omni_cord_v2_sft_config \
   model.context_parallel_size=2 \
-  model.vision_context_parallel=false \
+  model.vision_dp_over_cp=false \
   train.train_iters=20
 ```
 
@@ -214,4 +214,4 @@ Success criteria:
 - @skills/nemo-mbridge-perf-memory-tuning/SKILL.md
 - @skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL.md — the
   *sequence*-splitting use of the same process group; unrelated mechanism
-- @skills/nemo-mbridge-perf-vision-context-parallel/card.yaml
+- @skills/nemo-mbridge-perf-vision-dp-over-cp/card.yaml

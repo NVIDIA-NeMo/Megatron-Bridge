@@ -1,4 +1,4 @@
-title: vision_context_parallel
+title: vision_dp_over_cp
 validated_on: "2026-08-18"
 summary: >
   Megatron-Bridge can shard a VLM's images or temporal tubelets across the
@@ -6,7 +6,7 @@ summary: >
   microbatch instead of all of it. This is data parallelism over images reusing
   the CP group, not ring attention: the encoder attends within each image via
   cu_seqlens, so no sequence is split and the only added collective is the
-  post-projector gather. Controlled by model.vision_context_parallel, default
+  post-projector gather. Controlled by model.vision_dp_over_cp, default
   True, and a silent no-op at context_parallel_size=1.
 validation_status:
   upstream_mcore_split_gather_helpers:
@@ -26,7 +26,7 @@ validation_status:
   bridge_vision_cp_docs:
     - doc_only
 feature_meaning:
-  vision_context_parallel: >
+  vision_dp_over_cp: >
     Bridge model flag that shards the microbatch's images or tubelets across the
     language model's CP ranks. Whole images only; no image is split.
   split_to_context_parallel_ranks_dynamic_res: >
@@ -42,11 +42,11 @@ feature_meaning:
     encoder. They are removed during the gather.
 recommended_path:
   model.context_parallel_size: 2
-  model.vision_context_parallel: true
+  model.vision_dp_over_cp: true
 measured_impact:
   setup: >
     Nemotron-3 Nano Omni 30B-A3B, 2 nodes / 16 GPUs, PP=1 DP=2 EP=8 ETP=1 MBS=2
-    GBS=64 GA=16, only vision_context_parallel flipped.
+    GBS=64 GA=16, only vision_dp_over_cp flipped.
   results:
     - dataset: InfoVQA
       tp: 4
@@ -77,7 +77,7 @@ known_constraints:
 known_limitations:
   - Images are split by count with the remainder on the last rank, so multi-image data with a wide image-count spread balances unevenly.
   - The CP=8 case where a microbatch holds fewer images than ranks has unit tests but no end-to-end run.
-  - No checked-in Bridge recipe enables vision_context_parallel; both Nemotron Omni recipes ship CP=1.
+  - No checked-in Bridge recipe enables vision_dp_over_cp; both Nemotron Omni recipes ship CP=1.
   - Only wired into Nemotron Omni today, although the MCore helpers are model-agnostic.
 evidence:
   - src/megatron/bridge/models/nemotron_omni/modeling_nemotron_omni.py
@@ -89,5 +89,5 @@ evidence:
 follow_up_validation:
   - Run an end-to-end job where the microbatch holds fewer images than CP ranks to exercise placeholder padding.
   - Replace the count-based split with a patch-count-balanced greedy split on image boundaries, upstream in Megatron-Core.
-  - Add a Bridge functional test that completes a training step with vision_context_parallel=true at CP=2.
+  - Add a Bridge functional test that completes a training step with vision_dp_over_cp=true at CP=2.
   - Extend the flag to other Bridge VLM families using the same MCore helpers.
