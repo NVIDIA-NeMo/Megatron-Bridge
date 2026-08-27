@@ -30,7 +30,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
 
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 16
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -39,7 +39,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
