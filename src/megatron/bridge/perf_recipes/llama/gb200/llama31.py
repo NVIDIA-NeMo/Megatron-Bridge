@@ -46,8 +46,8 @@ def llama31_8b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.train.global_batch_size = 16
     cfg.train.micro_batch_size = 2
 
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = []
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
 
     _llama31_8b_common(cfg)
     cfg.optimizer.lr = 0.0004
@@ -105,8 +105,8 @@ def llama31_8b_pretrain_72gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.train.global_batch_size = 16
     cfg.train.micro_batch_size = 2
 
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = []
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
 
     _llama31_8b_common(cfg)
     cfg.optimizer.lr = 0.0008
@@ -164,8 +164,8 @@ def llama31_8b_pretrain_512gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 16
     cfg.train.micro_batch_size = 2
 
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = []
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
 
     _llama31_8b_common(cfg)
     cfg.optimizer.lr = 0.0008
