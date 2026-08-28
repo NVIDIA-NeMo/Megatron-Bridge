@@ -36,28 +36,33 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
     # Set up a minimal config needed by _should_skip_and_handle_iteration
     # iterations_to_skip uses 1-based iteration numbers (matching MLM convention).
     # {1} means "skip the 1st iteration", which fires when step=0 (step+1==1).
+    model_config = SimpleNamespace()
     state.cfg = SimpleNamespace(
+        model=model_config,
         train=SimpleNamespace(
             iterations_to_skip={1},
             micro_batch_size=4,
             exit_signal_handler=False,
             exit_signal=signal.SIGTERM,
-        )
+        ),
     )
 
-    # Fake pg_collection with a DP size
+    # Fake full data-distribution group with a DP size.
     class _DP:
         def size(self):
             return 3
 
-    class _PG:
-        def __init__(self):
-            self.dp = _DP()
+    fake_pg = SimpleNamespace()
+    data_distribution_group = _DP()
+    group_calls = []
 
-    fake_pg = _PG()
+    def _get_data_distribution_group(pg_collection, received_model_config):
+        group_calls.append((pg_collection, received_model_config))
+        return data_distribution_group
 
     # Ensure deterministic microbatch count without touching global calculators
     monkeypatch.setattr(train_module, "get_num_microbatches", lambda: 2)
+    monkeypatch.setattr(train_module, "get_data_distribution_group", _get_data_distribution_group)
 
     # Avoid any distributed or pipeline logic inside the dummy step
     monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
@@ -72,6 +77,7 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
 
     # Assert
     assert did_skip is True
+    assert group_calls == [(fake_pg, model_config)]
     # One iteration skipped
     assert state.train_state.step == 1
     # Batch size = dp.size * micro_batch_size * num_microbatches = 3 * 4 * 2 = 24
