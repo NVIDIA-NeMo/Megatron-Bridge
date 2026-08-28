@@ -3,18 +3,18 @@
 
 title: nemotron_3_5_super_vl_120b_a12b
 summary: >
-  Performance scope: pretrain_performance.H100 is verified on 64 H100s with
-  processor-sized dynamic video. The canonical 50-step BF16 run sustains
-  246.840 TFLOP/s/GPU and 3,118.610 tokens/s/GPU over steps 41-50, with
-  69.562/76.984 GiB peak allocated/reserved memory. The pinned eight-GPU BF16
-  import and distributed export are also verified:
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Real-data BF16 pretraining verification on 64 H100s and 64 GB200s
+  uses DataComp image-caption samples, natural dropless expert routing, and a
+  learned vision-pretrained checkpoint; both hardware runs are pending. The
+  pinned eight-GPU BF16 import and distributed export are verified:
   the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
   the immutable HF source bitwise, and the exported package reloaded natively
   through Transformers on eight H100s. CPU conversion, deterministic
-  generation, and training verification remain pending. The initial 64-H100
-  multimodal SFT recipe reuses the Nemotron Omni image/video stack without
-  audio and retains the checkpoint's separate temporal embedder and one-layer
-  MTP configuration.
+  generation and other training modes remain pending. The training recipes
+  reuse the Nemotron Omni image/video stack without audio and retain the
+  checkpoint's separate temporal embedder and one-layer MTP configuration.
 verification_index:
   model_level:
     verified:
@@ -27,10 +27,11 @@ verification_index:
       - inference
   training:
     H100:
-      unverified: [sft, sft_export_inference]
-      unsupported: [pretrain, sft_long_context, peft, checkpoint_resume]
-  performance:
-    H100: verified
+      unverified: [pretrain, sft, sft_export_inference, checkpoint_resume]
+      unsupported: [sft_long_context, peft]
+    GB200:
+      unverified: [pretrain, sft, sft_export_inference, checkpoint_resume]
+      unsupported: [sft_long_context, peft]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
   hf_revision: e86197a3bad449de618a5835f26835ce770c6f10  # pragma: allowlist secret
@@ -137,11 +138,23 @@ items:
       and actual generated-token count under an explicit maximum bound.
 
   pretrain:
-    all:
-      status: unsupported
-      precision: null
-      enabled_features: {}
-      command: null
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
+        --recipe nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config
+        --mode pretrain --pretrained_checkpoint
+        work/model-verification/nemotron-3.5-super-vl-120b-a12b/vision-pretrained/iter_0000000
+        --max_steps 120
+        dataset.path=work/data/datacomp-525k-energon
+        checkpoint.load=null
+        --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain
+        --save_interval 120 logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
       last_verified: null
       metrics:
         initial_loss: null
@@ -150,51 +163,46 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Megatron Bridge does not yet publish a convergence-oriented
-        from-scratch multimodal pretraining recipe for this checkpoint; the
-        initial convergence-training surface is supervised image/video
-        finetuning from a converted checkpoint. The separate performance
-        recipe is benchmark-only and does not satisfy this item.
+        On exactly 64 H100s, complete all 120 optimizer steps from the learned
+        vision-pretrained checkpoint on DataComp image-caption samples at
+        TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing,
+        finite loss, zero skipped or NaN iterations, the resolved
+        ConfigContainer, and a reloadable step-120 checkpoint are required.
 
-  pretrain_performance:
-    H100:
-      status: verified
+    GB200:
+      status: unverified
       precision: bf16
-      bridge_commit: 26b269467ee73052401cc652dc2b9aa4021163f2  # pragma: allowlist secret
+      enabled_features:
+        moe_dispatcher: hybridep
+        cuda_graph:
+          implementation: transformer_engine
+          scopes: [attn, mamba, moe_router, moe_preprocess]
       command: >
-        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
-        --recipe nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config
-        --mode pretrain --max_steps 50
-        dataset.path=work/data/nemotron-3.5-super-vl/energon
-        logger.log_interval=1 logger.log_throughput=true
+        ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
+        --recipe nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config
+        --mode pretrain --pretrained_checkpoint
+        work/model-verification/nemotron-3.5-super-vl-120b-a12b/vision-pretrained/iter_0000000
+        --max_steps 120
+        dataset.path=work/data/datacomp-525k-energon
+        checkpoint.load=null
+        --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain
+        --save_interval 120 logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
-        logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-performance/ConfigContainer.yaml
-      last_verified: 2026-08-27
+        logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain-config/ConfigContainer.yaml
+      last_verified: null
       metrics:
-        initial_loss: 12.89497
-        final_loss: 0.0
-        last_10_steps_step_time_ms_avg: 26268.110
-        last_10_steps_model_tflops_per_gpu_avg: 246.840
-        last_10_steps_tokens_per_second_per_gpu_avg: 3118.610
-        peak_allocated_memory_gib: 69.562
-        peak_reserved_memory_gib: 76.984
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        On exactly 64 H100s, the canonical BF16 real-video performance recipe
-        completes 50 optimizer steps at TP1/PP2/CP1/EP32/ETP1 without sequence
-        parallelism, with a 38/50 pipeline-layer split and GBS/MBS 1280/1. The
-        audio-free Nemotron Omni vision/projector/temporal stack remains fully
-        trainable. It retains the checkpoint-native one-layer MTP, forced
-        routing, dropless equal-input HybridEP flex dispatch, eager Flash
-        Attention, and selective recompute for decoder layernorm/MoE and RADIO
-        core attention. Router, permutation, HybridEP-permutation, and weighted
-        Squared-ReLU fusions are enabled. Every video uses processor-sized
-        post-resize grids and exact per-tubelet visual-token counts. All 50 keyed
-        rows have finite loss and throughput with zero skipped or NaN
-        iterations. Steps 41-50 average 26,268.110 ms, 246.840 model
-        TFLOP/s/GPU, and 3,118.610 tokens/s/GPU. Peak device memory is 69.562
-        GiB allocated and 76.984 GiB reserved, and the resolved configuration
-        persists. The repeated real-video performance dataset and forced
-        routing make loss a finiteness check rather than convergence evidence.
+        On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer
+        steps from the learned vision-pretrained checkpoint on DataComp
+        image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1.
+        Natural dropless routing, finite loss, zero skipped or NaN iterations,
+        active scoped Transformer Engine CUDA-graph replay, the resolved
+        ConfigContainer, and a reloadable step-120 checkpoint are required.
 
   sft:
     H100:
@@ -298,9 +306,9 @@ items:
         multimodal variant yet.
 
   checkpoint_resume:
-    all:
-      status: unsupported
-      precision: null
+    H100:
+      status: unverified
+      precision: bf16
       depends_on: pretrain
       command: null
       last_verified: null
@@ -310,8 +318,36 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
-      resume_comparison: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [61, 120]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
       expected_result: >
-        There is no supported pretraining reference workflow for this model,
-        so no optimizer and RNG checkpoint-resume sentinel contract is
-        available yet.
+        Resume verification must continue directly from a middle checkpoint
+        produced by pretrain.H100, restore optimizer and RNG state, and match
+        the uninterrupted loss sentinels within 1% relative plus 1e-6 absolute.
+
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [61, 120]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Resume verification must continue directly from a middle checkpoint
+        produced by pretrain.GB200, restore optimizer and RNG state, and match
+        the uninterrupted loss sentinels within 1% relative plus 1e-6 absolute.
