@@ -2144,7 +2144,7 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         img_seq_len=1,
         _dynamic_resolution=False,
     )
-    final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
+    preprocessed = LLaVAModel._preprocess_data(
         pp_model,
         image_embeddings=torch.ones(1, 5, hidden_size),
         language_embeddings=torch.ones(1, batch["input_ids"].shape[1], hidden_size),
@@ -2156,6 +2156,7 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
     )
+    final_embedding, final_labels, final_loss_mask = preprocessed[:3]
 
     assert final_embedding.shape == (32, 1, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (1, 32)
