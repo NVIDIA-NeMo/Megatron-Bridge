@@ -224,14 +224,14 @@ def nemotron_3_super_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_288gpu_b300_fp8mx_ncclep_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 288× B300, MXFP8, NCCL EP=8, Megatron-FSDP.
+def nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_ncclep_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× B300, MXFP8, NCCL EP=8, Megatron-FSDP.
 
-    Uses TP1 / PP9 / CP1 / EP8 / ETP1 / DP32 / EDP4, GBS 256 / MBS 1, and
-    sequence length 8192. PP9 evenly partitions Ultra's 108 layers and
-    compensates for limiting expert parallelism to a single NVL8 domain.
+    Uses TP1 / PP8 / CP1 / EP8 / ETP1 / DP32 / EDP4, GBS 256 / MBS 1, and
+    sequence length 8192. Ultra's 108 layers are distributed 12/14/14/14/14/14/14/12
+    across the eight pipeline stages.
     """
-    num_gpus = 288
+    num_gpus = 256
 
     cfg = nemotron_3_ultra_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
@@ -242,13 +242,15 @@ def nemotron_3_ultra_pretrain_288gpu_b300_fp8mx_ncclep_config() -> ConfigContain
     cfg.ddp.outer_dp_sharding_strategy = "optim"
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 9
+    cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.num_layers_in_first_pipeline_stage = 12
+    cfg.model.num_layers_in_last_pipeline_stage = 12
     cfg.model.seq_length = 8192
     cfg.dataset.seq_length = 8192
 

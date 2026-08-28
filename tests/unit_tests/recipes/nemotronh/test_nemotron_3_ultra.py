@@ -18,11 +18,11 @@ import pytest
 
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
+    nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_ncclep_config,
     nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config,
-    nemotron_3_ultra_pretrain_288gpu_b200_fp8mx_ncclep_config,
-    nemotron_3_ultra_pretrain_288gpu_b300_fp8mx_ncclep_config,
-    nemotron_3_ultra_pretrain_288gpu_gb200_fp8mx_ncclep_config,
-    nemotron_3_ultra_pretrain_288gpu_gb300_fp8mx_ncclep_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     NEMOTRON_3_ULTRA_TOKENIZER_NAME,
@@ -121,8 +121,8 @@ def test_vr200_perf_recipe_uses_nvl72_ultra_topology() -> None:
 @pytest.mark.parametrize(
     ("recipe_factory", "tensor_parallel_size", "sequence_parallel"),
     [
-        (nemotron_3_ultra_pretrain_288gpu_b200_fp8mx_ncclep_config, 2, True),
-        (nemotron_3_ultra_pretrain_288gpu_b300_fp8mx_ncclep_config, 1, False),
+        (nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_ncclep_config, 2, True),
+        (nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_ncclep_config, 1, False),
     ],
     ids=["b200", "b300"],
 )
@@ -131,17 +131,19 @@ def test_b_series_ncclep_perf_recipes_use_ep8(
     tensor_parallel_size: int,
     sequence_parallel: bool,
 ) -> None:
-    """B-series Ultra recipes trade EP64 for an evenly divided PP9/EP8 layout."""
+    """B-series Ultra recipes use an uneven PP8/EP8 layout on 256 GPUs."""
     cfg = recipe_factory()
 
     assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
-    assert cfg.model.pipeline_model_parallel_size == 9
+    assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.sequence_parallel is sequence_parallel
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.num_layers_in_first_pipeline_stage == 12
+    assert cfg.model.num_layers_in_last_pipeline_stage == 12
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
@@ -185,8 +187,8 @@ def test_b_series_ncclep_perf_recipes_use_ep8(
 @pytest.mark.parametrize(
     ("recipe_factory", "tensor_parallel_size", "sequence_parallel"),
     [
-        (nemotron_3_ultra_pretrain_288gpu_gb200_fp8mx_ncclep_config, 2, True),
-        (nemotron_3_ultra_pretrain_288gpu_gb300_fp8mx_ncclep_config, 1, False),
+        (nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_ncclep_config, 2, True),
+        (nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_ncclep_config, 1, False),
     ],
     ids=["gb200", "gb300"],
 )
@@ -195,17 +197,19 @@ def test_gb_series_ncclep_perf_recipes_use_ep8(
     tensor_parallel_size: int,
     sequence_parallel: bool,
 ) -> None:
-    """GB-series NCCL-EP recipes use the PP9/EP8 Ultra execution topology."""
+    """GB-series NCCL-EP recipes use an uneven PP8/EP8 layout on 256 GPUs."""
     cfg = recipe_factory()
 
     assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
-    assert cfg.model.pipeline_model_parallel_size == 9
+    assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.sequence_parallel is sequence_parallel
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.num_layers_in_first_pipeline_stage == 12
+    assert cfg.model.num_layers_in_last_pipeline_stage == 12
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"

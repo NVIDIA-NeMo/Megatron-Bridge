@@ -5,7 +5,7 @@ from megatron.bridge.perf_recipes.nemotronh.b200.nemotronh import (
     nemotron_3_super_pretrain_64gpu_b200_bf16_config,
     nemotron_3_super_pretrain_64gpu_b200_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_b200_nvfp4_config,
-    nemotron_3_ultra_pretrain_288gpu_b200_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_ncclep_config,
     nemotronh_56b_pretrain_64gpu_b200_fp8cs_config,
     nemotronh_56b_pretrain_256gpu_b200_bf16_config,
     nemotronh_56b_pretrain_256gpu_b200_fp8cs_config,
@@ -17,7 +17,7 @@ from megatron.bridge.perf_recipes.nemotronh.b300.nemotronh import (
     nemotron_3_super_pretrain_64gpu_b300_bf16_config,
     nemotron_3_super_pretrain_64gpu_b300_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_b300_nvfp4_config,
-    nemotron_3_ultra_pretrain_288gpu_b300_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_ncclep_config,
     nemotronh_56b_pretrain_64gpu_b300_fp8cs_config,
 )
 from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
@@ -32,7 +32,7 @@ from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
     nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config,
-    nemotron_3_ultra_pretrain_288gpu_gb200_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_ncclep_config,
     nemotronh_56b_pretrain_64gpu_gb200_fp8cs_config,
 )
 from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
@@ -47,7 +47,7 @@ from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
     nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
     nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
-    nemotron_3_ultra_pretrain_288gpu_gb300_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_ncclep_config,
     nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config,
     nemotronh_56b_pretrain_256gpu_gb300_bf16_config,
     nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config,

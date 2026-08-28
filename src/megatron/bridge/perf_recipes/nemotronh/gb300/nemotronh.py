@@ -324,17 +324,18 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_288gpu_gb300_fp8mx_ncclep_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 288× GB300, MXFP8, NCCL EP=8, Megatron-FSDP (HSDP).
+def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_ncclep_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× GB300, MXFP8, NCCL EP=8, Megatron-FSDP (HSDP).
 
-    Uses TP1 / PP9 / CP1 / EP8 / ETP1 / DP32 / EDP4, GBS 256 / MBS 1, and
-    sequence length 8192. PP9 evenly partitions Ultra's 108 layers and keeps
-    expert parallelism within eight ranks.
+    Uses TP1 / PP8 / CP1 / EP8 / ETP1 / DP32 / EDP4, GBS 256 / MBS 1, and
+    sequence length 8192. Ultra's 108 layers are distributed 12/14/14/14/14/14/14/12
+    across the eight pipeline stages.
     """
     cfg = nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config()
-    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=288)
-    cfg.model.pipeline_model_parallel_size = 9
+    cfg.model.pipeline_model_parallel_size = 8
     cfg.model.expert_model_parallel_size = 8
+    cfg.model.num_layers_in_first_pipeline_stage = 12
+    cfg.model.num_layers_in_last_pipeline_stage = 12
     _enable_ncclep_mxfp8(cfg)
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
