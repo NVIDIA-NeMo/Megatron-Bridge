@@ -377,12 +377,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             temporal_ckpt_compat=self.temporal_ckpt_compat,
         )
 
-        if self.temporal_patch_dim == 1:
-            # Dynamic image batches already express the exact replacement-token
-            # count in num_image_tiles. Vision-less PP stages cannot infer
-            # LLaVAModel's internal is_packed_dynamic_res flag, so make its
-            # label-only expansion use those counts directly as well.
-            llava_model.img_seq_len = 1
+        self._configure_llava_preprocess_contract(llava_model)
 
         model = NemotronOmniLlavaModel(llava_model=llava_model)
 
@@ -403,6 +398,16 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             )
 
         return model
+
+    def _configure_llava_preprocess_contract(self, llava_model: LLaVAModel) -> None:
+        """Align MCore preprocessing with the legacy collator's replacement counts."""
+        if self.temporal_patch_dim == 1:
+            # The legacy collator stores exact replacement-token counts in
+            # num_image_tiles rather than physical tile counts. Keep MCore on
+            # that contract even when imgs_sizes is present: dynamic-resolution
+            # regrouping interprets num_image_tiles as physical tiles.
+            llava_model._dynamic_resolution = False
+            llava_model.img_seq_len = 1
 
 
 @dataclass
