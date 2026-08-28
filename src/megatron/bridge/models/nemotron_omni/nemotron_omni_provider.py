@@ -177,6 +177,13 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
 
+    # Shard images (or tubelets, when temporal compression is on) across the
+    # context-parallel group instead of encoding every image on every CP rank.
+    # The vision tower is replicated, so this is data parallelism borrowing the
+    # CP group, not sequence sharding: RADIO already attends per image.
+    # No-op at CP=1, so defaulting it on only changes CP>1 runs.
+    vision_dp_over_cp: bool = True
+
     # This field is serialized in run_config.yaml. It prevents an older
     # checkpoint whose provider had the same class name but LLaVA semantics
     # from being loaded as the canonical expanded-sequence implementation.
@@ -370,12 +377,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             temporal_ckpt_compat=self.temporal_ckpt_compat,
         )
 
-        if self.temporal_patch_dim == 1:
-            # Dynamic image batches already express the exact replacement-token
-            # count in num_image_tiles. Vision-less PP stages cannot infer
-            # LLaVAModel's internal is_packed_dynamic_res flag, so make its
-            # label-only expansion use those counts directly as well.
-            llava_model.img_seq_len = 1
+        self._configure_llava_preprocess_contract(llava_model)
 
         model = NemotronOmniLlavaModel(llava_model=llava_model)
 
@@ -396,6 +398,16 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             )
 
         return model
+
+    def _configure_llava_preprocess_contract(self, llava_model: LLaVAModel) -> None:
+        """Align MCore preprocessing with the legacy collator's replacement counts."""
+        if self.temporal_patch_dim == 1:
+            # The legacy collator stores exact replacement-token counts in
+            # num_image_tiles rather than physical tile counts. Keep MCore on
+            # that contract even when imgs_sizes is present: dynamic-resolution
+            # regrouping interprets num_image_tiles as physical tiles.
+            llava_model._dynamic_resolution = False
+            llava_model.img_seq_len = 1
 
 
 @dataclass
@@ -462,6 +474,7 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
             temporal_patch_dim=self.temporal_patch_dim,
             separate_video_embedder=self.separate_video_embedder,
             temporal_ckpt_compat=self.temporal_ckpt_compat,
+            vision_dp_over_cp=self.vision_dp_over_cp,
             sound_model=sound_model,
             sound_projection=sound_projection,
             sound_token_index=self.sound_context_token_id,
