@@ -324,20 +324,21 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_3_ultra_gb300_nvfp4_config(
-    *, num_gpus: int, expert_model_parallel_size: int, global_batch_size: int
-) -> ConfigContainer:
-    """Shared builder for Nemotron 3 Ultra GB300 NVFP4 Megatron-FSDP perf recipes."""
+def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, NVFP4, Megatron-FSDP (HSDP).
+
+    TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + NVFP4 mixed
+    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
+    recompute + fine-grained activation offload of the expert MLP, MTP=2.
+    """
+
+    num_gpus = 256
+    expert_model_parallel_size = 64
+    global_batch_size = 256
+
     cfg = nemotron_3_ultra_pretrain_config()
     cfg.mixed_precision = _nemotron_3_ultra_nvfp4_precision()
 
-    """
-    Uses TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1,
-    seq 8192, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
-    recompute + activation offload of the expert MLP, MTP=2. The MoE architecture
-    (512 experts, latent MoE, MTP, squared-relu, hybrid Mamba/attention pattern,
-    ...) is inherited from the base recipe via ``AutoBridge``.
-    """
     # Parallelism
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -352,7 +353,7 @@ def _nemotron_3_ultra_gb300_nvfp4_config(
     # approximates offloading the moe_act input for seq 8192 / MBS 1.
     cfg.model.min_offloaded_tensor_size = 500_000_000
 
-    # MXFP8 requires router padding for quantization.
+    # NVFP4 requires router padding for quantization.
     cfg.model.moe_router_padding_for_quantization = True
 
     # GPU-count specific overrides of the canonical (256-GPU / EP64) defaults.
@@ -375,21 +376,6 @@ def _nemotron_3_ultra_gb300_nvfp4_config(
     # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
     _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
 
-    return cfg
-
-
-def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, NVFP4, Megatron-FSDP (HSDP).
-
-    TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + NVFP4 mixed
-    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
-    recompute + fine-grained activation offload of the expert MLP, MTP=2.
-    """
-    cfg = _nemotron_3_ultra_gb300_nvfp4_config(
-        num_gpus=256,
-        expert_model_parallel_size=64,
-        global_batch_size=256,
-    )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

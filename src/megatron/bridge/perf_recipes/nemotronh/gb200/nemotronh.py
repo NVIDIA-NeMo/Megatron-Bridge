@@ -344,7 +344,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     # approximates offloading the moe_act (pre-activation input) for seq 8192/2 (due to SP) / MBS 1.
     cfg.model.min_offloaded_tensor_size = 350_000_000
 
-    # MXFP8 requires router padding for quantization.
+    # NVFP4 requires router padding for quantization.
     cfg.model.moe_router_padding_for_quantization = True
 
     # GPU-count specific overrides of the canonical (256-GPU / EP64) defaults.
