@@ -4581,6 +4581,16 @@ class TestEpochBasedTraining:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_optimizer_finalize_preserves_derived_fields_through_replace(self):
+        from dataclasses import replace
+
+        optimizer = create_test_optimizer_config(use_precision_aware_optimizer=False)
+        optimizer.finalize()
+
+        module_optimizer = replace(optimizer, overlap_param_gather=False)
+
+        assert module_optimizer.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
+
     def test_megatron_mimo_runtime_config_update_rejects_num_epochs(self, monkeypatch):
         cfg = MagicMock()
         cfg.env_vars = {"TORCHINDUCTOR_WORKER_START": "fork"}
