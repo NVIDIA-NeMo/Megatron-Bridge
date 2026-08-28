@@ -36,6 +36,7 @@ import copy
 import warnings
 from collections.abc import Iterable
 from dataclasses import fields
+from pathlib import Path
 
 import torch
 from megatron.core.activations import squared_relu
@@ -86,6 +87,14 @@ def _copy_mapping_with_prefixes(mapping, *, megatron_prefix: str, hf_prefix: str
 class NemotronOmniBridge(NemotronVLBridge):
     """Bridge for the canonical expanded-sequence Nemotron-3 Omni model."""
 
+    _HF_DYNAMIC_MODULE_IMPORTS = """
+
+# Transformers copies only direct relative imports into its local dynamic-module cache.
+# Keep these transitive configuration dependencies visible from this auto_map entrypoint.
+from .configuration_nemotron_h import NemotronHConfig as _NemotronHConfig
+from .configuration_radio import RADIOConfig as _RADIOConfig
+"""
+
     _HF_PASSTHROUGH_KEYS = (
         "sound_encoder.encoder.feature_extractor.featurizer.fb",
         "sound_encoder.encoder.feature_extractor.featurizer.window",
@@ -119,6 +128,21 @@ class NemotronOmniBridge(NemotronVLBridge):
         "audio_model.py",
         "evs.py",
     ]
+
+    def postprocess_hf_export_artifacts(self, path: Path) -> None:
+        """Make transitive Omni configuration modules discoverable on local reload.
+
+        The pinned Nemotron Omni Hugging Face repositories expose ``modeling.py``
+        as their ``auto_map`` entrypoint. Fail explicitly if that required export
+        artifact is absent so an incomplete checkpoint is never reported as saved.
+        """
+        modeling_path = path / "modeling.py"
+        if not modeling_path.is_file():
+            raise FileNotFoundError(f"Nemotron Omni export is missing required artifact: {modeling_path}")
+
+        modeling_source = modeling_path.read_text()
+        if self._HF_DYNAMIC_MODULE_IMPORTS.strip() not in modeling_source:
+            modeling_path.write_text(modeling_source.rstrip() + self._HF_DYNAMIC_MODULE_IMPORTS + "\n")
 
     # ------------------------------------------------------------------
     # Provider translation
