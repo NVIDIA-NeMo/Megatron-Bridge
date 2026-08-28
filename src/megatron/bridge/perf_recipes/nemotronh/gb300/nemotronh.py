@@ -440,6 +440,27 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config() -> ConfigContainer
     """Nemotron 3 Nano pretrain: 8× GB300, MXFP8, NCCL EP=8."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config()
     _enable_ncclep_mxfp8(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    # Static-shape NCCL EP reads no HybridEP topology, so no HybridEP names are declared here.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
     return cfg
 
 

@@ -20,7 +20,6 @@ import torch
 from megatron.core.quantization.utils import load_quantization_recipe
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_pretrain_16gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
 )
@@ -64,7 +63,11 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
 
 
 def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
-    """Enable static-shape NCCL EP for an MXFP8 recipe."""
+    """Enable static-shape NCCL EP for an MXFP8 recipe.
+
+    The calling recipe builder still declares its own ``cfg.env_vars`` mapping inline, so the
+    launched environment stays readable next to the recipe instead of being derived here.
+    """
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
     cfg.model.moe_shared_expert_overlap = False
@@ -86,8 +89,6 @@ def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
-    cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
-    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
     cfg.model.moe_router_padding_for_quantization = True
 
 

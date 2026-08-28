@@ -61,6 +61,9 @@ def test_nemotron_3_nano_gb300_mxfp8_ncclep_defaults() -> None:
 
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
+    # moe_router_padding_for_quantization requires model.fp8/fp4, which runtime setup copies over
+    # from cfg.mixed_precision before the model config is finalized, so this recipe is not
+    # finalized here.
     assert cfg.model.moe_router_padding_for_quantization is True
-
-    cfg.model.finalize()
+    assert cfg.mixed_precision.fp8 == "e4m3"
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"

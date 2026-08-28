@@ -15,7 +15,6 @@
 """Common helpers for gpt_oss performance recipes."""
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.gpt_oss.gpt_oss import gpt_oss_20b_pretrain_config, gpt_oss_120b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -25,7 +24,9 @@ def _enable_ncclep_bf16(cfg: ConfigContainer) -> None:
     """Swap the recipe's flex dispatcher for eager NCCL EP on BF16.
 
     Only the dispatch stack changes. Parallelism, batch sizes, precision, recompute and the CUDA
-    graph mode are left exactly as the parent recipe set them.
+    graph mode are left exactly as the parent recipe set them. The calling recipe builder still
+    declares its own ``cfg.env_vars`` mapping inline, so the launched environment stays readable
+    next to the recipe instead of being derived here.
     """
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
@@ -41,7 +42,6 @@ def _enable_ncclep_bf16(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.delay_wgrad_compute = False
 
     cfg.model.offload_modules = []
-    cfg.env_vars = {name: value for name, value in cfg.env_vars.items() if name not in HYBRID_EP_ENV_NAMES}
 
     # GPT-OSS's clamped quick-GeLU does not have a BF16 op-fuser kernel. Eager NCCL EP sizes the
     # receive buffer per step, so it needs neither the op fuser nor a static capacity factor.
