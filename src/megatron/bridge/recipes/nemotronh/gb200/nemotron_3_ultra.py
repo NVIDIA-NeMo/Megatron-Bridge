@@ -25,21 +25,17 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
 
 
-def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return a convergence-safe Nemotron 3 Ultra pretrain config for 256 GB200 GPUs.
-
-    The recipe adopts the performance configuration's PP4/EP64 HybridEP
-    execution and targeted expert-activation offload. It keeps BF16 compute,
-    natural expert routing, numerical checks, and the library recipe's training
-    objective instead of benchmark-only policy.
-
-    Returns:
-        GB200 BF16 distributed-optimizer pretraining configuration.
-    """
+def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(
+    *,
+    expert_model_parallel_size: int = 64,
+    hybrid_ep_num_sms: int = 32,
+    recompute_modules: tuple[str, ...] = ("moe_act",),
+) -> ConfigContainer:
+    """Build a Nemotron 3 Ultra BF16 tuning config for 256 GB200 GPUs."""
     cfg = _nemotron_3_ultra_large_scale_bf16_config()
 
-    # TP4 gives BF16 and safely padded HybridEP dispatch enough activation
-    # headroom for naturally routed real-data batches on GB200.
+    # TP4 retains enough activation headroom for naturally routed real-data
+    # batches after Bridge enables safe uneven-input padding for eager HybridEP.
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -47,7 +43,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = expert_model_parallel_size
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = NEMOTRON_3_ULTRA_PRETRAIN_SEQ_LENGTH
     cfg.dataset.seq_length = NEMOTRON_3_ULTRA_PRETRAIN_SEQ_LENGTH
@@ -58,18 +54,19 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     # Bridge finalization enables this safety path for eager HybridEP so
     # different local token counts cannot produce mismatched collectives.
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = hybrid_ep_num_sms
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.min_offloaded_tensor_size = 350_000_000
     cfg.model.offload_modules = ["fused_group_mlp"]
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-    # Recompute the expert activation output while offloading its larger input.
-    # Keeping both halves of this memory policy prevents CPU activation growth
-    # across pipeline iterations while preserving the training objective.
+    # Keep moe_act recompute paired with fused-group-MLP activation offload.
+    # Tuning candidates may add core_attn when more HBM headroom is required.
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_modules = list(recompute_modules)
 
     cfg.dist.use_megatron_fsdp = False
     cfg.ddp.use_megatron_fsdp = False
@@ -86,7 +83,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": expert_model_parallel_size,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -96,6 +93,35 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return a convergence-safe Nemotron 3 Ultra pretrain config for 256 GB200 GPUs.
+
+    The recipe adopts the performance configuration's PP4/EP64 HybridEP
+    execution and targeted expert-activation offload. It keeps BF16 compute,
+    natural expert routing, numerical checks, and the library recipe's training
+    objective instead of benchmark-only policy.
+
+    Returns:
+        GB200 BF16 distributed-optimizer pretraining configuration.
+    """
+    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config()
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config() -> ConfigContainer:
+    """Return the GB200 BF16 recipe with 16 SMs reserved for HybridEP."""
+    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(hybrid_ep_num_sms=16)
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config() -> ConfigContainer:
+    """Return the GB200 BF16 recipe with two EP32 replicas per pipeline stage."""
+    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(expert_model_parallel_size=32)
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config() -> ConfigContainer:
+    """Return the GB200 BF16 recipe with additional core-attention recompute."""
+    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(recompute_modules=("moe_act", "core_attn"))
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContainer:
@@ -188,5 +214,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContaine
 
 __all__ = [
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config",
+    "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config",
+    "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config",
+    "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config",
     "nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config",
 ]

@@ -20,6 +20,9 @@ import torch
 import megatron.bridge.recipes as recipes
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config,
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config,
     nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
@@ -150,6 +153,8 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.min_offloaded_tensor_size == 350_000_000
@@ -169,6 +174,36 @@ def test_gb200_large_scale_pretrain_adopts_execution_config_without_benchmark_po
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.unit
+def test_gb200_bf16_tuning_variants_change_one_axis() -> None:
+    sm16_cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config()
+    ep32_cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config()
+    recompute_cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config()
+
+    assert recipes.nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config is (
+        nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config
+    )
+    assert recipes.nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config is (
+        nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config
+    )
+    assert recipes.nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config is (
+        nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config
+    )
+
+    assert sm16_cfg.model.moe_flex_dispatcher_num_sms == 16
+    assert sm16_cfg.model.expert_model_parallel_size == 64
+    assert sm16_cfg.model.recompute_modules == ["moe_act"]
+
+    assert ep32_cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert ep32_cfg.model.expert_model_parallel_size == 32
+    assert ep32_cfg.model.recompute_modules == ["moe_act"]
+    assert ep32_cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+
+    assert recompute_cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert recompute_cfg.model.expert_model_parallel_size == 64
+    assert recompute_cfg.model.recompute_modules == ["moe_act", "core_attn"]
 
 
 @pytest.mark.unit
