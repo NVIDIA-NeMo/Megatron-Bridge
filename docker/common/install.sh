@@ -111,6 +111,13 @@ main() {
         # Create virtual environment and install dependencies
         uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
+        # torch-memory-saver builds CUDA-suffixed extensions and requires the CUDA major.
+        export TMS_CUDA_MAJOR="$("${CUDA_HOME:-/usr/local/cuda}"/bin/nvcc --version | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | head -1)"
+        if [[ -z "$TMS_CUDA_MAJOR" ]]; then
+            echo "Error: failed to determine CUDA major from nvcc" >&2
+            exit 1
+        fi
+
         # Install dependencies (no extras — CUDA-compilation packages are opt-in via [te]/[ssm])
         # Skip --locked flag when testing against different MCore version
         if [[ "${MCORE_TRIGGERED_TESTING:-false}" == "true" ]]; then
