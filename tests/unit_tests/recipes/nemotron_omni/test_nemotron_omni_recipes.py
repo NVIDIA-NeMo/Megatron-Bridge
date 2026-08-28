@@ -490,8 +490,8 @@ def test_super_vl_pretrain_recipe_uses_gb200_nvl72_policy(fake_processor):
     assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.optimizer.exp_avg_dtype == torch.float32
     assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
-    assert cfg.ddp.overlap_grad_reduce is True
-    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
     assert cfg.checkpoint.async_save is True
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72

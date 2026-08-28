@@ -78,8 +78,10 @@ def nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    # Modality-specific embedders can be unused on a batch, which is not
+    # compatible with DDP overlap's fixed first-batch gradient-hook contract.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.checkpoint.async_save = True
 
     cfg.env_vars = {
