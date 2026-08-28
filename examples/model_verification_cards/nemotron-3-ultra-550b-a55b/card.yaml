@@ -1,0 +1,480 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: nemotron_3_ultra_550b_a55b
+summary: >
+  Nemotron 3 Ultra 550B-A55B has public packed full-SFT and packed PEFT recipes.
+  Its large-scale BF16 library pretraining workflows remain unverified because
+  the previously recorded 256-GPU recipe names are not exported on current
+  main. The separately scoped
+  pretrain_performance.GB200 and pretrain_performance.GB300 are verified with
+  their canonical 256-GPU MXFP8 recipes.
+  Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip,
+  single-process CPU export, and checkpoint-backed deterministic inference are
+  verified. CPU import, portable manual-forward, remaining functional
+  training, and checkpoint resume still require completed verification runs
+  before those support claims are promoted.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - inference
+    unverified:
+      - hf_to_megatron_cpu
+      - manual_forward_pass
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unsupported: [sft_long_context]
+    GB200:
+      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unsupported: [sft_long_context]
+  performance:
+    GB200: verified
+    GB300: verified
+model:
+  hf_id: nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+  hf_revision: 624ba927cfbef0427354998700de3d51173c8c04  # pragma: allowlist secret
+  architecture: NemotronHForCausalLM
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: d352aceda8ed4136f1db787bcf449c1b210a2438  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1
+      --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+      --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
+      --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: >
+      A machine with enough host memory must import the complete pinned BF16
+      checkpoint, persist iter_0000000, and reload it without missing,
+      unexpected, shape-mismatched, dtype-mismatched, or value-mismatched
+      tensors.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 782c48c3bf3aa1066a1564f1206b3866495e9439  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 3 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+      --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
+      --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 3 --ep 8 --etp 1
+    last_verified: 2026-07-25
+    expected_result: >
+      The command exited successfully and persisted a reloadable iter_0000000
+      at TP1/PP3/EP8/ETP1. Exact distributed export back to the immutable source
+      revision accounted for all 51,023 Nemotron-H, LatentMoE, Mamba, attention,
+      and MTP tensors and 560,524,603,904 parameters with matching names,
+      shapes, dtypes, and values.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1
+      --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+      --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
+      --megatron-path
+      work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-hf-export
+      --torch-dtype bfloat16
+    last_verified: 2026-08-26
+    expected_result: >
+      The single-process CPU export exits successfully and writes all 51,023
+      tensors, 560,524,603,904 values, and 1,121,049,257,984 tensor-payload
+      bytes. Keys, shapes, dtypes, and values are bitwise identical to the
+      pinned source with no dtype conversions, preserving its BF16 model
+      weights and FP32 expert-score correction biases. Transformers strictly
+      reloads the output natively as NemotronHForCausalLM with all 927 state
+      tensors and no loading discrepancies.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 782c48c3bf3aa1066a1564f1206b3866495e9439  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 3 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+      --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
+      --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/hf-export
+      --torch-dtype bfloat16
+      --distributed-save --tp 1 --pp 3 --ep 8 --etp 1
+    last_verified: 2026-07-25
+    expected_result: >
+      The command exited successfully and wrote 225 source-native Hugging Face
+      shards. All 51,023 tensors and 560,524,603,904 parameters matched the
+      pinned source exactly in name, shape, dtype, and value, preserving BF16
+      model weights and FP32 expert-score correction biases. Semantic
+      configuration, generation configuration, the 131,072-token vocabulary,
+      special tokens, chat template, and representative encodings also
+      matched, and the export reloaded natively with NemotronHConfig and
+      architecture NemotronHForCausalLM.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Historical evidence selected token ID 1256 in both models, decoded as
+      two spaces, with cosine similarity 0.999861, maximum absolute logit
+      difference 0.265625, and mean absolute difference 0.062669. Ultra cannot
+      co-reside as one rank-local Hugging Face model and a distributed Megatron
+      model, and compare.py is intentionally unchanged. A future portable
+      orchestration path must produce equivalent evidence before promotion.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 3 --gpus-per-node 8
+      --task legacy-full-prefix-generation
+      --hf_model_path nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+      --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
+      --megatron_model_path work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
+      --tp 1 --pp 3 --ep 8 --etp 1
+      --prompt "Explain why the sky appears blue in one sentence."
+      --max_new_tokens 32 --apply-chat-template --thinking-mode disabled
+      --legacy-full-prefix
+    last_verified: 2026-08-25
+    expected_result: >
+      The public launcher exited successfully after reloading the pinned BF16
+      checkpoint at TP1/PP3/EP8/ETP1. Against the 32-token maximum, greedy
+      decoding produced exactly 32 tokens over generation steps 0-31 without
+      an earlier EOS and emitted the exact JSON-escaped literal completion "The
+      user wants a one-sentence explanation for why the sky appears
+      blue.\u003c/think\u003eThe sky appears blue because Earth's atmosphere
+      scatters shorter (blue)".
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
+      expected_result: >
+        H100 functional pretraining remains unverified until a currently
+        exported public recipe completes a bounded run with all applicable
+        numerical and artifact checks.
+
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        GB200 functional pretraining remains unverified until a currently
+        exported public recipe completes a bounded run with all applicable
+        numerical and artifact checks.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --nodes 24 --gpus-per-node 8
+        --recipe nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config
+        --mode sft --wait
+        --pretrained_checkpoint work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
+        --max_steps 100
+        --warmup_iters 10 scheduler.lr_decay_iters=100
+        'dataset.hf_dataset.split="train_1M[:10%]"'
+        'dataset.hf_dataset.load_kwargs={revision:"469216e3f46f4dacf476b382e192485ea51a143e"}'
+        dataset.hf_output_root=work/data/openmathinstruct2-ultra-4096-v1
+        dataset.seed=1234
+        dataset.offline_packing_specs.pad_seq_to_mult=2
+        validation.eval_iters=0 validation.eval_interval=0
+        --save_dir work/model-verification/nemotron-3-ultra-550b-a55b/sft-checkpoints
+        --save_interval 100
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/sft-resolved.yaml
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The public 192-H100 packed OpenMathInstruct-2 full-SFT recipe must use
+        the pinned dataset revision and bounded train_1M first-ten-percent
+        selection, complete 100 optimizer steps at sequence length 4096 and
+        GBS/MBS 128/1, and preserve pad_seq_to_mult 2. This published Ultra
+        contract is support verification rather than the 8K/GBS8
+        qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no
+        skipped or NaN iterations, all five metrics, a persisted post-setup
+        configuration, audited supervised-token counts, and a complete
+        reloadable final checkpoint.
+
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        No GB200-specific Ultra full-SFT configuration is verified by this PR.
+        The H100 library recipe must be adapted and validated independently
+        before GB200 SFT support is claimed.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        After full SFT is verified, its final checkpoint must export to a
+        complete BF16 Hugging Face directory, reload natively as
+        NemotronHForCausalLM across enough accelerators, and complete one
+        deterministic greedy generation whose literal output is recorded.
+
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        GB200 SFT export and inference remain blocked on a verified GB200
+        full-SFT checkpoint.
+
+  sft_long_context:
+    H100:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Megatron Bridge does not publish a dedicated Ultra packed long-context
+        recipe. The only published Ultra full-SFT recipe fixes sequence length
+        4096 and context parallelism one, so it cannot provide the required
+        joint sequence-packing and CP-greater-than-one evidence and is not
+        relabeled as long-context support.
+
+    GB200:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Megatron Bridge does not publish a dedicated Ultra packed long-context
+        recipe for GB200.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
+        --recipe nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config
+        --mode lora --wait
+        --pretrained_checkpoint work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
+        --max_steps 100
+        --warmup_iters 10 scheduler.lr_decay_iters=100
+        'dataset.hf_dataset.split="train_1M[:10%]"'
+        'dataset.hf_dataset.load_kwargs={revision:"469216e3f46f4dacf476b382e192485ea51a143e"}'
+        dataset.hf_output_root=work/data/openmathinstruct2-ultra-4096-v1
+        dataset.seed=1234
+        dataset.offline_packing_specs.pad_seq_to_mult=2
+        validation.eval_iters=0 validation.eval_interval=0
+        --save_dir work/model-verification/nemotron-3-ultra-550b-a55b/peft-checkpoints
+        --save_interval 100
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/peft-resolved.yaml
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The public 32-H100 packed OpenMathInstruct-2 LoRA recipe must use the
+        same pinned bounded dataset and pad_seq_to_mult 2 as full SFT, match all
+        declared attention, MLP, and Mamba adapter targets, and complete 100
+        optimizer steps at sequence length 4096 and GBS/MBS 128/1. This
+        published Ultra contract is support verification rather than the
+        8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite
+        with no skipped or NaN iterations, all five metrics, audited
+        supervised-token counts, a persisted post-setup configuration, and a
+        reloadable adapter checkpoint.
+
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        No GB200-specific Ultra PEFT configuration is verified by this PR.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Ultra checkpoint resume remains unverified because one full checkpoint
+        exceeds the available verification quota. A future run must restore
+        full optimizer, scheduler, data-order, and RNG state from step 50,
+        continue directly at step 51, and satisfy the declared loss tolerance.
+
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        GB200 checkpoint resume remains unverified until a quota-safe reference
+        and continuation pair completes with matching state and losses.
+
+  pretrain_performance:
+    GB200:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 8192
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/gb200-performance/ConfigContainer.yaml
+      last_verified: 2026-08-19
+      metrics:
+        initial_loss: 12.1668
+        final_loss: 6.738161
+        last_10_steps_step_time_ms_avg: 3213.970
+        last_10_steps_model_tflops_per_gpu_avg: 917.750
+        last_10_steps_tokens_per_second_per_gpu_avg: 2548.873
+      expected_result: >
+        On exactly 256 GB200s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP2/PP1/CP1/EP64/ETP1, GBS/MBS 256/1,
+        and sequence length 8192 using Megatron-FSDP HSDP. All 50 keyed rows
+        have finite loss with zero skipped or NaN iterations. Loss moves from
+        12.1668 to 6.738161; the final ten steps average 3213.970 ms, 917.750
+        TFLOP/s/GPU, and 2548.873 tokens/s/GPU. The resolved configuration
+        persists.
+
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: fc704f7809f84461c6e2cbf476acb28c4a5654c0  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 8192
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-07-25
+      metrics:
+        initial_loss: 12.20118
+        final_loss: 7.019335
+        last_10_steps_step_time_ms_avg: 2282.400
+        last_10_steps_model_tflops_per_gpu_avg: 1306.850
+        last_10_steps_tokens_per_second_per_gpu_avg: 3589.204
+      expected_result: >
+        On exactly 256 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 256/1,
+        and sequence length 8192. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.20118 to 7.019335; the
+        final ten steps average 2282.400 ms, 1306.850 TFLOP/s/GPU, and 3589.204
+        tokens/s/GPU. The resolved configuration persists.

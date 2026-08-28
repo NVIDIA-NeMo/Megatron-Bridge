@@ -1126,6 +1126,11 @@ class AutoBridge(Generic[MegatronModelT]):
                     path, original_source_path=source_path, additional_files=additional_files
                 )
 
+            if model_bridge is not None:
+                artifact_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_artifacts", None)
+                if artifact_postprocessor is not None:
+                    artifact_postprocessor(model_bridge, Path(path))
+
         if dist.is_initialized():
             if dist.get_rank() == 0:
                 _save_artifacts()
@@ -1250,6 +1255,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 distributed_save=distributed_save,
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
+                ignored_source_key_suffixes=("_scale_inv",) if weight_dtype is not None else None,
             )
         else:
             # Config-only path: shard and write safetensors directly
