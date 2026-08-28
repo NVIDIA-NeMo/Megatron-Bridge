@@ -1423,6 +1423,17 @@ class ConfigContainer(Container):
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
+        from megatron.bridge.training.gtp import is_gtp_remat_active
+
+        if is_gtp_remat_active(self.model):
+            if self.dist.use_decentralized_pg:
+                raise ValueError(
+                    "GTP is not supported with dist.use_decentralized_pg=True. "
+                    "Set dist.use_decentralized_pg=False to use the standard MCore process-group runtime."
+                )
+            if self.ddp.average_in_collective:
+                raise ValueError("GTP requires ddp.average_in_collective=False.")
+
         self.logger.finalize()
         self.train.finalize()
         self.scheduler.finalize()
