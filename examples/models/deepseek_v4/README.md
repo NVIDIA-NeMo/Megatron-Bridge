@@ -104,8 +104,8 @@ parallelism — the recipe defaults to `TP=1, PP=4, EP=8` = 32 GPUs).
 uv run python -m torch.distributed.run --nnodes=<N> --nproc_per_node=<gpus_per_node> \
     scripts/training/run_recipe.py \
     --recipe deepseek_v4_flash_pretrain_config \
-    --dataset llm-pretrain-mock \
-    --step_func gpt_step \
+    --dataset mock \
+    --step-func dsv4_step \
     train.train_iters=10 train.global_batch_size=8 train.micro_batch_size=1 \
     model.seq_length=4096 dataset.seq_length=4096
 ```
