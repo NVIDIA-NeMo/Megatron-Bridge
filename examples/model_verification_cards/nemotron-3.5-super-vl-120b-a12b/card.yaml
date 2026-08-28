@@ -7,7 +7,8 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. Real-data BF16 pretraining verification on 64 H100s and 64 GB200s
   uses DataComp image-caption samples, natural dropless expert routing, and a
-  learned vision-pretrained checkpoint; both hardware runs are pending. The
+  learned vision-pretrained checkpoint; the 120-step H100 run and its final
+  checkpoint are verified, while the GB200 run is pending. The
   pinned eight-GPU BF16 import and distributed export are verified:
   the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
   the immutable HF source bitwise, and the exported package reloaded natively
@@ -27,7 +28,8 @@ verification_index:
       - inference
   training:
     H100:
-      unverified: [pretrain, sft, sft_export_inference, checkpoint_resume]
+      verified: [pretrain]
+      unverified: [sft, sft_export_inference, checkpoint_resume]
       unsupported: [sft_long_context, peft]
     GB200:
       unverified: [pretrain, sft, sft_export_inference, checkpoint_resume]
@@ -139,8 +141,9 @@ items:
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -155,19 +158,22 @@ items:
         --save_interval 120 logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-27
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 2.999004
+        final_loss: 2.170687
+        last_10_steps_step_time_ms_avg: 45173.51
+        last_10_steps_model_tflops_per_gpu_avg: 143.54
+        last_10_steps_tokens_per_second_per_gpu_avg: 1813.452
+        peak_allocated_memory_gib: 61.763
+        peak_reserved_memory_gib: 72.343
       expected_result: >
-        On exactly 64 H100s, complete all 120 optimizer steps from the learned
+        Exactly 64 H100s completed all 120 optimizer steps from the learned
         vision-pretrained checkpoint on DataComp image-caption samples at
-        TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing,
-        finite loss, zero skipped or NaN iterations, the resolved
-        ConfigContainer, and a reloadable step-120 checkpoint are required.
+        TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and
+        the recipe's BF16 precision-aware optimizer produced finite loss, zero
+        skipped or NaN iterations, the resolved ConfigContainer, and a
+        reloadable step-120 checkpoint with all 64 distributed model shards.
 
     GB200:
       status: unverified
