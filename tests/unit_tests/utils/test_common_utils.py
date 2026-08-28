@@ -21,8 +21,6 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
-
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
     get_master_addr_safe,
@@ -34,6 +32,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
     print_rank_last,
 )
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 class TestGetRankSafe:
