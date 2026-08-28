@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any
 
 import torch
 
 from megatron.bridge.diffusion.common.flow_matching.flow_matching_pipeline import LinearInterpolationSchedule
+from megatron.bridge.models.bagel.dependencies import configure_official_bagel_repo, import_official_bagel_module
 
 
 class BagelDiffusionScheduler:
@@ -50,10 +49,8 @@ class BagelDiffusionScheduler:
         """Load BAGEL's frozen FP32 VAE on first training step."""
         if self.vae is not None:
             return
-        repo = str(Path(self.bagel_repo).resolve())
-        if repo not in sys.path:
-            sys.path.insert(0, repo)
-        from modeling.autoencoder import load_ae
+        configure_official_bagel_repo(self.bagel_repo)
+        load_ae = import_official_bagel_module("modeling.autoencoder").load_ae
 
         self.vae, self.vae_params = load_ae(self.vae_path)
         self.vae.requires_grad_(False).eval().cuda()

@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -33,6 +32,7 @@ from megatron.bridge.models.bagel.data.energon import (
 from megatron.bridge.models.bagel.data.external import BagelExternalLoader, BagelRNGIterator
 from megatron.bridge.models.bagel.data.order import BagelPlannedLoader, plan_manifest_indices
 from megatron.bridge.models.bagel.data.packing import BagelPacker
+from megatron.bridge.models.bagel.dependencies import configure_official_bagel_repo, import_official_bagel_module
 
 
 logger = logging.getLogger(__name__)
@@ -92,12 +92,10 @@ class BagelDatasetConfig(DatasetProvider):
             raise RuntimeError("BAGEL dataset requires initialized process groups")
 
         root = Path(self.dataset_root)
-        repo = str(Path(self.bagel_repo).resolve())
-        if repo not in sys.path:
-            sys.path.insert(0, repo)
-        from data.data_utils import add_special_tokens
-        from data.transforms import ImageTransform
-        from modeling.qwen2 import Qwen2Tokenizer
+        configure_official_bagel_repo(self.bagel_repo)
+        add_special_tokens = import_official_bagel_module("data.data_utils").add_special_tokens
+        ImageTransform = import_official_bagel_module("data.transforms").ImageTransform
+        Qwen2Tokenizer = import_official_bagel_module("modeling.qwen2").Qwen2Tokenizer
 
         tokenizer = Qwen2Tokenizer.from_pretrained(self.tokenizer_model, local_files_only=True)
         tokenizer, special_tokens, _ = add_special_tokens(tokenizer)

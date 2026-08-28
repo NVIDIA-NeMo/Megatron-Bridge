@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +26,7 @@ from typing import Any
 import torch
 
 from megatron.bridge.models.bagel.checkpoint import initialize_bagel_from_native_checkpoint
+from megatron.bridge.models.bagel.dependencies import configure_official_bagel_repo, import_official_bagel_module
 from megatron.bridge.models.bagel.modeling import (
     BagelDiffusionSubmodule,
     BagelVisionSubmodule,
@@ -133,10 +133,11 @@ class BagelModelProvider(GPTModelProvider):
         """Load the official local BAGEL configuration without model weights."""
         if self.bagel_repo is None or self.model_path is None:
             raise ValueError("BAGEL model requires model.bagel_repo and model.model_path")
-        repo = str(Path(self.bagel_repo).resolve())
-        if repo not in sys.path:
-            sys.path.insert(0, repo)
-        from modeling.bagel import BagelConfig, Qwen2Config, SiglipVisionConfig
+        configure_official_bagel_repo(self.bagel_repo)
+        bagel_module = import_official_bagel_module("modeling.bagel")
+        BagelConfig = bagel_module.BagelConfig
+        Qwen2Config = bagel_module.Qwen2Config
+        SiglipVisionConfig = bagel_module.SiglipVisionConfig
 
         config_path = Path(self.model_path) / "config.json"
         if not config_path.is_file():
@@ -196,7 +197,9 @@ class BagelModelProvider(GPTModelProvider):
         if self._pg_collection is None:
             raise RuntimeError("BAGEL provider requires initialized process groups")
         bagel_config = self._official_config()
-        from modeling.bagel.modeling_utils import PositionEmbedding, TimestepEmbedder
+        modeling_utils = import_official_bagel_module("modeling.bagel.modeling_utils")
+        PositionEmbedding = modeling_utils.PositionEmbedding
+        TimestepEmbedder = modeling_utils.TimestepEmbedder
 
         pre_process = True if pre_process is None else pre_process
         post_process = True if post_process is None else post_process

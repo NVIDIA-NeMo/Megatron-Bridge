@@ -9,16 +9,25 @@ checkpoint restore.
 
 - A Megatron-LM revision containing
   [NVIDIA/Megatron-LM#3635](https://github.com/NVIDIA/Megatron-LM/pull/3635).
-- The official BAGEL repository at revision
-  `a2fa77dd8caeefc41e6607ae0ec17408d3f4ee9f`.
+- The NeMo container documented by the verification card, which provides the
+  compatible Torch, TorchVision, and FlashAttention runtime.
 - The `ByteDance-Seed/BAGEL-7B-MoT` model assets, including
   `ae.safetensors` and tokenizer files.
 - BAGEL data converted and prepared as described in the
   [BAGEL data tutorial](../../../tutorials/data/bagel/README.md).
 
-The BAGEL checkout is a runtime dependency because Bridge calls its tokenizer,
-image transforms, and flow-matching utilities directly. Keep its revision
-pinned so data and loss behavior remain reproducible.
+Install the optional Python dependencies and clone the official runtime source:
+
+```bash
+uv sync --extra bagel
+git clone https://github.com/ByteDance-Seed/Bagel.git work/dependencies/Bagel
+git -C work/dependencies/Bagel checkout a2fa77dd8caeefc41e6607ae0ec17408d3f4ee9f
+```
+
+The checkout remains a runtime dependency because Bridge calls its tokenizer,
+image transforms, and flow-matching utilities directly. Imports are lazy, so
+other Bridge models do not require the extra or the checkout. BAGEL commands
+fail with an installation hint when either is unavailable.
 
 ## Launch Pretraining
 

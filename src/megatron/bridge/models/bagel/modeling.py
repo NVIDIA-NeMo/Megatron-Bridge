@@ -22,6 +22,8 @@ import torch
 from megatron.core.models.mimo.submodules.base import ModalitySubmodules
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 
+from megatron.bridge.models.bagel.dependencies import import_official_bagel_module
+
 
 class OfficialBagelVisionEncoder(torch.nn.Module):
     """Wrap BAGEL's packed SigLIP encoder without changing its inputs."""
@@ -35,8 +37,10 @@ class OfficialBagelVisionEncoder(torch.nn.Module):
         recompute: bool,
     ) -> None:
         super().__init__()
-        from modeling.bagel import SiglipVisionModel
-        from modeling.bagel.modeling_utils import PositionEmbedding
+        bagel_module = import_official_bagel_module("modeling.bagel")
+        modeling_utils = import_official_bagel_module("modeling.bagel.modeling_utils")
+        SiglipVisionModel = bagel_module.SiglipVisionModel
+        PositionEmbedding = modeling_utils.PositionEmbedding
 
         if vision_model_path is None:
             self.encoder = SiglipVisionModel(bagel_config.vit_config)

@@ -163,6 +163,10 @@ nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 
 [project.optional-dependencies]
+bagel = [
+    "opencv-python-headless>=4.7.0.72",
+    "safetensors>=0.4.5",
+]
 recipes = [
     "nemo-run",
 ]
