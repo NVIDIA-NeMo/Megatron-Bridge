@@ -242,6 +242,41 @@ class NemotronOmniModel(MegatronModule):
         self.sound_model = sound_model
         self.sound_projection = sound_projection
 
+        self._expose_language_model_for_cuda_graph_helper()
+
+    def _expose_language_model_for_cuda_graph_helper(self) -> None:
+        """Expose language-model fields on the multimodal root when CUDA graphs are enabled.
+
+        MCore's CUDA graph helper discovers ``decoder`` on the top-level model,
+        while Nemotron Omni stores it below ``language_model``. Properties
+        expose the nested modules without registering duplicate root aliases or
+        changing checkpoint keys.
+        """
+
+        llm_cuda_graph_enabled = (
+            self.language_model is not None
+            and getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        )
+        if not llm_cuda_graph_enabled:
+            return
+        assert not self.language_model.config.variable_seq_lengths, (
+            "Nemotron Omni with CUDA graphs requires fixed sequence lengths "
+            "(variable_seq_lengths=False). Disable variable-length inputs or turn off CUDA graphs."
+        )
+        self.position_embedding_type = self.language_model.position_embedding_type
+
+    @property
+    def rotary_pos_emb(self):
+        """Expose the nested language model's rotary embeddings to MCore helpers."""
+
+        return getattr(self.language_model, "rotary_pos_emb", None)
+
+    @property
+    def decoder(self):
+        """Expose the nested language decoder without registering a module alias."""
+
+        return getattr(self.language_model, "decoder", None)
+
     def shared_embedding_or_output_weight(self):
         """Expose the language embedding for Megatron gradient finalization."""
 

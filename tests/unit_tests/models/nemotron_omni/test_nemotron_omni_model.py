@@ -26,6 +26,7 @@ from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
 from torch import nn
 
@@ -56,6 +57,18 @@ class _FakeLanguageModel(nn.Module):
     def forward(self, *, decoder_input, **kwargs):
         self.last_kwargs = kwargs
         return decoder_input
+
+
+class _FakeCudaGraphLanguageModel(nn.Module):
+    def __init__(self, *, variable_seq_lengths=False):
+        super().__init__()
+        self.config = SimpleNamespace(
+            cuda_graph_impl="transformer_engine",
+            variable_seq_lengths=variable_seq_lengths,
+        )
+        self.position_embedding_type = "rope"
+        self.rotary_pos_emb = object()
+        self.decoder = nn.Linear(1, 1)
 
 
 class _BoundaryModel(NemotronOmniModel):
@@ -219,6 +232,51 @@ def test_canonical_model_advertises_collator_owned_packing():
     assert NemotronOmniModel.model_owns_packing is False
     assert NemotronOmniModel.model_owns_mtp_loss_mask_packing is False
     assert NemotronOmniModel.model_slices_context_parallel_inputs is True
+
+
+def test_canonical_model_exposes_nested_language_decoder_for_cuda_graph_helper():
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.language_model = _FakeCudaGraphLanguageModel()
+
+    model._expose_language_model_for_cuda_graph_helper()
+
+    assert model.position_embedding_type == "rope"
+    assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+    assert model.decoder is model.language_model.decoder
+    assert "decoder" not in model._modules
+
+
+def test_canonical_model_rejects_variable_sequences_with_cuda_graphs():
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.language_model = _FakeCudaGraphLanguageModel(variable_seq_lengths=True)
+
+    with pytest.raises(AssertionError, match="requires fixed sequence lengths"):
+        model._expose_language_model_for_cuda_graph_helper()
+
+
+@pytest.mark.run_only_on("GPU")
+def test_cuda_graph_helper_discovers_nested_language_layers(single_rank_model_parallel):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider(
+        cuda_graph_impl="transformer_engine",
+        cuda_graph_modules=["mamba"],
+        use_te_rng_tracker=True,
+        variable_seq_lengths=False,
+    )
+    provider.finalize()
+    model = provider.provide().cuda().train()
+
+    helper = TECudaGraphHelper(
+        model=[model],
+        config=provider,
+        seq_length=provider.seq_length,
+        micro_batch_size=1,
+    )
+
+    assert helper.chunks_with_decoder == [model]
+    assert helper.num_layers_per_chunk[0] > 0
 
 
 def test_canonical_provider_rejects_ambiguous_legacy_class_name():
