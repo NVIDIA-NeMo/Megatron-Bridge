@@ -126,7 +126,7 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
-    _finalized: bool = field(default=False, init=False, repr=False)
+    _finalized: bool = field(default=False, repr=False)
     """Whether the deferred MCore optimizer finalization has run."""
 
     def __post_init__(self) -> None:
@@ -134,7 +134,8 @@ class OptimizerConfig(MCoreOptimizerConfig):
 
         The original post_init logic is deferred until finalize() is called.
         """
-        pass
+        if self._finalized:
+            super().__post_init__()
 
     def finalize(self) -> None:
         """Execute the deferred MCore post-init logic.
