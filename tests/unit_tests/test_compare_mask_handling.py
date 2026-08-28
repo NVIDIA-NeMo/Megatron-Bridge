@@ -120,19 +120,22 @@ class TestCompareMaskHandling:
         image = object()
 
         with patch.object(compare, "load_image", return_value=image):
-            actual_input_ids, actual_pixels, image_grid_thw, actual_token_type_ids = compare.process_inputs(
-                tokenizer,
-                processor,
-                "/tmp/example.png",
-                "Describe this image.",
-                is_vl_model=True,
-                tp_size=2,
+            actual_input_ids, actual_pixels, image_grid_thw, actual_token_type_ids, actual_mm_token_type_ids = (
+                compare.process_inputs(
+                    tokenizer,
+                    processor,
+                    "/tmp/example.png",
+                    "Describe this image.",
+                    is_vl_model=True,
+                    tp_size=2,
+                )
             )
 
         torch.testing.assert_close(actual_input_ids, torch.tensor([[1, 2, 3, 7]]))
         assert actual_pixels is pixel_values
         assert image_grid_thw is None
         torch.testing.assert_close(actual_token_type_ids, torch.tensor([[0, 1, 0, 0]]))
+        assert actual_mm_token_type_ids is None
         processor.apply_chat_template.assert_called_once_with(
             [
                 {
@@ -148,6 +151,39 @@ class TestCompareMaskHandling:
             return_dict=True,
             return_tensors="pt",
         )
+
+    def test_vlm_inputs_preserve_mm_token_types_and_tp_padding(self):
+        """VLM preprocessing keeps M-RoPE token types under their processor key."""
+        input_ids = torch.tensor([[1, 2, 3]])
+        mm_token_type_ids = torch.tensor([[0, 1, 0]])
+        pixel_values = torch.randn(3, 8)
+        image_grid_thw = torch.tensor([[1, 2, 2]])
+        processor = MagicMock()
+        processor.apply_chat_template.return_value = {
+            "input_ids": input_ids,
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
+            "mm_token_type_ids": mm_token_type_ids,
+        }
+        tokenizer = SimpleNamespace(pad_token_id=7)
+
+        with patch.object(compare, "load_image", return_value=object()):
+            actual_input_ids, actual_pixels, actual_grid, token_type_ids, actual_mm_token_type_ids = (
+                compare.process_inputs(
+                    tokenizer,
+                    processor,
+                    "/tmp/example.png",
+                    "Describe this image.",
+                    is_vl_model=True,
+                    tp_size=2,
+                )
+            )
+
+        torch.testing.assert_close(actual_input_ids, torch.tensor([[1, 2, 3, 7]]))
+        assert actual_pixels is pixel_values
+        assert actual_grid is image_grid_thw
+        assert token_type_ids is None
+        torch.testing.assert_close(actual_mm_token_type_ids, torch.tensor([[0, 1, 0, 0]]))
 
     def test_single_batch_iterator_stores_none_attention_mask(self):
         """Test that SingleBatchIterator preserves None attention_mask in batch dict."""
@@ -179,6 +215,21 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"] is None
         assert "inference_context" not in call_kwargs
         assert "runtime_gather_output" not in call_kwargs
+
+    def test_vlm_forward_step_passes_mm_token_type_ids(self):
+        """Megatron receives processor-produced M-RoPE token types unchanged."""
+        mm_token_type_ids = torch.tensor([[0, 1, 0]])
+        iterator = SingleBatchIterator(
+            torch.tensor([[1, 2, 3]]),
+            torch.arange(3).unsqueeze(0),
+            None,
+            mm_token_type_ids=mm_token_type_ids,
+        )
+        mock_model = MagicMock(return_value=torch.randn(1, 3, 100))
+
+        vlm_forward_step(iterator, mock_model)
+
+        assert mock_model.call_args.kwargs["mm_token_type_ids"] is mm_token_type_ids
 
     def test_text_inference_forward_step_passes_static_context(self):
         """Test that the text path receives the cache context and gathered-logit request."""
@@ -304,6 +355,32 @@ class TestCompareMaskHandling:
             )
 
         assert mock_hf_model.call_args.kwargs["token_type_ids"] is token_type_ids
+
+    def test_hf_path_receives_mm_token_type_ids(self):
+        """Qwen M-RoPE token types reach HF under the exact processor key."""
+        mock_hf_model = MagicMock()
+        mock_output = MagicMock()
+        mock_output.logits = torch.randn(1, 3, 100)
+        mock_hf_model.return_value = mock_output
+        input_ids = torch.tensor([[1, 2, 3]])
+        mm_token_type_ids = torch.tensor([[0, 1, 0]])
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.decode.return_value = "test"
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "print_rank_0"),
+        ):
+            _run_hf_inference(
+                mock_hf_model,
+                input_ids,
+                pixel_values=torch.randn(3, 8),
+                image_grid_thw=torch.tensor([[1, 2, 2]]),
+                tokenizer=mock_tokenizer,
+                mm_token_type_ids=mm_token_type_ids,
+            )
+
+        assert mock_hf_model.call_args.kwargs["mm_token_type_ids"] is mm_token_type_ids
 
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""

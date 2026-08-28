@@ -51,6 +51,7 @@ def _load_cpu_backend():
     modules["utils"].prepare_output_directory = lambda *args, **kwargs: calls.append(
         ("prepare_output_directory", args, kwargs)
     )
+    modules["utils"].resolve_hf_model_revision = lambda model, revision: f"{model}@{revision}" if revision else model
 
     previous_modules = {name: sys.modules.get(name) for name in modules}
     sys.modules.update(modules)
@@ -104,6 +105,7 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
 
     module.export_checkpoint(
         hf_model="hf/model",
+        hf_revision="0123456789abcdef",  # pragma: allowlist secret
         megatron_path=str(checkpoint),
         hf_path="/hf-export",
         show_progress=False,
@@ -118,8 +120,16 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
             ("/hf-export",),
             {"overwrite": False, "source_paths": [str(checkpoint), "hf/model"]},
         ),
-        ("from_hf_pretrained", ("hf/model",), {"trust_remote_code": False}),
-        ("from_auto_config", (str(checkpoint), "hf/model"), {"trust_remote_code": False}),
+        (
+            "from_hf_pretrained",
+            ("hf/model",),
+            {"trust_remote_code": False, "revision": "0123456789abcdef"},  # pragma: allowlist secret
+        ),
+        (
+            "from_auto_config",
+            (str(checkpoint), "hf/model@0123456789abcdef"),  # pragma: allowlist secret
+            {"trust_remote_code": False},
+        ),
         (
             "export_ckpt",
             "checkpoint-config",

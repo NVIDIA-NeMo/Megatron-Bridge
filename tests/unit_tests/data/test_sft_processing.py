@@ -219,6 +219,17 @@ def test_prompt_completion_rejects_structured_conversation():
         )
 
 
+def test_prompt_completion_honors_explicit_chat_named_text_column():
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="messages",
+        completion_column="answer",
+    )
+    row = {"messages": "question", "answer": "answer"}
+    adapted = adapt_hf_dataset([row], adapter_name=None)[0]
+
+    assert normalize_sft_example(adapted, preprocessing) == row
+
+
 def test_prompt_completion_tokenizes_separately_and_masks_prompt():
     tokenizer = _Tokenizer()
     preprocessing = PromptCompletionSFTPreprocessingConfig(
@@ -288,6 +299,24 @@ def test_prompt_completion_full_loss_and_truncation_preserve_special_tokens():
         tokenizer.eos_token_id,
     ]
     assert tokenized.loss_mask.tolist() == [True] * 5
+
+
+def test_prompt_completion_rejects_truncation_without_supervision():
+    tokenizer = _Tokenizer()
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        add_bos=True,
+        add_sep=True,
+        add_eos=False,
+    )
+
+    with pytest.raises(ValueError, match="supervised token"):
+        tokenize_prompt_completion_example(
+            {"prompt": "P", "completion": "A"},
+            tokenizer,
+            preprocessing,
+            max_length=2,
+            sep_token_id=103,
+        )
 
 
 @pytest.mark.parametrize(
