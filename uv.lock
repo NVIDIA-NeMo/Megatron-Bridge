@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 
 [options]
@@ -28,6 +28,11 @@ overrides = [
     { name = "urllib3", specifier = ">=2.6.3" },
     { name = "wandb", specifier = "==0.27.2" },
 ]
+
+[[manifest.dependency-metadata]]
+name = "fast-hadamard-transform"
+version = "1.0.4.post1"
+requires-dist = ["torch", "packaging", "ninja"]
 
 [[manifest.dependency-metadata]]
 name = "flash-mla"
@@ -1027,7 +1032,7 @@ wheels = [
 
 [[package]]
 name = "fast-hadamard-transform"
-version = "1.1.0"
+version = "1.0.4.post1"
 source = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v1.1.0#1cc807efbd6cc001df359822d60bf6052dd66859" }
 dependencies = [
     { name = "ninja" },
@@ -4618,14 +4623,14 @@ name = "torch"
 version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform == 'linux'" },
+    { name = "cuda-bindings", marker = "python_version < '0'" },
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
     { name = "networkx" },
     { name = "setuptools" },
     { name = "sympy" },
-    { name = "triton", marker = "sys_platform == 'never'" },
+    { name = "triton" },
     { name = "typing-extensions" },
 ]
 
@@ -4656,7 +4661,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pillow" },
-    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "torch" },
 ]
 
 [[package]]

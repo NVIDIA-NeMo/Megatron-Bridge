@@ -112,7 +112,7 @@ main() {
         fi
 
         # Install uv
-        UV_VERSION="0.7.2"
+        UV_VERSION="0.11.3"
         curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
 
         # Create virtual environment and install dependencies
