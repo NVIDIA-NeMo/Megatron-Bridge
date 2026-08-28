@@ -53,6 +53,7 @@ def _config(q_lora_rank):
         experimental_attention_variant=None,
         normalization="RMSNorm",
         transformer_impl="transformer_engine",
+        attention_latent_norm_epsilon=1e-6,
     )
 
 
