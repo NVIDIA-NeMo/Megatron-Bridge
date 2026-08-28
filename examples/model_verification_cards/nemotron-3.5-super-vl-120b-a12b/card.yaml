@@ -7,8 +7,10 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. Real-data BF16 pretraining verification on 64 H100s and 64 GB200s
   uses DataComp image-caption samples, natural dropless expert routing, and a
-  learned vision-pretrained checkpoint; the 120-step H100 run and its final
-  checkpoint are verified, while the GB200 run is pending. The
+  learned vision-pretrained checkpoint; both 120-step runs and their final
+  checkpoints are verified. The H100 and GB200 workloads use different
+  sequence and global batch sizes, so their losses and throughput are not
+  convergence-comparable. The
   pinned eight-GPU BF16 import and distributed export are verified:
   the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
   the immutable HF source bitwise, and the exported package reloaded natively
@@ -32,7 +34,8 @@ verification_index:
       unverified: [sft, sft_export_inference, checkpoint_resume]
       unsupported: [sft_long_context, peft]
     GB200:
-      unverified: [pretrain, sft, sft_export_inference, checkpoint_resume]
+      verified: [pretrain]
+      unverified: [sft, sft_export_inference, checkpoint_resume]
       unsupported: [sft_long_context, peft]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
@@ -176,8 +179,9 @@ items:
         reloadable step-120 checkpoint with all 64 distributed model shards.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522
       enabled_features:
         moe_dispatcher: hybridep
         cuda_graph:
@@ -192,23 +196,29 @@ items:
         dataset.path=work/data/datacomp-525k-energon
         checkpoint.load=null
         --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain
-        --save_interval 120 logger.log_interval=1 logger.log_throughput=true
+        --save_interval 120 checkpoint.save_optim=false checkpoint.save_rng=false
+        logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-28
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 3.063424
+        final_loss: 2.041944
+        last_10_steps_step_time_ms_avg: 20274.24
+        last_10_steps_model_tflops_per_gpu_avg: 258.75
+        last_10_steps_tokens_per_second_per_gpu_avg: 3232.476
+        peak_allocated_memory_gib: 120.64
+        peak_reserved_memory_gib: 122.13
       expected_result: >
         On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer
         steps from the learned vision-pretrained checkpoint on DataComp
         image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1.
         Natural dropless routing, finite loss, zero skipped or NaN iterations,
-        active scoped Transformer Engine CUDA-graph replay, the resolved
-        ConfigContainer, and a reloadable step-120 checkpoint are required.
+        selective core-attention recompute, active scoped Transformer Engine
+        CUDA-graph capture, and the resolved ConfigContainer are required. The
+        final asynchronous model-only checkpoint must contain all 64
+        distributed model shards; optimizer and RNG state are intentionally
+        excluded, so checkpoint resume remains a separate unverified item.
 
   sft:
     H100:

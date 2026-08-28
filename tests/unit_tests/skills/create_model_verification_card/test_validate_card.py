@@ -76,6 +76,8 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3.5-lightning", "checkpoint_resume", "GB200"): (8192, 512, 8),
     ("nemotron-3.5-lightning", "pretrain_performance", "H100"): (8192, 512, 16),
     ("nemotron-3.5-lightning", "pretrain_performance", "GB200"): (8192, 512, 8),
+    ("nemotron-3.5-super-vl-120b-a12b", "pretrain", "H100"): (4096, 1280, 64),
+    ("nemotron-3.5-super-vl-120b-a12b", "pretrain", "GB200"): (8192, 512, 64),
     ("qwen3-30b-a3b", "pretrain", "H100"): (4096, 1024, 16),
     ("qwen3-30b-a3b", "pretrain", "GB200"): (4096, 512, 8),
     ("qwen3-30b-a3b", "sft", "H100"): (2048, 32, 16),
