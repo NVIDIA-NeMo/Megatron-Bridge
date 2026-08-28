@@ -17,7 +17,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from functools import cached_property, partial
 from pathlib import Path
@@ -45,6 +45,7 @@ from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
     MegatronModelBridge,
+    MegatronWeightTuple,
     WeightConversionTask,
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
@@ -700,6 +701,12 @@ class AutoBridge(Generic[MegatronModelT]):
         # Get unquantized_state_dict from the bridge instance that was used for optimizer reload
         self.unquantized_state_dict = getattr(bridge, "unquantized_state_dict", None)
         return model
+
+    def get_export_fp8_tasks(self, model: MegatronModelT | list[MegatronModelT]) -> list[WeightConversionTask | None]:
+        """Build physical FP8 data and scale export tasks."""
+        if not isinstance(model, list):
+            model = [model]
+        return self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
     def export_hf_weights(
         self,
@@ -2096,6 +2103,25 @@ class AutoBridge(Generic[MegatronModelT]):
             pre_trained = self._pretrained_wrapper_cls.from_pretrained(hf_path)
 
         return self._model_bridge.build_conversion_tasks(pre_trained, megatron_model)
+
+    def stream_weights_hf_to_megatron(
+        self,
+        megatron_model: MegatronModelT | list[MegatronModelT],
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        *,
+        hf_state_dict: Mapping[str, torch.Tensor] | None = None,
+    ) -> Iterable[MegatronWeightTuple]:
+        """Stream HF-to-Megatron conversions from the configured or external state."""
+        return self._model_bridge.stream_weights_hf_to_megatron(
+            self._provider_bridge_input,
+            megatron_model,
+            conversion_tasks,
+            hf_state_dict=hf_state_dict,
+        )
+
+    def finalize_hf_import(self, megatron_model: MegatronModelT | list[MegatronModelT]) -> None:
+        """Finalize tied parameters and parameter-derived caches after import."""
+        self._model_bridge.finalize_hf_import(megatron_model)
 
     @property
     def transformer_config(self) -> TransformerConfig:
