@@ -124,6 +124,7 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 override-dependencies = [
+    "emerging-optimizers @ git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@b309e2f01cda75dc96a6dc1a2355a7b3b64b5e16",
     "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "imageio-ffmpeg; sys_platform == 'never'",              # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
