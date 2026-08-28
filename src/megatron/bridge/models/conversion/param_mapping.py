@@ -3303,35 +3303,37 @@ def split_qkv_weights(
         hidden_size = feature_dim
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
-        # NOTE: For standard (BF16/FP16) weights, `head_size` is the usual kv_channels/head_dim.
-        # For blockwise FP8 scale tensors (e.g. the rowwise_scale_inv metadata tensor),
-        # the last dim is typically compressed by a block-size factor (e.g. 4096 -> 32).
-        # In that case we infer a divisor and scale down `head_size` accordingly so that the
-        # same QKV slicing logic works for both weight tensors and their scale tensors.
+        # FP8 scale tensors may compress their row and feature dimensions by different
+        # block sizes. Infer the row block from the tensor geometry so the same QKV
+        # slicing handles both 2D blockwise and 1x32 MXFP8 scales.
         orig_hidden_size = provider.hidden_size
         current_last_dim = qkv.shape[-1]
 
-        # If last dim matches the model hidden size, it's a normal weight.
-        # Otherwise, treat it as a "scale-domain" tensor with compressed dims.
         if current_last_dim == orig_hidden_size:
             hidden_size = current_last_dim
             scaled_head_size = head_size
         else:
-            # Infer block divisor (e.g., 4096 / 32 = 128).
             if orig_hidden_size % current_last_dim != 0:
                 raise ValueError(
                     f"Cannot infer block divisor for qkv tensor: "
                     f"provider.hidden_size={orig_hidden_size} is not divisible by qkv.shape[-1]={current_last_dim}"
                 )
-            divisor = orig_hidden_size // current_last_dim
-            if head_size % divisor != 0:
-                raise ValueError(
-                    f"Cannot scale head_size for qkv tensor: "
-                    f"head_size={head_size} is not divisible by divisor={divisor} "
-                    f"(provider.hidden_size={orig_hidden_size}, qkv.shape[-1]={current_last_dim})"
-                )
+
             hidden_size = current_last_dim
-            scaled_head_size = head_size // divisor
+            uncompressed_m = qkv_total_dim * head_size
+            actual_m = qkv.numel() // current_last_dim
+            if actual_m == 0 or uncompressed_m % actual_m != 0:
+                raise ValueError(
+                    "Cannot infer row block factor for qkv scale tensor: "
+                    f"shape={tuple(qkv.shape)}, qkv_total_dim={qkv_total_dim}, head_size={head_size}"
+                )
+            row_block = uncompressed_m // actual_m
+            if head_size % row_block != 0:
+                raise ValueError(
+                    "Cannot scale head_size for qkv scale tensor: "
+                    f"head_size={head_size} is not divisible by inferred row block factor={row_block}"
+                )
+            scaled_head_size = head_size // row_block
 
         qkv_reshaped = qkv.view(qkv_total_dim, scaled_head_size, hidden_size)
 

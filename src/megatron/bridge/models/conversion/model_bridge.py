@@ -2054,10 +2054,10 @@ class MegatronModelBridge(
         pp_group: Any,
         fp8_scale_inv_attr: str,
     ) -> Dict[str, bool | int]:
-        """Detect which global parameters are blockwise FP8 and gather flags across pipeline parallel ranks.
+        """Detect supported FP8 parameters and gather flags across pipeline parallel ranks.
 
         This method scans all parameters in the megatron model to determine which ones are
-        blockwise FP8 tensors with valid scale_inv attributes. It then gathers these flags
+        blockwise or MXFP8 tensors with valid scale metadata. It then gathers these flags
         across all pipeline parallel ranks to ensure consistent decisions.
 
         Args:
@@ -2105,8 +2105,17 @@ class MegatronModelBridge(
                         if isinstance(candidate_metadata, dict):
                             metadata = candidate_metadata
 
-                if "is_2D_scaled" in metadata and metadata.get(scale_inv_metadata_key) is not None:
-                    scale_tensor = metadata[scale_inv_metadata_key]
+                scale_tensor = metadata.get(scale_inv_metadata_key)
+                is_mxfp8 = (
+                    getattr(model_config, "fp8_recipe", None) == "mxfp8"
+                    and metadata.get("rowwise_data") is not None
+                    and "with_gemm_swizzled_scales" in metadata
+                )
+                if is_mxfp8 and scale_tensor is not None:
+                    # MXFP8 scales every row independently, so remote PP ranks need a
+                    # concrete row-block size of one for mappings such as vocab export.
+                    local_fp8_flags[global_name] = 1
+                elif "is_2D_scaled" in metadata and scale_tensor is not None:
                     has_valid_row_ratio = (
                         metadata.get("is_2D_scaled")
                         and local_weights.ndim > 0
@@ -2140,7 +2149,7 @@ class MegatronModelBridge(
         fp8_scale_inv_attr: str = "_rowwise_scale_inv",
     ) -> List[WeightConversionTask]:
         """
-        Build Megatron→(export) conversion tasks, inserting extra *scale_inv* tasks for blockwise FP8 params.
+        Build Megatron→(export) conversion tasks, inserting extra *scale_inv* tasks for supported FP8 params.
         """
 
         # Ensure hf_pretrained has the required state structure (reuse existing ordering assumptions)
@@ -2168,7 +2177,7 @@ class MegatronModelBridge(
             sorted_global_param_names_all_pp_ranks,
         )
 
-        # 1) Determine which global params are blockwise FP8 and gather flags across PP ranks
+        # 1) Determine which global params use a supported FP8 layout and gather flags across PP ranks
         global_fp8_flags = self._detect_fp8_params(
             megatron_model,
             model_config,
@@ -2291,9 +2300,33 @@ class MegatronModelBridge(
         local_weights: Optional[torch.Tensor],
         scale_tensor: Optional[torch.Tensor],
     ) -> Optional[torch.Tensor]:
-        # This function is used to trim the padding in the scales for blockwise FP8 parameters.
-        # The GEMM for 2D blocks required padding in the scales.
-        metadata = local_weights.get_metadata() if local_weights is not None else {}
+        # TE pads MXFP8 scales to multiples of (128, 4), while 2D blockwise
+        # scales may pad their K dimension.
+        if local_weights is None or scale_tensor is None:
+            return scale_tensor
+
+        get_metadata = getattr(local_weights, "get_metadata", None)
+        metadata = get_metadata() if callable(get_metadata) else {}
+        if "with_gemm_swizzled_scales" in metadata:
+            if metadata["with_gemm_swizzled_scales"]:
+                raise ValueError("MXFP8 parameter export requires compact, non-swizzled scales")
+
+            expected_m = math.prod(local_weights.shape[:-1])
+            expected_k_tiles = math.ceil(local_weights.shape[-1] / 32)
+            if (
+                scale_tensor.ndim != 2
+                or scale_tensor.shape[0] < expected_m
+                or scale_tensor.shape[1] < expected_k_tiles
+            ):
+                raise ValueError(
+                    "MXFP8 scale tensor is smaller than the compact scale shape: "
+                    f"weight_shape={tuple(local_weights.shape)}, scale_shape={tuple(scale_tensor.shape)}, "
+                    f"expected_scale_shape=({expected_m}, {expected_k_tiles})"
+                )
+            if scale_tensor.shape == (expected_m, expected_k_tiles):
+                return scale_tensor
+            return scale_tensor[:expected_m, :expected_k_tiles].contiguous()
+
         quantizer = metadata.get("quantizer")
         block_len = getattr(quantizer, "block_len", None)
         is_2d_scaled = metadata.get("is_2D_scaled")

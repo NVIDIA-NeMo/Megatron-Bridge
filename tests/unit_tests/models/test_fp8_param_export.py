@@ -195,6 +195,8 @@ class TestFp8ParamExport:
         "export_dtype, cfg, expect_raise, n_fp8_build_calls",
         [
             ("fp8", {"fp8": "e4m3", "fp8_recipe": "blockwise", "fp8_param": True}, False, 1),
+            ("fp8", {"fp8": "e4m3", "fp8_recipe": "mxfp8", "fp8_param": True}, False, 1),
+            ("fp8", {"fp8": "e4m3", "fp8_recipe": "mxfp8", "fp8_param": False}, True, 0),
             ("fp8", {"fp8": "e4m3", "fp8_recipe": "tensorwise", "fp8_param": True}, True, 0),
             ("fp8", {"fp8": None, "fp8_recipe": "blockwise", "fp8_param": True}, True, 0),
             ("bf16", {"fp8": "e4m3", "fp8_recipe": "blockwise", "fp8_param": True}, False, 0),
@@ -219,7 +221,7 @@ class TestFp8ParamExport:
                 with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as arch_prop:
                     arch_prop.return_value = arch
                     if expect_raise:
-                        with pytest.raises(ValueError, match="only supports blockwise FP8 parameter export"):
+                        with pytest.raises(ValueError, match="only supports blockwise or MXFP8 parameter export"):
                             list(bridge.export_hf_weights(megatron, cpu=True))
                     else:
                         list(bridge.export_hf_weights(megatron, cpu=True))
@@ -283,6 +285,51 @@ class TestFp8ParamExport:
         if tasks[1].param_weight.shape == rowwise.shape:
             assert tasks[1].param_weight.data_ptr() == rowwise.data_ptr()
 
+    def test_build_export_fp8_tasks_trims_mxfp8_scale_padding(self, monkeypatch):
+        bridge = DummyBridge()
+        gname = _QKV_GLOBAL
+        MappingT = _make_qkv_mapping_type(gname)
+
+        rowwise_scale_inv = torch.ones((128, 4), dtype=torch.uint8)
+        metadata = {
+            "rowwise_data": torch.zeros((96, 64), dtype=torch.uint8),
+            "rowwise_scale_inv": rowwise_scale_inv,
+            "with_gemm_swizzled_scales": False,
+        }
+        fake_w = SimpleNamespace(get_metadata=lambda: metadata, shape=(96, 64))
+        model = SimpleNamespace(
+            config=SimpleNamespace(share_embeddings_and_output_weights=False, fp8_recipe="mxfp8"),
+            named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
+        )
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            gname,
+            registry_factory=lambda: MegatronMappingRegistry(MappingT()),
+        )
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_module_and_param_from_name",
+            lambda *_a, **_k: (SimpleNamespace(config=model.config), fake_w),
+        )
+
+        tasks = bridge.build_export_fp8_tasks(
+            SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
+        )
+
+        assert tasks[0].param_weight.shape == (96, 64)
+        assert tasks[0].param_weight.dtype == torch.float8_e4m3fn
+        assert tasks[1].param_weight.shape == (96, 2)
+        assert torch.all(tasks[1].param_weight == 1)
+
+    def test_mxfp8_scale_trim_rejects_swizzled_layout(self):
+        bridge = DummyBridge()
+        scale = torch.ones((128, 4), dtype=torch.uint8)
+        metadata = {"with_gemm_swizzled_scales": True}
+        fake_w = SimpleNamespace(get_metadata=lambda: metadata, shape=(96, 64))
+
+        with pytest.raises(ValueError, match="compact, non-swizzled scales"):
+            bridge._trim_blockwise_fp8_scale_inv_padding(fake_w, scale)
+
     def test_detect_fp8_params_without_top_level_te_class(self, monkeypatch):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
@@ -341,6 +388,35 @@ class TestFp8ParamExport:
         monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", _ag1)
         assert bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv") == {}
 
+    def test_detect_fp8_params_from_mxfp8_metadata(self, monkeypatch):
+        bridge = DummyBridge()
+        gname = _QKV_GLOBAL
+        metadata = {
+            "rowwise_data": torch.zeros((96, 64), dtype=torch.uint8),
+            "rowwise_scale_inv": torch.ones((128, 4), dtype=torch.uint8),
+            "with_gemm_swizzled_scales": False,
+        }
+        holder = SimpleNamespace(get_metadata=lambda: metadata, shape=(96, 64), ndim=2)
+        model = SimpleNamespace(
+            config=SimpleNamespace(share_embeddings_and_output_weights=False, fp8_recipe="mxfp8"),
+            named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
+        )
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_module_and_param_from_name",
+            lambda *_a, **_k: (SimpleNamespace(config=model.config), holder),
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}._megatron_local_name_to_global", lambda *_a, **_k: gname)
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda *_a, **_k: [])
+        monkeypatch.setattr(f"{_MODEL_MB}.get_pg_size", lambda _g: 1)
+
+        def _ag1(out, obj, group=None):
+            out[0] = obj
+
+        monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", _ag1)
+
+        flags = bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv")
+        assert flags == {gname: 1}
+
     def test_build_export_fp8_tasks_remote_pp_tasks_are_concrete(self, monkeypatch):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
@@ -387,16 +463,17 @@ class TestFp8ParamExport:
             bridge.build_export_fp8_tasks(SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model])
 
     @pytest.mark.parametrize(
-        "hidden_size, last_dim, expected_shapes, expected_error",
+        "hidden_size, last_dim, rows, expected_shapes, expected_error",
         [
-            (16, 4, ((4, 4), (2, 4), (2, 4)), None),
-            (4096, 32, ((32, 32), (16, 32), (16, 32)), None),
-            (10, 4, None, "Cannot infer block divisor"),
-            (12, 3, None, "Cannot scale head_size"),
+            pytest.param(16, 4, 8, ((4, 4), (2, 4), (2, 4)), None, id="blockwise-4x4"),
+            pytest.param(4096, 32, 64, ((32, 32), (16, 32), (16, 32)), None, id="blockwise-128x128"),
+            pytest.param(128, 4, 256, ((128, 4), (64, 4), (64, 4)), None, id="mxfp8-1x32"),
+            pytest.param(10, 4, 8, None, "Cannot infer block divisor", id="invalid-feature-block"),
+            pytest.param(16, 4, 7, None, "Cannot infer row block factor", id="invalid-row-geometry"),
+            pytest.param(24, 6, 12, None, "Cannot scale head_size", id="invalid-row-block"),
         ],
     )
-    def test_split_qkv_compressed(self, hidden_size, last_dim, expected_shapes, expected_error):
-        qkv_dim = 8
+    def test_split_qkv_compressed(self, hidden_size, last_dim, rows, expected_shapes, expected_error):
         provider = SimpleNamespace(
             num_attention_heads=4,
             num_query_groups=2,
@@ -404,12 +481,7 @@ class TestFp8ParamExport:
             kv_channels=None,
             attention_output_gate=False,
         )
-        if expected_error is None:
-            hs = hidden_size // provider.num_attention_heads
-            div = hidden_size // last_dim
-            qkv = torch.randn(qkv_dim * (hs // div), last_dim)
-        else:
-            qkv = torch.randn(qkv_dim, last_dim)
+        qkv = torch.randn(rows, last_dim)
         if expected_error:
             with pytest.raises(ValueError, match=expected_error):
                 split_qkv_weights(provider, qkv)
