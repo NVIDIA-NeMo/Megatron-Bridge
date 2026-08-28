@@ -238,6 +238,24 @@ class TestPgCollectionForwarding:
 class TestPretrainMegatronMIMOSetup:
     """Verify pretrain_megatron_mimo properly initializes checkpointing runtime."""
 
+    def test_optimizer_config_survives_mcore_per_module_replace(self):
+        """MCore's per-module copy should retain fields computed during post-init."""
+        from dataclasses import replace
+
+        from megatron.bridge.training.config import OptimizerConfig
+        from megatron.bridge.training.setup_megatron_mimo import _to_mcore_optimizer_config
+
+        bridge_config = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        bridge_config.finalize()
+
+        module_config = replace(
+            _to_mcore_optimizer_config(bridge_config),
+            overlap_param_gather=True,
+        )
+
+        assert module_config.overlap_param_gather is True
+        assert module_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
+
     @patch("megatron.bridge.training.setup_megatron_mimo.checkpoint_exists", return_value=False)
     @patch("megatron.bridge.training.setup_megatron_mimo.get_active_module_pg")
     @patch("megatron.bridge.training.setup_megatron_mimo.create_checkpoint_manager")
@@ -295,6 +313,10 @@ class TestPretrainMegatronMIMOSetup:
         cfg.model = Mock()
         cfg.model.fp16 = False
         cfg.model.bf16 = True
+        from megatron.bridge.training.config import OptimizerConfig
+
+        cfg.optimizer = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        cfg.optimizer.finalize()
 
         global_state = Mock()
         global_state.start_time = time.time()
@@ -328,7 +350,10 @@ class TestPretrainMegatronMIMOSetup:
             result = setup_megatron_mimo(state=global_state)
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
-        mock_get_mimo_optimizer.assert_called_once_with(unwrapped, cfg.optimizer)
+        optimizer_config = mock_get_mimo_optimizer.call_args.args[1]
+        assert type(optimizer_config).__module__ == "megatron.core.optimizer.optimizer_config"
+        assert optimizer_config.use_distributed_optimizer is True
+        assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
         global_state.initialize_async_checkpoint_worker.assert_called_once()
         assert result.checkpoint_manager is mock_mgr_instance
 
