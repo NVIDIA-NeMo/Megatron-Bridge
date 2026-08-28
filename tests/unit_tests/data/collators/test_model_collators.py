@@ -2143,6 +2143,12 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         _language_is_pipeline_parallel=True,
         _language_max_sequence_length=32,
         context_parallel_lm=1,
+        img_seq_len=5,
+        _dynamic_resolution=False,
+        _drop_vision_class_token=False,
+        _pixel_shuffle=False,
+        _conv_merging=False,
+        _max_num_tiles=1,
     )
     final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
         pp_model,
@@ -2529,6 +2535,12 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         _language_is_pipeline_parallel=True,
         _language_max_sequence_length=32,
         context_parallel_lm=1,
+        img_seq_len=5,
+        _dynamic_resolution=False,
+        _drop_vision_class_token=False,
+        _pixel_shuffle=False,
+        _conv_merging=False,
+        _max_num_tiles=1,
     )
     final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
         pp_model,
