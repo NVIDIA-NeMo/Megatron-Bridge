@@ -28,7 +28,12 @@ from megatron.bridge.training.mixed_precision import (
 )
 
 
-def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> None:
+def _benchmark_common(
+    cfg: ConfigContainer,
+    cross_entropy_impl: str = "te",
+    *,
+    force_moe_load_balancing: bool | None = None,
+) -> None:
     """Apply benchmark-mode defaults that prioritize throughput measurement over convergence.
 
     Intended for performance benchmark recipes only. Sets short training runs,
@@ -63,6 +68,9 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
 
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
     cfg.scheduler.lr_warmup_iters = 10
+
+    if force_moe_load_balancing is not None and getattr(cfg.model, "num_moe_experts", None):
+        cfg.model.moe_router_force_load_balancing = force_moe_load_balancing
 
     if hasattr(cfg.model, "use_transformer_engine_op_fuser") and cfg.model.use_transformer_engine_op_fuser:
         cfg.model.use_transformer_engine_op_fuser = False
