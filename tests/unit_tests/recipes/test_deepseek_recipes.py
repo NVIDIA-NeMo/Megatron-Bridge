@@ -492,7 +492,7 @@ def test_deepseek_v4_recipes_keep_hardware_qualified_dispatcher(
     if expected_dispatcher == "flex":
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 16
-        assert cfg.model.moe_hybridep_num_sms is None
+        assert getattr(cfg.model, "moe_hybridep_num_sms", None) is None
 
 
 @pytest.mark.parametrize(

@@ -28,14 +28,6 @@ supported training runtime. Switch the submodule before syncing the environment:
 uv sync
 ```
 
-Grouped-FP8 checkpoint saves also require the stateless grouped extra-state fix
-merged in Megatron-LM
-[#5997](https://github.com/NVIDIA/Megatron-LM/pull/5997). If the selected `dev`
-revision does not contain that fix yet, apply the equivalent signed commit
-`d05cb07ff618` from
-[#6509](https://github.com/NVIDIA/Megatron-LM/pull/6509) to the compatible `dev`
-checkout before enabling checkpoint saves.
-
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
 Bridge container; see the

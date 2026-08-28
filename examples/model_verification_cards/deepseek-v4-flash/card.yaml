@@ -322,7 +322,7 @@ items:
         --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config
         --step-func dsv4_step
         --pretrained_checkpoint work/models/deepseek-v4-flash-megatron
-        --save_dir work/model-verification/dsv4-flash/sft-ref
+        --save_dir work/model-verification/dsv4-flash/sft-long-context-ref
         --save_interval 100 --max_steps 100
         model.pipeline_model_parallel_size=4
         'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL'
