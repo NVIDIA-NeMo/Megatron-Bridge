@@ -74,8 +74,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("Distributed CPU export requires --distributed-save.")
         if not distributed_save and args.save_every_n_ranks != 1:
             raise ValueError("--save-every-n-ranks requires --distributed-save.")
-        if args.device == "cpu" and args.export_weight_dtype is not None:
-            raise ValueError("--export-weight-dtype is only supported by the GPU backend.")
+        if args.device == "cpu" and not distributed_cpu and args.export_weight_dtype is not None:
+            raise ValueError("--export-weight-dtype requires distributed CPU export or the GPU backend.")
 
 
 def _run_import(args: argparse.Namespace) -> None:

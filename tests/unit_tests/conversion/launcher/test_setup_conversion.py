@@ -130,6 +130,8 @@ def test_distributed_cpu_export_accepts_compatible_topology():
         "2",
         "--ep",
         "4",
+        "--export-weight-dtype",
+        "bfloat16",
     )
 
     module._validate_args(args)
@@ -217,7 +219,7 @@ def test_cpu_export_rejects_export_weight_dtype():
     module = _load_setup_conversion_module()
     args = _parse_export(module, "--export-weight-dtype", "float32")
 
-    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+    with pytest.raises(ValueError, match="requires distributed CPU export or the GPU backend"):
         module._validate_args(args)
 
 
