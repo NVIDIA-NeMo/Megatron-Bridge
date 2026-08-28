@@ -162,7 +162,7 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.17.1+4329ff84"
+version = "2.14.0+f031cf87"
 requires-dist = [
     "pydantic<2.14",
     "importlib-metadata>=1.0",
@@ -183,7 +183,7 @@ requires-dist = ["torch", "packaging", "ninja"]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "4329ff84bfbdaa778a33cba02a15fb0807c64689" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "f031cf87bd054c7558b887df7bed93975456667f" }
 
 [project.optional-dependencies]
 recipes = [
