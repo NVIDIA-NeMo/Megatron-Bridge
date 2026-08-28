@@ -23,6 +23,7 @@ from megatron.bridge.data import DatasetBuildContext
 from megatron.bridge.data.builders.energon import (
     EnergonDatasetBuilder,
     EnergonDatasetConfig,
+    EnergonTaskEncoderFactoryConfig,
     HFEnergonTaskEncoderConfig,
     NemotronOmniEnergonTaskEncoderConfig,
     QwenVLEnergonTaskEncoderConfig,
@@ -45,8 +46,17 @@ def _qwen_config(**overrides) -> EnergonDatasetConfig:
     return EnergonDatasetConfig(**values)
 
 
+def build_test_task_encoder(dataset_config: EnergonDatasetConfig) -> EnergonDatasetConfig:
+    """Return the supplied config to exercise the declarative factory contract."""
+    return dataset_config
+
+
 def test_config_round_trip_is_declarative_and_cli_overridable():
-    config = _qwen_config(dataset_kwargs={"handler": "warn_and_continue"})
+    factory_target = f"{__name__}.build_test_task_encoder"
+    config = _qwen_config(
+        dataset_kwargs={"handler": "warn_and_continue"},
+        task_encoder_factory=EnergonTaskEncoderFactoryConfig(target=factory_target),
+    )
 
     serialized = ConfigContainer._convert_value_to_dict(config)
     restored = instantiate(serialized)
@@ -54,6 +64,7 @@ def test_config_round_trip_is_declarative_and_cli_overridable():
     assert isinstance(restored, EnergonDatasetConfig)
     assert isinstance(restored.task_encoder, QwenVLEnergonTaskEncoderConfig)
     assert restored.dataset_kwargs == {"handler": "warn_and_continue"}
+    assert restored.task_encoder_factory == EnergonTaskEncoderFactoryConfig(target=factory_target)
     assert "processor" not in serialized
     assert "tokenizer" not in serialized
 
@@ -182,6 +193,32 @@ def test_qwen_factory_enables_native_energon_packing_from_buffer_size(monkeypatc
     assert encoder_cls.call_args.kwargs["enable_energon_packing"] is True
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is False
     assert encoder_cls.call_args.kwargs["in_batch_packing_pad_to_multiple_of"] == 8
+
+
+def test_task_encoder_factory_builds_a_custom_runtime_encoder():
+    config = _qwen_config(
+        micro_batch_size=1,
+        packing_buffer_size=32,
+        task_encoder_factory=EnergonTaskEncoderFactoryConfig(target=f"{__name__}.build_test_task_encoder"),
+    )
+
+    config.validate()
+    assert build_energon_task_encoder(config) is config
+
+
+@pytest.mark.parametrize("target", ["", "   "])
+def test_task_encoder_factory_requires_a_target(target: str):
+    config = _qwen_config(task_encoder_factory=EnergonTaskEncoderFactoryConfig(target=target))
+
+    with pytest.raises(ValueError, match="task_encoder_factory.target"):
+        config.validate()
+
+
+def test_task_encoder_factory_rejects_a_non_factory_config():
+    config = _qwen_config(task_encoder_factory={"target": "tests.factory"})
+
+    with pytest.raises(TypeError, match="EnergonTaskEncoderFactoryConfig"):
+        config.validate()
 
 
 @pytest.mark.parametrize(

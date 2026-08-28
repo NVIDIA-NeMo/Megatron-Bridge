@@ -23,6 +23,7 @@ from transformers import AutoProcessor, AutoTokenizer, Qwen3VLProcessor
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
 def _validate_hf_path(path: str, *, field_name: str) -> None:
@@ -138,6 +139,18 @@ EnergonTaskEncoderConfig = (
 
 
 @dataclass(kw_only=True)
+class EnergonTaskEncoderFactoryConfig:
+    """Declarative factory for task encoders not implemented by Bridge."""
+
+    target: str
+    """Fully qualified factory callable invoked with the dataset config."""
+
+    def validate(self) -> None:
+        """Validate the task-encoder factory target."""
+        _validate_hf_path(self.target, field_name="task_encoder_factory.target")
+
+
+@dataclass(kw_only=True)
 class EnergonDatasetConfig(DataloaderConfig):
     """Serializable configuration for an Energon-backed multimodal dataset."""
 
@@ -153,6 +166,7 @@ class EnergonDatasetConfig(DataloaderConfig):
     max_samples_per_sequence: int | None = None
     packing_buffer_size: int | None = None
     dataset_kwargs: dict[str, Any] = field(default_factory=dict)
+    task_encoder_factory: EnergonTaskEncoderFactoryConfig | None = None
     enable_in_batch_packing: bool = False
     defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False
@@ -203,6 +217,10 @@ class EnergonDatasetConfig(DataloaderConfig):
         if self.packing_buffer_size is not None and not isinstance(self.task_encoder, QwenVLEnergonTaskEncoderConfig):
             raise ValueError("Energon native sequence packing currently supports only QwenVLEnergonTaskEncoderConfig.")
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
+        if self.task_encoder_factory is not None:
+            if not isinstance(self.task_encoder_factory, EnergonTaskEncoderFactoryConfig):
+                raise TypeError("task_encoder_factory must be an EnergonTaskEncoderFactoryConfig when set.")
+            self.task_encoder_factory.validate()
         reserved_dataset_kwargs = {
             "batch_size",
             "max_samples_per_sequence",
@@ -229,6 +247,10 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
     """Construct the configured Energon task encoder at runtime."""
     task_config = config.task_encoder
     task_config.validate()
+    if config.task_encoder_factory is not None:
+        factory = _resolve_target(config.task_encoder_factory.target, "task_encoder_factory.target")
+        return factory(config)
+
     effective_packing = config.enable_in_batch_packing and not config.defer_in_batch_packing_to_step
     enable_energon_packing = config.packing_buffer_size is not None
 
