@@ -20,7 +20,6 @@ import pytest
 import torch
 
 from megatron.bridge.data.packing.offline import (
-    _init_shared_dataset_worker,
     _materialize_dataset_items,
     _pre_pad_data_point,
     prepare_gpt_sft_packed_data,
@@ -57,7 +56,17 @@ def test_configured_seed_controls_offline_packing(monkeypatch):
     def prepare_with_ambient_seed(ambient_seed):
         packed_outputs = []
         np.random.seed(ambient_seed)
-        monkeypatch.setattr(np, "save", lambda _, rows: packed_outputs.append(rows))
+        real_save = np.save
+
+        def fake_save(file, arr, *args, **kwargs):
+            # Let chunk saves inside _materialize_dataset_items write to disk,
+            # but capture the final output save from prepare_gpt_sft_packed_data.
+            if "chunk_" in str(file):
+                real_save(file, arr, *args, **kwargs)
+            else:
+                packed_outputs.append(arr)
+
+        monkeypatch.setattr(np, "save", fake_save)
         prepare_gpt_sft_packed_data(
             input_path=Path("unused.jsonl"),
             output_path=Path("unused.npy"),
@@ -256,61 +265,49 @@ def test_materialize_dataset_items_uses_serial_path_for_non_positive_workers(mon
         def __getitem__(self, index):
             return index + 10
 
+    import multiprocessing as mp
+
     def fail_pool(*args, **kwargs):
         raise AssertionError("Pool should not be constructed for non-positive worker counts")
 
-    monkeypatch.setattr("megatron.bridge.data.packing.offline.Pool", fail_pool)
+    monkeypatch.setattr(mp, "Pool", fail_pool)
 
     assert _materialize_dataset_items(TinyDataset(), -1).tolist() == [10, 11, 12]
     assert _materialize_dataset_items(TinyDataset(), 0).tolist() == [10, 11, 12]
 
 
-@pytest.mark.parametrize("pool_fails", [False, True])
-def test_materialize_dataset_items_configures_and_restores_worker_resources(monkeypatch, pool_fails):
-    """The multiprocessing path should use file-backed tensor sharing only while its pool runs."""
+def test_materialize_dataset_items_parallel_returns_correct_items():
+    """The parallel (fork) path should return all items correctly."""
 
     class TinyDataset:
         def __len__(self):
-            return 2
+            return 5
 
         def __getitem__(self, index):
-            return index + 20
+            return index + 100
 
-    pool_calls = []
+    result = _materialize_dataset_items(TinyDataset(), 2)
+    assert sorted(result.tolist()) == [100, 101, 102, 103, 104]
 
-    class FakePool:
-        def __init__(self, num_workers, *, initializer, initargs):
-            pool_calls.append((num_workers, initializer, initargs))
-            initializer(*initargs)
 
-        def __enter__(self):
-            return self
+def test_materialize_dataset_items_preserves_dict_items():
+    """Dict items (like tokenized samples) must survive chunked serialization."""
 
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
+    class TinyDataset:
+        def __len__(self):
+            return 4
 
-        def imap(self, function, indexes):
-            if pool_fails:
-                raise RuntimeError("worker failure")
-            return map(function, indexes)
+        def __getitem__(self, index):
+            return {"input_ids": np.array([index, index + 1]), "loss_mask": np.array([1, 0])}
 
-    sharing_strategy_calls = []
-    nofile_limit_calls = []
-    monkeypatch.setattr("megatron.bridge.data.packing.offline.Pool", FakePool)
-    monkeypatch.setattr(torch.multiprocessing, "get_sharing_strategy", lambda: "file_descriptor")
-    monkeypatch.setattr(torch.multiprocessing, "set_sharing_strategy", sharing_strategy_calls.append)
-    monkeypatch.setattr("megatron.bridge.data.packing.offline.resource.getrlimit", lambda _: (256, 4096))
-    monkeypatch.setattr(
-        "megatron.bridge.data.packing.offline.resource.setrlimit",
-        lambda _, limits: nofile_limit_calls.append(limits),
-    )
+    # Serial
+    result_serial = _materialize_dataset_items(TinyDataset(), num_workers=None)
+    assert len(result_serial) == 4
+    assert np.array_equal(result_serial[0]["input_ids"], [0, 1])
 
-    dataset = TinyDataset()
-    if pool_fails:
-        with pytest.raises(RuntimeError, match="worker failure"):
-            _materialize_dataset_items(dataset, 2)
-    else:
-        assert _materialize_dataset_items(dataset, 2).tolist() == [20, 21]
-    assert sharing_strategy_calls == ["file_system", "file_descriptor"]
-    assert nofile_limit_calls == [(4096, 4096), (256, 4096)]
-    assert pool_calls == [(2, _init_shared_dataset_worker, (dataset,))]
+    # Parallel
+    result_parallel = _materialize_dataset_items(TinyDataset(), 2)
+    assert len(result_parallel) == 4
+    # Items may be reordered in parallel mode; check by lookup
+    ids = {tuple(r["input_ids"].tolist()) for r in result_parallel}
+    assert ids == {(0, 1), (1, 2), (2, 3), (3, 4)}
