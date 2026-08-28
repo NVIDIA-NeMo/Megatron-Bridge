@@ -210,7 +210,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=False)
     cfg.model.mla_down_proj_fusion = True
 
-    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.recompute_modules = []
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
