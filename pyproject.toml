@@ -155,7 +155,7 @@ url = "https://pypi.nvidia.com"
 # resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
 [[tool.uv.dependency-metadata]]
 name = "flash-mla"
-version = "1.0.0+9edee0c"
+version = "1.0.0+b7643bd"
 requires-dist = []
 
 # Lane-specific metadata for VCS packages that otherwise compile CUDA extensions during lock.

@@ -36,7 +36,7 @@ requires-dist = ["torch", "packaging", "ninja"]
 
 [[manifest.dependency-metadata]]
 name = "flash-mla"
-version = "1.0.0+9edee0c"
+version = "1.0.0+b7643bd"
 
 [[manifest.dependency-metadata]]
 name = "transformer-engine"
@@ -1130,7 +1130,7 @@ wheels = [
 
 [[package]]
 name = "flash-mla"
-version = "1.0.0+9edee0c"
+version = "1.0.0+b7643bd"
 source = { git = "https://github.com/deepseek-ai/FlashMLA?rev=nv_dev#b7643bd54521f563b839b98289b5cd048c062ba2" }
 
 [[package]]
