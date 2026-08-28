@@ -615,6 +615,16 @@ class CheckpointConfig(MTrainCheckpointConfig):
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
 
+        if self.save_retain_interval is not None:
+            if self.save_retain_interval <= 0:
+                raise ValueError("save_retain_interval must be positive.")
+            if self.save_interval is None or self.save_interval <= 0:
+                raise ValueError("save_retain_interval requires a positive save_interval.")
+            if self.save_retain_interval % self.save_interval != 0:
+                raise ValueError("save_retain_interval must be divisible by save_interval.")
+            if self.most_recent_k != -1:
+                raise ValueError("save_retain_interval and most_recent_k cannot be enabled together.")
+
         if self.also_save_hf_checkpoint:
             if self.ckpt_format == "fsdp_dtensor":
                 raise ValueError(
@@ -772,8 +782,8 @@ class ProfilingConfig(MTrainProfilingConfig):
         )
         assert self.profile_step_start >= 0, f"profile_step_start must be >= 0, got {self.profile_step_start}"
         assert self.profile_step_end >= 0, f"profile_step_end must be >= 0, got {self.profile_step_end}"
-        assert self.profile_step_end >= self.profile_step_start, (
-            f"profile_step_end ({self.profile_step_end}) must be >= profile_step_start ({self.profile_step_start})"
+        assert self.profile_step_end > self.profile_step_start, (
+            f"profile_step_end ({self.profile_step_end}) must be > profile_step_start ({self.profile_step_start})"
         )
 
 
@@ -2057,7 +2067,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     Keeps (safe for MegatronMIMO):
     - Recipe environment variable defaults
     - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
-    - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
+    - Sub-config finalization (dataset, optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
     - Deterministic mode validation
 
@@ -2079,6 +2089,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     # Finalize sub-configs that don't depend on model construction order.
     # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
     # config and is called inside setup_megatron_mimo() right before build_infra().
+    if hasattr(cfg.dataset, "finalize"):
+        cfg.dataset.finalize()
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
     if hasattr(cfg.ddp, "finalize"):

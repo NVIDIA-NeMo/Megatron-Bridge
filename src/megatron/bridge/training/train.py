@@ -802,20 +802,7 @@ def train(
         print_rank_0(f"Total training energy (GPU): {total_energy / 1e6} MJ")
         energy_monitor.shutdown()
 
-    # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
-    if should_exit:
-        # Close NVIDIA DLFw Inspect if enabled
-        tensor_inspect_end_if_enabled(config.tensor_inspect)
-        checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
-        wandb_writer = global_state.wandb_logger
-        if wandb_writer:
-            wandb_writer.finish()
-        if global_state._comet_logger:
-            global_state._comet_logger.end()
-        fault_tolerance.shutdown(global_state)
-        sys.exit(exit_code)
-
-    # Close NVIDIA DLFw Inspect at clean finish
+    # Close NVIDIA DLFw Inspect at the end of the training loop.
     tensor_inspect_end_if_enabled(config.tensor_inspect)
 
     if should_fire(callback_manager, "on_train_end"):
@@ -829,6 +816,17 @@ def train(
                 scheduler=scheduler,
             ),
         )
+
+    # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
+    if should_exit:
+        checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
+        wandb_writer = global_state.wandb_logger
+        if wandb_writer:
+            wandb_writer.finish()
+        if global_state._comet_logger:
+            global_state._comet_logger.end()
+        fault_tolerance.shutdown(global_state)
+        sys.exit(exit_code)
 
 
 @nvtx_decorator()

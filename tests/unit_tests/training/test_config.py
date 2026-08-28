@@ -915,9 +915,9 @@ class TestConfigContainerValidation:
         "profile_step_start, profile_step_end, expect_assertion_error, expected_error_match",
         [
             (10, 20, False, None),  # Valid: end > start
-            (10, 10, False, None),  # Valid: end == start (single step)
+            (10, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: empty range
             (0, 5, False, None),  # Valid: start at 0
-            (20, 10, True, "profile_step_end .* must be >= profile_step_start"),  # Invalid: end < start
+            (20, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: end < start
             (-1, 10, True, "profile_step_start must be >= 0"),  # Invalid: start < 0
             (10, -1, True, "profile_step_end must be >= 0"),  # Invalid: end < 0
             (-5, -1, True, "profile_step_start must be >= 0"),  # Invalid: both < 0
@@ -3056,6 +3056,37 @@ class TestRerunConfigValidation:
 
 class TestCheckpointConfig:
     """Tests for CheckpointConfig class."""
+
+    @pytest.mark.parametrize(
+        "config_overrides, error_message",
+        [
+            ({"save_interval": 10, "save_retain_interval": 0}, "save_retain_interval must be positive"),
+            (
+                {"save_interval": None, "save_retain_interval": 20},
+                "save_retain_interval requires a positive save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 15},
+                "save_retain_interval must be divisible by save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 20, "most_recent_k": 1},
+                "save_retain_interval and most_recent_k cannot be enabled together",
+            ),
+        ],
+    )
+    def test_save_retain_interval_validation(self, config_overrides, error_message):
+        """Retain intervals require one valid, unambiguous persistent retention policy."""
+        ckpt_cfg = create_test_checkpoint_config(**config_overrides)
+
+        with pytest.raises(ValueError, match=error_message):
+            ckpt_cfg.finalize()
+
+    def test_save_retain_interval_accepts_multiple_of_save_interval(self):
+        """A positive retain interval divisible by the save interval is valid."""
+        ckpt_cfg = create_test_checkpoint_config(save_interval=10, save_retain_interval=20)
+
+        ckpt_cfg.finalize()
 
     def test_precision_aware_optimizer_cpu_staging_defaults_off(self):
         ckpt_cfg = create_test_checkpoint_config()
