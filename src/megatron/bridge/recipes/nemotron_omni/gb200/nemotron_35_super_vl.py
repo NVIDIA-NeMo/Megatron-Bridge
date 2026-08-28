@@ -71,6 +71,7 @@ def nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = None
+    cfg.model.moe_permute_fusion_into_hybridep = False
 
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32

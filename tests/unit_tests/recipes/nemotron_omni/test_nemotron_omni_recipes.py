@@ -475,6 +475,7 @@ def test_super_vl_pretrain_recipe_uses_gb200_nvl72_policy(fake_processor):
     assert cfg.model.moe_hybridep_assume_equal_dispatch_inputs is True
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
     assert cfg.model.recompute_vision is False
