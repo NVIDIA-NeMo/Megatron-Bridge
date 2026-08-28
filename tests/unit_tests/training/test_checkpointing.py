@@ -4363,6 +4363,7 @@ class TestFSDPDTensorFunctionality:
 
         # Create mock model and config
         mock_model = Mock()
+        mock_model.named_modules.return_value = []
         mock_cfg = Mock()
 
         # Mock model config without swiglu or experts

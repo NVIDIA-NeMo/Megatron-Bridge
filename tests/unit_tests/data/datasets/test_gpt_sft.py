@@ -197,7 +197,18 @@ class TestDataGPTSFTDataset:
         dataset, _ = get_gpt_sft(tmp_path)
         dataset._build_samples_mapping()
 
-    def test_global_sample_mapping_respects_max_num_samples(self, tmp_path):
+    def test_global_sample_mapping_respects_max_num_samples(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            gpt_sft_module,
+            "_get_samples_mapping",
+            lambda **kwargs: np.column_stack(
+                (
+                    np.arange(kwargs["max_num_samples"], dtype=np.int64),
+                    np.arange(1, kwargs["max_num_samples"] + 1, dtype=np.int64),
+                    np.ones(kwargs["max_num_samples"], dtype=np.int64),
+                )
+            ),
+        )
         dataset, dataset_length = get_gpt_sft(tmp_path, max_num_samples=2, global_sample_mapping=True)
 
         assert dataset_length > 2
