@@ -1539,7 +1539,9 @@ def save_checkpoint(
                     else:
                         open_file = open
                     with open_file(tracker_filename, "r") as f:
-                        previous_step = int(f.read().strip())
+                        previous_metadata = f.read().strip()
+                        if previous_metadata != "release":
+                            previous_step = int(previous_metadata)
 
                 train_state_dict["floating_point_operations_so_far"] = torch.tensor(
                     num_floating_point_operations_so_far, dtype=torch.float32

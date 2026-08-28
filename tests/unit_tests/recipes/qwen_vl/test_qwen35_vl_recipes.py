@@ -27,6 +27,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -118,6 +119,8 @@ class _FakeModelCfg:
         self.pipeline_model_parallel_size = 1
         self.pipeline_dtype = None
         self.virtual_pipeline_model_parallel_size = None
+        self.num_layers_in_first_pipeline_stage = None
+        self.num_layers_in_last_pipeline_stage = None
         self.context_parallel_size = 1
         self.expert_model_parallel_size = 1
         self.expert_tensor_parallel_size = 1
@@ -218,6 +221,15 @@ def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
     assert hasattr(cfg.peft, "alpha")
 
 
+def test_qwen35_vl_model_selector_supports_dora(monkeypatch: pytest.MonkeyPatch):
+    """Qwen3.5-VL model selectors should honor the requested DoRA scheme."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config(peft_scheme="dora")
+
+    assert isinstance(cfg.peft, DoRA)
+
+
 # ---------------------------------------------------------------------------
 # Recipe API shape
 # ---------------------------------------------------------------------------
@@ -229,13 +241,20 @@ def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
     + _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS
     + _QWEN35_VL_SFT_FUNCS
     + _QWEN35_VL_H100_SFT_FUNCS
-    + _QWEN35_VL_PEFT_FUNCS
-    + _QWEN35_VL_H100_PEFT_FUNCS
+    + [_qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config]
     + _QWEN35_VL_GB200_FUNCS,
 )
 def test_qwen35_vl_recipe_entry_points_are_parameterless(recipe_func: Callable):
     """Qwen3.5-VL public recipe entry points should be fixed configs."""
     assert not inspect.signature(recipe_func).parameters
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_PEFT_FUNCS)
+def test_qwen35_vl_selectable_peft_recipes_accept_a_peft_scheme(recipe_func: Callable):
+    """Model-selectable PEFT recipes should accept an optional PEFT scheme."""
+    parameter = inspect.signature(recipe_func).parameters["peft_scheme"]
+
+    assert parameter.default == "lora"
 
 
 def test_qwen35_vl_h100_module_has_no_parameterized_recipe_helpers():
@@ -710,6 +729,8 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_dtype is None
     assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1

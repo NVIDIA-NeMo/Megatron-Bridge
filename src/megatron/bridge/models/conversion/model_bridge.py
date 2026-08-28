@@ -22,6 +22,7 @@ import math
 import re
 import warnings
 from dataclasses import dataclass, field, fields, is_dataclass
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -450,6 +451,13 @@ class MegatronModelBridge(
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
     ADDITIONAL_FILE_PATTERNS = None
+
+    def postprocess_hf_export_artifacts(self, path: Path) -> None:
+        """Apply model-specific fixes after Hugging Face artifacts are saved.
+
+        Args:
+            path: Directory containing the exported Hugging Face artifacts.
+        """
 
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
