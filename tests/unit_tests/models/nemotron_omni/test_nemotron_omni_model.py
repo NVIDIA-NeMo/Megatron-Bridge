@@ -317,6 +317,47 @@ def test_llava_provider_preserves_existing_radio_cpe_default():
     assert provider.radio_interpolate_only_cpe is True
 
 
+def test_llava_provider_uses_exact_replacement_counts_with_production_tile_limit():
+    provider = NemotronOmniLlavaModelProvider(temporal_patch_dim=1)
+    llava_model = SimpleNamespace(_dynamic_resolution=True, _max_num_tiles=12, img_seq_len=256)
+
+    provider._configure_llava_preprocess_contract(llava_model)
+
+    assert llava_model._max_num_tiles == 12
+    assert llava_model._dynamic_resolution is False
+    assert llava_model.img_seq_len == 1
+
+
+def test_llava_forward_normalizes_all_one_frame_tensor_before_delegating():
+    class _RecordingLlava:
+        def __init__(self):
+            self.kwargs = None
+
+        def __call__(self, *args, **kwargs):
+            self.kwargs = kwargs
+            return args
+
+    model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
+    nn.Module.__init__(model)
+    model.llava_model = _RecordingLlava()
+
+    result = model.forward("input", num_frames=torch.ones(3, dtype=torch.int32), imgs_sizes=torch.ones(3, 2))
+
+    assert result == ("input",)
+    assert model.llava_model.kwargs["num_frames"] == 1
+    assert model.llava_model.kwargs["imgs_sizes"].shape == (3, 2)
+
+
+@pytest.mark.parametrize("num_frames", [2, torch.tensor([1, 2], dtype=torch.int32)])
+def test_llava_forward_rejects_video_frame_counts(num_frames):
+    model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
+    nn.Module.__init__(model)
+    model.llava_model = lambda *args, **kwargs: None
+
+    with pytest.raises(NotImplementedError, match="every num_frames value must be 1|num_frames must be 1"):
+        model.forward(num_frames=num_frames)
+
+
 def test_llava_model_emits_deprecation_notice(monkeypatch):
     monkeypatch.setattr(NemotronVLModel, "__init__", lambda *_args, **_kwargs: None)
 
