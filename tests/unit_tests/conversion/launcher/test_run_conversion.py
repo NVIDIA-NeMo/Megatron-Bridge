@@ -262,10 +262,13 @@ def test_distributed_cpu_export_uses_gloo_backend(monkeypatch):
             "--ep",
             "2",
             "--distributed-save",
+            "--export-weight-dtype",
+            "bfloat16",
         ]
     )
 
     assert calls[0]["distributed_save"] is True
+    assert calls[0]["export_weight_dtype"] == "bfloat16"
     assert calls[0]["use_cpu"] is True
 
 
@@ -350,7 +353,7 @@ def test_cpu_worker_rejects_parallelism():
 def test_cpu_worker_rejects_export_weight_dtype():
     module, _, _ = _load_run_conversion_module()
 
-    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+    with pytest.raises(ValueError, match="requires distributed CPU export or the GPU backend"):
         module.main(
             [
                 "export",
