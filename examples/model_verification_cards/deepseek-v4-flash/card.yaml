@@ -12,9 +12,9 @@ summary: >
   The verified 64-GPU GB200 MXFP8 library pretraining run uses
   PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused
   cross entropy, and selective recompute without activation offload. It completed
-  100 finite steps and saved a model-only grouped-MXFP8 checkpoint at step 100.
-  Formal checkpoint-resume verification remains separate because it requires the
-  step-50 sentinel comparison below. A capacity-1.5
+  100 finite steps with full-state checkpoints at steps 50 and 100. A direct
+  step-50 continuation restored optimizer, scheduler, data-order, and RNG state,
+  completed steps 51-100, and passed both loss-sentinel comparisons. A capacity-1.5
   performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert
   assignments and 64.23% of routing probability mass; that result is benchmark-only and
   is excluded from the natural-routing library recipe and verification metrics. CPU
@@ -50,8 +50,7 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     GB200:
-      verified: [pretrain, sft, sft_long_context, sft_export_inference, peft]
-      unverified: [checkpoint_resume]
+      verified: [pretrain, sft, sft_long_context, sft_export_inference, peft, checkpoint_resume]
   performance:
     GB200: verified
     GB300: verified
@@ -195,21 +194,20 @@ items:
         validation.eval_interval=0 validation.eval_iters=0
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-        checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null
-        checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.save_optim=false
+        checkpoint.exit_on_missing_checkpoint=false checkpoint.finetune=false
+        checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false
+        checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false
         --save_dir work/model-verification/dsv4-flash/pretrain-ref
-        --save_interval 100
+        --save_interval 50
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
         dist.distributed_timeout_minutes=120
       last_verified: 2026-08-27
       metrics:
-        initial_loss: 7.250136
-        final_loss: 3.237480
-        last_10_steps_step_time_ms_avg: 8482.070
-        last_10_steps_model_tflops_per_gpu_avg: 175.950
-        last_10_steps_tokens_per_second_per_gpu_avg: 1931.603960
-        peak_allocated_memory_gib: 159.93
-        peak_reserved_memory_gib: 162.06
+        initial_loss: 7.250204
+        final_loss: 3.280722
+        last_10_steps_step_time_ms_avg: 7856.370
+        last_10_steps_model_tflops_per_gpu_avg: 189.690
+        last_10_steps_tokens_per_second_per_gpu_avg: 2085.441495
       expected_result: >
         On 64 GB200 (16 nodes x 4 GPUs), TP1/PP4/VPP4/EP16/CP1 uses dense DP16,
         expert DP1, and GBS/MBS 256/1. The command loads the imported model weights
@@ -218,10 +216,11 @@ items:
         mla_up_proj, and MXFP8 parameter gather and gradient-buffer reuse without
         activation offload. Expert capacity, paged stash, CUDA graphs, and forced
         load balancing remain disabled. The run completed 100 finite LM/MTP-loss
-        steps with no skipped or NaN iterations and wrote a complete model-only
-        grouped-MXFP8 checkpoint at step 100. The item-specific Bridge revision
-        pins the compatible Megatron-LM dev revision used by this workload without
-        changing the card's default environment for other verification items.
+        steps with no skipped or NaN iterations and wrote complete grouped-MXFP8
+        checkpoints containing model, optimizer, scheduler, data-order, and RNG
+        state at steps 50 and 100. The item-specific Bridge revision pins the
+        compatible Megatron-LM dev revision used by this workload without changing
+        the card's default environment for other verification items.
 
   sft:
     GB200:
@@ -419,29 +418,52 @@ items:
 
   checkpoint_resume:
     GB200:
-      status: unverified
+      status: verified
       precision: fp8_mx
+      bridge_commit: dff6445009ebd054028a883ea6d84f9a16ad6b9c  # pragma: allowlist secret
       depends_on: pretrain
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
+        --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config
+        --mode pretrain --dataset megatron-indexed --max_steps 100
+        'dataset.blend=[["work/data/the-pile/my-gpt3_08_text_document"],null]'
+        dataset.path_to_cache=work/cache/the-pile dataset.num_workers=0
+        dataset.random_seed=1234 rng.seed=1234
+        scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100
+        validation.eval_interval=0 validation.eval_iters=0
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        checkpoint.exit_on_missing_checkpoint=false checkpoint.finetune=false
+        checkpoint.load_optim=true checkpoint.load_rng=true
+        checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false
+        --load_dir work/model-verification/dsv4-flash/pretrain-ref
+        --save_dir work/model-verification/dsv4-flash/pretrain-resumed
+        --save_interval 50 checkpoint.ckpt_step=50
+        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+        dist.distributed_timeout_minutes=120
+      last_verified: 2026-08-27
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 4.028752
+        final_loss: 3.261145
+        last_10_steps_step_time_ms_avg: 7995.850
+        last_10_steps_model_tflops_per_gpu_avg: 186.640
+        last_10_steps_tokens_per_second_per_gpu_avg: 2049.062951
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: false
+        sentinels_match: true
       expected_result: >
-        Verification requires a new uninterrupted reference run that saves a step-50
-        checkpoint, followed by a fresh process that restores optimizer, scheduler,
-        data-order, and RNG state and runs steps 51-100 in a separate output root.
-        Step-51 and step-100 losses must match the uninterrupted reference within the
-        declared 1% relative and 1e-6 absolute tolerances, and all five metrics must be recorded.
+        The direct 64-GPU TP1/PP4/VPP4/EP16 continuation restores model, optimizer,
+        scheduler, data-order, and RNG state from the complete step-50 reference
+        checkpoint, starts at step 51, and finishes at step 100 in a distinct output
+        root. All 50 resumed steps are finite with no skipped or NaN iterations, all
+        five metrics are recorded, the post-setup configuration persists, and a
+        complete full-state step-100 checkpoint is saved. Step-51 resumed/reference
+        LM loss is 4.028752/4.028773, an absolute difference of 0.000021. Step-100
+        resumed/reference LM loss is 3.261145/3.280722, an absolute difference of
+        0.019577. Both sentinels pass the declared 1% relative and 1e-6 absolute gate.
 
   pretrain_performance:
     GB200:
