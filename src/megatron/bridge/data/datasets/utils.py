@@ -77,36 +77,43 @@ def build_index_from_memdata(fn, newline_int):
 
     data_size = len(mdata)
 
-    # First pass: count delimiters using bounded-size chunks.
+    # First pass: count delimiters in bounded-size chunks.
     num_newlines = 0
 
     for start in range(0, data_size, _MEMMAP_INDEX_CHUNK_SIZE):
         chunk = mdata[start : start + _MEMMAP_INDEX_CHUNK_SIZE]
         num_newlines += np.count_nonzero(chunk == newline_int)
 
+    # Add an EOF sentinel when the file does not end with a newline.
     needs_eof = int(mdata[-1]) != newline_int
 
+    # Preallocate the exact-size index array.
     midx = np.empty(
         num_newlines + int(needs_eof),
         dtype=np.intp,
     )
 
-    # Second pass: populate the preallocated index directly.
+    # Second pass: fill the preallocated array with delimiter positions.
     offset = 0
 
     for start in range(0, data_size, _MEMMAP_INDEX_CHUNK_SIZE):
         chunk = mdata[start : start + _MEMMAP_INDEX_CHUNK_SIZE]
 
+        # Find delimiter positions within this chunk.
         local_midx = np.flatnonzero(chunk == newline_int)
         num_found = len(local_midx)
 
         if num_found:
+            # Shift local positions by the chunk offset to get global positions.
             midx[offset : offset + num_found] = local_midx + start
             offset += num_found
 
     if needs_eof:
+        # Sentinel one past the end of file.
         midx[offset] = data_size + 1
 
+    # Remove trailing empty lines: when two consecutive delimiters are
+    # adjacent (gap < 2), the last one represents an empty line at EOF.
     end = len(midx)
 
     while end > 1 and (midx[end - 1] - midx[end - 2]) < 2:
@@ -114,6 +121,7 @@ def build_index_from_memdata(fn, newline_int):
 
     midx = midx[:end]
 
+    # Free memmap
     mdata._mmap.close()
     del mdata
 
