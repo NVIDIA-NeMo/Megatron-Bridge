@@ -119,4 +119,3 @@ def test_openai_server_preserves_hf_chat_template_contract():
             },
         )
     ]
-
