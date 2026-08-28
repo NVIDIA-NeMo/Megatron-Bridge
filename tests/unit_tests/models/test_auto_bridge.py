@@ -1350,6 +1350,32 @@ class TestAutoBridge:
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_postprocesses_artifacts(self, _mock_dist_avail, _mock_dist_init, tmp_path):
+        """Model bridges can postprocess copied Hugging Face artifacts before weight export."""
+
+        class _ArtifactPostprocessor:
+            SUPPORTS_HF_PRETRAINED_EXPORT = True
+            ADDITIONAL_FILE_PATTERNS = None
+
+            def postprocess_hf_export_artifacts(self, path):
+                (path / "postprocessed").touch()
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.save_artifacts.side_effect = lambda path, **_: Path(path).mkdir(parents=True, exist_ok=True)
+        model_bridge = _ArtifactPostprocessor()
+        bridge = AutoBridge(mock_hf_model)
+
+        with (
+            patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=model_bridge)),
+            patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights,
+        ):
+            bridge.save_hf_pretrained([Mock()], tmp_path)
+
+        assert (tmp_path / "postprocessed").is_file()
+        mock_save_hf_weights.assert_called_once()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
     def test_save_hf_pretrained_config_only(self, _mock_dist_avail, _mock_dist_init, tmp_path):
         """Config-only save without a reference writes config.json and calls save_hf_weights."""
         bridge = AutoBridge(PretrainedConfig())
