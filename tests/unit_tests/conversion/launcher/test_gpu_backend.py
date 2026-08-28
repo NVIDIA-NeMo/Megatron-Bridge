@@ -70,7 +70,7 @@ def _fake_megatron_modules():
     return modules
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def cli():
     """Load the conversion script as a module under a stable test name."""
     spec = importlib.util.spec_from_file_location("gpu_backend_under_test", _CLI_PATH)
@@ -122,6 +122,59 @@ class _FakeHfPretrained:
     config = type("Config", (), {"num_hidden_layers": 1, "num_nextn_predict_layers": 0})()
 
 
+def test_distributed_cpu_initialization_uses_gloo(cli, monkeypatch):
+    calls = []
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setattr(cli.torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(cli.torch.distributed, "init_process_group", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(
+        cli.torch.cuda,
+        "set_device",
+        lambda *_args, **_kwargs: pytest.fail("distributed CPU export must not initialize CUDA"),
+    )
+
+    cli._ensure_distributed_initialized(45, use_cpu=True)
+
+    assert calls[0]["backend"] == "gloo"
+    assert calls[0]["timeout"].total_seconds() == 45 * 60
+
+
+def test_distributed_cpu_output_barrier_does_not_query_cuda(cli, monkeypatch, tmp_path):
+    barrier_calls = []
+    monkeypatch.setattr(cli.torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(cli.torch.distributed, "get_backend", lambda: "gloo")
+    monkeypatch.setattr(
+        cli.torch.distributed,
+        "barrier",
+        lambda *args, **kwargs: barrier_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        cli.torch.cuda,
+        "current_device",
+        lambda: pytest.fail("distributed CPU export must not query CUDA"),
+    )
+
+    cli._prepare_distributed_output(str(tmp_path / "output"), overwrite=False)
+
+    assert barrier_calls == [((), {})]
+
+
+def test_distributed_cpu_provider_uses_cpu_initialization(cli):
+    provider = _FakeProvider([])
+
+    cli._configure_model_provider(
+        provider,
+        tp=1,
+        pp=2,
+        ep=4,
+        etp=1,
+        dtype=torch.bfloat16,
+        use_cpu=True,
+    )
+
+    assert provider.use_cpu_initialization is True
+
+
 class TestImportHfToMegatron:
     @pytest.mark.parametrize("low_memory_save", [False, True])
     def test_import_saves_megatron_checkpoint_with_tokenizer_metadata(self, cli, monkeypatch, low_memory_save):
@@ -151,6 +204,11 @@ class TestImportHfToMegatron:
             lambda *args, **kwargs: prepared_outputs.append((args, kwargs)),
         )
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
+        monkeypatch.setattr(
+            cli,
+            "resolve_hf_model_revision",
+            lambda model, revision: f"{model}@{revision}" if revision else model,
+        )
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
 
         cli.import_checkpoint.__wrapped__(
@@ -180,6 +238,8 @@ class TestImportHfToMegatron:
         from_hf_call = next(call for call in calls if call[0] == "from_hf_pretrained")
         assert from_hf_call[1] == ("hf",)
         assert from_hf_call[2]["revision"] == "0123456789abcdef"  # pragma: allowlist secret
+        initialize_call = next(call for call in calls if call[0] == "initialize_model_parallel")
+        assert initialize_call[2] == {"seed": 0, "create_gloo_process_groups": False}
         assert prepared_outputs == [(("/ckpt",), {"overwrite": False, "source_paths": ["hf"]})]
 
 
@@ -228,6 +288,11 @@ class TestExportMegatronToHf:
             lambda *args, **kwargs: prepared_outputs.append((args, kwargs)),
         )
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
+        monkeypatch.setattr(
+            cli,
+            "resolve_hf_model_revision",
+            lambda model, revision: f"{model}@{revision}" if revision else model,
+        )
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
         monkeypatch.setattr(cli.AutoBridge, "from_auto_config", fake_from_auto_config)
 
@@ -235,6 +300,7 @@ class TestExportMegatronToHf:
         checkpoint_path.mkdir()
         cli.export_checkpoint.__wrapped__(
             hf_model="hf",
+            hf_revision="0123456789abcdef",  # pragma: allowlist secret
             megatron_path=str(checkpoint_path),
             hf_path="/hf-export",
             tp=1,
@@ -255,13 +321,19 @@ class TestExportMegatronToHf:
         load_call = next(call for call in calls if call[0] == "load_megatron_model")
         assert load_call[1] == (str(checkpoint_path),)
         assert load_call[2]["mp_overrides"]["expert_model_parallel_size"] == 2
+        initialize_call = next(call for call in calls if call[0] == "initialize_model_parallel")
+        assert initialize_call[2] == {"seed": 0, "create_gloo_process_groups": False}
 
         reference_call = next(call for call in calls if call[0] == "from_hf_pretrained")
         assert reference_call[1] == ("hf",)
-        assert reference_call[2] == {"trust_remote_code": True, "torch_dtype": torch.bfloat16}
+        assert reference_call[2] == {
+            "trust_remote_code": True,
+            "torch_dtype": torch.bfloat16,
+            "revision": "0123456789abcdef",  # pragma: allowlist secret
+        }
 
         bridge_call = next(call for call in calls if call[0] == "from_auto_config")
-        assert bridge_call[1] == (str(checkpoint_path), "hf")
+        assert bridge_call[1] == (str(checkpoint_path), "hf@0123456789abcdef")  # pragma: allowlist secret
         assert bridge_call[2] == {"trust_remote_code": True}
         assert FakeStateBackedBridge.hf_pretrained is reference_pretrained
         assert reference_pretrained.config is checkpoint_config
@@ -406,6 +478,8 @@ class TestRoundtrip:
 
         provider_call = next(call for call in calls if call[0] == "to_megatron_provider")
         assert provider_call[2] == {"load_weights": True}
+        initialize_call = next(call for call in calls if call[0] == "initialize_model_parallel")
+        assert initialize_call[2] == {"seed": 0, "create_gloo_process_groups": False}
         assert verified_models == [["megatron-model"]]
         assert initialized_timeouts == [45]
 

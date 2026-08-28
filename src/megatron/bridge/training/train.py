@@ -428,6 +428,13 @@ def train(
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
+            handle_profiling_stop(
+                config.profiling,
+                global_state.train_state.step,
+                torch.distributed.get_rank(),
+                prof,
+                nsys_nvtx_context,
+            )
             continue
 
         # Capture CUDA Graphs after warmup.
