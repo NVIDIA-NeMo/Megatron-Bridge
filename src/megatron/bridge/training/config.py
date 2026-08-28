@@ -126,6 +126,14 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    use_precision_aware_optimizer_no_fp8_or_ds_fp8: bool = False
+    """Derived MCore optimizer mode, recomputed during ``finalize()``.
+
+    Keeping this as an init field preserves the value when MCore derives
+    per-module configs with :func:`dataclasses.replace` before constructing a
+    distributed optimizer.
+    """
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
