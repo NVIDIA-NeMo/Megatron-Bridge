@@ -11,7 +11,7 @@ overrides = [
     { name = "cachetools", specifier = ">=5.0.0" },
     { name = "cryptography", specifier = ">=43.0.0,<47" },
     { name = "emerging-optimizers", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=b309e2f01cda75dc96a6dc1a2355a7b3b64b5e16" },
-    { name = "fast-hadamard-transform", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v1.1.0" },
+    { name = "fast-hadamard-transform", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca" },
     { name = "fastapi", specifier = "<0.139.2" },
     { name = "imageio", marker = "sys_platform == 'never'" },
     { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
@@ -999,7 +999,7 @@ wheels = [
 [[package]]
 name = "fast-hadamard-transform"
 version = "1.0.4.post1"
-source = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v1.1.0#1cc807efbd6cc001df359822d60bf6052dd66859" }
+source = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca#f134af63deb2df17e1171a9ec1ea4a7d8604d5ca" }
 dependencies = [
     { name = "ninja" },
     { name = "packaging" },
