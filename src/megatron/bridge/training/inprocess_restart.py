@@ -109,13 +109,17 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
                     async_calls_queue.close(abort=True)
                     global_state._async_calls_queue = None
 
-                from megatron.core.dist_checkpointing.strategies import filesystem_async
+                from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+                from nvidia_resiliency_ext.checkpointing.async_ckpt import (
+                    filesystem_async as nvrx_filesystem_async,
+                )
 
-                if filesystem_async._results_queue is not None:
-                    try:
-                        filesystem_async._results_queue._manager.shutdown()
-                    finally:
-                        filesystem_async._results_queue = None
+                for filesystem_async in (mcore_filesystem_async, nvrx_filesystem_async):
+                    if filesystem_async._results_queue is not None:
+                        try:
+                            filesystem_async._results_queue._manager.shutdown()
+                        finally:
+                            filesystem_async._results_queue = None
 
             except Exception:
                 pass
