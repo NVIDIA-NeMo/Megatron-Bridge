@@ -100,6 +100,7 @@ def _apply_qwen35_moe_config(provider: GPTModelProvider, text_config) -> None:
     provider.moe_router_pre_softmax = False
     provider.moe_token_dispatcher_type = "alltoall"
     provider.moe_permute_fusion = True
+    provider.moe_router_dtype = "fp32"
 
 
 def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, transpose_on_export=False):
