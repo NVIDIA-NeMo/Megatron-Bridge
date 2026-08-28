@@ -24,3 +24,14 @@ COMMON_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
     # Run NCCL work on its high-priority stream for every measured workload.
     "TORCH_NCCL_HIGH_PRIORITY": 1,
 }
+
+# HybridEP tuning is inert for other dispatchers. NCCL EP recipes omit these
+# names so their dumped launch environments describe only active tuning.
+HYBRID_EP_ENV_NAMES: frozenset[str] = frozenset(
+    {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+)

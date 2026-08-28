@@ -16,8 +16,13 @@ import importlib
 
 import pytest
 
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config,
+    nemotron_3_ultra_pretrain_288gpu_b200_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_288gpu_b300_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_288gpu_gb200_fp8mx_ncclep_config,
+    nemotron_3_ultra_pretrain_288gpu_gb300_fp8mx_ncclep_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     NEMOTRON_3_ULTRA_TOKENIZER_NAME,
@@ -104,11 +109,141 @@ def test_vr200_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.train.micro_batch_size == 1
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 4
+    assert cfg.ddp.outer_dp_sharding_strategy == "optim"
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("recipe_factory", "tensor_parallel_size", "sequence_parallel"),
+    [
+        (nemotron_3_ultra_pretrain_288gpu_b200_fp8mx_ncclep_config, 2, True),
+        (nemotron_3_ultra_pretrain_288gpu_b300_fp8mx_ncclep_config, 1, False),
+    ],
+    ids=["b200", "b300"],
+)
+def test_b_series_ncclep_perf_recipes_use_ep8(
+    recipe_factory,
+    tensor_parallel_size: int,
+    sequence_parallel: bool,
+) -> None:
+    """B-series Ultra recipes trade EP64 for an evenly divided PP9/EP8 layout."""
+    cfg = recipe_factory()
+
+    assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
+    assert cfg.model.pipeline_model_parallel_size == 9
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.sequence_parallel is sequence_parallel
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_ncclep_zero_copy is False
+    assert cfg.model.moe_grouped_gemm is True
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
+
+    assert cfg.model.fine_grained_activation_offloading is False
+    assert cfg.model.offload_modules == []
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads is None
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.05
+    assert cfg.model.moe_paged_stash is True
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe_act"]
+
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert cfg.model.cuda_graph_impl == "none"
+
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.num_distributed_optimizer_instances == 4
+    assert cfg.ddp.outer_dp_sharding_strategy == "optim"
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("recipe_factory", "tensor_parallel_size", "sequence_parallel"),
+    [
+        (nemotron_3_ultra_pretrain_288gpu_gb200_fp8mx_ncclep_config, 2, True),
+        (nemotron_3_ultra_pretrain_288gpu_gb300_fp8mx_ncclep_config, 1, False),
+    ],
+    ids=["gb200", "gb300"],
+)
+def test_gb_series_ncclep_perf_recipes_use_ep8(
+    recipe_factory,
+    tensor_parallel_size: int,
+    sequence_parallel: bool,
+) -> None:
+    """GB-series NCCL-EP recipes use the PP9/EP8 Ultra execution topology."""
+    cfg = recipe_factory()
+
+    assert cfg.model.tensor_model_parallel_size == tensor_parallel_size
+    assert cfg.model.pipeline_model_parallel_size == 9
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.sequence_parallel is sequence_parallel
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_ncclep_zero_copy is False
+    assert cfg.model.moe_grouped_gemm is True
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
+
+    assert cfg.model.fine_grained_activation_offloading is False
+    assert cfg.model.offload_modules == []
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads is None
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.05
+    assert cfg.model.moe_paged_stash is True
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe_act"]
+
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert cfg.model.cuda_graph_impl == "none"
+
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.num_distributed_optimizer_instances == 4
+    assert cfg.ddp.outer_dp_sharding_strategy == "optim"
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+    assert "NVTE_CPU_OFFLOAD_V1" not in cfg.env_vars
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
 
 
 @pytest.mark.unit

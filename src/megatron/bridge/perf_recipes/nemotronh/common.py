@@ -62,6 +62,36 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
     return cfg
 
 
+def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
+    """Enable static-shape NCCL EP for an MXFP8 recipe."""
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_ncclep_zero_copy = False
+
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
+    # Ultra keeps two MTP layers, while MCore A2A overlap supports at most one.
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.comm_overlap.delay_wgrad_compute = False
+
+    # Paged stash owns the expert activation spill path for this dispatcher.
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = []
+    cfg.model.fine_grained_offloading_max_inflight_offloads = None
+    cfg.model.moe_expert_rank_capacity_factor = 1.05
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+    cfg.model.moe_router_padding_for_quantization = True
+
+
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
     cfg = nemotron_3_super_bf16_with_nvfp4_mixed()

@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
+    _enable_ncclep_mxfp8,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     load_quantization_recipe,
@@ -304,6 +305,41 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
         # op fuser + fused weighted squared-ReLU with moe_act activation recompute
         # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_288gpu_gb200_fp8mx_ncclep_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 288× GB200, MXFP8, NCCL EP=8, Megatron-FSDP (HSDP).
+
+    Uses TP2 / PP9 / CP1 / EP8 / ETP1 / DP16 / EDP4, GBS 256 / MBS 1, and
+    sequence length 8192. PP9 evenly partitions Ultra's 108 layers and keeps
+    expert parallelism within eight ranks.
+    """
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config()
+    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=288)
+    cfg.model.pipeline_model_parallel_size = 9
+    cfg.model.expert_model_parallel_size = 8
+    _enable_ncclep_mxfp8(cfg)
+
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
 

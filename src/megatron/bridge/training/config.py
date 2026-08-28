@@ -1670,7 +1670,7 @@ class ConfigContainer(Container):
                     f"Sequence length in dataset config: {data_seq_length}"
                 )
 
-        # Validate DeepEP or HybridEP is supported for the current GPU architecture
+        # Validate the selected flex dispatcher backend for the current GPU architecture
         if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:
