@@ -916,9 +916,19 @@ class TestMimoOptimizerLoadCompat:
         opt_a = MagicMock()
         opt_b = MagicMock()
 
+        def process_group(*, rank: int, size: int = 1) -> SimpleNamespace:
+            return SimpleNamespace(rank=lambda: rank, size=lambda: size)
+
+        pg_collection = SimpleNamespace(
+            tp=process_group(rank=0),
+            gtp_remat=process_group(rank=0),
+            pp=process_group(rank=0),
+            dp_cp=process_group(rank=0),
+        )
+
         module_infos = {
-            "language": ModuleOptimizerInfo(optimizer=opt_a, grid=Mock(), pg_collection=Mock(), is_active=True),
-            "vision": ModuleOptimizerInfo(optimizer=opt_b, grid=Mock(), pg_collection=Mock(), is_active=True),
+            "language": ModuleOptimizerInfo(optimizer=opt_a, grid=Mock(), pg_collection=pg_collection, is_active=True),
+            "vision": ModuleOptimizerInfo(optimizer=opt_b, grid=Mock(), pg_collection=pg_collection, is_active=True),
         }
         config = MagicMock()
         return MimoOptimizer(module_infos, config), opt_a, opt_b
