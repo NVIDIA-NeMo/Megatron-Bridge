@@ -126,6 +126,9 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    _finalized: bool = field(default=False, init=False, repr=False)
+    """Whether the deferred MCore optimizer finalization has run."""
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -139,7 +142,10 @@ class OptimizerConfig(MCoreOptimizerConfig):
         This method calls the original Megatron Core OptimizerConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
+        if self._finalized:
+            return
         super().__post_init__()
+        self._finalized = True
 
 
 @dataclass(kw_only=True)

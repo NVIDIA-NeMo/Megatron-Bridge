@@ -43,6 +43,24 @@ def _make_megatron_mimo_infra(*, num_active_pgs: int = 1) -> Mock:
     return infra
 
 
+def test_megatron_mimo_runtime_config_update_finalizes_optimizer():
+    from megatron.bridge.training.config import OptimizerConfig, megatron_mimo_runtime_config_update
+
+    cfg = MagicMock()
+    cfg.env_vars = {}
+    cfg.train.num_epochs = None
+    cfg.train.global_batch_size = 1
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_global_batch_size = 1
+    cfg.validation.eval_micro_batch_size = 1
+    cfg.profiling = None
+    cfg.optimizer = OptimizerConfig(use_distributed_optimizer=True)
+
+    megatron_mimo_runtime_config_update(cfg)
+
+    assert cfg.optimizer.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
+
+
 def test_megatron_mimo_runtime_config_update_resolves_eval_batch_size_defaults():
     from megatron.bridge.training.config import megatron_mimo_runtime_config_update
 
