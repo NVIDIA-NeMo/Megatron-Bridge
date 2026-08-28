@@ -109,6 +109,22 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
 
+# FlashMLA setup.py initializes CUTLASS during metadata/build. Materialize the audited,
+# immutable submodule in the source cache so package installation is network-free.
+ARG FLASH_MLA_REF=b7643bd54521f563b839b98289b5cd048c062ba2
+ARG FLASH_MLA_CUTLASS_REF=147f5673d0c1c3dcf66f78d677fd647e4a020219
+RUN git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/FlashMLA.git /opt/flash-mla && \
+    git -C /opt/flash-mla fetch --depth 1 origin "$FLASH_MLA_REF" && \
+    git -C /opt/flash-mla checkout --detach FETCH_HEAD && \
+    test "$(git -C /opt/flash-mla rev-parse HEAD)" = "$FLASH_MLA_REF" && \
+    git -C /opt/flash-mla/csrc/cutlass init && \
+    git -C /opt/flash-mla/csrc/cutlass remote add origin https://github.com/NVIDIA/cutlass.git && \
+    git -C /opt/flash-mla/csrc/cutlass fetch --depth 1 origin "$FLASH_MLA_CUTLASS_REF" && \
+    git -C /opt/flash-mla/csrc/cutlass checkout --detach FETCH_HEAD && \
+    test "$(git -C /opt/flash-mla/csrc/cutlass rev-parse HEAD)" = "$FLASH_MLA_CUTLASS_REF" && \
+    git config --global url.file:///opt/flash-mla/.insteadOf https://github.com/deepseek-ai/FlashMLA && \
+    git config --global url.file:///opt/flash-mla/csrc/cutlass/.insteadOf https://github.com/NVIDIA/cutlass.git
+
 ARG BASELINE_MCORE_REF
 
 # Resolve the immutable baseline before copying the mutable dispatched checkout.
