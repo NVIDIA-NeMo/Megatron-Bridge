@@ -26,6 +26,7 @@ from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
 from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
@@ -275,6 +276,31 @@ def test_vision_recompute_is_disabled_by_default():
     assert vision_config.recompute_granularity is None
     assert vision_config.recompute_method is None
     assert vision_config.recompute_num_layers is None
+
+
+def test_vision_configs_do_not_inherit_language_pipeline_partitioning():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+    )
+    provider.pipeline_model_parallel_size = 2
+    provider.virtual_pipeline_model_parallel_size = 2
+    provider.num_layers_in_first_pipeline_stage = 38
+    provider.num_layers_in_last_pipeline_stage = 50
+    provider.account_for_embedding_in_pipeline_split = True
+    provider.account_for_loss_in_pipeline_split = True
+
+    vision_config = provider._build_vision_config(provider)
+    vision_projection_config = provider._build_vision_projection_config(provider)
+
+    assert get_num_layers_to_build(vision_config, pp_rank=0) == 32
+    for vision_config in (vision_config, vision_projection_config):
+        assert vision_config.pipeline_model_parallel_size == 1
+        assert vision_config.virtual_pipeline_model_parallel_size is None
+        assert vision_config.num_layers_in_first_pipeline_stage is None
+        assert vision_config.num_layers_in_last_pipeline_stage is None
+        assert vision_config.pipeline_model_parallel_layout is None
+        assert vision_config.account_for_embedding_in_pipeline_split is False
+        assert vision_config.account_for_loss_in_pipeline_split is False
 
 
 def test_vision_recompute_inherits_selective_model_config_when_enabled():

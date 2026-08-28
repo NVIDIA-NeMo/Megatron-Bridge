@@ -98,60 +98,37 @@ def _nemotron_35_super_vl_base() -> ConfigContainer:
     return cfg
 
 
-def _apply_performance_measurement_policy(cfg: ConfigContainer) -> ConfigContainer:
-    """Apply fixed-shape throughput measurement settings without a perf-recipe dependency."""
-    cfg.train.train_iters = 50
-    cfg.train.eval_iters = 0
-    cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 100
-    cfg.dataset.pad_to_max_length = True
-    cfg.tokenizer.use_tokenizer_vocab_size = False
-
-    cfg.checkpoint.save = None
-    cfg.checkpoint.load = None
-    cfg.checkpoint.async_save = False
-    cfg.logger.log_interval = 1
-    cfg.logger.tensorboard_dir = None
-
-    cfg.ddp.check_for_nan_in_grad = False
-    cfg.ddp.check_for_large_grads = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.rerun_state_machine.check_for_nan_in_loss = False
-    cfg.optimizer.lr = 4.5e-4
-    cfg.optimizer.min_lr = 4.5e-6
-    cfg.optimizer.adam_beta1 = 0.9
-    cfg.optimizer.adam_beta2 = 0.95
-    cfg.optimizer.adam_eps = 1e-8
-    cfg.optimizer.weight_decay = 0.1
-    cfg.scheduler.start_weight_decay = 0.1
-    cfg.scheduler.end_weight_decay = 0.1
-    cfg.scheduler.lr_decay_style = "WSD"
-    cfg.scheduler.lr_decay_iters = cfg.train.train_iters
-    cfg.scheduler.lr_warmup_iters = 10
-
-    cfg.model.apply_rope_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
-    cfg.model.use_transformer_engine_op_fuser = False
-    cfg.model.use_te_rng_tracker = False
-    cfg.rng.te_rng_tracker = False
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    return cfg
-
-
 def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
-    """Return the 64-H100 BF16 performance pretraining config for Super VL.
+    """Return the 64-H100 BF16 pretraining config for Super VL.
 
     The language stack starts from the Nemotron 3 Super H100 recipe, then uses
     the measured Super-VL pipeline balance, selective recompute, and HybridEP
-    policy needed by the trainable vision stack. All present model stacks
-    remain trainable.
+    policy needed by the trainable vision stack. It retains natural expert
+    routing, numerical guards, and checkpointing for real-data training. All
+    present model stacks remain trainable.
 
     Returns:
-        The Super-VL performance pretraining configuration.
+        The Super-VL pretraining configuration.
     """
     cfg = nemotron_35_super_vl_sft_64gpu_h100_bf16_config()
-    cfg.model.moe_router_force_load_balancing = True
-    _apply_performance_measurement_policy(cfg)
+    cfg.train.train_iters = 100
+    cfg.train.eval_iters = 0
+    cfg.dataset.do_validation = False
+    cfg.dataset.pad_to_max_length = True
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = cfg.train.train_iters
+    cfg.checkpoint.load = None
+    cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.async_save = False
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
+    cfg.logger.log_device_memory_used = True
+    cfg.logger.tensorboard_dir = None
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.check_for_large_grads = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -173,8 +150,12 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.vision_recompute_method = None
     cfg.model.vision_recompute_num_layers = None
 
+    # Fixed-width MBS1 inputs are equal across DP ranks, so HybridEP can use
+    # its dropless eager path without per-layer uneven-input padding. Do not
+    # inherit the language performance recipe's expert-capacity token drops.
     cfg.model.moe_expert_capacity_factor = None
     cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
     cfg.model.moe_hybridep_assume_equal_dispatch_inputs = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.ddp.overlap_param_gather = False
@@ -189,6 +170,12 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.overlap_p2p_comm = False
     cfg.model.batch_p2p_comm = True
     cfg.model.batch_p2p_sync = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.apply_rope_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.use_transformer_engine_op_fuser = False
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
 
     cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = 0
     cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = 0

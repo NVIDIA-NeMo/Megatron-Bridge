@@ -291,6 +291,12 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         """
         vision_cfg = super()._build_vision_config(language_cfg)
         vision_cfg.pipeline_model_parallel_size = 1
+        vision_cfg.virtual_pipeline_model_parallel_size = None
+        vision_cfg.num_layers_in_first_pipeline_stage = None
+        vision_cfg.num_layers_in_last_pipeline_stage = None
+        vision_cfg.pipeline_model_parallel_layout = None
+        vision_cfg.account_for_embedding_in_pipeline_split = False
+        vision_cfg.account_for_loss_in_pipeline_split = False
         if self.vision_final_layernorm:
             # MCore places a final norm in the vision TransformerBlock when
             # mtp_num_layers is non-None. Nemotron 3.5 Super VL was trained
@@ -308,6 +314,12 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         vision_proj_cfg = super()._build_vision_projection_config(language_cfg)
         vision_proj_cfg.activation_func = squared_relu
         vision_proj_cfg.pipeline_model_parallel_size = 1
+        vision_proj_cfg.virtual_pipeline_model_parallel_size = None
+        vision_proj_cfg.num_layers_in_first_pipeline_stage = None
+        vision_proj_cfg.num_layers_in_last_pipeline_stage = None
+        vision_proj_cfg.pipeline_model_parallel_layout = None
+        vision_proj_cfg.account_for_embedding_in_pipeline_split = False
+        vision_proj_cfg.account_for_loss_in_pipeline_split = False
         return vision_proj_cfg
 
     def _build_sound_projection_config(self, language_cfg):

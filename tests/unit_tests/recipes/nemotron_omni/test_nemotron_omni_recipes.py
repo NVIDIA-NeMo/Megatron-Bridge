@@ -37,6 +37,9 @@ _super_vl_recipe_module = importlib.import_module("megatron.bridge.recipes.nemot
 _super_vl_h100_recipe_module = importlib.import_module(
     "megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl"
 )
+_super_vl_gb200_recipe_module = importlib.import_module(
+    "megatron.bridge.recipes.nemotron_omni.gb200.nemotron_35_super_vl"
+)
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 _SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
@@ -345,7 +348,7 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
 
 
-def test_super_vl_pretrain_recipe_uses_tuned_h100_policy(fake_processor):
+def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor):
     cfg = _build_config(
         _super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
         fake_processor,
@@ -375,7 +378,7 @@ def test_super_vl_pretrain_recipe_uses_tuned_h100_policy(fake_processor):
     assert cfg.model.sequence_parallel is False
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.moe_router_force_load_balancing is True
+    assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_expert_capacity_factor is None
     assert cfg.model.moe_pad_expert_input_to_capacity is False
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
@@ -410,21 +413,20 @@ def test_super_vl_pretrain_recipe_uses_tuned_h100_policy(fake_processor):
     assert cfg.dataset.seq_length == 4096
     assert cfg.train.global_batch_size == 1280
     assert cfg.train.micro_batch_size == 1
-    assert cfg.train.train_iters == 50
+    assert cfg.train.train_iters == 100
     assert cfg.train.eval_iters == 0
+    assert cfg.dataset.do_validation is False
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
-    assert cfg.checkpoint.save is None
+    assert cfg.checkpoint.save is not None
     assert cfg.checkpoint.load is None
     assert cfg.checkpoint.async_save is False
-    assert cfg.ddp.check_for_nan_in_grad is False
-    assert cfg.rerun_state_machine.check_for_nan_in_loss is False
-    assert cfg.optimizer.lr == 4.5e-4
-    assert cfg.optimizer.min_lr == 4.5e-6
-    assert cfg.optimizer.adam_beta1 == 0.9
-    assert cfg.optimizer.adam_beta2 == 0.95
-    assert cfg.optimizer.adam_eps == 1e-8
-    assert cfg.optimizer.weight_decay == 0.1
-    assert cfg.scheduler.lr_decay_style == "WSD"
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.optimizer.lr == 6e-6
+    assert cfg.optimizer.min_lr == 6e-7
+    assert cfg.scheduler.lr_decay_style == "cosine"
     assert cfg.mixed_precision.bf16 is True
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.env_vars == {
@@ -441,3 +443,55 @@ def test_super_vl_pretrain_recipe_uses_tuned_h100_policy(fake_processor):
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
     }
+
+
+def test_super_vl_pretrain_recipe_uses_gb200_nvl72_policy(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.dataset.pad_to_max_length is True
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
+
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+    assert cfg.model.moe_hybridep_assume_equal_dispatch_inputs is True
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.micro_batch_size == 1
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.checkpoint.async_save is True
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
