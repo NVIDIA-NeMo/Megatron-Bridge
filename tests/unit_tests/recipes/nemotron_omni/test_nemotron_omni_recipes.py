@@ -467,6 +467,8 @@ def test_super_vl_pretrain_recipe_uses_gb200_nvl72_policy(fake_processor):
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
     assert cfg.model.sequence_parallel is True
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_expert_capacity_factor is None

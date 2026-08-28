@@ -28,9 +28,11 @@ def nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Return the 64-GB200 BF16 pretraining config for Super VL.
 
     The recipe preserves the H100 data, objective, optimizer schedule, natural
-    routing, and numerical-safety contract. GB200-specific changes are limited
-    to the parallel layout, full-precision optimizer state, communication
-    overlap, scoped CUDA graphs, and the single-NVL72 HybridEP environment.
+    routing, and numerical-safety contract. It uses the 8192-token workload
+    shape of the corresponding Nemotron 3 Super GB200 recipe. Other
+    GB200-specific changes are limited to the parallel layout, full-precision
+    optimizer state, communication overlap, scoped CUDA graphs, and the
+    single-NVL72 HybridEP environment.
 
     Returns:
         The Super-VL GB200 pretraining configuration.
@@ -48,6 +50,8 @@ def nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
+    cfg.model.seq_length = 8192
+    cfg.dataset.seq_length = 8192
     cfg.model.overlap_p2p_comm = False
     cfg.model.batch_p2p_comm = False
     cfg.model.batch_p2p_sync = True
