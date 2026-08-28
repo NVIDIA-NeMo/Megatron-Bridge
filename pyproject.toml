@@ -172,7 +172,7 @@ requires-dist = ["torch", "packaging", "ninja"]
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
-flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
+flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "b7643bd54521f563b839b98289b5cd048c062ba2" }
 
 [project.optional-dependencies]
 recipes = [
