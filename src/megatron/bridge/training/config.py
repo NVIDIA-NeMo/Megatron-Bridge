@@ -782,8 +782,8 @@ class ProfilingConfig(MTrainProfilingConfig):
         )
         assert self.profile_step_start >= 0, f"profile_step_start must be >= 0, got {self.profile_step_start}"
         assert self.profile_step_end >= 0, f"profile_step_end must be >= 0, got {self.profile_step_end}"
-        assert self.profile_step_end >= self.profile_step_start, (
-            f"profile_step_end ({self.profile_step_end}) must be >= profile_step_start ({self.profile_step_start})"
+        assert self.profile_step_end > self.profile_step_start, (
+            f"profile_step_end ({self.profile_step_end}) must be > profile_step_start ({self.profile_step_start})"
         )
 
 
@@ -1422,6 +1422,17 @@ class ConfigContainer(Container):
         validate_cuda_graph_configuration(self.model)
         if hasattr(self.model, "finalize"):
             self.model.finalize()
+
+        from megatron.bridge.training.gtp import is_gtp_remat_active
+
+        if is_gtp_remat_active(self.model):
+            if self.dist.use_decentralized_pg:
+                raise ValueError(
+                    "GTP is not supported with dist.use_decentralized_pg=True. "
+                    "Set dist.use_decentralized_pg=False to use the standard MCore process-group runtime."
+                )
+            if self.ddp.average_in_collective:
+                raise ValueError("GTP requires ddp.average_in_collective=False.")
 
         self.logger.finalize()
         self.train.finalize()
@@ -2067,7 +2078,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     Keeps (safe for MegatronMIMO):
     - Recipe environment variable defaults
     - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
-    - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
+    - Sub-config finalization (dataset, optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
     - Deterministic mode validation
 
@@ -2089,6 +2100,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     # Finalize sub-configs that don't depend on model construction order.
     # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
     # config and is called inside setup_megatron_mimo() right before build_infra().
+    if hasattr(cfg.dataset, "finalize"):
+        cfg.dataset.finalize()
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
     if hasattr(cfg.ddp, "finalize"):
