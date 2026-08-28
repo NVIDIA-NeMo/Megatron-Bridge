@@ -2114,6 +2114,8 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
 
     from megatron.core.models.multimodal.llava_model import LLaVAModel
 
+    from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
+
     from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
     processor = _DynamicNemotronOmniProcessor()
@@ -2153,7 +2155,7 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        is_packed_dynamic_res=True,
+        **({"is_packed_dynamic_res": True} if HAS_MCORE_DEV_BRANCH else {}),
     )
 
     assert final_embedding.shape == (32, 1, hidden_size)
@@ -2500,6 +2502,8 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
 
     from megatron.core.models.multimodal.llava_model import LLaVAModel
 
+    from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
+
     processor = _DynamicNemotronOmniProcessor()
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
 
@@ -2537,7 +2541,7 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        is_packed_dynamic_res=True,
+        **({"is_packed_dynamic_res": True} if HAS_MCORE_DEV_BRANCH else {}),
     )
 
     assert final_embedding.shape == (32, 3, hidden_size)
