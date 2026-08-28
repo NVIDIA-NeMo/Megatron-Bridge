@@ -21,6 +21,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
+
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
     get_master_addr_safe,
@@ -75,20 +77,26 @@ class TestGetRankSafe:
     @patch("torch.distributed.is_initialized")
     @patch.dict(os.environ, {"RANK": "invalid"}, clear=True)
     def test_invalid_rank_env_var(self, mock_is_initialized):
-        """Test get_rank_safe propagates an actionable error when RANK is malformed."""
+        """Test get_rank_safe handles malformed RANK per the active MCore behavior."""
         mock_is_initialized.return_value = False
 
-        with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
-            get_rank_safe()
+        if HAS_MCORE_DEV_BRANCH:
+            assert get_rank_safe() == 0
+        else:
+            with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
+                get_rank_safe()
 
     @patch("torch.distributed.is_initialized")
     @patch.dict(os.environ, {"SLURM_NTASKS": "8", "SLURM_PROCID": "invalid"}, clear=True)
     def test_invalid_slurm_rank_env_var(self, mock_is_initialized):
-        """Test get_rank_safe propagates an actionable error when SLURM_PROCID is malformed."""
+        """Test get_rank_safe handles malformed SLURM_PROCID per the active MCore behavior."""
         mock_is_initialized.return_value = False
 
-        with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
-            get_rank_safe()
+        if HAS_MCORE_DEV_BRANCH:
+            assert get_rank_safe() == 0
+        else:
+            with pytest.raises(ValueError, match="invalid literal for int.*invalid"):
+                get_rank_safe()
 
 
 class TestGetWorldSizeSafe:
