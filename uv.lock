@@ -40,6 +40,10 @@ name = "flash-mla"
 version = "1.0.0+b7643bd"
 
 [[manifest.dependency-metadata]]
+name = "torch-memory-saver"
+version = "0.0.10b1"
+
+[[manifest.dependency-metadata]]
 name = "transformer-engine"
 version = "2.14.0+f031cf87"
 requires-dist = ["einops", "importlib-metadata", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic", "torch"]
