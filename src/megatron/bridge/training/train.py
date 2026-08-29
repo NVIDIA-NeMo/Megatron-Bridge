@@ -429,6 +429,8 @@ def train(
 
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
+            if global_state.train_state.step == start_iteration + 1:
+                start_iteration = global_state.train_state.step
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
             handle_profiling_stop(
                 config.profiling,
