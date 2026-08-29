@@ -180,6 +180,9 @@ requires-dist = []
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "b7643bd54521f563b839b98289b5cd048c062ba2" }
+# Keep the executable native dependency source explicit at the exact revision
+# selected by the frozen MCore main pin.
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "4329ff84bfbdaa778a33cba02a15fb0807c64689" }
 
 [project.optional-dependencies]
 recipes = [
