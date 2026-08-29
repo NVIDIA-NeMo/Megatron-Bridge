@@ -127,21 +127,27 @@ RUN git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/Fl
     git config --global url.file:///opt/flash-mla/csrc/cutlass/.insteadOf https://github.com/NVIDIA/cutlass.git
 
 # MCore pins native packages to exact source commits. Prefetch both lane revisions, verify
-# their immutable trees, and force uv's clones through these audited local caches.
+# the dev FHT commit is carried by v1.1.0 and the dev TE commit is the v2.14 release target,
+# then force uv's clones through these audited local caches.
 ARG FAST_HADAMARD_TRANSFORM_MAIN_REF=1cc807efbd6cc001df359822d60bf6052dd66859
 ARG FAST_HADAMARD_TRANSFORM_DEV_REF=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca
 ARG TRANSFORMER_ENGINE_MAIN_REF=4329ff84bfbdaa778a33cba02a15fb0807c64689
 ARG TRANSFORMER_ENGINE_DEV_REF=f031cf87bd054c7558b887df7bed93975456667f
 RUN git clone --filter=blob:none --no-checkout https://github.com/Dao-AILab/fast-hadamard-transform.git /opt/fast-hadamard-transform && \
-    git -C /opt/fast-hadamard-transform fetch --depth 1 origin \
-        "$FAST_HADAMARD_TRANSFORM_MAIN_REF" "$FAST_HADAMARD_TRANSFORM_DEV_REF" && \
-    git -C /opt/fast-hadamard-transform cat-file -e "$FAST_HADAMARD_TRANSFORM_MAIN_REF^{commit}" && \
-    git -C /opt/fast-hadamard-transform cat-file -e "$FAST_HADAMARD_TRANSFORM_DEV_REF^{commit}" && \
+    git -C /opt/fast-hadamard-transform fetch --depth 3 origin \
+        "$FAST_HADAMARD_TRANSFORM_MAIN_REF" "$FAST_HADAMARD_TRANSFORM_DEV_REF" \
+        refs/tags/v1.1.0:refs/tags/v1.1.0 && \
+    test "$(git -C /opt/fast-hadamard-transform rev-parse refs/tags/v1.1.0^{commit})" = \
+        "$FAST_HADAMARD_TRANSFORM_MAIN_REF" && \
+    git -C /opt/fast-hadamard-transform merge-base --is-ancestor \
+        "$FAST_HADAMARD_TRANSFORM_DEV_REF" "$FAST_HADAMARD_TRANSFORM_MAIN_REF" && \
     git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/TransformerEngine.git /opt/transformer-engine && \
     git -C /opt/transformer-engine fetch --depth 1 origin \
-        "$TRANSFORMER_ENGINE_MAIN_REF" "$TRANSFORMER_ENGINE_DEV_REF" && \
+        "$TRANSFORMER_ENGINE_MAIN_REF" "$TRANSFORMER_ENGINE_DEV_REF" \
+        refs/tags/v2.14:refs/tags/v2.14 && \
     git -C /opt/transformer-engine cat-file -e "$TRANSFORMER_ENGINE_MAIN_REF^{commit}" && \
-    git -C /opt/transformer-engine cat-file -e "$TRANSFORMER_ENGINE_DEV_REF^{commit}" && \
+    test "$(git -C /opt/transformer-engine rev-parse refs/tags/v2.14^{commit})" = \
+        "$TRANSFORMER_ENGINE_DEV_REF" && \
     test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_MAIN_REF" 3rdparty/cudnn-frontend | awk '{print $3}')" = \
         "e46d7082450264ce05cf898f8740011c4896f817" && \
     test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_DEV_REF" 3rdparty/cudnn-frontend | awk '{print $3}')" = \
