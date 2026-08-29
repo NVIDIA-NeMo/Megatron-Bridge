@@ -71,18 +71,18 @@ class TestMLASelfAttentionWithoutQueryNorm:
     def test_no_query_lora_drops_the_fused_query_norm(self):
         """With q_lora_rank=None, HF has no query norm, so linear_q_proj must stay unfused."""
         resolved = _resolve(q_lora_rank=None)
-        assert "LayerNorm" not in resolved["linear_q_proj"].__name__
+        assert "LayerNorm" not in resolved["linear_q_proj"].module.__name__
 
     def test_no_query_lora_keeps_the_kv_norm(self):
         """kv_a_layernorm exists in every DeepSeek checkpoint and must still be built."""
         resolved = _resolve(q_lora_rank=None)
-        assert "LayerNorm" in resolved["linear_kv_up_proj"].__name__
+        assert "LayerNorm" in resolved["linear_kv_up_proj"].module.__name__
 
     def test_query_lora_is_untouched(self):
         """With a query LoRA the norm belongs on linear_q_up_proj and maps to q_a_layernorm."""
         resolved = _resolve(q_lora_rank=1536)
-        assert "LayerNorm" in resolved["linear_q_up_proj"].__name__
-        assert "LayerNorm" in resolved["linear_kv_up_proj"].__name__
+        assert "LayerNorm" in resolved["linear_q_up_proj"].module.__name__
+        assert "LayerNorm" in resolved["linear_kv_up_proj"].module.__name__
 
     @pytest.mark.parametrize("q_lora_rank", [None, 1536])
     def test_standalone_norms_stay_disabled(self, q_lora_rank):
