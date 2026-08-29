@@ -38,6 +38,14 @@ class TestQwenVLInferenceWrapper:
             wrapper.inference_params = None
             return wrapper
 
+    def test_multimodal_prompt_config_uses_qwen_visual_tokens(self):
+        prompt_config = QwenVLInferenceWrapper.multimodal_prompt_config
+
+        assert prompt_config.image_spec.model_token == "<|image_pad|>"
+        assert prompt_config.image_spec.prefix == "<|vision_start|>"
+        assert prompt_config.image_spec.suffix == "<|vision_end|>"
+        assert prompt_config.video_spec.model_token == "<|video_pad|>"
+
     def test_prep_inference_input(self, wrapper):
         prompts_tokens = torch.tensor([[1, 2, 3]])
         pixel_values = torch.randn(1, 3, 224, 224)

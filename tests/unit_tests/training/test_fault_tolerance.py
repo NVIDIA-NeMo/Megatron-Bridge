@@ -16,6 +16,7 @@ import json
 from unittest.mock import MagicMock, call, mock_open, patch
 
 import pytest
+from nvidia_resiliency_ext.fault_tolerance import RankMonitorClientError
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.state import FaultToleranceState, GlobalState
@@ -452,6 +453,45 @@ class TestShutdown:
             mock_update.assert_called_once_with(mock_global_state, is_closing_ft=True)
             mock_rank_monitor_client.shutdown_workload_monitoring.assert_called_once()
             assert mock_global_state.rank_monitor_client is None
+
+    def test_shutdown_closes_setup_section_for_completed_resume(self):
+        """Test a completed resume can calculate setup timeouts during shutdown."""
+        mock_global_state = MagicMock(spec=GlobalState)
+        mock_ft_state = MagicMock(spec=FaultToleranceState)
+        mock_ft_state.is_setup_section_open = True
+        mock_ft_state.is_calculating_timeouts = True
+        mock_ft_state.is_persistent_chkpt_loaded = True
+        mock_ft_state.seen_tr_iters_cnt = 0
+        mock_ft_state.seen_checkpoints_cnt = 0
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        mock_rank_monitor_client = MagicMock()
+        mock_rank_monitor_client.section_timeouts = {"setup": 600}
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        def close_section(section):
+            assert section == "setup"
+            mock_ft_state.is_setup_section_open = False
+
+        def calculate_timeouts(*, selected_sections, calc_out_of_section):
+            if mock_ft_state.is_setup_section_open:
+                raise RankMonitorClientError("Not enough data to compute timeouts.")
+            assert selected_sections == ["setup"]
+            assert calc_out_of_section is False
+
+        mock_rank_monitor_client.end_section.side_effect = close_section
+        mock_rank_monitor_client.calculate_and_set_section_timeouts.side_effect = calculate_timeouts
+
+        with (
+            patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=1),
+            patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
+        ):
+            fault_tolerance.shutdown(mock_global_state)
+
+        mock_rank_monitor_client.end_section.assert_called_once_with("setup")
+        mock_rank_monitor_client.shutdown_workload_monitoring.assert_called_once_with()
+        assert mock_ft_state.is_setup_section_open is False
+        assert mock_global_state.rank_monitor_client is None
 
     def test_shutdown_no_client(self):
         """Test shutdown when no rank monitor client."""
