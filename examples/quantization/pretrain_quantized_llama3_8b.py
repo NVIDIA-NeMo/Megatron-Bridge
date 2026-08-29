@@ -196,8 +196,9 @@ def main() -> None:
     # Check for ModelOpt state
     checkpoint_to_check = cfg.checkpoint.pretrained_checkpoint or cfg.checkpoint.load
     ckpt_step = None if cfg.checkpoint.pretrained_checkpoint else cfg.checkpoint.ckpt_step
-    if checkpoint_to_check and has_modelopt_state(checkpoint_to_check, ckpt_step=ckpt_step):
-        cfg.model.restore_modelopt_state = True
+    cfg.model.restore_modelopt_state = bool(
+        checkpoint_to_check and has_modelopt_state(checkpoint_to_check, ckpt_step=ckpt_step)
+    )
 
     # Display final configuration
     if get_rank_safe() == 0:
