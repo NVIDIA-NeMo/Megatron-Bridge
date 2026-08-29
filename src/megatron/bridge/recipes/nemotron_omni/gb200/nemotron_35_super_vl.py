@@ -163,6 +163,9 @@ def nemotron_35_super_vl_peft_16gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1

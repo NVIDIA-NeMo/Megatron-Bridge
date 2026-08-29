@@ -234,9 +234,10 @@ items:
         --pretrained_checkpoint
         work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron/iter_0000000
         --max_steps 100
-        dataset.path=work/data/nemotron-3.5-super-vl/energon
+        dataset.path=work/data/datacomp-525k-energon
         dataset.do_validation=false dataset.do_test=false
         validation.eval_iters=0 validation.eval_interval=0
+        scheduler.lr_decay_iters=100
         checkpoint.load=null
         --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft
         --save_interval 100 checkpoint.save_optim=false checkpoint.save_rng=false
@@ -273,6 +274,7 @@ items:
         dataset.path=work/data/datacomp-525k-energon
         dataset.do_validation=false dataset.do_test=false
         validation.eval_iters=0 validation.eval_interval=0
+        scheduler.lr_decay_iters=100
         checkpoint.load=null
         --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft
         --save_interval 100 checkpoint.save_optim=false checkpoint.save_rng=false
@@ -373,15 +375,14 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         On exactly 16 H100s, train LoRA adapters for 100 optimizer steps from
-        the immutable source checkpoint on DataComp at TP8/PP1/CP1/EP16/ETP1
+        the immutable source checkpoint on DataComp at TP4/PP2/CP1/EP8/ETP1
         and GBS/MBS 16/1. The frozen language, image, projector, and temporal-
         video base weights must remain unchanged while adapters on the model-
         native attention, Mamba, and MLP projections train with rank 32,
         alpha 32, and zero dropout. Natural routing and dropless all-to-all
-        dispatch plus selective grouped-expert activation recompute are
-        required. Loss must remain finite with zero skipped or NaN iterations,
-        and a reloadable adapter checkpoint plus the resolved ConfigContainer
-        must persist.
+        dispatch run without active activation recompute. Loss must remain
+        finite with zero skipped or NaN iterations, and a reloadable adapter
+        checkpoint plus the resolved ConfigContainer must persist.
 
     GB200:
       status: unverified

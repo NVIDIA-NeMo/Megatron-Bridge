@@ -377,9 +377,11 @@ def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_pr
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is True
-    assert cfg.model.tensor_model_parallel_size == 8
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 38
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is True
     assert cfg.model.moe_token_dispatcher_type == "alltoall"
@@ -387,10 +389,10 @@ def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_pr
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_expert_capacity_factor is None
     assert cfg.model.moe_pad_expert_input_to_capacity is False
-    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
-    assert cfg.model.recompute_modules == ["moe_act"]
+    assert cfg.model.recompute_modules is None
     assert cfg.model.recompute_vision is False
 
     assert cfg.train.train_iters == 100
@@ -624,6 +626,9 @@ def test_super_vl_peft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.model.mtp_num_layers == 1
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.expert_model_parallel_size == 16
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is True
