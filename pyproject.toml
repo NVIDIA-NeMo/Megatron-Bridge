@@ -169,6 +169,13 @@ name = "fast-hadamard-transform"
 version = "1.0.4.post1"
 requires-dist = ["torch", "packaging", "ninja"]
 
+# torch-memory-saver compiles CUDA extensions while preparing VCS metadata.
+# Mirror its immutable source metadata so lock generation remains build-free.
+[[tool.uv.dependency-metadata]]
+name = "torch-memory-saver"
+version = "0.0.10b1"
+requires-dist = []
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
