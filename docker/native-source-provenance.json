@@ -3,11 +3,14 @@
   "authority": {
     "repository": "NVIDIA/Megatron-LM",
     "manifest_path": "pyproject.toml",
+    "baseline_bridge_transformer_engine": {"repository": "https://github.com/NVIDIA/TransformerEngine.git", "commit": {"object_format": "40-hex-git-oid", "parts": ["27486e03cfc1fa41f693", "2dcecdc47c71c47eac3e"]}, "disposition": "superseded-by-frozen-mcore-lane-source"},
+    "audit": "Each lane revision is read from its frozen MCore manifest, verified against this record, and fetched with its exact native submodule object IDs before installation.",
     "selection": "The frozen MCore gitlink selects native Python dependency sources; Bridge records and verifies any build-side selector without overriding MCore's TransformerEngine source on the main lane."
   },
   "lanes": [
     {
       "name": "main",
+      "audit": {"selected_by": "frozen-mcore-gitlink", "transformer_engine_evidence": "mcore-manifest-and-build-cache-verifier", "fast_hadamard_transform_evidence": "mcore-manifest-bridge-override-and-build-cache-verifier"},
       "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["4ac689b8bfe55c00f61d", "7ff0d082cad558632445"]},
       "native_sources": {
         "transformer_engine": {
@@ -35,6 +38,7 @@
     },
     {
       "name": "dev",
+      "audit": {"selected_by": "frozen-mcore-gitlink", "transformer_engine_evidence": "mcore-manifest-and-build-cache-verifier", "fast_hadamard_transform_evidence": "mcore-manifest-bridge-override-and-build-cache-verifier"},
       "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["bae1d8992fe40719505d", "2e10537e3cc1816ee68f"]},
       "native_sources": {
         "transformer_engine": {
