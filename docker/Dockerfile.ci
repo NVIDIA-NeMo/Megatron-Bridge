@@ -176,7 +176,7 @@ RUN git clone --no-checkout https://github.com/Dao-AILab/fast-hadamard-transform
         "57e3cfb47a2d9e0d46eb6335c3dc411498efa198" && \
     git init /opt/transformer-engine-cutlass && \
     git -C /opt/transformer-engine-cutlass remote add origin https://github.com/NVIDIA/cutlass.git && \
-    git -C /opt/transformer-engine-cutlass fetch --depth 1 origin refs/heads/v4 && \
+    git -C /opt/transformer-engine-cutlass fetch --depth 1 origin 57e3cfb47a2d9e0d46eb6335c3dc411498efa198 && \
     test "$(git -C /opt/transformer-engine-cutlass rev-parse FETCH_HEAD^{commit})" = \
         "57e3cfb47a2d9e0d46eb6335c3dc411498efa198" && \
     git init /opt/transformer-engine-cudnn-frontend && \
