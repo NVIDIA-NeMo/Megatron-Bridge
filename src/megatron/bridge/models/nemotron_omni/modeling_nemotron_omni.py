@@ -28,7 +28,7 @@ is not the canonical model selected by AutoBridge.
 
 import logging
 from collections import namedtuple
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 from megatron.core import tensor_parallel
@@ -375,7 +375,13 @@ class NemotronOmniModel(MegatronModule):
             raise RuntimeError("Image data was provided on a stage without the vision encoder")
 
         parameter = next(self.vision_model.parameters())
-        images = images.to(dtype=parameter.dtype)
+        # ``images`` may be a list of jagged [n, C, Hi, Wi] tensors (see
+        # _patchify_dynamic_images), so cast element-wise rather than assuming
+        # a single rectangular tensor.
+        if isinstance(images, (list, tuple)):
+            images = [image.to(dtype=parameter.dtype) for image in images]
+        else:
+            images = images.to(dtype=parameter.dtype)
 
         if imgs_sizes is not None and imgs_sizes.numel() > 0:
             images = self._patchify_dynamic_images(images, imgs_sizes)
@@ -471,7 +477,11 @@ class NemotronOmniModel(MegatronModule):
             return projected.new_empty((0, projected.shape[-1]))
         return torch.cat(valid_embeddings, dim=0).contiguous()
 
-    def _patchify_dynamic_images(self, images: torch.Tensor, imgs_sizes: torch.Tensor) -> torch.Tensor:
+    def _patchify_dynamic_images(
+        self,
+        images: Union[torch.Tensor, list[torch.Tensor], tuple[torch.Tensor, ...]],
+        imgs_sizes: torch.Tensor,
+    ) -> torch.Tensor:
         """Convert padded processor pixels to RADIO's packed patch representation.
 
         The processor emits ``[num_images, channels, padded_height, padded_width]``.
@@ -480,9 +490,59 @@ class NemotronOmniModel(MegatronModule):
         here makes raw media tensors part of the model contract and avoids an
         Omni-only NeMo-RL pre-forward adapter. Already-patchified inputs remain
         accepted for Bridge/SFT callers.
+
+        ``images`` may also be a list/tuple of jagged ``[n, C, Hi, Wi]`` tensors
+        with differing spatial dims, which lets callers skip padding entirely.
         """
 
         patch_features = 3 * self.patch_dim * self.patch_dim
+
+        # Heterogeneous image sizes: a list/tuple of [n, C, Hi, Wi] (or
+        # [C, Hi, Wi]) tensors whose spatial dims differ per entry. Because
+        # each entry already carries its true size there is nothing to crop,
+        # and patchifying at native resolution avoids the pad-to-max-shape
+        # copy the rectangular path requires -- every entry still yields the
+        # same feature width (C*P*P), so the patch blocks concatenate.
+        if isinstance(images, (list, tuple)):
+            if not images:
+                raise ValueError("Received an empty list of images.")
+            jagged_patches = []
+            for entry in images:
+                if entry.ndim == 3:
+                    entry = entry.unsqueeze(0)
+                if entry.ndim != 4:
+                    raise ValueError(
+                        "Jagged RADIO input entries must be [n,C,H,W] or [C,H,W]; "
+                        f"got shape {tuple(entry.shape)}."
+                    )
+                count, channels, height, width = entry.shape
+                if height % self.patch_dim or width % self.patch_dim:
+                    raise ValueError(
+                        f"Image size {(height, width)} is not divisible by "
+                        f"patch_dim={self.patch_dim}."
+                    )
+                rows = height // self.patch_dim
+                columns = width // self.patch_dim
+                jagged_patches.append(
+                    entry.reshape(count, channels, rows, self.patch_dim, columns, self.patch_dim)
+                    .permute(0, 2, 4, 1, 3, 5)
+                    .reshape(count * rows * columns, channels * self.patch_dim * self.patch_dim)
+                )
+            total_entries = sum(
+                (entry.shape[0] if entry.ndim == 4 else 1) for entry in images
+            )
+            if imgs_sizes is not None and imgs_sizes.shape[0] != total_entries:
+                raise ValueError(
+                    f"Received {total_entries} images but {imgs_sizes.shape[0]} image sizes."
+                )
+            return torch.cat(jagged_patches, dim=0).unsqueeze(0).contiguous()
+
+        if images.ndim == 2 and images.shape[-1] == patch_features:
+            # Accept pre-patchified 2-D [total_patches, C*P*P] from the data
+            # pipeline (NRL_PATCHIFY_INSTEAD_OF_PAD). Concatenating patches
+            # along dim 0 keeps PackedTensor's packing semantics intact, so the
+            # leading batch axis is added here rather than at pack time.
+            return images.unsqueeze(0)
         if images.ndim == 3 and images.shape[0] == 1:
             if images.shape[-1] != patch_features:
                 raise ValueError(
