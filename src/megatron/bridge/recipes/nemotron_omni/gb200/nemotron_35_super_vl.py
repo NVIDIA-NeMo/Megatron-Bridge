@@ -168,6 +168,10 @@ def nemotron_35_super_vl_peft_16gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 16
     cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
     cfg.model.cuda_graph_impl = "none"
     set_cuda_graph_modules(cfg.model, [])
     cfg.model.use_te_rng_tracker = False

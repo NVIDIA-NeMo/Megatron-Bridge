@@ -174,9 +174,10 @@ items:
         Exactly 64 H100s completed all 120 optimizer steps from the learned
         vision-pretrained checkpoint on DataComp image-caption samples at
         TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and
-        the recipe's BF16 precision-aware optimizer produced finite loss, zero
-        skipped or NaN iterations, the resolved ConfigContainer, and a
-        reloadable step-120 checkpoint with all 64 distributed model shards.
+        selective language/vision activation recompute plus the recipe's BF16
+        precision-aware optimizer produced finite loss, zero skipped or NaN
+        iterations, the resolved ConfigContainer, and a reloadable step-120
+        checkpoint with all 64 distributed model shards.
 
     GB200:
       status: verified
@@ -377,9 +378,10 @@ items:
         video base weights must remain unchanged while adapters on the model-
         native attention, Mamba, and MLP projections train with rank 32,
         alpha 32, and zero dropout. Natural routing and dropless all-to-all
-        dispatch are required. Loss must remain finite with zero skipped or
-        NaN iterations, and a reloadable adapter checkpoint plus the resolved
-        ConfigContainer must persist.
+        dispatch plus selective grouped-expert activation recompute are
+        required. Loss must remain finite with zero skipped or NaN iterations,
+        and a reloadable adapter checkpoint plus the resolved ConfigContainer
+        must persist.
 
     GB200:
       status: unverified

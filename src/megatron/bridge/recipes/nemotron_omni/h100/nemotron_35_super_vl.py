@@ -269,10 +269,10 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_expert_capacity_factor = None
     cfg.model.moe_pad_expert_input_to_capacity = False
-    cfg.model.recompute_granularity = None
+    cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = None
+    cfg.model.recompute_modules = ["moe_act"]
     cfg.model.recompute_vision = False
 
     cfg.train.train_iters = 100

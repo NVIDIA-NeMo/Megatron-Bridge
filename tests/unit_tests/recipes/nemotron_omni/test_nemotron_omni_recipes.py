@@ -387,8 +387,10 @@ def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_pr
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.moe_expert_capacity_factor is None
     assert cfg.model.moe_pad_expert_input_to_capacity is False
-    assert cfg.model.recompute_granularity is None
-    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules == ["moe_act"]
     assert cfg.model.recompute_vision is False
 
     assert cfg.train.train_iters == 100
