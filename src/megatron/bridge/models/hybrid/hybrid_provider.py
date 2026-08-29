@@ -310,26 +310,31 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         pre_process = pre_process if pre_process is not None else is_pp_first_stage(self._pg_collection.pp)
         post_process = post_process if post_process is not None else is_pp_last_stage(self._pg_collection.pp)
 
-        # MCore creates independent per-layer configs by deep-copying this config. Keep the
-        # runtime-only process groups out of that copy and pass them through the dedicated
-        # constructor argument instead; torch.distributed.ProcessGroup cannot be deep-copied.
-        model_config = self._copy_config_without_runtime_process_groups(deep=False)
-
-        return MCoreHybridModel(
-            config=model_config,
-            hybrid_stack_spec=hybrid_stack_spec,
-            vocab_size=padded_vocab_size,
-            max_sequence_length=self.seq_length,
-            hybrid_layer_pattern=self.hybrid_layer_pattern,
-            fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
-            **logit_dtype_kwarg(MCoreHybridModel, self.logit_dtype),
-            parallel_output=self.parallel_output,
-            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
-            position_embedding_type=self.position_embedding_type,
-            rotary_percent=self.rotary_percent,
-            rotary_base=self.rotary_base,
-            seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process,
-            post_process=post_process,
-            pg_collection=self._pg_collection,
-        )
+        # MCore creates independent per-layer configs by deep-copying this config. Detach
+        # runtime-only process groups during construction and pass them through the dedicated
+        # argument instead; torch.distributed.ProcessGroup cannot be deep-copied. The model must
+        # retain this provider as its root config because Bridge installs DDP schedule callbacks
+        # on the provider after wrapping the model.
+        pg_collection = self._pg_collection
+        self._pg_collection = None
+        try:
+            return MCoreHybridModel(
+                config=self,
+                hybrid_stack_spec=hybrid_stack_spec,
+                vocab_size=padded_vocab_size,
+                max_sequence_length=self.seq_length,
+                hybrid_layer_pattern=self.hybrid_layer_pattern,
+                fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(MCoreHybridModel, self.logit_dtype),
+                parallel_output=self.parallel_output,
+                share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+                position_embedding_type=self.position_embedding_type,
+                rotary_percent=self.rotary_percent,
+                rotary_base=self.rotary_base,
+                seq_len_interpolation_factor=self.seq_len_interpolation_factor,
+                pre_process=pre_process,
+                post_process=post_process,
+                pg_collection=pg_collection,
+            )
+        finally:
+            self._pg_collection = pg_collection

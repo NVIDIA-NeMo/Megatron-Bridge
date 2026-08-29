@@ -134,7 +134,7 @@ class TestHybridModelProvider:
                 assert mock_model.call_args.kwargs["hybrid_stack_spec"] is hybrid_provider.default_hybrid_stack_spec
                 assert "logit_dtype" not in mock_model.call_args.kwargs
 
-    def test_provide_keeps_runtime_process_groups_out_of_model_config(self):
+    def test_provide_preserves_runtime_config_identity_without_copying_process_groups(self):
         class UncopyableProcessGroupCollection:
             pp = object()
 
@@ -151,17 +151,23 @@ class TestHybridModelProvider:
         provider._pg_collection = pg_collection
 
         def create_model(**kwargs):
+            assert kwargs["config"] is provider
+            assert kwargs["config"]._pg_collection is None
             copied_config = AttentionLayerConfig.from_config(kwargs["config"])
             assert copied_config._pg_collection is None
-            return Mock()
+            return Mock(config=kwargs["config"])
 
         with patch(
             "megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel", side_effect=create_model
         ) as mock_model:
-            provider.provide(pre_process=True, post_process=True)
+            model = provider.provide(pre_process=True, post_process=True)
 
         assert provider._pg_collection is pg_collection
         assert mock_model.call_args.kwargs["pg_collection"] is pg_collection
+
+        runtime_grad_sync = Mock()
+        provider.grad_sync_func = runtime_grad_sync
+        assert model.config.grad_sync_func is runtime_grad_sync
 
     def test_provide_method_with_vocab_padding(self):
         provider = HybridModelProvider(
