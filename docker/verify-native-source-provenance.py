@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-_GIT_SHA1_PART = re.compile(r"[0-9a-f]{20}")
+_GIT_OID_PART = re.compile(r"[0-9a-f]{20}")
 
 
 def _require(condition: bool, message: str) -> None:
@@ -30,13 +30,16 @@ def _require(condition: bool, message: str) -> None:
 
 
 def _git_commit(value: dict[str, Any], label: str) -> str:
-    """Reconstruct and validate a split Git SHA-1 object ID."""
-    _require(value.get("algorithm") == "git-sha1", f"invalid algorithm for {label}")
+    """Reconstruct and validate a split Git object ID."""
+    _require(
+        value.get("object_format") == "40-hex-git-oid",
+        f"invalid object format for {label}",
+    )
     parts = value.get("parts")
     _require(isinstance(parts, list) and len(parts) == 2, f"invalid parts for {label}")
     _require(
-        all(isinstance(part, str) and _GIT_SHA1_PART.fullmatch(part) for part in parts),
-        f"invalid Git SHA-1 for {label}",
+        all(isinstance(part, str) and _GIT_OID_PART.fullmatch(part) for part in parts),
+        f"invalid Git object ID for {label}",
     )
     return "".join(parts)
 

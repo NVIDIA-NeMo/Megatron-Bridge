@@ -177,6 +177,9 @@ name = "torch-memory-saver"
 version = "0.0.10b1"
 requires-dist = []
 
+# TransformerEngine remains owned by the active MCore manifest rather than a Bridge override.
+# docker/native-source-provenance.json records both frozen lane sources, and the CI-image
+# verifier checks the selected MCore manifest and build cache before dependency installation.
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
