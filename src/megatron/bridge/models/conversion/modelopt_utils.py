@@ -40,10 +40,11 @@ HFExportHook = Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]
 
 
 class ModelOptExportPlan(NamedTuple):
-    """Prepared conversion tasks and their canonical ModelOpt HF config."""
+    """Prepared conversion tasks and stable canonical ModelOpt metadata."""
 
     conversion_tasks: list[WeightConversionTask]
     quantization_config: dict[str, Any]
+    quantized_params: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -117,17 +118,33 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
         return _SourceState(None, tuple(task.param_weight.shape))
 
     from modelopt.torch.export.quant_utils import capture_quantized_weight_export_state
-    from modelopt.torch.quantization.nn import SequentialQuantizer
-    from modelopt.torch.quantization.utils import representative_weight_quantizer
-
-    quantizer = representative_weight_quantizer(task.megatron_module, weight_name)
-    if isinstance(quantizer, SequentialQuantizer):
-        quantizer = quantizer[0]
-    if quantizer is None or not quantizer.is_enabled:
-        return _SourceState(None, tuple(task.param_weight.shape))
 
     return _SourceState(
-        capture_quantized_weight_export_state(task.megatron_module, weight_name),
+        capture_quantized_weight_export_state(
+            task.megatron_module,
+            weight_name,
+            cpu=False,
+        ),
+        tuple(task.param_weight.shape),
+        _mapping_parallelism(task.mapping, task.megatron_module),
+        _qkv_layout(task.mapping, task.megatron_module),
+    )
+
+
+def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
+    if task.megatron_module is None or task.param_weight is None:
+        return None
+    if not isinstance(task.param_weight, torch.Tensor):
+        raise NotImplementedError("ModelOpt real-quant export requires a tensor source weight")
+
+    weight_name = _direct_weight_name(task.megatron_module, task.param_weight)
+    if weight_name is None:
+        return _SourceState(None, tuple(task.param_weight.shape))
+
+    from modelopt.torch.export.quant_utils import get_quantized_weight_export_spec
+
+    return _SourceState(
+        get_quantized_weight_export_spec(task.megatron_module, weight_name),
         tuple(task.param_weight.shape),
         _mapping_parallelism(task.mapping, task.megatron_module),
         _qkv_layout(task.mapping, task.megatron_module),
@@ -155,7 +172,7 @@ def _world_group() -> Any:
     return torch.distributed.group.WORLD
 
 
-def _sync_source_states(
+def _sync_source_specs(
     local_states: dict[str, _SourceState],
     group: Any,
 ) -> dict[str, _SourceState]:
@@ -163,6 +180,24 @@ def _sync_source_states(
     for rank_states in _all_gather_objects(local_states, group):
         synchronized.update(rank_states)
     return synchronized
+
+
+def _transform_source_spec(
+    task: WeightConversionTask,
+    source: _SourceState,
+) -> dict[str, object | None]:
+    names = _mapping_names(task.mapping)
+    shards: list[_SourceState] = _all_gather_objects(source, task.mapping.tp_group)
+    quantized = [shard.state is not None for shard in shards]
+    if any(quantized) and not all(quantized):
+        raise RuntimeError(f"Inconsistent ModelOpt quantization across TP for {task.global_param_name}")
+    if not any(quantized):
+        return {name: None for name in names.values() if name.endswith(".weight")}
+
+    reference = shards[0].state
+    if any(shard.state != reference for shard in shards[1:]):
+        raise RuntimeError(f"Inconsistent ModelOpt export format across TP for {task.global_param_name}")
+    return {name: reference for name in names.values() if name.endswith(".weight")}
 
 
 def _mapping_names(mapping: Any) -> dict[str, str]:
@@ -185,12 +220,51 @@ def _select_state(state: object, weight_dim: int, indices: torch.Tensor) -> obje
     return select_quantized_weight_export_state(state, weight_dim, indices)
 
 
+def _gather_source_states(
+    source: _SourceState,
+    mapping: Any,
+) -> list[_SourceState]:
+    from modelopt.torch.export.quant_utils import (
+        restore_quantized_weight_export_state,
+        split_quantized_weight_export_state,
+    )
+
+    assert source.state is not None
+    state_metadata, state_tensors = split_quantized_weight_export_state(source.state)
+    tensor_specs = tuple((tuple(tensor.shape), tensor.dtype) for tensor in state_tensors)
+    payloads = _all_gather_objects(
+        (replace(source, state=state_metadata), tensor_specs),
+        mapping.tp_group,
+    )
+    if any(specs != tensor_specs for _, specs in payloads[1:]):
+        raise RuntimeError(f"Inconsistent ModelOpt state tensors for {source.weight_shape}")
+
+    gathered_tensors = [
+        mapping.gather_from_tp_ranks(_stage_tensor_for_collective(tensor.contiguous(), mapping.tp_group))
+        for tensor in state_tensors
+    ]
+    return [
+        replace(
+            source_metadata,
+            state=restore_quantized_weight_export_state(
+                source_metadata.state,
+                [values[rank] for values in gathered_tensors],
+            ),
+        )
+        for rank, (source_metadata, _) in enumerate(payloads)
+    ]
+
+
 def _transform_source_state(
     task: WeightConversionTask,
     source: _SourceState,
 ) -> dict[str, object | None]:
     names = _mapping_names(task.mapping)
-    shards: list[_SourceState] = _all_gather_objects(source, task.mapping.tp_group)
+    shards = (
+        _gather_source_states(source, task.mapping)
+        if source.state is not None
+        else _all_gather_objects(source, task.mapping.tp_group)
+    )
     quantized = [shard.state is not None for shard in shards]
     if any(quantized) and not all(quantized):
         raise RuntimeError(f"Inconsistent ModelOpt quantization across TP for {task.global_param_name}")
@@ -341,6 +415,8 @@ def _local_expert_mapping(mapping: Any, pg_collection: Any) -> Any | None:
 
 
 def _stage_tensor_for_collective(tensor: torch.Tensor, group: Any) -> torch.Tensor:
+    if not torch.distributed.is_initialized() or get_pg_size(group) == 1:
+        return tensor
     backend = str(torch.distributed.get_backend(group)).lower()
     if backend != "nccl" or tensor.device.type != "cpu":
         return tensor
@@ -349,36 +425,126 @@ def _stage_tensor_for_collective(tensor: torch.Tensor, group: Any) -> torch.Tens
     return tensor.to(torch.device("cuda", torch.cuda.current_device()))
 
 
-def _gather_expert_output(
-    hf_name: str,
-    tensor: torch.Tensor,
+def _capture_current_source_state(task: WeightConversionTask) -> _SourceState:
+    from modelopt.torch.export.quant_utils import (
+        restore_quantized_weight_export_state,
+        split_quantized_weight_export_state,
+    )
+
+    local_source = None
+    local_tensors: tuple[torch.Tensor, ...] = ()
+    capture_error = None
+    try:
+        local_source = _capture_source_state(task)
+        if local_source is not None:
+            if local_source.state is None:
+                raise RuntimeError(f"{task.global_param_name} is no longer quantized")
+            state_metadata, local_tensors = split_quantized_weight_export_state(local_source.state)
+            tensor_specs = tuple((tuple(tensor.shape), tensor.dtype) for tensor in local_tensors)
+            local_source = replace(local_source, state=state_metadata)
+            local_payload = (local_source, tensor_specs)
+        else:
+            local_payload = None
+    except Exception as error:
+        local_payload = None
+        capture_error = f"{type(error).__name__}: {error}"
+    _raise_distributed_errors(
+        capture_error,
+        _world_group(),
+        f"ModelOpt state capture failed for {task.global_param_name}",
+    )
+
+    cache_prefix = f"modelopt:{task.global_param_name}"
+    source_metadata, tensor_specs = task.mapping.broadcast_obj_from_pp_rank(
+        local_payload,
+        cache_key=f"{cache_prefix}:metadata",
+    )
+    values = []
+    for index, _ in enumerate(tensor_specs):
+        local_tensor = local_tensors[index] if local_source is not None else None
+        if local_tensor is not None:
+            local_tensor = _stage_tensor_for_collective(local_tensor.contiguous(), task.mapping.pp_group)
+        values.append(
+            task.mapping.broadcast_from_pp_rank(
+                local_tensor,
+                cache_key=f"{cache_prefix}:tensor:{index}",
+            )
+        )
+    return replace(
+        source_metadata,
+        state=restore_quantized_weight_export_state(source_metadata.state, values),
+    )
+
+
+def _gather_expert_outputs(
+    outputs: Iterable[HFWeightTuple],
     group: Any,
 ) -> Iterable[HFWeightTuple]:
-    names = _all_gather_objects(hf_name, group)
-    if len(names) == 1:
-        yield HFWeightTuple(hf_name, tensor)
+    outputs = tuple(outputs)
+    metadata = tuple((name, tuple(tensor.shape), tensor.dtype) for name, tensor in outputs)
+    gathered_metadata = _all_gather_objects(metadata, group)
+    if len(gathered_metadata) == 1:
+        yield from outputs
         return
 
-    tensor = _stage_tensor_for_collective(tensor.contiguous(), group)
-    local_bytes = tensor.reshape(-1).view(torch.uint8)
-    gathered = [torch.empty_like(local_bytes) for _ in names]
-    torch.distributed.all_gather(gathered, local_bytes, group=group)
-    for name, value in zip(names, gathered, strict=True):
-        yield HFWeightTuple(name, value.view(tensor.dtype).reshape(tensor.shape))
+    local_layout = tuple((shape, dtype) for _, shape, dtype in metadata)
+    if any(
+        tuple((shape, dtype) for _, shape, dtype in rank_metadata) != local_layout
+        for rank_metadata in gathered_metadata[1:]
+    ):
+        raise RuntimeError("Inconsistent ModelOpt expert output tensors across EP")
+
+    for index, (_, tensor) in enumerate(outputs):
+        tensor = _stage_tensor_for_collective(tensor.contiguous(), group)
+        local_bytes = tensor.reshape(-1).view(torch.uint8)
+        gathered = [torch.empty_like(local_bytes) for _ in gathered_metadata]
+        torch.distributed.all_gather(gathered, local_bytes, group=group)
+        for rank_metadata, value in zip(gathered_metadata, gathered, strict=True):
+            name, shape, dtype = rank_metadata[index]
+            yield HFWeightTuple(name, value.view(dtype).reshape(shape))
 
 
 def _compose_export_hooks(
     exporter: HFExportHook,
-    finalizer: HFExportHook | None,
+    finalizer: Callable[[Iterable[HFWeightTuple]], Iterable[HFWeightTuple]] | None,
 ) -> HFExportHook:
     if finalizer is None:
         return exporter
 
     def export_and_finalize(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
-        for exported_name, exported_tensor in exporter(hf_name, tensor):
-            yield from finalizer(exported_name, exported_tensor)
+        yield from finalizer(exporter(hf_name, tensor))
 
     return export_and_finalize
+
+
+def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
+    from modelopt.torch.export.quant_utils import export_quantized_weight_tensors
+
+    expected_names = {name for name in _mapping_names(task.mapping).values() if name.endswith(".weight")}
+    transformed_states = None
+    remaining_names = set(expected_names)
+
+    def export_weight(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
+        nonlocal remaining_names, transformed_states
+        if transformed_states is None:
+            source = _capture_current_source_state(task)
+            transformed_states = _transform_source_state(task, source)
+            remaining_names = set(expected_names)
+
+        state = transformed_states.get(hf_name)
+        if state is None:
+            raise RuntimeError(f"Missing ModelOpt export state for {hf_name}")
+        prefix = hf_name.removesuffix(".weight")
+        exported = export_quantized_weight_tensors(tensor, state, tensor.dtype)
+        remaining_names.discard(hf_name)
+        if not remaining_names:
+            transformed_states = None
+
+        for relative_name, exported_tensor in exported.items():
+            exported_name = hf_name if relative_name == "weight" else f"{prefix}.{relative_name}"
+            yield HFWeightTuple(exported_name, exported_tensor)
+
+    return export_weight
 
 
 def build_modelopt_export_plan(
@@ -394,31 +560,31 @@ def build_modelopt_export_plan(
         for task in conversion_tasks
         if task is not None and not isinstance(getattr(task, "mapping", None), AmaxMapping)
     ]
-    local_states = {}
+    local_specs = {}
     capture_error = None
     try:
-        local_states = {
+        local_specs = {
             task.global_param_name: source
             for task in concrete_tasks
-            if (source := _capture_source_state(task)) is not None
+            if (source := _capture_source_spec(task)) is not None
         }
     except Exception as error:
         capture_error = f"{type(error).__name__}: {error}"
     _raise_distributed_errors(
         capture_error,
         _world_group(),
-        "ModelOpt state capture failed",
+        "ModelOpt export metadata capture failed",
     )
 
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
-    source_states = _sync_source_states(local_states, pp_group)
+    source_specs = _sync_source_specs(local_specs, pp_group)
 
     pg_collection = model_bridge_utils._get_pg_collection_from_model(model)
     local_expert_mappings = {}
     expert_mapping_error = None
     try:
         for task in concrete_tasks:
-            source = source_states.get(task.global_param_name)
+            source = source_specs.get(task.global_param_name)
             if source is None or source.state is None or not task.mapping.is_expert:
                 continue
             local_mapping = _local_expert_mapping(task.mapping, pg_collection)
@@ -436,74 +602,54 @@ def build_modelopt_export_plan(
         "ModelOpt expert mapping validation failed",
     )
 
-    named_states: dict[str, object | None] = {}
+    named_specs: dict[str, object | None] = {}
     for task in concrete_tasks:
-        source = source_states.get(task.global_param_name)
+        source = source_specs.get(task.global_param_name)
         if source is None:
             continue
         transformed = None
         transform_error = None
         try:
-            transformed = _transform_source_state(task, source)
+            transformed = _transform_source_spec(task, source)
         except Exception as error:
             transform_error = f"{type(error).__name__}: {error}"
 
         if task.mapping.is_expert:
-            expert_states: dict[str, object | None] = {}
+            expert_specs: dict[str, object | None] = {}
             gathered = _all_gather_objects(
                 (transformed, transform_error),
                 task.mapping.ep_group,
             )
             errors = [error for _, error in gathered if error is not None]
             if errors:
-                raise RuntimeError("ModelOpt expert state transform failed: " + "; ".join(dict.fromkeys(errors)))
-            for rank_states, _ in gathered:
-                assert rank_states is not None
-                overlap = expert_states.keys() & rank_states.keys()
+                raise RuntimeError("ModelOpt expert metadata transform failed: " + "; ".join(dict.fromkeys(errors)))
+            for rank_specs, _ in gathered:
+                assert rank_specs is not None
+                overlap = expert_specs.keys() & rank_specs.keys()
                 if overlap:
-                    raise RuntimeError(f"Duplicate ModelOpt expert states: {sorted(overlap)}")
-                expert_states.update(rank_states)
-            transformed = expert_states
+                    raise RuntimeError(f"Duplicate ModelOpt expert specs: {sorted(overlap)}")
+                expert_specs.update(rank_specs)
+            transformed = expert_specs
         elif transform_error is not None:
-            raise RuntimeError(f"ModelOpt state transform failed for {task.global_param_name}: {transform_error}")
+            raise RuntimeError(f"ModelOpt metadata transform failed for {task.global_param_name}: {transform_error}")
 
         assert transformed is not None
-        for name, state in transformed.items():
-            previous = named_states.setdefault(name, state)
-            if previous is not state and previous is not None and state is not None:
-                raise RuntimeError(f"Duplicate ModelOpt state for {name}")
+        for name, spec in transformed.items():
+            if name in named_specs and named_specs[name] != spec:
+                raise RuntimeError(f"Duplicate ModelOpt spec for {name}")
+            named_specs[name] = spec
 
-    if not any(state is not None for state in named_states.values()):
+    if not any(spec is not None for spec in named_specs.values()):
         raise RuntimeError("No supported ModelOpt quantized weights were found")
 
-    from modelopt.torch.export.quant_utils import (
-        build_hf_quantization_config,
-        export_quantized_weight_tensors,
-    )
+    from modelopt.torch.export.quant_utils import build_hf_quantization_config
 
-    quantization_config = build_hf_quantization_config(named_states)
-
-    def export_weight(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
-        state = named_states.get(hf_name)
-        if state is None:
-            yield HFWeightTuple(hf_name, tensor)
-            return
-        if not hf_name.endswith(".weight"):
-            raise ValueError(f"Expected a canonical HF weight name, got {hf_name}")
-        prefix = hf_name.removesuffix(".weight")
-        for relative_name, exported_tensor in export_quantized_weight_tensors(
-            tensor,
-            state,
-            tensor.dtype,
-        ).items():
-            exported_name = hf_name if relative_name == "weight" else f"{prefix}.{relative_name}"
-            yield HFWeightTuple(exported_name, exported_tensor)
+    quantization_config = build_hf_quantization_config(named_specs)
 
     export_tasks = []
     for task in concrete_tasks:
-        source = source_states.get(task.global_param_name)
+        source = source_specs.get(task.global_param_name)
         mapping = task.mapping
-        finalizer = None
         if task.mapping.is_expert:
             eligibility = _all_gather_objects(
                 source is not None and source.state is not None,
@@ -517,17 +663,32 @@ def build_modelopt_export_plan(
             local_mapping = local_expert_mappings.get(task.global_param_name)
             if local_mapping is not None:
                 mapping = local_mapping
+        export_tasks.append(replace(task, mapping=mapping, export_hook=None))
 
-                def finalize(name: str, value: torch.Tensor, group=mapping.ep_group):
-                    yield from _gather_expert_output(name, value, group)
+    quantized_params = frozenset(name for name, source in source_specs.items() if source.state is not None)
+    return ModelOptExportPlan(export_tasks, quantization_config, quantized_params)
 
-                finalizer = finalize
+
+def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConversionTask]:
+    """Attach fresh per-stream state capture hooks to a metadata-only plan."""
+    export_tasks = []
+    for task in plan.conversion_tasks:
+        if task.global_param_name not in plan.quantized_params:
+            export_tasks.append(task)
+            continue
+
+        finalizer = None
+        if isinstance(task.mapping, _LocalExpertMappingMixin):
+            group = task.mapping.ep_group
+
+            def finalize(outputs: Iterable[HFWeightTuple], group=group):
+                yield from _gather_expert_outputs(outputs, group)
+
+            finalizer = finalize
         export_tasks.append(
             replace(
                 task,
-                mapping=mapping,
-                export_hook=_compose_export_hooks(export_weight, finalizer),
+                export_hook=_compose_export_hooks(_make_export_hook(task), finalizer),
             )
         )
-
-    return ModelOptExportPlan(export_tasks, quantization_config)
+    return export_tasks

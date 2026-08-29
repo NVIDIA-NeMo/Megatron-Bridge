@@ -140,9 +140,10 @@ Use `AutoBridge.export_hf_weights_modelopt()` when you need to stream ModelOpt d
 already-loaded Megatron model instead of writing a full checkpoint through the export script. This is useful for
 integrations that consume Hugging Face weight names directly, such as inference-engine refit paths.
 
-Build one export plan after ModelOpt calibration, pass its `quantization_config` unchanged to the consumer, and reuse
-the plan for every weight stream. ModelOpt owns the emitted tensor names and formats; unquantized parameters retain
-their regular Hugging Face names.
+Build one export plan after ModelOpt calibration and pass its `quantization_config` unchanged to the consumer. The
+plan retains only stable topology and format metadata, so it can be reused for every weight stream. Mutable quantizer
+state is captured as each weight is streamed. ModelOpt owns the emitted tensor names and formats; unquantized
+parameters retain their regular Hugging Face names.
 
 ```python
 from safetensors.torch import save_file

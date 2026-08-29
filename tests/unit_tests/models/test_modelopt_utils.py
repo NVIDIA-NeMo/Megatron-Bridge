@@ -34,13 +34,19 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
 
 
-def _task(mapping, module, *, global_name="decoder.layers.0.projection.weight"):
+def _task(
+    mapping,
+    module,
+    *,
+    global_name="decoder.layers.0.projection.weight",
+    weight_name="weight",
+):
     return WeightConversionTask(
-        param_name="weight",
+        param_name=weight_name,
         global_param_name=global_name,
         mapping=mapping,
         megatron_module=module,
-        param_weight=module.weight,
+        param_weight=getattr(module, weight_name),
     )
 
 
@@ -61,13 +67,26 @@ def _source(state, shape, parallelism, qkv_layout=None):
     return modelopt_utils._SourceState(state, shape, parallelism, qkv_layout)
 
 
+class _GroupedWeights(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        source = _fp8_linear()
+        self.weight0 = torch.nn.Parameter(source.weight.detach().clone())
+        self.quantizers = torch.nn.ModuleList([source.weight_quantizer])
+        self.input_quantizer = source.input_quantizer
+
+    def iter_weights_for_calibration(self):
+        yield self.weight0, self.quantizers[0]
+
+
 def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
     module = _fp8_linear()
     hf_name = "model.layers.0.self_attn.o_proj.weight"
     task = _task(ColumnParallelMapping("projection.weight", hf_name), module)
 
     plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
-    exported = dict(plan.conversion_tasks[0].export_hook(hf_name, module.weight))
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    exported = dict(export_task.export_hook(hf_name, module.weight))
 
     assert set(exported) == {
         hf_name,
@@ -77,6 +96,40 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
     assert exported[hf_name].dtype == torch.float8_e4m3fn
     assert plan.quantization_config["quant_algo"] == "FP8"
     assert plan.quantization_config["config_groups"]["group_0"]["targets"] == ["Linear"]
+
+
+def test_numbered_grouped_weight_uses_exact_modelopt_quantizer():
+    module = _GroupedWeights()
+    hf_name = "model.layers.0.mlp.experts.0.down_proj.weight"
+    task = _task(
+        ColumnParallelMapping("projection.weight0", hf_name),
+        module,
+        weight_name="weight0",
+    )
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    exported = dict(export_task.export_hook(hf_name, module.weight0))
+
+    assert exported[hf_name].dtype == torch.float8_e4m3fn
+    assert f"{hf_name.removesuffix('.weight')}.weight_scale" in exported
+
+
+def test_reused_plan_recaptures_mutable_quantizer_state():
+    module = _fp8_linear()
+    hf_name = "model.layers.0.self_attn.o_proj.weight"
+    task = _task(ColumnParallelMapping("projection.weight", hf_name), module)
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+
+    first_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    first = dict(first_task.export_hook(hf_name, module.weight))
+    module.weight_quantizer._amax.mul_(2)
+    second_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    second = dict(second_task.export_hook(hf_name, module.weight))
+
+    assert not torch.equal(
+        first["model.layers.0.self_attn.o_proj.weight_scale"], second["model.layers.0.self_attn.o_proj.weight_scale"]
+    )
 
 
 def test_build_plan_excludes_fake_quant_amax_mappings():
@@ -112,7 +165,7 @@ def test_gated_state_is_split_before_tp_merge(monkeypatch):
     ]
     calls = []
 
-    monkeypatch.setattr(modelopt_utils, "_all_gather_objects", lambda _value, _group: shards)
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda _source, _mapping: shards)
 
     def select(state, dim, indices):
         result = ("select", state, dim, tuple(indices.tolist()))
@@ -148,7 +201,7 @@ def test_qkv_state_uses_megatron_interleaving(monkeypatch):
     source = _source("qkv", (16, 8), "column", (4, 2, 2, 8, False))
     selections = []
 
-    monkeypatch.setattr(modelopt_utils, "_all_gather_objects", lambda value, _group: [value])
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda value, _mapping: [value])
 
     def select(state, dim, indices):
         selections.append((state, dim, tuple(indices.tolist())))
@@ -179,7 +232,7 @@ def test_inconsistent_tp_quantization_is_rejected(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="Inconsistent ModelOpt quantization across TP"):
-        modelopt_utils._transform_source_state(task, quantized)
+        modelopt_utils._transform_source_spec(task, quantized)
 
 
 def test_quantized_expert_is_packed_before_ep_gather():
@@ -192,7 +245,7 @@ def test_quantized_expert_is_packed_before_ep_gather():
     task = _task(mapping, module, global_name=mapping.megatron_param)
 
     plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
-    export_task = plan.conversion_tasks[0]
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
     mapped = export_task.mapping.megatron_to_hf(module.weight, module)
     exported = {
         name: value for hf_name, weight in mapped.items() for name, value in export_task.export_hook(hf_name, weight)
@@ -247,9 +300,9 @@ def _distributed_topology_worker(rank, world_size, init_file):
         world_size=world_size,
     )
     try:
-        original_capture = modelopt_utils._capture_source_state
+        original_capture = modelopt_utils._capture_source_spec
         original_get_pp_group = modelopt_utils.model_bridge_utils._get_pp_group
-        modelopt_utils._capture_source_state = lambda _task: (
+        modelopt_utils._capture_source_spec = lambda _task: (
             (_ for _ in ()).throw(ValueError("rank-local failure")) if rank == 0 else None
         )
         modelopt_utils.model_bridge_utils._get_pp_group = lambda _model: torch.distributed.group.WORLD
@@ -263,30 +316,31 @@ def _distributed_topology_worker(rank, world_size, init_file):
         else:
             raise AssertionError("Every rank must observe the capture failure")
         finally:
-            modelopt_utils._capture_source_state = original_capture
+            modelopt_utils._capture_source_spec = original_capture
             modelopt_utils.model_bridge_utils._get_pp_group = original_get_pp_group
 
         mapping = ColumnParallelMapping("projection.weight", "model.projection.weight")
         mapping._tp_group = torch.distributed.group.WORLD
         task = SimpleNamespace(mapping=mapping, global_param_name="projection.weight")
-        source = _source(f"rank{rank}", (2, 2), "column")
+        module = _fp8_linear()
+        source = _source(
+            quant_utils.capture_quantized_weight_export_state(module),
+            tuple(module.weight.shape),
+            "column",
+        )
         gathered_sources = modelopt_utils._all_gather_objects(source, torch.distributed.group.WORLD)
         assert all(isinstance(item, modelopt_utils._SourceState) for item in gathered_sources), repr(gathered_sources)
-        original_merge = quant_utils.merge_quantized_weight_export_states
-        quant_utils.merge_quantized_weight_export_states = lambda states, dim: (tuple(states), dim)
-        try:
-            transformed = modelopt_utils._transform_source_state(task, source)
-            assert transformed["model.projection.weight"] == (
-                ("rank0", "rank1"),
-                0,
-            )
-        finally:
-            quant_utils.merge_quantized_weight_export_states = original_merge
+        transformed = modelopt_utils._transform_source_state(task, source)
+        assert transformed["model.projection.weight"].weight_shape == (8, 4)
 
         gathered = list(
-            modelopt_utils._gather_expert_output(
-                f"expert.{rank}.weight",
-                torch.tensor([rank], dtype=torch.int64),
+            modelopt_utils._gather_expert_outputs(
+                [
+                    HFWeightTuple(
+                        f"expert.{rank}.weight",
+                        torch.tensor([rank], dtype=torch.int64),
+                    )
+                ],
                 torch.distributed.group.WORLD,
             )
         )
@@ -309,8 +363,8 @@ def test_two_rank_planning_and_expert_collectives(tmp_path):
 
 
 def test_auto_bridge_can_reuse_a_prepared_plan():
-    task = SimpleNamespace(name="task")
-    plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}})
+    task = SimpleNamespace(name="task", global_param_name="model.weight")
+    plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}}, frozenset())
 
     class FakeBridge:
         def __init__(self):
@@ -333,7 +387,7 @@ def test_auto_bridge_can_reuse_a_prepared_plan():
             export_plan=plan,
             cpu=True,
             show_progress=False,
-            merge_adapter_weights=False,
+            merge_adapter_weights=True,
         )
     )
 
@@ -345,7 +399,19 @@ def test_auto_bridge_can_reuse_a_prepared_plan():
                 "cpu": True,
                 "show_progress": False,
                 "conversion_tasks": [task],
-                "merge_adapter_weights": False,
+                "merge_adapter_weights": True,
             },
         )
     ]
+
+
+def test_auto_bridge_rejects_unmerged_adapters():
+    with pytest.raises(NotImplementedError, match="unmerged adapter"):
+        list(
+            AutoBridge.export_hf_weights_modelopt(
+                SimpleNamespace(),
+                torch.nn.Linear(1, 1),
+                export_plan=SimpleNamespace(),
+                merge_adapter_weights=False,
+            )
+        )

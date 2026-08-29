@@ -801,15 +801,21 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
     ) -> Iterable["HFWeightTuple"]:
         """Export canonical ModelOpt deployment tensors from a prepared plan."""
+        if not merge_adapter_weights:
+            raise NotImplementedError("ModelOpt export does not support unmerged adapter weights")
         if not isinstance(model, list):
             model = [model]
         if export_plan is None:
             export_plan = self.build_hf_modelopt_export_plan(model)
+        from megatron.bridge.models.conversion.modelopt_utils import (
+            prepare_modelopt_export_tasks,
+        )
+
         hf_weights = self.export_hf_weights(
             model,
             cpu=cpu,
             show_progress=show_progress,
-            conversion_tasks=export_plan.conversion_tasks,
+            conversion_tasks=prepare_modelopt_export_tasks(export_plan),
             merge_adapter_weights=merge_adapter_weights,
         )
         yield from hf_weights
