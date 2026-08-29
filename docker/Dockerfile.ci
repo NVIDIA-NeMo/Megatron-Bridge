@@ -123,6 +123,7 @@ RUN git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/Fl
     git -C /opt/flash-mla/csrc/cutlass fetch --depth 1 origin "$FLASH_MLA_CUTLASS_REF" && \
     git -C /opt/flash-mla/csrc/cutlass checkout --detach FETCH_HEAD && \
     test "$(git -C /opt/flash-mla/csrc/cutlass rev-parse HEAD)" = "$FLASH_MLA_CUTLASS_REF" && \
+    git config --global protocol.file.allow always && \
     git config --global url.file:///opt/flash-mla/.insteadOf https://github.com/deepseek-ai/FlashMLA && \
     git config --global url.file:///opt/flash-mla/csrc/cutlass/.insteadOf https://github.com/NVIDIA/cutlass.git
 
