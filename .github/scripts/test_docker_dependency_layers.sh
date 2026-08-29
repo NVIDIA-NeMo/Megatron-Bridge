@@ -274,7 +274,7 @@ lock_package_field() {
 
   awk -v package="$package" -v field="$field" '
     $0 == "[[package]]" { in_package = 1; package_matches = 0; next }
-    in_package && $0 ~ /^\[\[/ { in_package = 0; package_matches = 0 }
+    in_package && $0 ~ /^\[\[/ { if (package_matches) exit; in_package = 0; package_matches = 0 }
     in_package && $0 == "name = \"" package "\"" { package_matches = 1; next }
     package_matches && index($0, field " = ") == 1 { print; exit }
   ' "$lock_file"
@@ -290,6 +290,25 @@ if [[ "$bridge_te_source" != "$mlm_te_source" ]]; then
   echo "Bridge must lock the TransformerEngine source selected by MCore" >&2
   exit 1
 fi
+
+emerging_optimizers_ref=b309e2f01cda75dc96a6dc1a2355a7b3b64b5e16
+emerging_optimizers_pyproject=a1f7327489c439a3e696474458a12630b6ebd762
+for lock_file in 3rdparty/Megatron-LM/uv.lock uv.lock; do
+  if ! grep -Eq '^source = \{ git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers\.git\?rev=(v0\.3\.0|'"$emerging_optimizers_ref"')#'"$emerging_optimizers_ref"'" \}$' "$lock_file"; then
+    echo "Bridge and selected MCore must lock the same audited Emerging Optimizers release commit" >&2
+    exit 1
+  fi
+done
+for expected_line in \
+  "ARG EMERGING_OPTIMIZERS_REF=${emerging_optimizers_ref}" \
+  "ARG EMERGING_OPTIMIZERS_PYPROJECT=${emerging_optimizers_pyproject}" \
+  'refs/tags/v0.3.0:refs/tags/v0.3.0' \
+  'git config --global url.file:///opt/emerging-optimizers/.insteadOf'; do
+  if ! grep -Fq "$expected_line" "$dockerfile"; then
+    echo "CI image must attest and locally cache the audited Emerging Optimizers release source" >&2
+    exit 1
+  fi
+done
 
 composite_action=".github/actions/test-template/action.yml"
 if grep -qE 'mcore_(commit|ref)|MCORE_COMMIT|uv sync --all-extras --all-groups' "$composite_action"; then
