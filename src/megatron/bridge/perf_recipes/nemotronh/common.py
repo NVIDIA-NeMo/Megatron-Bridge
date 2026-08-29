@@ -26,7 +26,6 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
 
@@ -78,10 +77,13 @@ def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
     cfg.model.moe_mlp_glu_interleave_size = 32
 
     # Ultra keeps two MTP layers, while MCore A2A overlap supports at most one.
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.comm_overlap.delay_wgrad_compute = False
+    # Set these on the model rather than through CommOverlapConfig: instantiating
+    # CommOverlapConfig activates the DP overlap path in runtime_config_update,
+    # which unconditionally writes ddp.bucket_size = 128 MB and then collides with
+    # the recipe's ddp.num_buckets ("Cannot specify both num_buckets and
+    # bucket_size"). Every other Ultra recipe leaves cfg.comm_overlap unset.
+    cfg.model.overlap_moe_expert_parallel_comm = False
+    cfg.model.delay_wgrad_compute = False
 
     # Paged stash owns the expert activation spill path for this dispatcher.
     cfg.model.fine_grained_activation_offloading = False

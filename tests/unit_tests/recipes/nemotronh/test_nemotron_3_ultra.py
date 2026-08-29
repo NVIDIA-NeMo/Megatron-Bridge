@@ -170,9 +170,11 @@ def test_b_series_ncclep_perf_recipes_use_ep8(
     assert cfg.model.recompute_modules == ["moe_act"]
 
     assert cfg.model.mtp_num_layers == 2
-    assert cfg.comm_overlap.tp_comm_overlap is False
-    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
-    assert cfg.comm_overlap.delay_wgrad_compute is False
+    # cfg.comm_overlap must stay unset: instantiating it activates the DP overlap
+    # path, which writes ddp.bucket_size and collides with ddp.num_buckets.
+    assert cfg.comm_overlap is None
+    assert cfg.model.overlap_moe_expert_parallel_comm is False
+    assert cfg.model.delay_wgrad_compute is False
     assert cfg.model.cuda_graph_impl == "none"
 
     assert cfg.train.global_batch_size == 256
@@ -239,9 +241,11 @@ def test_gb_series_ncclep_perf_recipes_use_ep8(
     assert cfg.model.recompute_modules == ["moe_act"]
 
     assert cfg.model.mtp_num_layers == 2
-    assert cfg.comm_overlap.tp_comm_overlap is False
-    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
-    assert cfg.comm_overlap.delay_wgrad_compute is False
+    # cfg.comm_overlap must stay unset: instantiating it activates the DP overlap
+    # path, which writes ddp.bucket_size and collides with ddp.num_buckets.
+    assert cfg.comm_overlap is None
+    assert cfg.model.overlap_moe_expert_parallel_comm is False
+    assert cfg.model.delay_wgrad_compute is False
     assert cfg.model.cuda_graph_impl == "none"
 
     assert cfg.train.global_batch_size == 256
