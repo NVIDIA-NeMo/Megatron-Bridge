@@ -265,6 +265,7 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
     cfg.model.freeze_sound_projection = True
     cfg.model.calculate_per_token_loss = True
     cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_expert_capacity_factor = None
     cfg.model.moe_pad_expert_input_to_capacity = False
