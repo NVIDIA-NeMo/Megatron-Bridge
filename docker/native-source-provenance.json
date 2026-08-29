@@ -8,48 +8,48 @@
   "lanes": [
     {
       "name": "main",
-      "mcore_commit": {"algorithm": "git-sha1", "parts": ["4ac689b8bfe55c00f61d", "7ff0d082cad558632445"]},
+      "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["4ac689b8bfe55c00f61d", "7ff0d082cad558632445"]},
       "native_sources": {
         "transformer_engine": {
           "package": "transformer-engine",
           "repository": "https://github.com/NVIDIA/TransformerEngine.git",
-          "mcore_commit": {"algorithm": "git-sha1", "parts": ["4329ff84bfbdaa778a33", "cba02a15fb0807c64689"]},
-          "build_commit": {"algorithm": "git-sha1", "parts": ["4329ff84bfbdaa778a33", "cba02a15fb0807c64689"]},
+          "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["4329ff84bfbdaa778a33", "cba02a15fb0807c64689"]},
+          "build_commit": {"object_format": "40-hex-git-oid", "parts": ["4329ff84bfbdaa778a33", "cba02a15fb0807c64689"]},
           "bridge_selector": null
         },
         "fast_hadamard_transform": {
           "package": "fast-hadamard-transform",
           "repository": "https://github.com/Dao-AILab/fast-hadamard-transform.git",
-          "mcore_commit": {"algorithm": "git-sha1", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]},
-          "build_commit": {"algorithm": "git-sha1", "parts": ["1cc807efbd6cc001df35", "9822d60bf6052dd66859"]},
+          "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]},
+          "build_commit": {"object_format": "40-hex-git-oid", "parts": ["1cc807efbd6cc001df35", "9822d60bf6052dd66859"]},
           "bridge_selector": {"kind": "vcs-requirement", "value": "v1.1.0"}
         },
         "torch_memory_saver": {
           "package": "torch-memory-saver",
           "repository": "https://github.com/fzyzcjy/torch_memory_saver.git",
-          "mcore_commit": {"algorithm": "git-sha1", "parts": ["9bc9a442e6d108c7b790", "3def199896a005143aaf"]},
-          "build_commit": {"algorithm": "git-sha1", "parts": ["9bc9a442e6d108c7b790", "3def199896a005143aaf"]},
+          "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["9bc9a442e6d108c7b790", "3def199896a005143aaf"]},
+          "build_commit": {"object_format": "40-hex-git-oid", "parts": ["9bc9a442e6d108c7b790", "3def199896a005143aaf"]},
           "bridge_selector": null
         }
       }
     },
     {
       "name": "dev",
-      "mcore_commit": {"algorithm": "git-sha1", "parts": ["bae1d8992fe40719505d", "2e10537e3cc1816ee68f"]},
+      "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["bae1d8992fe40719505d", "2e10537e3cc1816ee68f"]},
       "native_sources": {
         "transformer_engine": {
           "package": "transformer-engine",
           "repository": "https://github.com/NVIDIA/TransformerEngine.git",
-          "mcore_commit": {"algorithm": "git-sha1", "parts": ["f031cf87bd054c7558b8", "87df7bed93975456667f"]},
-          "build_commit": {"algorithm": "git-sha1", "parts": ["f031cf87bd054c7558b8", "87df7bed93975456667f"]},
-          "bridge_selector": {"kind": "uv-source", "commit": {"algorithm": "git-sha1", "parts": ["f031cf87bd054c7558b8", "87df7bed93975456667f"]}}
+          "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["f031cf87bd054c7558b8", "87df7bed93975456667f"]},
+          "build_commit": {"object_format": "40-hex-git-oid", "parts": ["f031cf87bd054c7558b8", "87df7bed93975456667f"]},
+          "bridge_selector": {"kind": "uv-source", "commit": {"object_format": "40-hex-git-oid", "parts": ["f031cf87bd054c7558b8", "87df7bed93975456667f"]}}
         },
         "fast_hadamard_transform": {
           "package": "fast-hadamard-transform",
           "repository": "https://github.com/Dao-AILab/fast-hadamard-transform.git",
-          "mcore_commit": {"algorithm": "git-sha1", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]},
-          "build_commit": {"algorithm": "git-sha1", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]},
-          "bridge_selector": {"kind": "vcs-requirement", "commit": {"algorithm": "git-sha1", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]}}
+          "mcore_commit": {"object_format": "40-hex-git-oid", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]},
+          "build_commit": {"object_format": "40-hex-git-oid", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]},
+          "bridge_selector": {"kind": "vcs-requirement", "commit": {"object_format": "40-hex-git-oid", "parts": ["f134af63deb2df17e117", "1a9ec1ea4a7d8604d5ca"]}}
         },
         "torch_memory_saver": null
       }
