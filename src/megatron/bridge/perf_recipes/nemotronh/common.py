@@ -176,6 +176,7 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.scheduler.lr_decay_style = "WSD"
 
     # DDP bucketing
+    cfg.ddp.bucket_size = None
     cfg.ddp.num_buckets = 48
 
 

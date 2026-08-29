@@ -108,6 +108,8 @@ def test_vr200_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
     assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.bucket_size is None
+    assert cfg.ddp.num_buckets == 48
     assert cfg.ddp.num_distributed_optimizer_instances == 4
     assert cfg.ddp.outer_dp_sharding_strategy == "optim"
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
@@ -178,6 +180,8 @@ def test_b_series_ncclep_perf_recipes_use_ep8(
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
     assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.bucket_size is None
+    assert cfg.ddp.num_buckets == 48
     assert cfg.ddp.num_distributed_optimizer_instances == 4
     assert cfg.ddp.outer_dp_sharding_strategy == "optim"
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
