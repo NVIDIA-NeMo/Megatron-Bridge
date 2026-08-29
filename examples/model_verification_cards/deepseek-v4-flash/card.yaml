@@ -8,6 +8,11 @@ summary: >
   Timing and throughput metrics from functional training items are sanity
   checks rather than optimized performance results.
 
+  The Megatron-backed DeepSeek V4 workflows in this card require the
+  Megatron-Core dev branch; the default MCore submodule revision in Megatron
+  Bridge r0.6.0 is insufficient. Follow the public setup instructions in
+  examples/models/deepseek_v4/README.md.
+
   DeepSeek-V4-Flash support verification covers GPU conversion, training, and
   checkpoint resume on GB200. CPU conversion remains unverified because full
   BF16 materialization requires a high-memory CPU node. Optimized Megatron
