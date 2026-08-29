@@ -188,6 +188,8 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.num_layers_in_first_pipeline_stage = 4
+    cfg.model.num_layers_in_last_pipeline_stage = 8
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = True

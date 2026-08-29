@@ -404,14 +404,24 @@ def sync_model_pipeline_layout(
         middle_layer_count = model.num_layers - sum(
             stage_layers or 0 for stage_layers in (first_stage_layers, last_stage_layers)
         )
+        virtual_pipeline_size = model.virtual_pipeline_model_parallel_size or 1
+        middle_stage_layers = (
+            middle_layer_count // middle_stage_count
+            if middle_stage_count > 0 and middle_layer_count % middle_stage_count == 0
+            else None
+        )
         stages_are_compatible = (
             middle_stage_count >= 0
             and middle_layer_count >= 0
             and bool(middle_stage_count) == bool(middle_layer_count)
             and (middle_stage_count == 0 or middle_layer_count % middle_stage_count == 0)
+            and all(
+                stage_layers is None or stage_layers % virtual_pipeline_size == 0
+                for stage_layers in (first_stage_layers, middle_stage_layers, last_stage_layers)
+            )
         )
         if (
-            "model.pipeline_model_parallel_size" in override_fields
+            override_fields.intersection(topology_fields)
             and getattr(model, "pipeline_model_parallel_layout", None) is None
             and not stages_are_compatible
         ):

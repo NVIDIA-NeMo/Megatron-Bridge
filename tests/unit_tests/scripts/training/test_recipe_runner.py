@@ -371,6 +371,33 @@ def test_sync_model_pipeline_layout_preserves_compatible_recipe_stages(recipe_ru
     ) == (11, 11)
 
 
+def test_sync_model_pipeline_layout_repartitions_layers_after_vp_override(recipe_runner: ModuleType) -> None:
+    """Topology overrides must not retain stage counts indivisible by VP."""
+    config = SimpleNamespace(
+        model=SimpleNamespace(
+            num_layers=60,
+            pipeline_model_parallel_size=4,
+            virtual_pipeline_model_parallel_size=3,
+            pipeline_model_parallel_layout=None,
+            num_layers_in_first_pipeline_stage=4,
+            num_layers_in_last_pipeline_stage=8,
+        )
+    )
+
+    recipe_runner.sync_model_pipeline_layout(
+        config,
+        cli_overrides=[
+            "model.pipeline_model_parallel_size=4",
+            "model.virtual_pipeline_model_parallel_size=3",
+        ],
+    )
+
+    assert (
+        config.model.num_layers_in_first_pipeline_stage,
+        config.model.num_layers_in_last_pipeline_stage,
+    ) == (None, None)
+
+
 @pytest.mark.parametrize(
     "dataset",
     [
