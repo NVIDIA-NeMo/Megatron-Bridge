@@ -17,7 +17,7 @@ import inspect
 import logging
 import warnings
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Callable, Literal, Self
 
 import torch
 from megatron.core.models.hybrid.hybrid_layer_specs import (
@@ -275,6 +275,12 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
         return _configure_mamba_chunk_size(resolved_spec, self.mamba_chunk_size)
 
+    def _copy_config_without_runtime_process_groups(self, *, deep: bool) -> Self:
+        """Copy this config without the runtime-only process-group collection."""
+        model_config = copy.copy(self)
+        model_config._pg_collection = None
+        return copy.deepcopy(model_config) if deep else model_config
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreHybridModel:
         """Configure and instantiate a Megatron Core Hybrid model based on this configuration.
 
@@ -307,8 +313,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         # MCore creates independent per-layer configs by deep-copying this config. Keep the
         # runtime-only process groups out of that copy and pass them through the dedicated
         # constructor argument instead; torch.distributed.ProcessGroup cannot be deep-copied.
-        model_config = copy.copy(self)
-        model_config._pg_collection = None
+        model_config = self._copy_config_without_runtime_process_groups(deep=False)
 
         return MCoreHybridModel(
             config=model_config,
