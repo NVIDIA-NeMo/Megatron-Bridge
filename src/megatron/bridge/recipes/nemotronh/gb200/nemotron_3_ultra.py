@@ -29,7 +29,6 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(
     *,
     expert_model_parallel_size: int = 64,
     hybrid_ep_num_sms: int = 32,
-    recompute_modules: tuple[str, ...] = ("moe_act",),
 ) -> ConfigContainer:
     """Build a Nemotron 3 Ultra BF16 tuning config for 256 GB200 GPUs."""
     cfg = _nemotron_3_ultra_large_scale_bf16_config()
@@ -61,12 +60,14 @@ def _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(
     cfg.model.min_offloaded_tensor_size = 350_000_000
     cfg.model.offload_modules = ["fused_group_mlp"]
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-    # Keep moe_act recompute paired with fused-group-MLP activation offload.
-    # Tuning candidates may add core_attn when more HBM headroom is required.
+    # Match the proven natural-routing BF16 baseline: Flash Attention already
+    # recomputes its largest intermediates, while expert activation offload
+    # carries the grouped-MLP memory policy. Transformer Engine's BF16
+    # weighted-SReLU fallback cannot honor moe_act activation recompute.
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = list(recompute_modules)
+    cfg.model.recompute_modules = ["core_attn"]
 
     cfg.dist.use_megatron_fsdp = False
     cfg.ddp.use_megatron_fsdp = False
@@ -117,11 +118,6 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config() -> Config
 def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config() -> ConfigContainer:
     """Return the GB200 BF16 recipe with two EP32 replicas per pipeline stage."""
     return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(expert_model_parallel_size=32)
-
-
-def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config() -> ConfigContainer:
-    """Return the GB200 BF16 recipe with additional core-attention recompute."""
-    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(recompute_modules=("moe_act", "core_attn"))
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContainer:
@@ -214,7 +210,6 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContaine
 
 __all__ = [
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config",
-    "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_core_attn_recompute_config",
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config",
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config",
     "nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config",
