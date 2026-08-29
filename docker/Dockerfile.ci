@@ -137,10 +137,14 @@ ARG TRANSFORMER_ENGINE_DEV_REF=f031cf87bd054c7558b887df7bed93975456667f
 ARG EMERGING_OPTIMIZERS_REF=b309e2f01cda75dc96a6dc1a2355a7b3b64b5e16
 ARG EMERGING_OPTIMIZERS_PYPROJECT=a1f7327489c439a3e696474458a12630b6ebd762
 ARG BASELINE_MCORE_REF
-COPY docker/native-source-provenance.json /opt/native-source-provenance.json
-RUN python -c 'import json, sys; lanes = json.load(open("/opt/native-source-provenance.json"))["lanes"]; lane = next((item for item in lanes if item["mcore_ref"] == sys.argv[1]), None); assert lane is not None, "unknown MCore provenance"; assert lane["transformer_engine_ref"] == sys.argv[2]; assert lane["fast_hadamard_transform_ref"] == sys.argv[3]' \
-        "$BASELINE_MCORE_REF" \
+COPY docker/native-source-provenance.json docker/verify-native-source-provenance.py /opt/
+RUN python /opt/verify-native-source-provenance.py \
+        --manifest /opt/native-source-provenance.json \
+        --mcore-ref "$BASELINE_MCORE_REF" \
+        --bridge-pyproject pyproject.toml \
+        --transformer-engine-ref \
         "$(if [ "$BASELINE_MCORE_REF" = "4ac689b8bfe55c00f61d7ff0d082cad558632445" ]; then printf %s "$TRANSFORMER_ENGINE_MAIN_REF"; else printf %s "$TRANSFORMER_ENGINE_DEV_REF"; fi)" \
+        --fast-hadamard-transform-ref \
         "$(if [ "$BASELINE_MCORE_REF" = "4ac689b8bfe55c00f61d7ff0d082cad558632445" ]; then printf %s "$FAST_HADAMARD_TRANSFORM_MAIN_REF"; else printf %s "$FAST_HADAMARD_TRANSFORM_DEV_REF"; fi)"
 RUN git clone --no-checkout https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git /opt/emerging-optimizers && \
     git -C /opt/emerging-optimizers fetch --depth 1 origin \
@@ -224,7 +228,10 @@ RUN if [ -n "$BASELINE_MCORE_REF" ]; then \
         git -C 3rdparty/Megatron-LM fetch --depth 1 origin "$BASELINE_MCORE_REF" && \
         git -C 3rdparty/Megatron-LM checkout --detach FETCH_HEAD && \
         test "$(git -C 3rdparty/Megatron-LM rev-parse HEAD)" = "$BASELINE_MCORE_REF" && \
-        test -f 3rdparty/Megatron-LM/pyproject.toml; \
+        python /opt/verify-native-source-provenance.py \
+            --manifest /opt/native-source-provenance.json \
+            --mcore-ref "$BASELINE_MCORE_REF" \
+            --mcore-pyproject 3rdparty/Megatron-LM/pyproject.toml; \
     fi
 
 # Build arg to skip --locked when testing with different MCore versions
