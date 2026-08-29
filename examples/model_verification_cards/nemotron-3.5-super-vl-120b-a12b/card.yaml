@@ -15,9 +15,10 @@ summary: >
   the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
   the immutable HF source bitwise, and the exported package reloaded natively
   through Transformers on eight H100s. CPU conversion, deterministic
-  generation and other training modes remain pending. The training recipes
-  reuse the Nemotron Omni image/video stack without audio and retain the
-  checkpoint's separate temporal embedder and one-layer MTP configuration.
+  generation and post-SFT export remain pending. SFT, PEFT, and checkpoint
+  resume are verified on both H100 and GB200. The training recipes reuse the
+  Nemotron Omni image/video stack without audio and retain the checkpoint's
+  separate temporal embedder and one-layer MTP configuration.
 verification_index:
   model_level:
     verified:
@@ -30,12 +31,12 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [pretrain]
-      unverified: [sft, sft_export_inference, peft, checkpoint_resume]
+      verified: [pretrain, sft, peft, checkpoint_resume]
+      unverified: [sft_export_inference]
       unsupported: [sft_long_context]
     GB200:
-      verified: [pretrain]
-      unverified: [sft, sft_export_inference, peft, checkpoint_resume]
+      verified: [pretrain, sft, peft, checkpoint_resume]
+      unverified: [sft_export_inference]
       unsupported: [sft_long_context]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
@@ -158,26 +159,31 @@ items:
         dataset.path=work/data/datacomp-525k-energon
         checkpoint.load=null
         --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain
-        --save_interval 120 logger.log_interval=1 logger.log_throughput=true
+        --save_interval 60 logger.log_interval=1 logger.log_throughput=true
+        optimizer.optimizer_cpu_offload=true
+        optimizer.optimizer_offload_fraction=0.25
+        optimizer.overlap_cpu_optimizer_d2h_h2d=false
+        model.recompute_granularity=full model.recompute_method=uniform
+        model.recompute_num_layers=1 model.recompute_modules=null
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
-      last_verified: 2026-08-27
+      last_verified: 2026-08-29
       metrics:
         initial_loss: 2.999004
-        final_loss: 2.170687
-        last_10_steps_step_time_ms_avg: 45173.51
-        last_10_steps_model_tflops_per_gpu_avg: 143.54
-        last_10_steps_tokens_per_second_per_gpu_avg: 1813.452
-        peak_allocated_memory_gib: 61.763
-        peak_reserved_memory_gib: 72.343
+        final_loss: 2.104368
+        last_10_steps_step_time_ms_avg: 49743.2
+        last_10_steps_model_tflops_per_gpu_avg: 130.34
+        last_10_steps_tokens_per_second_per_gpu_avg: 1646.858
       expected_result: >
         Exactly 64 H100s completed all 120 optimizer steps from the learned
         vision-pretrained checkpoint on DataComp image-caption samples at
         TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and
-        selective language/vision activation recompute plus the recipe's BF16
+        full/uniform one-layer language recompute, selective vision recompute,
+        and 25% optimizer-state CPU offload plus the recipe's BF16
         precision-aware optimizer produced finite loss, zero skipped or NaN
-        iterations, the resolved ConfigContainer, and a reloadable step-120
-        checkpoint with all 64 distributed model shards.
+        iterations, and the resolved ConfigContainer. Full optimizer/RNG
+        checkpoints at steps 60 and 120 each contain all 64 distributed model
+        shards and 32 Energon data-parallel states.
 
     GB200:
       status: verified
@@ -197,34 +203,32 @@ items:
         dataset.path=work/data/datacomp-525k-energon
         checkpoint.load=null
         --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain
-        --save_interval 120 checkpoint.save_optim=false checkpoint.save_rng=false
+        --save_interval 60
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain-config/ConfigContainer.yaml
       last_verified: 2026-08-28
       metrics:
-        initial_loss: 3.063424
-        final_loss: 2.041944
-        last_10_steps_step_time_ms_avg: 20274.24
-        last_10_steps_model_tflops_per_gpu_avg: 258.75
-        last_10_steps_tokens_per_second_per_gpu_avg: 3232.476
-        peak_allocated_memory_gib: 120.64
-        peak_reserved_memory_gib: 122.13
+        initial_loss: 3.062157
+        final_loss: 2.038754
+        last_10_steps_step_time_ms_avg: 20385.85
+        last_10_steps_model_tflops_per_gpu_avg: 257.33
+        last_10_steps_tokens_per_second_per_gpu_avg: 3214.779
       expected_result: >
         On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer
         steps from the learned vision-pretrained checkpoint on DataComp
         image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1.
         Natural dropless routing, finite loss, zero skipped or NaN iterations,
-        no active activation recompute, scoped Transformer Engine CUDA-graph
-        capture, and the resolved ConfigContainer are required. The
-        final asynchronous model-only checkpoint must contain all 64
-        distributed model shards; optimizer and RNG state are intentionally
-        excluded, so checkpoint resume remains a separate unverified item.
+        no active language or vision recompute, scoped Transformer Engine
+        CUDA-graph capture, and the resolved ConfigContainer are required.
+        Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64
+        distributed model shards and 32 Energon data-parallel states.
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -244,25 +248,29 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-28
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 5.412096
+        final_loss: 2.293077
+        last_10_steps_step_time_ms_avg: 30878.25
+        last_10_steps_model_tflops_per_gpu_avg: 209.98
+        last_10_steps_tokens_per_second_per_gpu_avg: 2653.0
       expected_result: >
-        On exactly 64 H100s, the BF16 audio-free image/video SFT run must
-        complete 100 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS
-        1280/1, with the checkpoint-native one-layer MTP, separate temporal
-        embedder, natural routing, HybridEP flex dispatch, fixed expert
-        capacity, selective recompute, and precision-aware optimizer. Loss must
-        remain finite with zero skipped or NaN iterations. A reloadable model-
-        only step-100 checkpoint and the resolved ConfigContainer must persist.
+        Exactly 64 H100s completed 100 BF16 SFT optimizer steps from the
+        immutable source checkpoint on 128,000 DataComp image-caption samples
+        at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. The shifted production
+        loss masks contain 2,900,779 supervised tokens. Natural routing,
+        HybridEP flex dispatch, fixed expert capacity, selective language
+        recompute with vision recompute disabled, and the precision-aware
+        optimizer produced finite loss with zero skipped or NaN iterations.
+        The model-only step-100 checkpoint contains all 64 distributed shards
+        and 32 Energon states and reloaded successfully. This dataset verifies
+        image-caption batching; it does not contain video samples.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
@@ -281,22 +289,24 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-29
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 5.393576
+        final_loss: 2.303741
+        last_10_steps_step_time_ms_avg: 47924.55
+        last_10_steps_model_tflops_per_gpu_avg: 135.3
+        last_10_steps_tokens_per_second_per_gpu_avg: 1709.354
       expected_result: >
-        On exactly 64 GB200s, the BF16 audio-free image/video SFT run must
-        complete 100 optimizer steps from the immutable source checkpoint on
-        DataComp at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 1280/1. The H100 SFT
-        objective, optimizer, schedule, trainable set, natural routing, and
-        fixed expert-capacity contract are preserved; execution uses eager
-        all-to-all dispatch without active recompute. Loss must remain finite
-        with zero skipped or NaN iterations, and a reloadable model-only final
-        checkpoint plus the resolved ConfigContainer must persist.
+        Exactly 64 GB200s within one NVL72 domain completed 100 BF16 SFT
+        optimizer steps from the immutable source checkpoint on 128,000
+        DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS
+        1280/1. The shifted production loss masks contain 2,900,779 supervised
+        tokens. Natural routing, eager all-to-all dispatch, fixed expert
+        capacity, and no active language or vision recompute produced finite
+        loss with zero skipped or NaN iterations. The model-only step-100
+        checkpoint contains all 64 distributed shards and 32 Energon states
+        and reloaded successfully. This dataset verifies image-caption batching;
+        it does not contain video samples.
 
   sft_export_inference:
     H100:
@@ -347,8 +357,9 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: b1d2932f32839aa5244edbb342fefc4a88714068
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
@@ -366,27 +377,29 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-peft-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-29
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 3.857522
+        final_loss: 2.157877
+        last_10_steps_step_time_ms_avg: 5427.27
+        last_10_steps_model_tflops_per_gpu_avg: 59.74
+        last_10_steps_tokens_per_second_per_gpu_avg: 754.707
       expected_result: >
-        On exactly 16 H100s, train LoRA adapters for 100 optimizer steps from
-        the immutable source checkpoint on DataComp at TP4/PP2/CP1/EP8/ETP1
-        and GBS/MBS 16/1. The frozen language, image, projector, and temporal-
-        video base weights must remain unchanged while adapters on the model-
-        native attention, Mamba, and MLP projections train with rank 32,
-        alpha 32, and zero dropout. Natural routing and dropless all-to-all
-        dispatch run without active activation recompute. Loss must remain
-        finite with zero skipped or NaN iterations, and a reloadable adapter
-        checkpoint plus the resolved ConfigContainer must persist.
+        Exactly 16 H100s completed the rank-32, alpha-32, zero-dropout LoRA
+        objective for 100 optimizer steps from the immutable source checkpoint
+        on 1,600 DataComp image-caption samples at TP4/PP2/CP1/EP8/ETP1 and
+        GBS/MBS 16/1. The shifted production loss masks contain 35,540
+        supervised tokens. Frozen base weights, natural routing, dropless
+        all-to-all dispatch, and no active language or vision recompute
+        produced finite loss with zero skipped or NaN iterations. The
+        step-100 adapter contains all 16 distributed shards and two Energon
+        states and reloaded successfully. This dataset does not contain video
+        samples.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4
@@ -404,64 +417,106 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-peft-config/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-08-28
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 5.485836
+        final_loss: 2.260179
+        last_10_steps_step_time_ms_avg: 3472.77
+        last_10_steps_model_tflops_per_gpu_avg: 93.55
+        last_10_steps_tokens_per_second_per_gpu_avg: 1179.462
       expected_result: >
-        On exactly 16 GB200s, the same rank-32, alpha-32, zero-dropout LoRA
-        objective must complete 100 optimizer steps from the immutable source
-        checkpoint on DataComp at TP2/PP1/CP1/EP16/ETP1 and GBS/MBS 16/1.
-        Frozen base weights, natural routing, dropless all-to-all dispatch,
-        finite loss, zero skipped or NaN iterations, a reloadable adapter
-        checkpoint, and the resolved ConfigContainer are required.
+        Exactly 16 GB200s completed the rank-32, alpha-32, zero-dropout LoRA
+        objective for 100 optimizer steps from the immutable source checkpoint
+        on 1,600 DataComp image-caption samples at TP2/PP1/CP1/EP16/ETP1 and
+        GBS/MBS 16/1. The shifted production loss masks contain 34,537
+        supervised tokens. Frozen base weights, natural routing, dropless
+        all-to-all dispatch, and no active language or vision recompute
+        produced finite loss with zero skipped or NaN iterations. The
+        step-100 adapter contains all 16 distributed shards and eight Energon
+        states and reloaded successfully. This dataset does not contain video
+        samples.
 
   checkpoint_resume:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a
       depends_on: pretrain
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
+        --recipe nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config
+        --mode pretrain --max_steps 120
+        dataset.path=work/data/datacomp-525k-energon
+        --load_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain
+        checkpoint.ckpt_step=60
+        --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-resume
+        --save_interval 120
+        optimizer.optimizer_cpu_offload=true
+        optimizer.optimizer_offload_fraction=0.25
+        optimizer.overlap_cpu_optimizer_d2h_h2d=false
+        model.recompute_granularity=full model.recompute_method=uniform
+        model.recompute_num_layers=1 model.recompute_modules=null
+        logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-resume-config/ConfigContainer.yaml
+      last_verified: 2026-08-29
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 2.064014
+        final_loss: 2.117677
+        last_10_steps_step_time_ms_avg: 50238.95
+        last_10_steps_model_tflops_per_gpu_avg: 129.05
+        last_10_steps_tokens_per_second_per_gpu_avg: 1630.607
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [61, 120]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
+        sentinels_match: true
       expected_result: >
-        Resume verification must continue directly from a middle checkpoint
-        produced by pretrain.H100, restore optimizer and RNG state, and match
-        the uninterrupted loss sentinels within 1% relative plus 1e-6 absolute.
+        The distinct resume root loaded pretrain.H100 step 60 directly,
+        restored optimizer, RNG, and Energon state, and completed exactly steps
+        61--120 on the same 64-H100 topology and execution fingerprint. Every
+        resumed LM and MTP loss matched the uninterrupted reference within 1%
+        relative plus 1e-6 absolute; the maximum absolute deltas across all 60
+        resumed steps were 0.013309 and 0.017865. LM deltas at sentinels 61 and
+        120 were 0 and 0.013309. The final full-state checkpoint contains 64
+        model shards and 32 Energon states.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522
       depends_on: pretrain
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
+        --recipe nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config
+        --mode pretrain --max_steps 120
+        dataset.path=work/data/datacomp-525k-energon
+        --load_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain
+        checkpoint.ckpt_step=60
+        --save_dir work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-resume
+        --save_interval 120
+        logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-resume-config/ConfigContainer.yaml
+      last_verified: 2026-08-28
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 2.204572
+        final_loss: 2.040755
+        last_10_steps_step_time_ms_avg: 19945.03
+        last_10_steps_model_tflops_per_gpu_avg: 263.04
+        last_10_steps_tokens_per_second_per_gpu_avg: 3285.831
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [61, 120]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
+        sentinels_match: true
       expected_result: >
-        Resume verification must continue directly from a middle checkpoint
-        produced by pretrain.GB200, restore optimizer and RNG state, and match
-        the uninterrupted loss sentinels within 1% relative plus 1e-6 absolute.
+        The distinct resume root loaded pretrain.GB200 step 60 directly,
+        restored optimizer, RNG, and Energon state, and completed exactly steps
+        61--120 on the same 64-GB200 one-domain topology. Every resumed LM and
+        MTP loss matched the uninterrupted reference within 1% relative plus
+        1e-6 absolute; LM deltas at sentinels 61 and 120 were 0.000077 and
+        0.002001. The final full-state checkpoint contains 64 model shards and
+        32 Energon states.
