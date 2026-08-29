@@ -50,6 +50,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig, _set_moe_expert_tensor_parallel_default
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
+from megatron.bridge.training.gtp import is_gtp_remat_active
 from megatron.bridge.training.utils.pg_utils import DistTrainProcessGroupCollection
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
@@ -759,6 +760,18 @@ def _initialize_distributed(
         if dist_config.use_decentralized_pg or dist_config.distributed_backend == "nccl":
             raise RuntimeError("Cannot initialize parallel groups with no CUDA devices available (device_count=0)")
 
+    if dist_config.use_decentralized_pg and is_gtp_remat_active(model_config):
+        raise NotImplementedError(
+            "GTP is not supported with dist.use_decentralized_pg=True. "
+            "Use the standard MCore process-group runtime by setting dist.use_decentralized_pg=False."
+        )
+
+    if is_gtp_remat_active(model_config):
+        from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+
+        if not HAVE_GTP:
+            raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
+
     if dist_config.use_decentralized_pg:
         # Use HyperCommGrid to create local parallel groups passed through functions
         # instead of relying on mcore's global parallel state (mpu) variables.
@@ -812,6 +825,8 @@ def _initialize_distributed(
                 expert_model_parallel_size=model_config.expert_model_parallel_size,
                 num_distributed_optimizer_instances=num_distributed_optimizer_instances,
                 expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
+                gtp_remat_size=model_config.gtp_weight_remat_size,
+                expert_gtp_remat_size=model_config.expert_gtp_weight_remat_size,
                 distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
                 nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
                 order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-cp-ep-pp-dp",
