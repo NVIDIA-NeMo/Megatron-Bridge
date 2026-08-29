@@ -1,0 +1,26 @@
+{
+  "schema": "megatron-bridge.native-source-provenance.v1",
+  "authority": {
+    "repository": "NVIDIA/Megatron-LM",
+    "manifest_path": "pyproject.toml",
+    "selection": "The frozen MCore gitlink selects native Python dependency sources; Bridge does not override them."
+  },
+  "lanes": [
+    {
+      "name": "main",
+      "mcore_ref": "4ac689b8bfe55c00f61d7ff0d082cad558632445",
+      "transformer_engine_ref": "4329ff84bfbdaa778a33cba02a15fb0807c64689",
+      "fast_hadamard_transform_ref": "1cc807efbd6cc001df359822d60bf6052dd66859"
+    },
+    {
+      "name": "dev",
+      "mcore_ref": "bae1d8992fe40719505d2e10537e3cc1816ee68f",
+      "transformer_engine_ref": "f031cf87bd054c7558b887df7bed93975456667f",
+      "fast_hadamard_transform_ref": "f134af63deb2df17e1171a9ec1ea4a7d8604d5ca"
+    }
+  ],
+  "verification": {
+    "consumer": "docker/Dockerfile.ci",
+    "contract": "The build selects a lane by its immutable MCore ref, verifies these exact source refs, and redirects package clones to the verified local caches."
+  }
+}
