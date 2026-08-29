@@ -56,6 +56,7 @@ ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
     UV_HTTP_TIMEOUT=120 \
     NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
     NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD=1 \
+    FAST_HADAMARD_TRANSFORM_FORCE_BUILD=TRUE \
     HYBRID_EP_MULTINODE=1 \
     RDMA_CORE_HOME=/opt/rdma-core/build \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
@@ -124,6 +125,39 @@ RUN git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/Fl
     test "$(git -C /opt/flash-mla/csrc/cutlass rev-parse HEAD)" = "$FLASH_MLA_CUTLASS_REF" && \
     git config --global url.file:///opt/flash-mla/.insteadOf https://github.com/deepseek-ai/FlashMLA && \
     git config --global url.file:///opt/flash-mla/csrc/cutlass/.insteadOf https://github.com/NVIDIA/cutlass.git
+
+# MCore pins native packages to exact source commits. Prefetch both lane revisions, verify
+# their immutable trees, and force uv's clones through these audited local caches.
+ARG FAST_HADAMARD_TRANSFORM_MAIN_REF=1cc807efbd6cc001df359822d60bf6052dd66859
+ARG FAST_HADAMARD_TRANSFORM_DEV_REF=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca
+ARG TRANSFORMER_ENGINE_MAIN_REF=4329ff84bfbdaa778a33cba02a15fb0807c64689
+ARG TRANSFORMER_ENGINE_DEV_REF=f031cf87bd054c7558b887df7bed93975456667f
+RUN git clone --filter=blob:none --no-checkout https://github.com/Dao-AILab/fast-hadamard-transform.git /opt/fast-hadamard-transform && \
+    git -C /opt/fast-hadamard-transform fetch --depth 1 origin \
+        "$FAST_HADAMARD_TRANSFORM_MAIN_REF" "$FAST_HADAMARD_TRANSFORM_DEV_REF" && \
+    git -C /opt/fast-hadamard-transform cat-file -e "$FAST_HADAMARD_TRANSFORM_MAIN_REF^{commit}" && \
+    git -C /opt/fast-hadamard-transform cat-file -e "$FAST_HADAMARD_TRANSFORM_DEV_REF^{commit}" && \
+    git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/TransformerEngine.git /opt/transformer-engine && \
+    git -C /opt/transformer-engine fetch --depth 1 origin \
+        "$TRANSFORMER_ENGINE_MAIN_REF" "$TRANSFORMER_ENGINE_DEV_REF" && \
+    git -C /opt/transformer-engine cat-file -e "$TRANSFORMER_ENGINE_MAIN_REF^{commit}" && \
+    git -C /opt/transformer-engine cat-file -e "$TRANSFORMER_ENGINE_DEV_REF^{commit}" && \
+    test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_MAIN_REF" 3rdparty/cudnn-frontend | awk '{print $3}')" = \
+        "e46d7082450264ce05cf898f8740011c4896f817" && \
+    test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_DEV_REF" 3rdparty/cudnn-frontend | awk '{print $3}')" = \
+        "7b9b711c22b6823e87150213ecd8449260db8610" && \
+    test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_MAIN_REF" 3rdparty/googletest | awk '{print $3}')" = \
+        "f8d7d77c06936315286eb55f8de22cd23c188571" && \
+    test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_DEV_REF" 3rdparty/googletest | awk '{print $3}')" = \
+        "f8d7d77c06936315286eb55f8de22cd23c188571" && \
+    test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_MAIN_REF" 3rdparty/cutlass | awk '{print $3}')" = \
+        "57e3cfb47a2d9e0d46eb6335c3dc411498efa198" && \
+    test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_DEV_REF" 3rdparty/cutlass | awk '{print $3}')" = \
+        "57e3cfb47a2d9e0d46eb6335c3dc411498efa198" && \
+    git config --global url.file:///opt/fast-hadamard-transform/.insteadOf \
+        https://github.com/Dao-AILab/fast-hadamard-transform.git && \
+    git config --global url.file:///opt/transformer-engine/.insteadOf \
+        https://github.com/NVIDIA/TransformerEngine.git
 
 ARG BASELINE_MCORE_REF
 
