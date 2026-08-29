@@ -141,6 +141,7 @@ COPY docker/native-source-provenance.json docker/verify-native-source-provenance
 RUN python /opt/verify-native-source-provenance.py \
         --manifest /opt/native-source-provenance.json \
         --mcore-ref "$BASELINE_MCORE_REF" \
+        --bridge-pyproject pyproject.toml \
         --transformer-engine-ref \
         "$(if [ "$BASELINE_MCORE_REF" = "4ac689b8bfe55c00f61d7ff0d082cad558632445" ]; then printf %s "$TRANSFORMER_ENGINE_MAIN_REF"; else printf %s "$TRANSFORMER_ENGINE_DEV_REF"; fi)" \
         --fast-hadamard-transform-ref \
