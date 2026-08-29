@@ -20,6 +20,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+import tomllib
+from packaging.requirements import InvalidRequirement, Requirement
+
+
 _GIT_OID_PART = re.compile(r"[0-9a-f]{20}")
 
 
@@ -47,9 +51,7 @@ def _git_commit(value: dict[str, Any], label: str) -> str:
 def _lane(manifest: dict[str, Any], mcore_ref: str) -> dict[str, Any]:
     """Return the unique lane selected by an immutable MCore commit."""
     lanes = [
-        lane
-        for lane in manifest["lanes"]
-        if _git_commit(lane["mcore_commit"], f"{lane['name']} MCore") == mcore_ref
+        lane for lane in manifest["lanes"] if _git_commit(lane["mcore_commit"], f"{lane['name']} MCore") == mcore_ref
     ]
     _require(len(lanes) == 1, f"unknown or duplicate MCore provenance: {mcore_ref}")
     return lanes[0]
@@ -60,8 +62,7 @@ def _source(lane: dict[str, Any], name: str) -> dict[str, Any]:
     source = lane["native_sources"].get(name)
     _require(isinstance(source, dict), f"missing {name} source provenance")
     _require(
-        isinstance(source.get("repository"), str)
-        and source["repository"].startswith("https://github.com/"),
+        isinstance(source.get("repository"), str) and source["repository"].startswith("https://github.com/"),
         f"invalid {name} repository",
     )
     _require(isinstance(source.get("package"), str), f"invalid {name} package")
@@ -73,28 +74,52 @@ def _build_commit(lane: dict[str, Any], name: str) -> str:
     return _git_commit(_source(lane, name)["build_commit"], f"{name} build")
 
 
+def _uv_sources(path: Path) -> dict[str, Any]:
+    """Parse effective uv source declarations from a project manifest."""
+    with path.open("rb") as manifest_file:
+        manifest = tomllib.load(manifest_file)
+    sources = manifest.get("tool", {}).get("uv", {}).get("sources", {})
+    _require(isinstance(sources, dict), "invalid tool.uv.sources table")
+    return sources
+
+
+def _source_entries(sources: dict[str, Any], package: str) -> list[dict[str, Any]]:
+    """Return normalized source entries for one package."""
+    entries = sources.get(package, [])
+    if isinstance(entries, dict):
+        entries = [entries]
+    _require(
+        isinstance(entries, list) and all(isinstance(entry, dict) for entry in entries),
+        f"invalid {package} source declaration",
+    )
+    return entries
+
+
 def _verify_mcore_manifest(lane: dict[str, Any], path: Path) -> None:
-    """Verify every active native source against the frozen MCore manifest."""
-    text = path.read_text()
+    """Verify every active native source against parsed frozen MCore metadata."""
+    sources = _uv_sources(path)
     for name, source in lane["native_sources"].items():
         package = name.replace("_", "-")
+        entries = _source_entries(sources, package)
         if source is None:
-            _require(
-                package not in text, f"unexpected {package} source in MCore manifest"
-            )
+            _require(not entries, f"unexpected {package} source in MCore manifest")
             continue
-        package = source["package"]
         repository = source["repository"]
         commit = _git_commit(source["mcore_commit"], f"{name} MCore")
-        expected = f'{package} = {{ git = "{repository}", rev = "{commit}" }}'
         _require(
-            expected in text, f"{package} source does not match frozen MCore provenance"
+            any(entry.get("git") == repository and entry.get("rev") == commit for entry in entries),
+            f"{package} source does not match frozen MCore provenance",
         )
 
 
 def _verify_bridge_manifest(lane: dict[str, Any], path: Path) -> None:
-    """Verify each explicit Bridge-side selector against its lane provenance."""
-    text = path.read_text()
+    """Verify each explicit Bridge-side selector against parsed project metadata."""
+    with path.open("rb") as manifest_file:
+        manifest = tomllib.load(manifest_file)
+    sources = manifest.get("tool", {}).get("uv", {}).get("sources", {})
+    dependencies = manifest.get("project", {}).get("dependencies", [])
+    _require(isinstance(sources, dict), "invalid Bridge tool.uv.sources table")
+    _require(isinstance(dependencies, list), "invalid Bridge project dependencies")
     for name, source in lane["native_sources"].items():
         if source is None or source["bridge_selector"] is None:
             continue
@@ -103,15 +128,39 @@ def _verify_bridge_manifest(lane: dict[str, Any], path: Path) -> None:
         repository = source["repository"]
         if selector["kind"] == "uv-source":
             value = _git_commit(selector["commit"], f"{name} Bridge selector")
-            expected = f'{package} = {{ git = "{repository}", rev = "{value}" }}'
+            entries = _source_entries(sources, package)
+            matches = any(entry.get("git") == repository and entry.get("rev") == value for entry in entries)
         elif selector["kind"] == "vcs-requirement":
             value = selector.get("value")
             if value is None:
                 value = _git_commit(selector["commit"], f"{name} Bridge selector")
-            expected = f"{package} @ git+{repository}@{value}"
+            expected_url = f"git+{repository}@{value}"
+            matches = False
+            for dependency in dependencies:
+                try:
+                    requirement = Requirement(dependency)
+                except InvalidRequirement:
+                    continue
+                if requirement.name == package and requirement.url is not None:
+                    matches = requirement.url == expected_url
+                    if matches:
+                        break
+                elif requirement.name == package:
+                    entries = _source_entries(sources, package)
+                    matches = any(entry.get("git") == repository and entry.get("rev") == value for entry in entries)
+                    if not matches and isinstance(value, str):
+                        if _GIT_OID_PART.fullmatch(value[:20]):
+                            matches = (
+                                source["mcore_commit"] is not None
+                                and _git_commit(source["mcore_commit"], f"{name} MCore") == value
+                            )
+                        else:
+                            matches = str(requirement.specifier) == f">={value.removeprefix('v')}"
+                    if matches:
+                        break
         else:
             raise ValueError(f"invalid {name} Bridge selector kind")
-        _require(expected in text, f"{package} source does not match Bridge provenance")
+        _require(matches, f"{package} source does not match Bridge provenance")
 
 
 def main() -> None:
@@ -133,8 +182,7 @@ def main() -> None:
         )
     if args.fast_hadamard_transform_ref is not None:
         _require(
-            _build_commit(lane, "fast_hadamard_transform")
-            == args.fast_hadamard_transform_ref,
+            _build_commit(lane, "fast_hadamard_transform") == args.fast_hadamard_transform_ref,
             "fast-hadamard-transform build source does not match provenance",
         )
     if args.mcore_pyproject is not None:
