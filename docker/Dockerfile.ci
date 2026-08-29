@@ -134,6 +134,19 @@ ARG FAST_HADAMARD_TRANSFORM_MAIN_REF=1cc807efbd6cc001df359822d60bf6052dd66859
 ARG FAST_HADAMARD_TRANSFORM_DEV_REF=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca
 ARG TRANSFORMER_ENGINE_MAIN_REF=4329ff84bfbdaa778a33cba02a15fb0807c64689
 ARG TRANSFORMER_ENGINE_DEV_REF=f031cf87bd054c7558b887df7bed93975456667f
+ARG EMERGING_OPTIMIZERS_REF=b309e2f01cda75dc96a6dc1a2355a7b3b64b5e16
+ARG EMERGING_OPTIMIZERS_PYPROJECT=a1f7327489c439a3e696474458a12630b6ebd762
+RUN git clone --no-checkout https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git /opt/emerging-optimizers && \
+    git -C /opt/emerging-optimizers fetch --depth 1 origin \
+        refs/tags/v0.3.0:refs/tags/v0.3.0 && \
+    test "$(git -C /opt/emerging-optimizers rev-parse refs/tags/v0.3.0^{commit})" = \
+        "$EMERGING_OPTIMIZERS_REF" && \
+    test "$(git -C /opt/emerging-optimizers rev-parse "$EMERGING_OPTIMIZERS_REF:pyproject.toml")" = \
+        "$EMERGING_OPTIMIZERS_PYPROJECT" && \
+    test -z "$(git -C /opt/emerging-optimizers ls-tree -r "$EMERGING_OPTIMIZERS_REF" | awk '$1 == "160000"')" && \
+    git config --global url.file:///opt/emerging-optimizers/.insteadOf \
+        https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git
+
 RUN git clone --no-checkout https://github.com/Dao-AILab/fast-hadamard-transform.git /opt/fast-hadamard-transform && \
     git -C /opt/fast-hadamard-transform fetch --depth 3 origin \
         "$FAST_HADAMARD_TRANSFORM_MAIN_REF" "$FAST_HADAMARD_TRANSFORM_DEV_REF" \
