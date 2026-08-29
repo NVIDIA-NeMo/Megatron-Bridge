@@ -348,6 +348,68 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
 
 
+def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_processor):
+    cfg = _build_config(
+        _super_vl_h100_recipe_module.nemotron_35_super_vl_peft_16gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.dataset.task_encoder.temporal_video_resize_mode == "processor"
+    assert cfg.dataset.pad_to_max_length is True
+    assert cfg.dataset.do_validation is False
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
+    assert cfg.peft.dim == 32
+    assert cfg.peft.alpha == 32
+    assert cfg.peft.dropout == 0.0
+
+    assert cfg.model.has_sound is False
+    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.separate_video_embedder is True
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.tensor_model_parallel_size == 8
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 16
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.optimizer.lr == 1e-4
+    assert cfg.optimizer.min_lr == 0.0
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.load is None
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.async_save is False
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+
+
 def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor):
     cfg = _build_config(
         _super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
@@ -496,5 +558,82 @@ def test_super_vl_pretrain_recipe_uses_gb200_nvl72_policy(fake_processor):
     assert cfg.ddp.overlap_param_gather is False
     assert cfg.checkpoint.async_save is True
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_64gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.train.global_batch_size == 1280
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.checkpoint.async_save is False
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_super_vl_peft_recipe_uses_gb200_support_topology(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_peft_16gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
+    assert cfg.peft.dim == 32
+    assert cfg.peft.alpha == 32
+    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.train.global_batch_size == 16
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.checkpoint.async_save is False
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1

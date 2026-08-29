@@ -17,6 +17,7 @@
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
     _make_nemotron_omni_energon_dataset,
@@ -24,6 +25,8 @@ from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     _apply_nemotron_3_super_64gpu_h100_training_stack,
 )
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -215,7 +218,114 @@ def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     return _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
 
 
+def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return the 16-H100 BF16 PEFT configuration for Nemotron 3.5 Super VL.
+
+    The base language, image, projector, and temporal-video weights remain
+    frozen. Adapters target the model-native attention, Mamba, and MLP linear
+    projections inherited from Nemotron 3 Super. The Energon dataset preserves
+    Omni's processor-sized image and temporal-video metadata contract.
+
+    Args:
+        peft_scheme: PEFT scheme, either ``"lora"``, ``"dora"``, or a
+            configured PEFT instance.
+
+    Returns:
+        The Super-VL PEFT configuration.
+    """
+    cfg = _nemotron_35_super_vl_base()
+    target_modules = ["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"]
+    cfg.peft = default_peft_config(
+        peft_scheme,
+        target_modules=target_modules,
+        dim=32,
+        alpha=32,
+        dropout=0.0,
+        dropout_position="pre",
+        lora_A_init_method="xavier",
+        lora_B_init_method="zero",
+    )
+
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.pipeline_model_parallel_layout = None
+
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = True
+    cfg.model.freeze_sound_encoder = True
+    cfg.model.freeze_sound_projection = True
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_expert_capacity_factor = None
+    cfg.model.moe_pad_expert_input_to_capacity = False
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_vision = False
+
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 16
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
+
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=10,
+        lr_decay_iters=100,
+        max_lr=1e-4,
+        min_lr=0.0,
+        adam_beta2=0.95,
+    )
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+
+    cfg.dataset = _make_nemotron_omni_energon_dataset(
+        cfg.train.micro_batch_size,
+        hf_processor_path=NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
+    )
+    cfg.dataset.pad_to_max_length = True
+    cfg.dataset.do_validation = False
+
+    cfg.checkpoint.load = None
+    cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.async_save = False
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
+    cfg.logger.log_device_memory_used = True
+    cfg.logger.tensorboard_dir = None
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.check_for_large_grads = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
+    return cfg
+
+
 __all__ = [
+    "nemotron_35_super_vl_peft_16gpu_h100_bf16_config",
     "nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config",
     "nemotron_35_super_vl_sft_64gpu_h100_bf16_config",
 ]

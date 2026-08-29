@@ -17,7 +17,9 @@
 import torch
 
 from megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl import (
+    nemotron_35_super_vl_peft_16gpu_h100_bf16_config,
     nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
+    nemotron_35_super_vl_sft_64gpu_h100_bf16_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -103,4 +105,87 @@ def nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-__all__ = ["nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config"]
+def nemotron_35_super_vl_sft_64gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the 64-GB200 BF16 SFT configuration for Super VL.
+
+    This preserves the H100 SFT data, objective, optimizer, schedule, batch,
+    and trainable-parameter contract while mapping execution to one NVL72
+    domain. The ordinary all-to-all dispatcher and eager execution keep this
+    support-verification recipe independent of topology-sensitive benchmark
+    transport and graph capture.
+
+    Returns:
+        The Super-VL GB200 SFT configuration.
+    """
+    cfg = nemotron_35_super_vl_sft_64gpu_h100_bf16_config()
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_vision = False
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.checkpoint.async_save = False
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+    }
+    return cfg
+
+
+def nemotron_35_super_vl_peft_16gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the 16-GB200 BF16 LoRA configuration for Super VL.
+
+    Returns:
+        The Super-VL GB200 PEFT configuration.
+    """
+    cfg = nemotron_35_super_vl_peft_16gpu_h100_bf16_config()
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.checkpoint.async_save = False
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+    }
+    return cfg
+
+
+__all__ = [
+    "nemotron_35_super_vl_peft_16gpu_gb200_bf16_config",
+    "nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config",
+    "nemotron_35_super_vl_sft_64gpu_gb200_bf16_config",
+]
