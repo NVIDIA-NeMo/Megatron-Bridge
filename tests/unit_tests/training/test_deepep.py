@@ -506,3 +506,25 @@ class TestNCCLEP:
 
         # Verify get_device_properties was called
         mock_get_device_properties.assert_called_once_with(0)
+
+    def test_apply_without_cuda_builds_flex_config(self, monkeypatch: pytest.MonkeyPatch):
+        """NCCL EP config construction must not probe CUDA devices on GPU-less hosts."""
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+
+        def fail_hardware_probe(*args, **kwargs):
+            del args, kwargs
+            pytest.fail("apply_flex_dispatcher_backend probed CUDA device properties without CUDA")
+
+        monkeypatch.setattr("torch.cuda.get_device_properties", fail_hardware_probe)
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="ncclep")
+
+        assert config.moe_token_dispatcher_type == "flex"
+        assert config.moe_flex_dispatcher_backend == "ncclep"
+        assert config.moe_shared_expert_overlap is False

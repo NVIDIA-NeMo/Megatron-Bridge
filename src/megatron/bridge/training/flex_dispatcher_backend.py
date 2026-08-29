@@ -50,7 +50,7 @@ def apply_flex_dispatcher_backend(
             )
         return
 
-    if not torch.cuda.is_available() and moe_flex_dispatcher_backend in ("deepep", "hybridep"):
+    if not torch.cuda.is_available() and moe_flex_dispatcher_backend in ("deepep", "hybridep", "ncclep"):
         model_config.moe_token_dispatcher_type = "flex"
         model_config.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
         model_config.moe_shared_expert_overlap = False
