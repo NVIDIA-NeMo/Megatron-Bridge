@@ -266,7 +266,12 @@ def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def gpt_oss_120b_pretrain_64gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× GB200, BF16, NCCL EP=64."""
+    """GPT-OSS 120B pretrain: 64× GB200, BF16, NCCL EP=64.
+
+    Note:
+        This recipe is temporary, added only for experimentation with NCCL EP.
+        It will be removed in the near future.
+    """
     cfg = gpt_oss_120b_pretrain_64gpu_gb200_bf16_config()
     _enable_ncclep_bf16(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

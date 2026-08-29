@@ -437,7 +437,12 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× GB300, MXFP8, NCCL EP=8."""
+    """Nemotron 3 Nano pretrain: 8× GB300, MXFP8, NCCL EP=8.
+
+    Note:
+        This recipe is temporary, added only for experimentation with NCCL EP.
+        It will be removed in the near future.
+    """
     cfg = nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config()
     _enable_ncclep_mxfp8(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
