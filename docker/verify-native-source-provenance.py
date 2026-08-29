@@ -95,6 +95,18 @@ def _source_entries(sources: dict[str, Any], package: str) -> list[dict[str, Any
     return entries
 
 
+def _verify_exact_source(sources: dict[str, Any], package: str, repository: str, revision: str, label: str) -> None:
+    """Require exactly one unconditional source at the approved repository and revision."""
+    entries = _source_entries(sources, package)
+    _require(len(entries) == 1, f"{label} must have exactly one source declaration")
+    entry = entries[0]
+    _require(set(entry) == {"git", "rev"}, f"{label} source must be unconditional")
+    _require(
+        entry["git"] == repository and entry["rev"] == revision,
+        f"{label} source does not match provenance",
+    )
+
+
 def _verify_mcore_manifest(lane: dict[str, Any], path: Path) -> None:
     """Verify every active native source against parsed frozen MCore metadata."""
     sources = _uv_sources(path)
@@ -104,11 +116,12 @@ def _verify_mcore_manifest(lane: dict[str, Any], path: Path) -> None:
         if source is None:
             _require(not entries, f"unexpected {package} source in MCore manifest")
             continue
-        repository = source["repository"]
-        commit = _git_commit(source["mcore_commit"], f"{name} MCore")
-        _require(
-            any(entry.get("git") == repository and entry.get("rev") == commit for entry in entries),
-            f"{package} source does not match frozen MCore provenance",
+        _verify_exact_source(
+            sources,
+            source["package"],
+            source["repository"],
+            _git_commit(source["mcore_commit"], f"{name} MCore"),
+            f"{source['package']} MCore",
         )
 
 
@@ -117,9 +130,15 @@ def _verify_bridge_manifest(lane: dict[str, Any], path: Path) -> None:
     with path.open("rb") as manifest_file:
         manifest = tomllib.load(manifest_file)
     sources = manifest.get("tool", {}).get("uv", {}).get("sources", {})
-    dependencies = manifest.get("project", {}).get("dependencies", [])
+    overrides = manifest.get("tool", {}).get("uv", {}).get("override-dependencies", [])
     _require(isinstance(sources, dict), "invalid Bridge tool.uv.sources table")
-    _require(isinstance(dependencies, list), "invalid Bridge project dependencies")
+    _require(isinstance(overrides, list), "invalid Bridge override dependencies")
+    requirements: list[Requirement] = []
+    for override in overrides:
+        try:
+            requirements.append(Requirement(override))
+        except InvalidRequirement as error:
+            raise ValueError("invalid Bridge override dependency") from error
     for name, source in lane["native_sources"].items():
         if source is None or source["bridge_selector"] is None:
             continue
@@ -127,40 +146,22 @@ def _verify_bridge_manifest(lane: dict[str, Any], path: Path) -> None:
         package = source["package"]
         repository = source["repository"]
         if selector["kind"] == "uv-source":
-            value = _git_commit(selector["commit"], f"{name} Bridge selector")
-            entries = _source_entries(sources, package)
-            matches = any(entry.get("git") == repository and entry.get("rev") == value for entry in entries)
+            revision = _git_commit(selector["commit"], f"{name} Bridge selector")
+            _verify_exact_source(sources, package, repository, revision, f"{package} Bridge")
         elif selector["kind"] == "vcs-requirement":
-            value = selector.get("value")
-            if value is None:
-                value = _git_commit(selector["commit"], f"{name} Bridge selector")
-            expected_url = f"git+{repository}@{value}"
-            matches = False
-            for dependency in dependencies:
-                try:
-                    requirement = Requirement(dependency)
-                except InvalidRequirement:
-                    continue
-                if requirement.name == package and requirement.url is not None:
-                    matches = requirement.url == expected_url
-                    if matches:
-                        break
-                elif requirement.name == package:
-                    entries = _source_entries(sources, package)
-                    matches = any(entry.get("git") == repository and entry.get("rev") == value for entry in entries)
-                    if not matches and isinstance(value, str):
-                        if _GIT_OID_PART.fullmatch(value[:20]):
-                            matches = (
-                                source["mcore_commit"] is not None
-                                and _git_commit(source["mcore_commit"], f"{name} MCore") == value
-                            )
-                        else:
-                            matches = str(requirement.specifier) == f">={value.removeprefix('v')}"
-                    if matches:
-                        break
+            revision = selector.get("value")
+            if revision is None:
+                revision = _git_commit(selector["commit"], f"{name} Bridge selector")
+            matching = [requirement for requirement in requirements if requirement.name == package]
+            _require(len(matching) == 1, f"{package} must have exactly one Bridge override")
+            requirement = matching[0]
+            _require(requirement.marker is None, f"{package} Bridge override must be unconditional")
+            _require(
+                requirement.url == f"git+{repository}@{revision}",
+                f"{package} source does not match Bridge provenance",
+            )
         else:
             raise ValueError(f"invalid {name} Bridge selector kind")
-        _require(matches, f"{package} source does not match Bridge provenance")
 
 
 def main() -> None:
