@@ -39,7 +39,9 @@ class TestQwenVLInferenceWrapper:
             return wrapper
 
     def test_multimodal_prompt_config_uses_qwen_visual_tokens(self):
-        prompt_config = QwenVLInferenceWrapper.multimodal_prompt_config
+        prompt_config = getattr(QwenVLInferenceWrapper, "multimodal_prompt_config", None)
+        if prompt_config is None:
+            pytest.skip("selected MCore does not provide structured multimodal prompt contracts")
 
         assert prompt_config.image_spec.model_token == "<|image_pad|>"
         assert prompt_config.image_spec.prefix == "<|vision_start|>"
