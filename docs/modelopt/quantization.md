@@ -180,6 +180,10 @@ must therefore build the plan and fully consume each export stream in the same t
 termination. The current streaming API supports canonical per-expert Hugging Face MoE layouts; canonical grouped-
 expert Hugging Face tensors are rejected until ModelOpt provides a state-stacking operation.
 
+Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
+or QAT. Dimension-permuting mappings are also rejected by the streaming API. This API requires a ModelOpt release
+that provides the functional quantized-weight export interface.
+
 ### Supported Models For PTQ
 
 | Model | fp8 | nvfp4 |

@@ -26,6 +26,7 @@ from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
     ColumnParallelMapping,
     FusedExpertMapping,
     GatedMLPMapping,
@@ -130,6 +131,63 @@ def test_reused_plan_recaptures_mutable_quantizer_state():
     assert not torch.equal(
         first["model.layers.0.self_attn.o_proj.weight_scale"], second["model.layers.0.self_attn.o_proj.weight_scale"]
     )
+
+
+def test_build_plan_rejects_quantized_adapter_weights():
+    module = _fp8_linear()
+    task = _task(
+        ColumnParallelMapping("projection.to_wrap.weight", "model.projection.weight"),
+        module,
+        global_name="decoder.layers.0.projection.to_wrap.weight",
+    )
+
+    with pytest.raises(RuntimeError, match="folded into base weights before quantization calibration"):
+        modelopt_utils.build_modelopt_export_plan([task], model=[module])
+
+
+def test_build_plan_rejects_dimension_permutation():
+    module = _fp8_linear()
+    mapping = AutoMapping(
+        "projection.weight",
+        "model.projection.weight",
+        permute_dims=(1, 0),
+    )
+
+    with pytest.raises(RuntimeError, match="dimension-permuting mappings"):
+        modelopt_utils.build_modelopt_export_plan([_task(mapping, module)], model=[module])
+
+
+def test_distributed_error_check_skips_object_gather_on_success(monkeypatch):
+    group = object()
+    monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 2)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda _group: "gloo")
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        modelopt_utils,
+        "_all_gather_objects",
+        lambda *_args, **_kwargs: pytest.fail("success path used object gather"),
+    )
+
+    modelopt_utils._raise_distributed_errors(None, group, "capture")
+
+
+def test_distributed_error_check_gathers_messages_only_on_failure(monkeypatch):
+    group = object()
+    monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 2)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda _group: "gloo")
+
+    def report_remote_failure(failed, **_kwargs):
+        failed.fill_(1)
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", report_remote_failure)
+    monkeypatch.setattr(
+        modelopt_utils,
+        "_all_gather_objects",
+        lambda _error, _group: [None, "ValueError: rank-local failure"],
+    )
+
+    with pytest.raises(RuntimeError, match="rank-local failure"):
+        modelopt_utils._raise_distributed_errors(None, group, "capture")
 
 
 def test_build_plan_excludes_fake_quant_amax_mappings():

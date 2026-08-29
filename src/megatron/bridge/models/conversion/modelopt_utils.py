@@ -107,6 +107,15 @@ def _qkv_layout(mapping: Any, module: torch.nn.Module) -> tuple[int, int, int, i
     )
 
 
+def _validate_quantized_task(task: WeightConversionTask) -> None:
+    if ".to_wrap.weight" in task.global_param_name:
+        raise NotImplementedError(
+            "ModelOpt export requires adapters to be folded into base weights before quantization calibration"
+        )
+    if isinstance(task.mapping, AutoMapping) and task.mapping.permute_dims is not None:
+        raise NotImplementedError("ModelOpt export does not support dimension-permuting mappings")
+
+
 def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
     if task.megatron_module is None or task.param_weight is None:
         return None
@@ -143,8 +152,11 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
 
     from modelopt.torch.export.quant_utils import get_quantized_weight_export_spec
 
+    spec = get_quantized_weight_export_spec(task.megatron_module, weight_name)
+    if spec is not None:
+        _validate_quantized_task(task)
     return _SourceState(
-        get_quantized_weight_export_spec(task.megatron_module, weight_name),
+        spec,
         tuple(task.param_weight.shape),
         _mapping_parallelism(task.mapping, task.megatron_module),
         _qkv_layout(task.mapping, task.megatron_module),
@@ -161,6 +173,18 @@ def _all_gather_objects(value: Any, group: Any) -> list[Any]:
 
 
 def _raise_distributed_errors(error: str | None, group: Any, context: str) -> None:
+    world_size = get_pg_size(group)
+    if world_size > 1:
+        device = torch.device("cpu")
+        if str(torch.distributed.get_backend(group)).lower() == "nccl":
+            if not torch.cuda.is_available():
+                raise RuntimeError("NCCL ModelOpt error synchronization requires CUDA")
+            device = torch.device("cuda", torch.cuda.current_device())
+        failed = torch.tensor(error is not None, dtype=torch.uint8, device=device)
+        torch.distributed.all_reduce(failed, op=torch.distributed.ReduceOp.MAX, group=group)
+        if not failed.item():
+            return
+
     errors = [item for item in _all_gather_objects(error, group) if item is not None]
     if errors:
         raise RuntimeError(f"{context}: {'; '.join(dict.fromkeys(errors))}")
@@ -341,13 +365,6 @@ def _transform_source_state(
         else:
             if len(names) != 1:
                 raise ValueError(f"Expected one HF name for {task.global_param_name}")
-            if isinstance(task.mapping, AutoMapping) and task.mapping.permute_dims is not None:
-                from modelopt.torch.export.quant_utils import permute_quantized_weight_export_state
-
-                transformed_state = permute_quantized_weight_export_state(
-                    transformed_state,
-                    task.mapping.permute_dims,
-                )
             transformed = {next(iter(names.values())): transformed_state}
 
     return transformed
@@ -676,6 +693,7 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
         if task.global_param_name not in plan.quantized_params:
             export_tasks.append(task)
             continue
+        _validate_quantized_task(task)
 
         finalizer = None
         if isinstance(task.mapping, _LocalExpertMappingMixin):
