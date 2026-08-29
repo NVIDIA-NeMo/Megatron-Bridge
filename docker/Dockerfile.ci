@@ -161,10 +161,42 @@ RUN git clone --no-checkout https://github.com/Dao-AILab/fast-hadamard-transform
         "57e3cfb47a2d9e0d46eb6335c3dc411498efa198" && \
     test "$(git -C /opt/transformer-engine ls-tree "$TRANSFORMER_ENGINE_DEV_REF" 3rdparty/cutlass | awk '{print $3}')" = \
         "57e3cfb47a2d9e0d46eb6335c3dc411498efa198" && \
+    git init /opt/transformer-engine-cutlass && \
+    git -C /opt/transformer-engine-cutlass remote add origin https://github.com/NVIDIA/cutlass.git && \
+    git -C /opt/transformer-engine-cutlass fetch --depth 1 origin refs/heads/v4 && \
+    test "$(git -C /opt/transformer-engine-cutlass rev-parse FETCH_HEAD^{commit})" = \
+        "57e3cfb47a2d9e0d46eb6335c3dc411498efa198" && \
+    git init /opt/transformer-engine-cudnn-frontend && \
+    git -C /opt/transformer-engine-cudnn-frontend remote add origin https://github.com/NVIDIA/cudnn-frontend.git && \
+    git -C /opt/transformer-engine-cudnn-frontend fetch --depth 1 origin \
+        refs/tags/v1.21.0 refs/tags/v1.25.0 && \
+    test "$(git -C /opt/transformer-engine-cudnn-frontend rev-parse refs/tags/v1.21.0^{commit})" = \
+        "7b9b711c22b6823e87150213ecd8449260db8610" && \
+    test "$(git -C /opt/transformer-engine-cudnn-frontend rev-parse refs/tags/v1.25.0^{commit})" = \
+        "e46d7082450264ce05cf898f8740011c4896f817" && \
+    git init /opt/transformer-engine-googletest && \
+    git -C /opt/transformer-engine-googletest remote add origin https://github.com/google/googletest.git && \
+    git -C /opt/transformer-engine-googletest fetch --depth 1 origin refs/tags/v1.14.0 && \
+    test "$(git -C /opt/transformer-engine-googletest rev-parse FETCH_HEAD^{commit})" = \
+        "f8d7d77c06936315286eb55f8de22cd23c188571" && \
+    git init /opt/transformer-engine-nccl && \
+    git -C /opt/transformer-engine-nccl remote add origin https://github.com/NVIDIA/nccl.git && \
+    git -C /opt/transformer-engine-nccl fetch --depth 1 origin \
+        a6b5de08b6af4f938cef541ae6e4d405632f89a4 && \
+    test "$(git -C /opt/transformer-engine-nccl rev-parse FETCH_HEAD^{commit})" = \
+        "a6b5de08b6af4f938cef541ae6e4d405632f89a4" && \
     git config --global url.file:///opt/fast-hadamard-transform/.insteadOf \
         https://github.com/Dao-AILab/fast-hadamard-transform.git && \
     git config --global url.file:///opt/transformer-engine/.insteadOf \
-        https://github.com/NVIDIA/TransformerEngine.git
+        https://github.com/NVIDIA/TransformerEngine.git && \
+    git config --global url.file:///opt/transformer-engine-cutlass/.insteadOf \
+        https://github.com/NVIDIA/cutlass.git && \
+    git config --global url.file:///opt/transformer-engine-cudnn-frontend/.insteadOf \
+        https://github.com/NVIDIA/cudnn-frontend.git && \
+    git config --global url.file:///opt/transformer-engine-googletest/.insteadOf \
+        https://github.com/google/googletest.git && \
+    git config --global url.file:///opt/transformer-engine-nccl/.insteadOf \
+        https://github.com/NVIDIA/nccl.git
 
 ARG BASELINE_MCORE_REF
 
