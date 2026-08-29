@@ -66,17 +66,17 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" aria-controls="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" aria-controls="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" aria-controls="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" aria-controls="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -166,40 +166,52 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517 --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000 --hf-path work/model-verification/nemotron-3-nano-30b-a3b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a public run against the pinned Hugging Face revision with all applicable verification gates.
+        <p>The synchronous CPU export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 46 source FP32 tensors cast to BF16 are the 23 per-layer mixer A_log tensors and 23 per-layer mixer D tensors; each equals the export exactly after that declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.
 </p>
       </section>
     </article>
     <article id="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-30b-a3b-megatron-to-hf-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517 --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000 --hf-path work/model-verification/nemotron-3-nano-30b-a3b/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --distributed-save --save-every-n-ranks 1 --trust-remote-code</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>This workflow remains unverified and requires a public run against the pinned Hugging Face revision with all applicable verification gates.
+        <p>The synchronous TP1/PP1/EP8/ETP1 export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 69 source FP32 tensors cast to BF16 are the same 46 mixer A_log and D tensors plus 23 per-layer mixer gate e_score_correction_bias tensors. The legacy distributed GPU export model wrapper downcast those gate biases to BF16, while the CPU export preserved them in FP32; all 69 equal the export exactly after this declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.
 </p>
       </section>
     </article>

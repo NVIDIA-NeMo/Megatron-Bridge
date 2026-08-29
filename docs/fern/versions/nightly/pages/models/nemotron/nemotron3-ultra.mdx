@@ -64,10 +64,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" aria-controls="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" aria-controls="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -205,12 +205,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -219,12 +219,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 --hf-revision 624ba927cfbef0427354998700de3d51173c8c04 --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-hf-export --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 --hf-revision 624ba927cfbef0427354998700de3d51173c8c04 --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-hf-export --torch-dtype bfloat16</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The CPU export must write a complete source-native Hugging Face checkpoint: BF16 model weights plus the source FP32 expert-score correction biases. Configuration, generation configuration, tokenizer assets, tensor names, shapes, dtypes, and values must match the pinned source and reload natively as NemotronHForCausalLM.
+        <p>The single-process CPU export exits successfully and writes all 51,023 tensors, 560,524,603,904 values, and 1,121,049,257,984 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned source with no dtype conversions, preserving its BF16 model weights and FP32 expert-score correction biases. Transformers strictly reloads the output natively as NemotronHForCausalLM with all 927 state tensors and no loading discrepancies.
 </p>
       </section>
     </article>

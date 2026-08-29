@@ -58,10 +58,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="gemma-3-4b-it-megatron-to-hf-cpu" aria-controls="gemma-3-4b-it-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="gemma-3-4b-it-megatron-to-hf-cpu" aria-controls="gemma-3-4b-it-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -157,12 +157,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="gemma-3-4b-it-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -176,7 +176,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A fresh exact-revision CPU import and export from Bridge commit 2d0175b116af6cb785bb8efab7ee053435496266 completed on 2026-07-24, but the source/export key gate reported 437 missing legacy vision_tower.vision_model.* keys and 437 extra flat vision_tower.* keys. This leaf remains unverified pending a source-namespace-preserving design; changing the general config-only export path would regress pruned and custom checkpoint exports.
+        <p>The exact-revision CPU export exits successfully and writes all 883 tensors, 4,300,079,472 values, and 8,600,158,944 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned BF16 source with no dtype conversions, including all 437 legacy vision_tower.vision_model.* tensors. Transformers strictly reloads the output natively as Gemma3ForConditionalGeneration with all 884 state entries and no loading discrepancies.
 </p>
       </section>
     </article>
@@ -202,7 +202,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>TP2/PP2 distributed export completed without a missing PP owner. Source and export contained the same 883 keys with exact shapes, dtypes, and torch.equal values, including all 437 legacy vision_tower.vision_model.* tensors. Native Gemma3ForConditionalGeneration strict reload reported no missing, unexpected, mismatched, or errored tensors.
+        <p>TP2/PP2 distributed export completed without a missing PP owner. Source and export contained the same 883 keys with exact shapes, dtypes, and torch.equal values, including all 437 legacy vision_tower.vision_model.* tensors. Transformers exposes 884 logical state entries after reload because tied lm_head.weight aliases the single stored language_model.model.embed_tokens.weight tensor; no extra tensor is serialized. Native Gemma3ForConditionalGeneration strict reload reported no missing, unexpected, mismatched, or errored tensors.
 </p>
       </section>
     </article>

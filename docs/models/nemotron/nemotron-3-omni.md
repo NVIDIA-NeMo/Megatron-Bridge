@@ -77,17 +77,17 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-cpu" aria-controls="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-cpu" aria-controls="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-gpu" aria-controls="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-gpu" aria-controls="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -176,12 +176,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -195,19 +195,19 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>CPU export completes in 14 indexed shards. Its exact comparison contains all 7,349 source tensors (7,300 BF16, 24 int64, and 25 float32), with identical keys, shapes, dtypes, and values and maximum difference zero. The item remains unverified because the Transformers 5.8.0 local custom-code loader omits transitive configuration modules before from_pretrained can reload the otherwise bitwise-identical export.
+        <p>CPU export completes in 14 indexed shards totaling 66,031,270,520 bytes. Its exact comparison contains all 7,349 source tensors and 33,015,632,238 values, with identical keys, shapes, dtypes, and values and no dtype conversions. Transformers reloads the local custom-code export natively with the source-equivalent warning set: one generated vision summary buffer is missing and four source-only audio/vision buffers are unexpected.
 </p>
       </section>
     </article>
     <article id="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -221,7 +221,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Strict export completed in 17 indexed shards. All 7,349 tensors match the immutable HF source in keys, shapes, dtypes, and values, with maximum difference zero. The item remains unverified because Transformers 5.8.0 local custom-code loading omits the transitive configuration_nemotron_h and configuration_radio modules from the model cache, preventing a native from_pretrained reload even though those files exist in the export.
+        <p>Distributed export completes in 17 indexed shards totaling 66,031,270,520 bytes. All 7,349 tensors and 33,015,632,238 values match the immutable HF source exactly in keys, shapes, dtypes, and values with no dtype conversions. Transformers reloads the local custom-code export natively with the same one missing generated buffer and four unexpected source-only buffers reported when reloading the pinned source itself.
 </p>
       </section>
     </article>

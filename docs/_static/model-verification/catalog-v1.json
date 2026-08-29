@@ -53,19 +53,29 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "c3836699a2e006528a1338902874f96da0f5d219",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "b758d52cb3d12e3ca316d41d9527e6072a1c325b",
+          "command_topologies": [
+            {
+              "expert_parallel": "8",
+              "expert_tensor_parallel": "1",
+              "nodes": "4",
+              "pipeline_parallel": "4",
+              "tensor_parallel": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model deepseek-ai/DeepSeek-V3 --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb --megatron-path work/model-verification/deepseek-v3/imported-megatron/iter_0000000 --hf-path work/model-verification/deepseek-v3/cpu-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --tp 1 --pp 4 --ep 8 --etp 1 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress"
+          ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v3-megatron-to-hf-cpu",
-          "expected_result": "A CPU export from a verified Megatron checkpoint must preserve every mapped tensor and strictly reload as DeepseekV3ForCausalLM. This workflow is deferred by this card.\n",
+          "expected_result": "The 32-process distributed CPU export exits successfully and writes all 163 source-shaped shards. The index contains exactly 46,183 BF16 model tensors; an exhaustive audit matches all 684,489,845,504 values against the pinned source after blockwise dequantization of all 45,808 FP8 tensors and 59 other declared dtype normalizations. Transformers strictly reloads the output as DeepseekV3ForCausalLM with all 967 state tensors and no loading discrepancies.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-26",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -381,7 +391,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "deepseek-v3",
       "source_card": "examples/model_verification_cards/deepseek-v3/card.yaml",
-      "summary": "Distributed H100 GPU import, BF16 export, and deterministic inference are verified against the pinned blockwise-FP8 checkpoint. The canonical pretrain_performance.H100 1024-GPU BF16, pretrain_performance.GB200 256-GPU MXFP8, and pretrain_performance.GB300 256-GPU MXFP8 recipes are also verified. Timing and throughput metrics from future functional training items remain sanity checks rather than optimized performance results. CPU conversion, forward correlation, functional training, fine-tuning, and checkpoint-resume verification remain deferred.\n",
+      "summary": "Distributed H100 GPU import, BF16 export, and deterministic inference are verified against the pinned blockwise-FP8 checkpoint. The canonical pretrain_performance.H100 1024-GPU BF16, pretrain_performance.GB200 256-GPU MXFP8, and pretrain_performance.GB300 256-GPU MXFP8 recipes are also verified. A distributed CPU export of the same pinned checkpoint is also verified. Timing and throughput metrics from future functional training items remain sanity checks rather than optimized performance results. CPU import, forward correlation, functional training, fine-tuning, and checkpoint-resume verification remain deferred.\n",
       "title": "deepseek_v3"
     },
     {
@@ -806,7 +816,7 @@
       "min_transformers_version": "5.12.0",
       "slug": "deepseek-v4-flash",
       "source_card": "examples/model_verification_cards/deepseek-v4-flash/card.yaml",
-      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nDeepSeek-V4-Flash support verification covers GPU conversion, training, and checkpoint resume on GB200. CPU conversion remains unverified because full BF16 materialization requires a high-memory CPU node. Optimized Megatron KV-cache inference is unavailable for DSv4HybridAttention, while the maintained non-cached full-prefix compatibility path remains unverified for this model. PEFT also remains unverified because no exact model recipe is currently exported. SFT export requires nemo_26.08.rc4 or later (TE 2.18) and the Bridge fix for stream_weights_megatron_to_hf None-task handling.\nKnown issues tracked for follow-up PRs: - DSv4ExpertGatedMLPMapping: moe_grouped_gemm=True export produces malformed expert\n  weight shapes due to apply_swiglu_sharded_factory shard reassembly in the export path.\n  Workaround: use moe_grouped_gemm=False for export. Training with moe_grouped_gemm=True\n  is unaffected.\n- MCore moe_hybridep_pad_uneven_dispatch_inputs missing from dev HEAD; apply 1-line patch\n  to megatron/core/transformer/transformer_config.py until upstream MCore PR lands.\n",
+      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nThe Megatron-backed DeepSeek V4 workflows in this card require the Megatron-Core dev branch; the default MCore submodule revision in Megatron Bridge r0.6.0 is insufficient. Follow the public setup instructions in examples/models/deepseek_v4/README.md.\nDeepSeek-V4-Flash support verification covers GPU conversion, training, and checkpoint resume on GB200. CPU conversion remains unverified because full BF16 materialization requires a high-memory CPU node. Optimized Megatron KV-cache inference is unavailable for DSv4HybridAttention, while the maintained non-cached full-prefix compatibility path remains unverified for this model. PEFT also remains unverified because no exact model recipe is currently exported. SFT export requires nemo_26.08.rc4 or later (TE 2.18) and the Bridge fix for stream_weights_megatron_to_hf None-task handling.\nKnown issues tracked for follow-up PRs: - DSv4ExpertGatedMLPMapping: moe_grouped_gemm=True export produces malformed expert\n  weight shapes due to apply_swiglu_sharded_factory shard reassembly in the export path.\n  Workaround: use moe_grouped_gemm=False for export. Training with moe_grouped_gemm=True\n  is unaffected.\n- MCore moe_hybridep_pad_uneven_dispatch_inputs missing from dev HEAD; apply 1-line patch\n  to megatron/core/transformer/transformer_config.py until upstream MCore PR lands.\n",
       "title": "deepseek_v4_flash"
     },
     {
@@ -867,7 +877,7 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "330f87c0a391eb2770cbf2306352cc807211d7ba",
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
           "command_topologies": [
             {
               "nodes": "1"
@@ -879,13 +889,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "gemma-3-4b-it-megatron-to-hf-cpu",
-          "expected_result": "A fresh exact-revision CPU import and export from Bridge commit 2d0175b116af6cb785bb8efab7ee053435496266 completed on 2026-07-24, but the source/export key gate reported 437 missing legacy vision_tower.vision_model.* keys and 437 extra flat vision_tower.* keys. This leaf remains unverified pending a source-namespace-preserving design; changing the general config-only export path would regress pruned and custom checkpoint exports.\n",
+          "expected_result": "The exact-revision CPU export exits successfully and writes all 883 tensors, 4,300,079,472 values, and 8,600,158,944 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned BF16 source with no dtype conversions, including all 437 legacy vision_tower.vision_model.* tensors. Transformers strictly reloads the output natively as Gemma3ForConditionalGeneration with all 884 state entries and no loading discrepancies.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-26",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -908,7 +918,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "gemma-3-4b-it-megatron-to-hf-gpu",
-          "expected_result": "TP2/PP2 distributed export completed without a missing PP owner. Source and export contained the same 883 keys with exact shapes, dtypes, and torch.equal values, including all 437 legacy vision_tower.vision_model.* tensors. Native Gemma3ForConditionalGeneration strict reload reported no missing, unexpected, mismatched, or errored tensors.\n",
+          "expected_result": "TP2/PP2 distributed export completed without a missing PP owner. Source and export contained the same 883 keys with exact shapes, dtypes, and torch.equal values, including all 437 legacy vision_tower.vision_model.* tensors. Transformers exposes 884 logical state entries after reload because tied lm_head.weight aliases the single stored language_model.model.embed_tokens.weight tensor; no extra tensor is serialized. Native Gemma3ForConditionalGeneration strict reload reported no missing, unexpected, mismatched, or errored tensors.\n",
           "hardware": null,
           "last_verified": "2026-07-30",
           "metrics": {},
@@ -1128,7 +1138,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "gemma-3-4b-it",
       "source_card": "examples/model_verification_cards/gemma-3-4b-it/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Gemma 3 4B Instruct exact-checkpoint CPU and TP2/PP2 GPU import, TP2/PP2 GPU export, manual multimodal forward parity, and deterministic TP2/PP2 inference are verified. CPU export remains unverified because its vision namespace gate does not pass; SFT, post-SFT export/inference, and PEFT remain pending. Pretraining and checkpoint resume are unsupported because there is no public exact-model pretraining recipe. Long-context SFT is unsupported because the required dense local/global attention biases currently exclude context parallelism and in-batch THD packing. Existing toy-model tests are not used as exact-model evidence.\n",
+      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Gemma 3 4B Instruct exact-checkpoint CPU and TP2/PP2 GPU import, CPU and TP2/PP2 GPU export, manual multimodal forward parity, and deterministic TP2/PP2 inference are verified. SFT, post-SFT export/inference, and PEFT remain pending. Pretraining and checkpoint resume are unsupported because there is no public exact-model pretraining recipe. Long-context SFT is unsupported because the required dense local/global attention biases currently exclude context parallelism and in-batch THD packing. Existing toy-model tests are not used as exact-model evidence.\n",
       "title": "gemma_3_4b_it"
     },
     {
@@ -1794,19 +1804,25 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "6ae8e11630b212ef54f23f574f355a38f0b89d12",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
+          "command_topologies": [
+            {
+              "nodes": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model MiniMaxAI/MiniMax-M3 --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8 --megatron-path work/model-verification/minimax-m3/imported-megatron/iter_0000000 --hf-path work/model-verification/minimax-m3/cpu-hf-export --torch-dtype bfloat16 --no-progress --trust-remote-code"
+          ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "minimax-m3-megatron-to-hf-cpu",
-          "expected_result": "No CPU Megatron-to-Hugging-Face result is claimed. The prerequisite CPU-only import exited during CUDA-dependent model initialization before producing a checkpoint, so the dependent CPU export did not run and no CPU round trip completed. Future verification requires reloading a successfully imported CPU checkpoint, writing a complete indexed Hugging Face VLM, and matching its keys, shapes, dtypes, and values exactly against the pinned source.\n",
+          "expected_result": "The single-node CPU export exited successfully and wrote the complete indexed MiniMax-M3 VLM checkpoint. An exhaustive audit matched all 23,416 source and export tensors, 427,040,140,160 values, and 854,172,958,720 tensor-payload bytes with zero missing, unexpected, shape, dtype, or value mismatches and no dtype conversions (atol=0, rtol=0). A meta-device Transformers 5.14.0 reload instantiated MiniMaxM3SparseForConditionalGeneration with 1,582 state entries and zero missing, unexpected, mismatched, or error keys.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-26",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -1829,7 +1845,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "minimax-m3-megatron-to-hf-gpu",
-          "expected_result": "The 32-H100 distributed export exited successfully and wrote an indexed full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59 safetensors shards are byte-for-byte identical to the pinned source, covering all 23,416 tensors and 854,172,958,720 actual tensor-payload bytes. The exported configuration preserves 60 text layers, 128 top-4 experts, 32 vision layers, both projector stages, and 57 lightning-indexer layers. Three tokenizer probes and multimodal processor inputs match the source. Transformers 5.12.1 natively reloads both source and export as MiniMaxM3SparseForConditionalGeneration through its checkpoint conversion mapping with zero missing, unexpected, mismatched, or error keys. The export consolidates the tokenizer in tokenizer.json and does not reproduce four redundant source-side legacy tokenizer files.\n",
+          "expected_result": "The 32-H100 distributed export exited successfully and wrote an indexed full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59 safetensors shards are byte-for-byte identical to the pinned source, covering all 23,416 tensors and 854,172,958,720 actual tensor-payload bytes. The exported configuration preserves 60 text layers, 128 top-4 experts, 32 vision layers, both projector stages, and 57 lightning-indexer layers. Three tokenizer probes and multimodal processor inputs match the source. Transformers 5.14.0 natively reloads both source and export as MiniMaxM3SparseForConditionalGeneration through its checkpoint conversion mapping with zero missing, unexpected, mismatched, or error keys. The export consolidates the tokenizer in tokenizer.json and does not reproduce four redundant source-side legacy tokenizer files.\n",
           "hardware": null,
           "last_verified": "2026-07-23",
           "metrics": {},
@@ -2027,10 +2043,10 @@
       ],
       "hf_id": "MiniMaxAI/MiniMax-M3",
       "hf_revision": "50942730318c7943fe83db7ec8e9f9177ecb1cf8",
-      "min_transformers_version": "5.8.1",
+      "min_transformers_version": "5.14.0",
       "slug": "minimax-m3",
       "source_card": "examples/model_verification_cards/minimax-m3/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Model-level verification covers the complete MiniMax-M3 vision-language checkpoint, including the language model, vision tower, projector paths, and lightning-indexer state. The pinned 32-H100 GPU import and GPU export completed their verification gates. A current clean 32-H100 release-candidate run also reloaded the persisted full-VLM checkpoint through the public VLM generation entry point, processed the pinned repository image, and generated a coherent 64-token bounded completion without token-0 or NUL degeneration. It reached the configured bound before EOS or the image-only OCR target; that limitation is recorded in the inference result. All 59 exported safetensors shards are byte-for-byte identical to the pinned source, and Transformers 5.12.1 natively reloads the export without loading errors. CPU import and export remain unverified because the CPU-only attempt exited during CUDA-dependent model initialization before producing a checkpoint. Full-VLM manual Hugging Face/Megatron forward correlation also remains unverified. Training entries cover only the language-model backbone and do not claim vision or projector training; post-SFT full-VLM export therefore remains unsupported.\n",
+      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Model-level verification covers the complete MiniMax-M3 vision-language checkpoint, including the language model, vision tower, projector paths, and lightning-indexer state. The pinned 32-H100 GPU import and GPU export completed their verification gates. A current clean 32-H100 release-candidate run also reloaded the persisted full-VLM checkpoint through the public VLM generation entry point, processed the pinned repository image, and generated a coherent 64-token bounded completion without token-0 or NUL degeneration. It reached the configured bound before EOS or the image-only OCR target; that limitation is recorded in the inference result. All 59 exported safetensors shards are byte-for-byte identical to the pinned source, and Transformers 5.14.0 natively reloads the export without loading errors. A separate CPU export reproduced the complete pinned source tensor graph exactly. CPU import remains unverified because the CPU-only attempt exited during CUDA-dependent model initialization before producing a checkpoint. Full-VLM manual Hugging Face/Megatron forward correlation also remains unverified. Training entries cover only the language-model backbone and do not claim vision or projector training; post-SFT full-VLM export therefore remains unsupported.\n",
       "title": "minimax_m3"
     },
     {
@@ -2741,7 +2757,7 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "fbbafc7ddfa818ef91d5eb64c8a00dcaa7bee78d",
+          "bridge_commit": "7783fc356b7d4768525eabf9825f9108c6544f4c",
           "command_topologies": [
             {
               "nodes": "1"
@@ -2753,18 +2769,18 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-cpu",
-          "expected_result": "CPU export completes in 14 indexed shards. Its exact comparison contains all 7,349 source tensors (7,300 BF16, 24 int64, and 25 float32), with identical keys, shapes, dtypes, and values and maximum difference zero. The item remains unverified because the Transformers 5.8.0 local custom-code loader omits transitive configuration modules before from_pretrained can reload the otherwise bitwise-identical export.\n",
+          "expected_result": "CPU export completes in 14 indexed shards totaling 66,031,270,520 bytes. Its exact comparison contains all 7,349 source tensors and 33,015,632,238 values, with identical keys, shapes, dtypes, and values and no dtype conversions. Transformers reloads the local custom-code export natively with the source-equivalent warning set: one generated vision summary buffer is missing and four source-only audio/vision buffers are unexpected.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "fbbafc7ddfa818ef91d5eb64c8a00dcaa7bee78d",
+          "bridge_commit": "7783fc356b7d4768525eabf9825f9108c6544f4c",
           "command_topologies": [
             {
               "expert_parallel": "4",
@@ -2782,13 +2798,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-nano-omni-30b-a3b-reasoning-megatron-to-hf-gpu",
-          "expected_result": "Strict export completed in 17 indexed shards. All 7,349 tensors match the immutable HF source in keys, shapes, dtypes, and values, with maximum difference zero. The item remains unverified because Transformers 5.8.0 local custom-code loading omits the transitive configuration_nemotron_h and configuration_radio modules from the model cache, preventing a native from_pretrained reload even though those files exist in the export.\n",
+          "expected_result": "Distributed export completes in 17 indexed shards totaling 66,031,270,520 bytes. All 7,349 tensors and 33,015,632,238 values match the immutable HF source exactly in keys, shapes, dtypes, and values with no dtype conversions. Transformers reloads the local custom-code export natively with the same one missing generated buffer and four unexpected source-only buffers reported when reloading the pinned source itself.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_gpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_gpu"
         },
@@ -3030,7 +3046,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "nemotron-3-nano-omni-30b-a3b-reasoning",
       "source_card": "examples/model_verification_cards/nemotron-3-nano-omni-30b-a3b-reasoning/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Verification uses the immutable public model and CORD v2 revisions. CPU and distributed GPU import, deterministic Megatron inference, 100-step one-node H100 full-model SFT, in-batch-packed 8K SFT, and LoRA PEFT runs completed. The H100 fine-tuning variants preserve real image-text samples and natural routing while using lower-precision optimizer state; 4K SFT and PEFT use HybridEP, while packed CP2 uses the standard all-to-all dispatcher. Strict CPU and GPU round trips preserved all 7,349 tensors bitwise, but Transformers 5.8.0 cannot natively reload the local custom-code exports because its dynamic-module cache omits transitive configuration imports. The one-step HF/Megatron comparison predicts the same token but remains below the 0.99 cosine gate. Unsupported and incomplete workflows remain explicitly identified rather than inferred from focused unit coverage.\n",
+      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Verification uses the immutable public model and CORD v2 revisions. CPU and distributed GPU import and export, deterministic Megatron inference, 100-step one-node H100 full-model SFT, in-batch-packed 8K SFT, and LoRA PEFT runs completed. The H100 fine-tuning variants preserve real image-text samples and natural routing while using lower-precision optimizer state; 4K SFT and PEFT use HybridEP, while packed CP2 uses the standard all-to-all dispatcher. Strict CPU and GPU round trips preserve all 7,349 tensors bitwise and reload with the same native-loader notices as the pinned Hugging Face source. The one-step HF/Megatron comparison predicts the same token but remains below the 0.99 cosine gate. Unsupported and incomplete workflows remain explicitly identified rather than inferred from focused unit coverage.\n",
       "title": "nemotron_3_nano_omni_30b_a3b_reasoning"
     },
     {
@@ -3085,36 +3101,54 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "d352aceda8ed4136f1db787bcf449c1b210a2438",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
+          "command_topologies": [
+            {
+              "nodes": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517 --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000 --hf-path work/model-verification/nemotron-3-nano-30b-a3b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code"
+          ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-nano-30b-a3b-megatron-to-hf-cpu",
-          "expected_result": "This workflow remains unverified and requires a public run against the pinned Hugging Face revision with all applicable verification gates.\n",
+          "expected_result": "The synchronous CPU export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 46 source FP32 tensors cast to BF16 are the 23 per-layer mixer A_log tensors and 23 per-layer mixer D tensors; each equals the export exactly after that declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "d352aceda8ed4136f1db787bcf449c1b210a2438",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
+          "command_topologies": [
+            {
+              "expert_parallel": "8",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "1",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517 --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000 --hf-path work/model-verification/nemotron-3-nano-30b-a3b/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --distributed-save --save-every-n-ranks 1 --trust-remote-code"
+          ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-nano-30b-a3b-megatron-to-hf-gpu",
-          "expected_result": "This workflow remains unverified and requires a public run against the pinned Hugging Face revision with all applicable verification gates.\n",
+          "expected_result": "The synchronous TP1/PP1/EP8/ETP1 export writes a complete indexed checkpoint. All 6,243 source keys and shapes match across 31,577,940,288 values. The 69 source FP32 tensors cast to BF16 are the same 46 mixer A_log and D tensors plus 23 per-layer mixer gate e_score_correction_bias tensors. The legacy distributed GPU export model wrapper downcast those gate biases to BF16, while the CPU export preserved them in FP32; all 69 equal the export exactly after this declared cast, and every remaining tensor matches exactly at zero tolerance. Native loading succeeds as NemotronHForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_gpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_gpu"
         },
@@ -3335,7 +3369,7 @@
       "min_transformers_version": "5.8.1",
       "slug": "nemotron-3-nano-30b-a3b",
       "source_card": "examples/model_verification_cards/nemotron-3-nano-30b-a3b/card.yaml",
-      "summary": "The pinned BF16 checkpoint has verified one-node GPU import and checkpoint-backed deterministic inference. Performance scope: pretrain_performance.GB300 uses the tuned canonical 8-GPU MXFP8 recipe. CPU conversion, GPU export, manual forward, and functional training workflows remain unverified in this card.\n",
+      "summary": "The pinned checkpoint has verified one-node GPU import, independent CPU and distributed GPU BF16 export, and checkpoint-backed deterministic inference. Both exports strictly reload with Transformers and exhaustively match the source after the explicitly requested BF16 casts. Performance scope: pretrain_performance.GB300 uses the tuned canonical 8-GPU MXFP8 recipe. CPU import, manual forward, and functional training workflows remain unverified in this card.\n",
       "title": "nemotron_3_nano_30b_a3b"
     },
     {
@@ -3716,7 +3750,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-super-120b-a12b-hf-to-megatron-cpu",
-          "expected_result": "The pinned CPU import must exit successfully, create iter_0000000, and preserve the complete source checkpoint so the paired CPU export can audit every supported tensor for exact keys, shapes, dtypes, and values.\n",
+          "expected_result": "The pinned CPU import must exit successfully, create iter_0000000, and preserve the complete source checkpoint. A subsequent CPU export from that CPU-imported checkpoint must audit every supported tensor for exact keys, shapes, dtypes, and values; the currently verified CPU export uses the independently verified GPU-imported checkpoint instead.\n",
           "hardware": null,
           "last_verified": null,
           "metrics": {},
@@ -3756,25 +3790,25 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
           "command_topologies": [
             {
               "nodes": "1"
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 --hf-revision d51eab0d1f979ebc26b546e634a04f450d99158e --megatron-path work/model-verification/nemotron-3-super-120b-a12b/cpu-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-super-120b-a12b/cpu-hf-export --torch-dtype bfloat16"
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 --hf-revision d51eab0d1f979ebc26b546e634a04f450d99158e --megatron-path work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-super-120b-a12b/cpu-hf-export --torch-dtype bfloat16"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-super-120b-a12b-megatron-to-hf-cpu",
-          "expected_result": "Strict CPU export must exit successfully, reproduce every supported source tensor with exact keys, shapes, dtypes, and values, and reload natively as NemotronHForCausalLM.\n",
+          "expected_result": "The single-process CPU export exits successfully and writes 247,222,108,160 bytes across 42,683 tensors and 123,611,033,088 values. Every exported key, shape, dtype, and value is bitwise identical to the pinned Hugging Face BF16 source, with no dtype conversions, and Transformers strictly reloads all 763 state tensors natively as NemotronHForCausalLM.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -4359,7 +4393,7 @@
       "min_transformers_version": "5.8.1",
       "slug": "nemotron-3-super-120b-a12b",
       "source_card": "examples/model_verification_cards/nemotron-3-super-120b-a12b/card.yaml",
-      "summary": "Performance scope: pretrain_performance.H100 and pretrain_performance.GB200 and pretrain_performance.GB300 track tuned canonical 64-GPU performance recipes, with NVFP4 on GB300. Timing and throughput from functional H100 and GB200 training are support-verification sanity checks rather than optimized performance results. Hardware evidence is scoped strictly by accelerator. Nemotron 3 Super 120B-A12B verification covers conversion, inference, bounded real-data training, checkpoint resume, and canonical H100, GB200, and GB300 benchmarks.\n",
+      "summary": "Performance scope: pretrain_performance.H100 and pretrain_performance.GB200 and pretrain_performance.GB300 track tuned canonical 64-GPU performance recipes, with NVFP4 on GB300. Timing and throughput from functional H100 and GB200 training are support-verification sanity checks rather than optimized performance results. Hardware evidence is scoped strictly by accelerator. Nemotron 3 Super 120B-A12B verification covers GPU import, CPU and GPU export, inference, bounded real-data training, checkpoint resume, and canonical H100, GB200, and GB300 benchmarks. CPU import remains unverified.\n",
       "title": "nemotron_3_super_120b_a12b"
     },
     {
@@ -4420,25 +4454,25 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "d352aceda8ed4136f1db787bcf449c1b210a2438",
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
           "command_topologies": [
             {
               "nodes": "1"
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 --hf-revision 624ba927cfbef0427354998700de3d51173c8c04 --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-hf-export --torch-dtype bfloat16"
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 --hf-revision 624ba927cfbef0427354998700de3d51173c8c04 --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-hf-export --torch-dtype bfloat16"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu",
-          "expected_result": "The CPU export must write a complete source-native Hugging Face checkpoint: BF16 model weights plus the source FP32 expert-score correction biases. Configuration, generation configuration, tokenizer assets, tensor names, shapes, dtypes, and values must match the pinned source and reload natively as NemotronHForCausalLM.\n",
+          "expected_result": "The single-process CPU export exits successfully and writes all 51,023 tensors, 560,524,603,904 values, and 1,121,049,257,984 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned source with no dtype conversions, preserving its BF16 model weights and FP32 expert-score correction biases. Transformers strictly reloads the output natively as NemotronHForCausalLM with all 927 state tensors and no loading discrepancies.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-26",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -4881,7 +4915,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "nemotron-3-ultra-550b-a55b",
       "source_card": "examples/model_verification_cards/nemotron-3-ultra-550b-a55b/card.yaml",
-      "summary": "Nemotron 3 Ultra 550B-A55B has public packed full-SFT and packed PEFT recipes. Its large-scale BF16 library pretraining workflows remain unverified because the previously recorded 256-GPU recipe names are not exported on current main. The separately scoped pretrain_performance.GB200 and pretrain_performance.GB300 are verified with their canonical 256-GPU MXFP8 recipes. Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip and checkpoint-backed deterministic inference are verified. CPU conversion, portable manual-forward, remaining functional training, and checkpoint resume still require completed verification runs before those support claims are promoted.\n",
+      "summary": "Nemotron 3 Ultra 550B-A55B has public packed full-SFT and packed PEFT recipes. Its large-scale BF16 library pretraining workflows remain unverified because the previously recorded 256-GPU recipe names are not exported on current main. The separately scoped pretrain_performance.GB200 and pretrain_performance.GB300 are verified with their canonical 256-GPU MXFP8 recipes. Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip, single-process CPU export, and checkpoint-backed deterministic inference are verified. CPU import, portable manual-forward, remaining functional training, and checkpoint resume still require completed verification runs before those support claims are promoted.\n",
       "title": "nemotron_3_ultra_550b_a55b"
     },
     {
@@ -5695,25 +5729,25 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "a8038f6d99d8ade33e1b715ba79bc9185b073e59",
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
           "command_topologies": [
             {
               "nodes": "1"
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model unsloth/gpt-oss-120b-BF16 --megatron-path work/model-verification/gpt-oss-120b/cpu-megatron/iter_0000000 --hf-path work/model-verification/gpt-oss-120b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code"
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model unsloth/gpt-oss-120b-BF16 --hf-revision e7523373bc44b42296b43202e265a1eebf2ee16f --megatron-path work/model-verification/gpt-oss-120b/imported-megatron/iter_0000000 --hf-path work/model-verification/gpt-oss-120b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "gpt-oss-120b-megatron-to-hf-cpu",
-          "expected_result": "Future verification must export the CPU-imported checkpoint to a public BF16 Hugging Face layout, strictly reload it as GptOssForCausalLM with attention_bias=true, and audit keys, shapes, dtypes, and values against the BF16 reference semantics.\n",
+          "expected_result": "The single-process CPU export exits successfully and writes the complete BF16 Hugging Face checkpoint. Exhaustive comparison against the pinned unsloth/gpt-oss-120b-BF16 reference covers all 615 tensors and 116,829,156,672 values with exact keys, shapes, dtypes, and bitwise-equal values. Transformers strictly reloads all 615 state tensors natively as GptOssForCausalLM with attention_bias=true and no loading discrepancies, and the tokenizer also reloads successfully.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -6083,7 +6117,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "gpt-oss-120b",
       "source_card": "examples/model_verification_cards/gpt-oss-120b/card.yaml",
-      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use tuned canonical performance recipes; timing and throughput metrics from functional training items remain sanity checks rather than optimized performance results. GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export, manual HF/Megatron forward-pass correlation, deterministic Megatron inference, bounded H100 pretraining, H100 SFT, H100 PEFT, and H100 checkpoint resume, H100 SFT export/inference, and H100 long-context SFT are verified. GB200 and GB300 pretraining performance are verified. CPU conversion remains planned but not yet verified.\n",
+      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use tuned canonical performance recipes; timing and throughput metrics from functional training items remain sanity checks rather than optimized performance results. GPT-OSS 120B H100 GPU HF-to-Megatron import, GPU Megatron-to-HF export, manual HF/Megatron forward-pass correlation, deterministic Megatron inference, bounded H100 pretraining, H100 SFT, H100 PEFT, and H100 checkpoint resume, H100 SFT export/inference, and H100 long-context SFT are verified. GB200 and GB300 pretraining performance are verified. CPU Megatron-to-Hugging-Face export is verified; CPU Hugging-Face-to-Megatron import remains planned.\n",
       "title": "gpt_oss_120b"
     },
     {
@@ -6144,25 +6178,25 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "6799f099712c961f15cf92d6bd88998f029d672d",
+          "bridge_commit": "60442bb9adb5435b47db22c6c20aacdf772fbddc",
           "command_topologies": [
             {
               "nodes": "1"
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model unsloth/gpt-oss-20b-BF16 --megatron-path work/model-verification/gpt-oss-20b/cpu-megatron/iter_0000000 --hf-path work/model-verification/gpt-oss-20b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code"
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model unsloth/gpt-oss-20b-BF16 --hf-revision cc89b3e7fd423253264883a80a4fa5abc619649f --megatron-path work/model-verification/gpt-oss-20b/imported-megatron/iter_0000000 --hf-path work/model-verification/gpt-oss-20b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "gpt-oss-20b-megatron-to-hf-cpu",
-          "expected_result": "Future verification must export the CPU-imported Megatron checkpoint to the public unquantized BF16 Hugging Face layout and verify that Transformers reloads the result as GptOssForCausalLM with no missing, unexpected, shape, dtype, or value mismatches against the BF16 reference semantics.\n",
+          "expected_result": "The synchronous CPU workflow exports the verified distributed Megatron checkpoint to the pinned public unquantized BF16 Hugging Face layout. Its 411 tensors, shapes, dtypes, and all 20,914,757,184 values match the BF16 reference bitwise at zero tolerance. Native Transformers loading succeeds as GptOssForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -6462,7 +6496,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "gpt-oss-20b",
       "source_card": "examples/model_verification_cards/gpt-oss-20b/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. GPT-OSS 20B H100 support verification has completed GPU HF-to-Megatron conversion, GPU Megatron-to-HF export, manual forward-pass correlation, deterministic Megatron inference, bounded pretraining, full SFT, SFT export/inference, long-context SFT, LoRA PEFT, and direct checkpoint resume; CPU conversion remains pending.\n",
+      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. GPT-OSS 20B H100 support verification has completed GPU HF-to-Megatron conversion, CPU and GPU Megatron-to-HF export, manual forward-pass correlation, deterministic Megatron inference, bounded pretraining, full SFT, SFT export/inference, long-context SFT, LoRA PEFT, and direct checkpoint resume; CPU import remains pending.\n",
       "title": "gpt_oss_20b"
     },
     {
@@ -9093,19 +9127,29 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "5db9c262411cf4561d44cdf76a134b423fdaacc2",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "c94d0bdb1c863f99c6227bb36fbc7f3ebc565243",
+          "command_topologies": [
+            {
+              "expert_parallel": "8",
+              "expert_tensor_parallel": "2",
+              "nodes": "4",
+              "pipeline_parallel": "2",
+              "tensor_parallel": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress"
+          ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-megatron-to-hf-cpu",
-          "expected_result": "A CPU export from a verified Megatron checkpoint must preserve every mapped tensor and strictly reload in Transformers. This workflow is deferred by this card.\n",
+          "expected_result": "The 32-process distributed CPU export exits successfully and writes 280 safetensors shards. The exhaustive projection audit covers all 59,079 tensors and 1,487,822,475,264 tensor-payload bytes in the 78-layer inference graph with zero missing, unexpected, shape, dtype, or value mismatches. The 791 tensors under model.layers.78 belong only to the intentionally disabled appended MTP auxiliary layer and remain outside this item. Transformers 5.12.1 strictly reloads the output as GlmMoeDsaForCausalLM with 1,629 state tensors, 743,911,199,232 parameters, and no loading discrepancies.\n",
           "hardware": null,
-          "last_verified": null,
+          "last_verified": "2026-08-26",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "megatron_to_hf_cpu"
         },
@@ -9322,7 +9366,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "glm5",
       "source_card": "examples/model_verification_cards/glm5/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Model-level verification covers deterministic HybridEP inference and exact distributed GPU import/export of the pinned GLM-5 Hugging Face checkpoint's 78-layer inference graph. The checkpoint's appended MTP auxiliary layer is intentionally disabled and excluded from those claims. CPU conversion, Hugging Face/Megatron forward parity, training, checkpoint resume, and post-SFT export/reload verification are deferred.\n",
+      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Model-level verification covers deterministic HybridEP inference, exact distributed GPU import/export, and exact distributed CPU export of the pinned GLM-5 Hugging Face checkpoint's 78-layer inference graph. The checkpoint's appended MTP auxiliary layer is intentionally disabled and excluded from those claims. CPU import, Hugging Face/Megatron forward parity, training, checkpoint resume, and post-SFT export/reload verification are deferred.\n",
       "title": "glm5"
     },
     {

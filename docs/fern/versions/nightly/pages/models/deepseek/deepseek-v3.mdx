@@ -58,10 +58,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="deepseek-v3-megatron-to-hf-cpu" aria-controls="deepseek-v3-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="deepseek-v3-megatron-to-hf-cpu" aria-controls="deepseek-v3-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -172,20 +172,26 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="deepseek-v3-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="deepseek-v3-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model deepseek-ai/DeepSeek-V3 --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb --megatron-path work/model-verification/deepseek-v3/imported-megatron/iter_0000000 --hf-path work/model-verification/deepseek-v3/cpu-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --tp 1 --pp 4 --ep 8 --etp 1 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A CPU export from a verified Megatron checkpoint must preserve every mapped tensor and strictly reload as DeepseekV3ForCausalLM. This workflow is deferred by this card.
+        <p>The 32-process distributed CPU export exits successfully and writes all 163 source-shaped shards. The index contains exactly 46,183 BF16 model tensors; an exhaustive audit matches all 684,489,845,504 values against the pinned source after blockwise dequantization of all 45,808 FP8 tensors and 59 other declared dtype normalizations. Transformers strictly reloads the output as DeepseekV3ForCausalLM with all 967 state tensors and no loading discrepancies.
 </p>
       </section>
     </article>

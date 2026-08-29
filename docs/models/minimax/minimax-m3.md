@@ -54,10 +54,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="minimax-m3-megatron-to-hf-cpu" aria-controls="minimax-m3-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="minimax-m3-megatron-to-hf-cpu" aria-controls="minimax-m3-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -147,20 +147,26 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="minimax-m3-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="minimax-m3-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-26</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model MiniMaxAI/MiniMax-M3 --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8 --megatron-path work/model-verification/minimax-m3/imported-megatron/iter_0000000 --hf-path work/model-verification/minimax-m3/cpu-hf-export --torch-dtype bfloat16 --no-progress --trust-remote-code</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No CPU Megatron-to-Hugging-Face result is claimed. The prerequisite CPU-only import exited during CUDA-dependent model initialization before producing a checkpoint, so the dependent CPU export did not run and no CPU round trip completed. Future verification requires reloading a successfully imported CPU checkpoint, writing a complete indexed Hugging Face VLM, and matching its keys, shapes, dtypes, and values exactly against the pinned source.
+        <p>The single-node CPU export exited successfully and wrote the complete indexed MiniMax-M3 VLM checkpoint. An exhaustive audit matched all 23,416 source and export tensors, 427,040,140,160 values, and 854,172,958,720 tensor-payload bytes with zero missing, unexpected, shape, dtype, or value mismatches and no dtype conversions (atol=0, rtol=0). A meta-device Transformers 5.14.0 reload instantiated MiniMaxM3SparseForConditionalGeneration with 1,582 state entries and zero missing, unexpected, mismatched, or error keys.
 </p>
       </section>
     </article>
@@ -186,7 +192,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-H100 distributed export exited successfully and wrote an indexed full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59 safetensors shards are byte-for-byte identical to the pinned source, covering all 23,416 tensors and 854,172,958,720 actual tensor-payload bytes. The exported configuration preserves 60 text layers, 128 top-4 experts, 32 vision layers, both projector stages, and 57 lightning-indexer layers. Three tokenizer probes and multimodal processor inputs match the source. Transformers 5.12.1 natively reloads both source and export as MiniMaxM3SparseForConditionalGeneration through its checkpoint conversion mapping with zero missing, unexpected, mismatched, or error keys. The export consolidates the tokenizer in tokenizer.json and does not reproduce four redundant source-side legacy tokenizer files.
+        <p>The 32-H100 distributed export exited successfully and wrote an indexed full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59 safetensors shards are byte-for-byte identical to the pinned source, covering all 23,416 tensors and 854,172,958,720 actual tensor-payload bytes. The exported configuration preserves 60 text layers, 128 top-4 experts, 32 vision layers, both projector stages, and 57 lightning-indexer layers. Three tokenizer probes and multimodal processor inputs match the source. Transformers 5.14.0 natively reloads both source and export as MiniMaxM3SparseForConditionalGeneration through its checkpoint conversion mapping with zero missing, unexpected, mismatched, or error keys. The export consolidates the tokenizer in tokenizer.json and does not reproduce four redundant source-side legacy tokenizer files.
 </p>
       </section>
     </article>

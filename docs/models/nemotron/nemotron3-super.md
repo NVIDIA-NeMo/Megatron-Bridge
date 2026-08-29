@@ -61,10 +61,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" aria-controls="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" aria-controls="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -176,7 +176,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned CPU import must exit successfully, create iter_0000000, and preserve the complete source checkpoint so the paired CPU export can audit every supported tensor for exact keys, shapes, dtypes, and values.
+        <p>The pinned CPU import must exit successfully, create iter_0000000, and preserve the complete source checkpoint. A subsequent CPU export from that CPU-imported checkpoint must audit every supported tensor for exact keys, shapes, dtypes, and values; the currently verified CPU export uses the independently verified GPU-imported checkpoint instead.
 </p>
       </section>
     </article>
@@ -209,12 +209,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -223,12 +223,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 --hf-revision d51eab0d1f979ebc26b546e634a04f450d99158e --megatron-path work/model-verification/nemotron-3-super-120b-a12b/cpu-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-super-120b-a12b/cpu-hf-export --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 --hf-revision d51eab0d1f979ebc26b546e634a04f450d99158e --megatron-path work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3-super-120b-a12b/cpu-hf-export --torch-dtype bfloat16</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Strict CPU export must exit successfully, reproduce every supported source tensor with exact keys, shapes, dtypes, and values, and reload natively as NemotronHForCausalLM.
+        <p>The single-process CPU export exits successfully and writes 247,222,108,160 bytes across 42,683 tensors and 123,611,033,088 values. Every exported key, shape, dtype, and value is bitwise identical to the pinned Hugging Face BF16 source, with no dtype conversions, and Transformers strictly reloads all 763 state tensors natively as NemotronHForCausalLM.
 </p>
       </section>
     </article>

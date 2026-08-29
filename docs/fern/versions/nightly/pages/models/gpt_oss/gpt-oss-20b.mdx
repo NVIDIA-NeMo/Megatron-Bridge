@@ -58,10 +58,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="gpt-oss-20b-megatron-to-hf-cpu" aria-controls="gpt-oss-20b-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="gpt-oss-20b-megatron-to-hf-cpu" aria-controls="gpt-oss-20b-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -157,12 +157,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="gpt-oss-20b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="gpt-oss-20b-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -171,12 +171,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model unsloth/gpt-oss-20b-BF16 --megatron-path work/model-verification/gpt-oss-20b/cpu-megatron/iter_0000000 --hf-path work/model-verification/gpt-oss-20b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model unsloth/gpt-oss-20b-BF16 --hf-revision cc89b3e7fd423253264883a80a4fa5abc619649f --megatron-path work/model-verification/gpt-oss-20b/imported-megatron/iter_0000000 --hf-path work/model-verification/gpt-oss-20b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Future verification must export the CPU-imported Megatron checkpoint to the public unquantized BF16 Hugging Face layout and verify that Transformers reloads the result as GptOssForCausalLM with no missing, unexpected, shape, dtype, or value mismatches against the BF16 reference semantics.
+        <p>The synchronous CPU workflow exports the verified distributed Megatron checkpoint to the pinned public unquantized BF16 Hugging Face layout. Its 411 tensors, shapes, dtypes, and all 20,914,757,184 values match the BF16 reference bitwise at zero tolerance. Native Transformers loading succeeds as GptOssForCausalLM with no missing, unexpected, mismatched, or errored weights, and the tokenizer reloads from the export.
 </p>
       </section>
     </article>
