@@ -6,7 +6,7 @@ workflow="${2:-.github/workflows/cicd-main.yml}"
 fw_final_dockerfile="${3:-docker/Dockerfile.fw_final}"
 
 baseline_arg_line=$(grep -n '^ARG BASELINE_MCORE_REF$' "$dockerfile" | cut -d: -f1)
-baseline_clone_line=$(grep -n 'git clone --filter=blob:none --no-checkout' "$dockerfile" | cut -d: -f1)
+baseline_clone_line=$(grep -n 'git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/Megatron-LM.git' "$dockerfile" | cut -d: -f1)
 baseline_line=$(grep -n 'Install the main-branch environment from an immutable baseline context' "$dockerfile" | cut -d: -f1)
 dispatched_copy_line=$(grep -n '^COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM$' "$dockerfile" | cut -d: -f1)
 delta_line=$(grep -n 'syncing the dispatched dependency delta' "$dockerfile" | cut -d: -f1)
