@@ -328,13 +328,17 @@ def test_llava_provider_uses_exact_replacement_counts_with_production_tile_limit
     assert llava_model.img_seq_len == 1
 
 
-def test_llava_forward_normalizes_all_one_frame_tensor_before_delegating():
+def test_llava_forward_preserves_all_one_frame_tensor_for_multiple_images():
     class _RecordingLlava:
         def __init__(self):
             self.kwargs = None
 
         def __call__(self, *args, **kwargs):
             self.kwargs = kwargs
+            num_frames = kwargs["num_frames"]
+            frame_counts = [num_frames] if isinstance(num_frames, int) else num_frames.tolist()
+            if sum(frame_counts) != len(kwargs["imgs_sizes"]):
+                raise ValueError("num_frames must partition imgs_sizes exactly")
             return args
 
     model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
@@ -344,7 +348,7 @@ def test_llava_forward_normalizes_all_one_frame_tensor_before_delegating():
     result = model.forward("input", num_frames=torch.ones(3, dtype=torch.int32), imgs_sizes=torch.ones(3, 2))
 
     assert result == ("input",)
-    assert model.llava_model.kwargs["num_frames"] == 1
+    assert torch.equal(model.llava_model.kwargs["num_frames"], torch.ones(3, dtype=torch.int32))
     assert model.llava_model.kwargs["imgs_sizes"].shape == (3, 2)
 
 

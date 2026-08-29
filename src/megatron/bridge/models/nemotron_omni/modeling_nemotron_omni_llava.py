@@ -84,7 +84,6 @@ class NemotronOmniLlavaModel(NemotronVLModel):
                 raise NotImplementedError(
                     "NemotronOmniLlavaModel only supports image inputs; every num_frames value must be 1."
                 )
-            num_frames = 1
         elif num_frames not in (None, 1):
             raise NotImplementedError("NemotronOmniLlavaModel only supports image inputs; num_frames must be 1.")
 
