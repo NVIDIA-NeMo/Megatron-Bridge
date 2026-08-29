@@ -304,8 +304,14 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         pre_process = pre_process if pre_process is not None else is_pp_first_stage(self._pg_collection.pp)
         post_process = post_process if post_process is not None else is_pp_last_stage(self._pg_collection.pp)
 
+        # MCore creates independent per-layer configs by deep-copying this config. Keep the
+        # runtime-only process groups out of that copy and pass them through the dedicated
+        # constructor argument instead; torch.distributed.ProcessGroup cannot be deep-copied.
+        model_config = copy.copy(self)
+        model_config._pg_collection = None
+
         return MCoreHybridModel(
-            config=self,
+            config=model_config,
             hybrid_stack_spec=hybrid_stack_spec,
             vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,

@@ -19,6 +19,7 @@ import pytest
 import torch
 from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
 from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnBackend
 
@@ -132,6 +133,35 @@ class TestHybridModelProvider:
                 mock_model.assert_called_once()
                 assert mock_model.call_args.kwargs["hybrid_stack_spec"] is hybrid_provider.default_hybrid_stack_spec
                 assert "logit_dtype" not in mock_model.call_args.kwargs
+
+    def test_provide_keeps_runtime_process_groups_out_of_model_config(self):
+        class UncopyableProcessGroupCollection:
+            pp = object()
+
+            def __deepcopy__(self, memo):
+                raise TypeError("runtime process groups cannot be copied")
+
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+        )
+        pg_collection = UncopyableProcessGroupCollection()
+        provider._pg_collection = pg_collection
+
+        def create_model(**kwargs):
+            copied_config = AttentionLayerConfig.from_config(kwargs["config"])
+            assert copied_config._pg_collection is None
+            return Mock()
+
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel", side_effect=create_model
+        ) as mock_model:
+            provider.provide(pre_process=True, post_process=True)
+
+        assert provider._pg_collection is pg_collection
+        assert mock_model.call_args.kwargs["pg_collection"] is pg_collection
 
     def test_provide_method_with_vocab_padding(self):
         provider = HybridModelProvider(
