@@ -268,7 +268,7 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
     assert executor.kwargs["exclusive"] is None
     assert "launcher" not in executor.kwargs
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
-    assert executor.kwargs["container_env"] == ["HF_TOKEN"]
+    assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
     assert executor.kwargs["additional_parameters"] == {"export": "PATH,HF_TOKEN"}
     assert executor.kwargs["container_mounts"] == ["/host:/container"]
     assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]

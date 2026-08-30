@@ -192,6 +192,9 @@ def _validate_task_args(task_name: str, inference_args: list[str]) -> None:
 def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
     """Build the srun-native NeMo-Run Slurm executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
+    container_env = [*env_names]
+    if "PYTHONPATH" not in container_env:
+        container_env.append("PYTHONPATH")
     # Slurm's --export=NIL removes the site PATH used to find scontrol and srun
     # on clusters where they are not installed in /usr/bin. Always inherit PATH
     # for the generated batch script, but expose it to the container only when
@@ -211,7 +214,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
         packager=run.Packager(),
         container_image=args.container_image,
         container_mounts=mounts,
-        container_env=env_names,
+        container_env=container_env,
         additional_parameters={"export": ",".join(batch_env_names)},
         srun_args=args.srun_args,
         **gpu_kwargs,
