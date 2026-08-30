@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from inspect import signature
 from types import SimpleNamespace
 
 import pytest
@@ -2110,8 +2111,6 @@ def test_nemotron_omni_llava_collate_rejects_packed_post_merge_total_overflow(mo
 
 
 def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_merge_width(monkeypatch):
-    from types import SimpleNamespace
-
     from megatron.core.models.multimodal.llava_model import LLaVAModel
 
     from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
@@ -2141,8 +2140,13 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         _language_is_pipeline_parallel=True,
         _language_max_sequence_length=32,
         context_parallel_lm=1,
+        img_seq_len=1,
     )
-    final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
+    preprocess_kwargs = {}
+    if "imgs_sizes" in signature(LLaVAModel._preprocess_data).parameters:
+        preprocess_kwargs["imgs_sizes"] = batch["imgs_sizes"]
+
+    preprocessed = LLaVAModel._preprocess_data(
         pp_model,
         image_embeddings=torch.ones(1, 5, hidden_size),
         language_embeddings=torch.ones(1, batch["input_ids"].shape[1], hidden_size),
@@ -2153,8 +2157,10 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        is_packed_dynamic_res=True,
+        **preprocess_kwargs,
     )
+
+    final_embedding, final_labels, final_loss_mask = preprocessed[:3]
 
     assert final_embedding.shape == (32, 1, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (1, 32)
@@ -2496,8 +2502,6 @@ def test_nemotron_omni_dynamic_collate_handles_mixed_shapes_within_one_sample(mo
 
 
 def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkeypatch):
-    from types import SimpleNamespace
-
     from megatron.core.models.multimodal.llava_model import LLaVAModel
 
     processor = _DynamicNemotronOmniProcessor()
@@ -2525,8 +2529,13 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         _language_is_pipeline_parallel=True,
         _language_max_sequence_length=32,
         context_parallel_lm=1,
+        img_seq_len=1,
     )
-    final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
+    preprocess_kwargs = {}
+    if "imgs_sizes" in signature(LLaVAModel._preprocess_data).parameters:
+        preprocess_kwargs["imgs_sizes"] = batch["imgs_sizes"]
+
+    preprocessed = LLaVAModel._preprocess_data(
         pp_model,
         image_embeddings=torch.ones(1, 5, hidden_size),
         language_embeddings=torch.ones(3, batch["input_ids"].shape[1], hidden_size),
@@ -2537,8 +2546,10 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        is_packed_dynamic_res=True,
+        **preprocess_kwargs,
     )
+
+    final_embedding, final_labels, final_loss_mask = preprocessed[:3]
 
     assert final_embedding.shape == (32, 3, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (3, 32)
