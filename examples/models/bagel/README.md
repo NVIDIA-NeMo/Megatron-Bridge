@@ -53,6 +53,12 @@ configuration or `bagel_7b_finetune_8gpu_h100_bf16_config` for fine-tuning.
 The lower-level `pretrain_bagel.py` example additionally supports initializing
 from a native BAGEL checkpoint and recording loss-alignment traces.
 
+The standard `throughput/tflops/device` logger uses official BAGEL's Qwen2
+formula with the data-parallel-global packed sequence length and sum of squared
+sample lengths. It reports theoretical training TFLOP/s per GPU. As in the
+official implementation, this numerator does not separately count the vision
+encoder, VAE, EMA, optimizer, or activation recomputation.
+
 ## Current Limitations
 
 - Tensor, pipeline, and context parallel sizes must all be one.

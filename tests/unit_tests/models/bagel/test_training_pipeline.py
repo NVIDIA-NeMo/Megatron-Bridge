@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import random
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -20,7 +21,12 @@ import pytest
 import torch
 from torch.utils.data._utils.worker import _generate_state
 
-from megatron.bridge.models.bagel.bagel_step import _initialize_scheduler, _seed_reference_training_rng, bagel_loss
+from megatron.bridge.models.bagel.bagel_step import (
+    _accumulate_bagel_flops_metadata,
+    _initialize_scheduler,
+    _seed_reference_training_rng,
+    bagel_loss,
+)
 from megatron.bridge.models.bagel.data.batch import _attention_metadata
 from megatron.bridge.models.bagel.data.external import BagelRNGIterator
 from megatron.bridge.models.bagel.diffusion import BagelDiffusionScheduler
@@ -30,6 +36,7 @@ from megatron.bridge.recipes.bagel.h100.bagel import (
     bagel_7b_pretrain_8gpu_h100_bf16_config,
     bagel_7b_pretrain_32gpu_h100_bf16_config,
 )
+from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 
 
 class RandomIterator:
@@ -137,6 +144,38 @@ def test_bagel_loss_matches_official_ce_and_mse_normalization():
     assert tokens.item() == 1
     assert torch.equal(metrics["ce"], torch.tensor([6.0, 2.0]))
     assert torch.equal(metrics["mse"], torch.tensor([2.0, 1.0]))
+
+
+def test_bagel_flops_match_official_qwen2_formula():
+    provider = BagelModelProvider(
+        num_layers=2,
+        hidden_size=8,
+        num_attention_heads=2,
+        num_query_groups=1,
+        ffn_hidden_size=12,
+        kv_channels=4,
+        seq_length=10,
+        vocab_size=16,
+    )
+    config = SimpleNamespace(model=provider, peft=None)
+    assert (
+        num_floating_point_operations(
+            config,
+            batch_size=1,
+            seqlen_sum=10,
+            seqlen_squared_sum=58,
+        )
+        == 84_096.0
+    )
+
+
+def test_bagel_flops_accumulate_packed_microbatches():
+    state = SimpleNamespace()
+    _accumulate_bagel_flops_metadata(state, sequence_length=10, sample_lens=[3, 7])
+    _accumulate_bagel_flops_metadata(state, sequence_length=5, sample_lens=[5])
+    assert state._flops_seqlen_sum == 15
+    assert state._flops_seqlen_sq_sum == 83
+    assert state._flops_requires_global_reduce
 
 
 def test_provider_rejects_unvalidated_model_parallel_topology():

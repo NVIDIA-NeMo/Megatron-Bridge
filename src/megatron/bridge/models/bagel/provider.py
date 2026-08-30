@@ -129,6 +129,35 @@ class BagelModelProvider(GPTModelProvider):
         self.variable_seq_lengths = True
         super().finalize()
 
+    def _get_num_floating_point_operations_with_runtime_stats(
+        self,
+        *,
+        batch_size: int,
+        seqlen_sum: int | None,
+        seqlen_squared_sum: int | None,
+        cross_seqlen_sum: int | None = None,
+        cross_seqlen_product_sum: int | None = None,
+    ) -> float:
+        """Return the official BAGEL Qwen2 training FLOPs estimate."""
+        del cross_seqlen_sum, cross_seqlen_product_sum
+        if seqlen_sum is None and seqlen_squared_sum is None:
+            seqlen_sum = batch_size * self.seq_length
+            seqlen_squared_sum = batch_size * self.seq_length**2
+        elif seqlen_sum is None or seqlen_squared_sum is None:
+            raise ValueError("BAGEL FLOPs require both sequence sums")
+
+        head_dim = self.kv_channels or self.hidden_size // self.num_attention_heads
+        num_key_value_heads = self.num_query_groups or self.num_attention_heads
+        q_size = self.num_attention_heads * head_dim
+        kv_size = num_key_value_heads * head_dim
+        mlp_parameters = self.hidden_size * self.ffn_hidden_size * 3
+        attention_parameters = self.hidden_size * (q_size + 2 * kv_size + q_size)
+        embedding_parameters = self.vocab_size * self.hidden_size * 2
+        dense_parameters = (mlp_parameters + attention_parameters) * self.num_layers + embedding_parameters
+        dense_flops = 6.0 * dense_parameters * seqlen_sum
+        attention_flops = 12.0 * head_dim * self.num_attention_heads * self.num_layers * seqlen_squared_sum
+        return dense_flops + attention_flops
+
     def _official_config(self) -> Any:
         """Load the official local BAGEL configuration without model weights."""
         if self.bagel_repo is None or self.model_path is None:

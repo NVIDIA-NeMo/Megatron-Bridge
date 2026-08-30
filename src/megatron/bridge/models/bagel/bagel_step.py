@@ -19,6 +19,7 @@ from __future__ import annotations
 import random
 from collections.abc import Iterable
 from functools import partial
+from typing import cast
 
 import numpy as np
 import torch
@@ -50,6 +51,20 @@ def _initialize_scheduler(scheduler: BagelDiffusionScheduler) -> None:
         torch.set_rng_state(torch_rng)
         if cuda_rng is not None:
             torch.cuda.set_rng_state(cuda_rng)
+
+
+def _accumulate_bagel_flops_metadata(
+    state: GlobalState,
+    *,
+    sequence_length: int,
+    sample_lens: list[int],
+) -> None:
+    """Accumulate the sequence statistics used by official BAGEL FLOPs."""
+    state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + sequence_length
+    state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + sum(
+        sample_len**2 for sample_len in sample_lens
+    )
+    state._flops_requires_global_reduce = True
 
 
 def bagel_loss(
@@ -141,6 +156,11 @@ class BagelForwardStep:
                 packed_batch,
                 self.scheduler,
                 num_attention_heads=config.num_attention_heads,
+            )
+            _accumulate_bagel_flops_metadata(
+                state,
+                sequence_length=cast(int, batch["sequence_length"]),
+                sample_lens=cast(list[int], batch["sample_lens"]),
             )
         state.timers("batch-generator").stop()
 
