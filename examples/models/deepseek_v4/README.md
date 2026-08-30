@@ -97,7 +97,7 @@ launcher. Hardware-qualified library recipes are defined under
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config` | BF16 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config` | MXFP8 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config` | BF16 Muon |
-| GB200, 64 GPUs | `deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config` | MXFP8 Adam |
+| GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config` | MXFP8 Adam |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config` | BF16 Adam |
 | GB300, 32 GPUs | `deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config` | MXFP8 Adam |
 
@@ -105,7 +105,7 @@ For example, a short generated-data run of the GB200 library recipe is:
 
 ```bash
 ./scripts/training/train.sh --nodes 16 --gpus-per-node 4 \
-  --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config \
+  --recipe deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config \
   --mode pretrain --dataset mock --max_steps 10
 ```
 

@@ -184,7 +184,7 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config
+        --recipe deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
         --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000
         'dataset.blend=[["work/data/the-pile/my-gpt3_08_text_document"],null]'
@@ -424,7 +424,7 @@ items:
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
-        --recipe deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config
+        --recipe deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config
         --mode pretrain --dataset megatron-indexed --max_steps 100
         'dataset.blend=[["work/data/the-pile/my-gpt3_08_text_document"],null]'
         dataset.path_to_cache=work/cache/the-pile dataset.num_workers=0

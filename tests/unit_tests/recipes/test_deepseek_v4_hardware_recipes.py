@@ -30,7 +30,7 @@ from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config as flash_fp8_config,
 )
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
-    deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config as flash_library_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config as flash_library_config,
 )
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config as flash_packed_sft_config,
@@ -227,7 +227,7 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     )
     assert cfg.model.recompute_modules == ["mhc", "mla_up_proj"]
     assert cfg.model.fine_grained_activation_offloading is False
-    assert cfg.model.offload_modules == []
+    assert cfg.model.offload_modules is None
     assert cfg.model.fine_grained_offloading_max_inflight_offloads is None
     assert getattr(cfg.model, "moe_expert_rank_capacity_factor", None) is None
     assert getattr(cfg.model, "moe_paged_stash", False) is False
@@ -240,5 +240,5 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
 
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:
     assert recipes.deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config is flash_packed_peft_config
-    assert recipes.deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config is flash_library_config
+    assert recipes.deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config is flash_library_config
     assert recipes.deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config is flash_packed_sft_config

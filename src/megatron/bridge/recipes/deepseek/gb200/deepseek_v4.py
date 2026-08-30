@@ -191,14 +191,12 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigContainer:
+def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config() -> ConfigContainer:
     """Return the scalable real-training DeepSeek V4 Flash GB200 config.
 
-    The historical name is retained for compatibility. This variant uses PP4/VPP4,
-    EP16, and selective recompute without activation offload; its current
-    qualification is at 64 GPUs. Expert capacity, paged stash, CUDA graphs, and
-    forced load balancing remain disabled to preserve natural-routing training
-    semantics.
+    This 64-GPU variant uses PP4/VPP4, EP16, and selective recompute without
+    activation offload. Expert capacity, paged stash, CUDA graphs, and forced
+    load balancing remain disabled to preserve natural-routing training semantics.
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config()
 
@@ -222,7 +220,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_library_config() -> ConfigCont
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.recompute_modules = ["mhc", "mla_up_proj"]
     cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = []
+    cfg.model.offload_modules = None
     cfg.model.fine_grained_offloading_max_inflight_offloads = None
     cfg.model.moe_pad_experts_for_cuda_graph_inference = False
     cfg.model.cuda_graph_impl = "none"
