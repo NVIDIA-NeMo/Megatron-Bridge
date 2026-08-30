@@ -246,6 +246,8 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
 def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB300)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()
+    cfg.model.cuda_graph_scope = ["attn"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
