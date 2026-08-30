@@ -103,7 +103,7 @@ jobs:
         shell: bash -e -u -o pipefail {0}
         env:
           IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
-          MERGE_COMMIT_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+          MERGE_COMMIT_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').mergeCommitSha }}
         run: |
           if [[ "$IS_PR" == "true" ]]; then
             SHA=$MERGE_COMMIT_SHA
