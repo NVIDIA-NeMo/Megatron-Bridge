@@ -294,14 +294,21 @@ def apply_target_topology_environment(
     model-specific environment stays explicit in the recipe. Explicit
     ``env_vars`` overrides remain final.
     """
+    from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+
     topology_names = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
         "NVLINK_DOMAIN_SIZE",
         "USE_MNNVL",
     }
     protected = protected_env_names or set()
-    if getattr(config.model, "moe_flex_dispatcher_backend", None) != "hybridep":
-        for name in topology_names - protected:
+    dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
+    if dispatcher_backend != "hybridep":
+        # NCCL EP also drops the HybridEP tuning this function never derives, so an NCCL EP launch
+        # carries no stale HybridEP settings at all. DeepEP and alltoall keep whatever the recipe
+        # set, exactly as before.
+        stale_names = HYBRID_EP_ENV_NAMES if dispatcher_backend == "ncclep" else topology_names
+        for name in stale_names - protected:
             config.env_vars.pop(name, None)
         return
 
@@ -387,9 +394,9 @@ def apply_argparse_overrides(config: Any, args: Any) -> Any:
 
     dispatcher_backend = getattr(args, "moe_flex_dispatcher_backend", -1)
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
-    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+    if dispatcher_backend in {"deepep", "hybridep", "ncclep"} and num_moe_experts not in {None, 0}:
         config.model.moe_flex_dispatcher_backend = dispatcher_backend
-    elif dispatcher_backend in {"deepep", "hybridep"}:
+    elif dispatcher_backend in {"deepep", "hybridep", "ncclep"}:
         logger.warning("Ignoring flex dispatcher override for a model without MoE experts.")
     elif dispatcher_backend is None:
         config.model.moe_flex_dispatcher_backend = None
@@ -413,7 +420,7 @@ def finalize_config_overrides(config: Any) -> Any:
 
     dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
-    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+    if dispatcher_backend in {"deepep", "hybridep", "ncclep"} and num_moe_experts not in {None, 0}:
         config.model.moe_token_dispatcher_type = "flex"
         config.model.moe_shared_expert_overlap = False
     elif dispatcher_backend is None and getattr(config.model, "moe_token_dispatcher_type", None) == "flex":
