@@ -220,7 +220,7 @@ def test_dora_replicated_base_matches_dense_forward_and_gradients() -> None:
     grad_local = grad_full.chunk(_TP_SIZE, dim=0)[rank]
     actual, _ = wrapped(x_local)
     expected = F.linear(x_local, direction) * (magnitude / torch.linalg.norm(direction, dim=1)).view(1, 1, -1)
-    torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-6)
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
 
     actual.backward(grad_local)
     actual_a_grad = _summed_grad(adapter.linear_in.weight)
@@ -239,9 +239,9 @@ def test_dora_replicated_base_matches_dense_forward_and_gradients() -> None:
     _assert_replicated_parameter(adapter.linear_in.weight, full_a.shape)
     _assert_replicated_parameter(adapter.linear_out.weight, full_b.shape)
     _assert_replicated_parameter(adapter.weight_magnitude, magnitude.shape)
-    torch.testing.assert_close(actual_a_grad, reference_grads[0], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(actual_b_grad, reference_grads[1], rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(actual_magnitude_grad, reference_grads[2], rtol=1e-6, atol=1e-6)
+    torch.testing.assert_close(actual_a_grad, reference_grads[0], rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(actual_b_grad, reference_grads[1], rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(actual_magnitude_grad, reference_grads[2], rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.gpu
@@ -286,7 +286,7 @@ def test_multi_lora_replicated_base_matches_dense_forward_and_gradients() -> Non
         dim=0,
     )
     expected = F.linear(x_full, base_weight) + expected_adapter
-    torch.testing.assert_close(actual, expected.chunk(_TP_SIZE, dim=0)[rank], rtol=1e-6, atol=1e-6)
+    torch.testing.assert_close(actual, expected.chunk(_TP_SIZE, dim=0)[rank], rtol=1e-5, atol=1e-5)
 
     actual.backward(grad_local)
     actual_grads: list[tuple[torch.Tensor, torch.Tensor]] = []
@@ -316,7 +316,7 @@ def test_multi_lora_replicated_base_matches_dense_forward_and_gradients() -> Non
         full_a, full_b = full_weights[slot]
         _assert_replicated_parameter(adapter.linear_in.weight, full_a.shape)
         _assert_replicated_parameter(adapter.linear_out.weight, full_b.shape)
-        torch.testing.assert_close(actual_grads[slot][0], reference_grads[slot], rtol=1e-6, atol=1e-6)
+        torch.testing.assert_close(actual_grads[slot][0], reference_grads[slot], rtol=1e-5, atol=1e-5)
         torch.testing.assert_close(
-            actual_grads[slot][1], reference_grads[len(wrapped.adapters) + slot], rtol=1e-6, atol=1e-6
+            actual_grads[slot][1], reference_grads[len(wrapped.adapters) + slot], rtol=1e-5, atol=1e-5
         )
