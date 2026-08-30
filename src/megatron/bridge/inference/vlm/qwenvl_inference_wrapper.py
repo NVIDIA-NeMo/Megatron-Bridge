@@ -12,10 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import torch
-from megatron.core.inference.config import MediaPromptSpec, MultimodalPromptConfig
+
+
+try:
+    from megatron.core.inference.config import MediaPromptSpec, MultimodalPromptConfig
+except ImportError as exc:
+    if not all(name in str(exc) for name in ("MediaPromptSpec", "MultimodalPromptConfig")):
+        raise
+
+    @dataclass(frozen=True)
+    class MediaPromptSpec:
+        """Map one API media type to the model's prompt-token contract."""
+
+        model_token: str = "<image>"
+        prefix: str = ""
+        suffix: str = ""
+
+    @dataclass(frozen=True)
+    class MultimodalPromptConfig:
+        """Prompt contracts for MCore revisions without multimodal config types."""
+
+        image_spec: MediaPromptSpec = field(default_factory=MediaPromptSpec)
+        video_spec: MediaPromptSpec = field(default_factory=lambda: MediaPromptSpec(model_token="<video>"))
+
+
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
