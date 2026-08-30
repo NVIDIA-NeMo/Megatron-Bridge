@@ -27,6 +27,7 @@ if (
 
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
+    BailingMoeV3Bridge,
 )
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -231,6 +232,7 @@ __all__ = [
     "RowParallelMapping",
     "AutoMapping",
     "BailingMoeV2Bridge",
+    "BailingMoeV3Bridge",
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
