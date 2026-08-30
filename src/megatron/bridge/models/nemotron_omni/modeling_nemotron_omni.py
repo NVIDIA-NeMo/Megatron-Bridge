@@ -375,9 +375,6 @@ class NemotronOmniModel(MegatronModule):
             raise RuntimeError("Image data was provided on a stage without the vision encoder")
 
         parameter = next(self.vision_model.parameters())
-        # ``images`` may be a list of jagged [n, C, Hi, Wi] tensors (see
-        # _patchify_dynamic_images), so cast element-wise rather than assuming
-        # a single rectangular tensor.
         if isinstance(images, (list, tuple)):
             images = [image.to(dtype=parameter.dtype) for image in images]
         else:
@@ -497,12 +494,6 @@ class NemotronOmniModel(MegatronModule):
 
         patch_features = 3 * self.patch_dim * self.patch_dim
 
-        # Heterogeneous image sizes: a list/tuple of [n, C, Hi, Wi] (or
-        # [C, Hi, Wi]) tensors whose spatial dims differ per entry. Because
-        # each entry already carries its true size there is nothing to crop,
-        # and patchifying at native resolution avoids the pad-to-max-shape
-        # copy the rectangular path requires -- every entry still yields the
-        # same feature width (C*P*P), so the patch blocks concatenate.
         if isinstance(images, (list, tuple)):
             if not images:
                 raise ValueError("Received an empty list of images.")
@@ -538,10 +529,6 @@ class NemotronOmniModel(MegatronModule):
             return torch.cat(jagged_patches, dim=0).unsqueeze(0).contiguous()
 
         if images.ndim == 2 and images.shape[-1] == patch_features:
-            # Accept pre-patchified 2-D [total_patches, C*P*P] from the data
-            # pipeline (NRL_PATCHIFY_INSTEAD_OF_PAD). Concatenating patches
-            # along dim 0 keeps PackedTensor's packing semantics intact, so the
-            # leading batch axis is added here rather than at pack time.
             return images.unsqueeze(0)
         if images.ndim == 3 and images.shape[0] == 1:
             if images.shape[-1] != patch_features:
