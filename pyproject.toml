@@ -154,6 +154,11 @@ url = "https://pypi.nvidia.com"
 # flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
 # resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
 [[tool.uv.dependency-metadata]]
+name = "torch-memory-saver"
+version = "0.0.10b1"
+requires-dist = []
+
+[[tool.uv.dependency-metadata]]
 name = "flash-mla"
 version = "1.0.0+9edee0c"
 requires-dist = []
