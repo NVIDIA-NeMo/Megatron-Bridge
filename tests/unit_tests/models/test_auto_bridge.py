@@ -357,8 +357,16 @@ class TestAutoBridge:
         self._run_save_hf_weights(source, tmp_path, mtp_num_layers=1)
 
         assert source.save_generator_kwargs["ignored_source_key_prefixes"] is None
+        assert source.save_generator_kwargs["ignored_source_key_suffixes"] is None
 
-    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers):
+    def test_save_hf_weights_strips_scale_inv_for_plain_export(self, tmp_path):
+        """Plain-dtype export omits source-only FP8 scale tensors from strict shard accounting."""
+        source = _make_fake_source(present=set())
+        self._run_save_hf_weights(source, tmp_path, mtp_num_layers=1, weight_dtype=torch.bfloat16)
+
+        assert source.save_generator_kwargs["ignored_source_key_suffixes"] == ("_scale_inv",)
+
+    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers, weight_dtype=None):
         """Drive ``save_hf_weights`` with a stubbed bridge/model so the only
         behavior under test is the MTP prefix-resolution wiring.
 
@@ -391,7 +399,7 @@ class TestAutoBridge:
             patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
         ):
             mock_bridge.return_value = fake_model_bridge
-            bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
+            bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False, weight_dtype=weight_dtype)
 
     def test_can_handle_supported_model(self, llama_config_mock):
         """Test can_handle returns True for supported models."""
@@ -1339,6 +1347,32 @@ class TestAutoBridge:
                     save_every_n_ranks=1,
                     weight_dtype=None,
                 )
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_postprocesses_artifacts(self, _mock_dist_avail, _mock_dist_init, tmp_path):
+        """Model bridges can postprocess copied Hugging Face artifacts before weight export."""
+
+        class _ArtifactPostprocessor:
+            SUPPORTS_HF_PRETRAINED_EXPORT = True
+            ADDITIONAL_FILE_PATTERNS = None
+
+            def postprocess_hf_export_artifacts(self, path):
+                (path / "postprocessed").touch()
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.save_artifacts.side_effect = lambda path, **_: Path(path).mkdir(parents=True, exist_ok=True)
+        model_bridge = _ArtifactPostprocessor()
+        bridge = AutoBridge(mock_hf_model)
+
+        with (
+            patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=model_bridge)),
+            patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights,
+        ):
+            bridge.save_hf_pretrained([Mock()], tmp_path)
+
+        assert (tmp_path / "postprocessed").is_file()
+        mock_save_hf_weights.assert_called_once()
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)

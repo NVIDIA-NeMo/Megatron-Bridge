@@ -22,7 +22,9 @@ __all__ = [
     "nemotron_35_super_vl_sft_64gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config",
+    "nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config",
     "nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config",
+    "nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config",
     "nemotron_omni_valor32k_peft_4gpu_h100_bf16_config",
     "nemotron_omni_valor32k_sft_4gpu_h100_bf16_config",
 ]

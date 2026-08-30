@@ -158,6 +158,36 @@ def test_cpu_import_forwards_hf_revision_without_replacing_model_id(monkeypatch)
     assert calls[0]["hf_revision"] == "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
 
 
+def test_export_forwards_hf_revision_without_replacing_model_id(monkeypatch):
+    module, cpu_backend, _ = _load_run_conversion_module()
+    calls = []
+    cpu_backend.export_checkpoint = lambda **kwargs: calls.append(kwargs)
+    monkeypatch.setattr(
+        module,
+        "resolve_hf_commit_revision",
+        lambda model, revision: "0123456789abcdef0123456789abcdef01234567",  # pragma: allowlist secret
+    )
+
+    module.main(
+        [
+            "export",
+            "--device",
+            "cpu",
+            "--hf-model",
+            "hf/model",
+            "--hf-revision",
+            "release-tag",
+            "--megatron-path",
+            "/checkpoint",
+            "--hf-path",
+            "/hf-export",
+        ]
+    )
+
+    assert calls[0]["hf_model"] == "hf/model"
+    assert calls[0]["hf_revision"] == "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+
+
 def test_cpu_import_rejects_hf_revision_for_local_path(tmp_path, monkeypatch):
     module, cpu_backend, _ = _load_run_conversion_module()
     calls = []
@@ -209,6 +239,66 @@ def test_gpu_export_enables_distributed_save_by_default():
     assert calls[0]["distributed_save"] is True
     assert calls[0]["ep"] == 2
     assert calls[0]["hf_path"] == "/hf"
+
+
+def test_distributed_cpu_export_uses_gloo_backend(monkeypatch):
+    module, cpu_backend, gpu_backend = _load_run_conversion_module()
+    calls = []
+    cpu_backend.export_checkpoint = lambda **kwargs: pytest.fail("must not use the single-process backend")
+    gpu_backend.export_checkpoint = lambda **kwargs: calls.append(kwargs)
+    monkeypatch.setenv("WORLD_SIZE", "2")
+
+    module.main(
+        [
+            "export",
+            "--device",
+            "cpu",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/megatron",
+            "--hf-path",
+            "/hf",
+            "--ep",
+            "2",
+            "--distributed-save",
+            "--export-weight-dtype",
+            "bfloat16",
+        ]
+    )
+
+    assert calls[0]["distributed_save"] is True
+    assert calls[0]["export_weight_dtype"] == "bfloat16"
+    assert calls[0]["use_cpu"] is True
+
+
+@pytest.mark.parametrize(
+    ("parallelism_args", "message"),
+    [
+        (["--tp", "3"], r"WORLD_SIZE must be divisible by TP\*PP"),
+        (["--ep", "3"], r"WORLD_SIZE must be divisible by ETP\*EP\*PP"),
+    ],
+)
+def test_distributed_cpu_export_rejects_incompatible_world_size(monkeypatch, parallelism_args, message):
+    module, _, _ = _load_run_conversion_module()
+    monkeypatch.setenv("WORLD_SIZE", "4")
+
+    with pytest.raises(ValueError, match=message):
+        module.main(
+            [
+                "export",
+                "--device",
+                "cpu",
+                "--hf-model",
+                "hf/model",
+                "--megatron-path",
+                "/megatron",
+                "--hf-path",
+                "/hf",
+                "--distributed-save",
+                *parallelism_args,
+            ]
+        )
 
 
 def test_gpu_roundtrip_dispatches_to_gpu_backend():
@@ -263,7 +353,7 @@ def test_cpu_worker_rejects_parallelism():
 def test_cpu_worker_rejects_export_weight_dtype():
     module, _, _ = _load_run_conversion_module()
 
-    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+    with pytest.raises(ValueError, match="requires distributed CPU export or the GPU backend"):
         module.main(
             [
                 "export",

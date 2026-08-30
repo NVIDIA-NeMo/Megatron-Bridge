@@ -328,25 +328,39 @@ def test_canonical_provider_builds_dedicated_model(monkeypatch):
     provider = NemotronOmniModelProvider(
         image_token_index=18,
         nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        transformer_impl="inference_optimized",
     )
     model = SimpleNamespace()
     model_factory = Mock(return_value=model)
     llava_factory = Mock()
+    inference_spec = object()
+    resolve_hybrid_stack_spec = Mock(return_value=inference_spec)
+    projection_submodules = object()
+    get_projection_submodules = Mock(return_value=projection_submodules)
 
+    monkeypatch.setattr(provider, "_resolve_hybrid_stack_spec", resolve_hybrid_stack_spec)
     monkeypatch.setattr(provider_module, "LLaVAModel", llava_factory)
     monkeypatch.setattr(provider_module, "get_vit_layer_with_transformer_engine_spec", Mock(return_value=object()))
-    monkeypatch.setattr(provider_module, "get_language_mlp_submodules", Mock(return_value=object()))
+    monkeypatch.setattr(
+        provider_module,
+        "_get_transformer_engine_projection_submodules",
+        get_projection_submodules,
+    )
     monkeypatch.setattr(provider_module, "NemotronOmniModel", model_factory)
 
     assert provider.provide() is model
     model_factory.assert_called_once()
+    resolve_hybrid_stack_spec.assert_called_once_with()
+    assert model_factory.call_args.kwargs["language_transformer_layer_spec"] is inference_spec
+    assert model_factory.call_args.kwargs["vision_projection_layer_spec"] is projection_submodules
+    get_projection_submodules.assert_called_once_with()
     llava_factory.assert_not_called()
 
 
 def test_nemotron_omni_provider_can_omit_sound_modules():
     provider = NemotronOmniModelProvider(has_sound=False)
 
-    sound_model, sound_projection = provider._build_sound_modules(None, None, add_encoder=True)
+    sound_model, sound_projection = provider._build_sound_modules(None, add_encoder=True)
 
     assert provider.has_sound is False
     assert sound_model is None
@@ -359,10 +373,14 @@ def test_nemotron_omni_provider_builds_sound_modules_when_enabled(monkeypatch):
     expected_sound_projection = object()
     monkeypatch.setattr(provider, "_build_sound_encoder", lambda: expected_sound_model)
     monkeypatch.setattr(provider, "_build_sound_projection_config", lambda _: object())
-    monkeypatch.setattr(provider_module, "get_language_mlp_submodules", lambda _: object())
+    monkeypatch.setattr(
+        provider_module,
+        "_get_transformer_engine_projection_submodules",
+        lambda: object(),
+    )
     monkeypatch.setattr(provider_module, "MultimodalProjector", lambda **_: expected_sound_projection)
 
-    sound_model, sound_projection = provider._build_sound_modules(None, None, add_encoder=True)
+    sound_model, sound_projection = provider._build_sound_modules(None, add_encoder=True)
 
     assert sound_model is expected_sound_model
     assert sound_projection is expected_sound_projection
@@ -416,6 +434,26 @@ def test_nemotron_omni_export_preserves_source_only_buffers():
     assert exported_buffers.keys() == source_tensors.keys()
     for name, source_tensor in source_tensors.items():
         assert torch.equal(exported_buffers[name], source_tensor)
+
+
+def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
+    modeling_path = tmp_path / "modeling.py"
+    modeling_path.write_text("from .configuration import NemotronOmniConfig\n")
+    bridge = NemotronOmniBridge()
+
+    bridge.postprocess_hf_export_artifacts(tmp_path)
+    bridge.postprocess_hf_export_artifacts(tmp_path)
+
+    modeling_source = modeling_path.read_text()
+    assert modeling_source.count("from .configuration_nemotron_h import NemotronHConfig") == 1
+    assert modeling_source.count("from .configuration_radio import RADIOConfig") == 1
+
+
+def test_nemotron_omni_export_requires_modeling_entrypoint(tmp_path):
+    bridge = NemotronOmniBridge()
+
+    with pytest.raises(FileNotFoundError, match="missing required artifact.*modeling.py"):
+        bridge.postprocess_hf_export_artifacts(tmp_path)
 
 
 def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):

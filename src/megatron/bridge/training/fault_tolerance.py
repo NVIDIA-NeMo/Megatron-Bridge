@@ -251,6 +251,10 @@ def shutdown(global_state: GlobalState) -> None:
     rmon_cli = global_state.rank_monitor_client
     if rmon_cli is not None:
         print_rank_0("FT: closing...")
+        ft_state = global_state.fault_tolerance_state
+        if ft_state.is_setup_section_open:
+            rmon_cli.end_section("setup")
+            ft_state.is_setup_section_open = False
         _maybe_update_timeouts(global_state, is_closing_ft=True)
         rmon_cli.shutdown_workload_monitoring()
         print_rank_0("FT: closed.")
