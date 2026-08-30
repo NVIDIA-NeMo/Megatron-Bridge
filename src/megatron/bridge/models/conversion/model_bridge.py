@@ -1934,11 +1934,13 @@ class MegatronModelBridge(
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
     def finalize_hf_import(self, megatron_model: Union[MegatronModel, List[MegatronModel]]) -> None:
-        """Finalize tied parameters and parameter-derived caches after import."""
-        from megatron.core.resharding import refresh_module_caches
+        """Finalize tied parameters and any available parameter-derived caches after import."""
+        from megatron.core import resharding
 
         self._broadcast_shared_embeddings(megatron_model)
-        refresh_module_caches(megatron_model)
+        refresh_module_caches = getattr(resharding, "refresh_module_caches", None)
+        if refresh_module_caches is not None:
+            refresh_module_caches(megatron_model)
 
     def _should_skip_mtp_duplicate_embedding_export(
         self,
