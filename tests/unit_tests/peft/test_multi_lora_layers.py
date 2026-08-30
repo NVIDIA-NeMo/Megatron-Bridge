@@ -148,6 +148,7 @@ def adapter_deps_patch() -> ExitStack:
     # has no initialized CUDA state on CPU; stub ``fork()`` to a no-op context.
     tracker = MagicMock()
     tracker.fork.side_effect = lambda *args, **kwargs: nullcontext()
+    tracker.get_states.return_value = {}
     stack.enter_context(patch("megatron.core.tensor_parallel.random.get_cuda_rng_tracker", return_value=tracker))
     return stack
 
@@ -522,6 +523,34 @@ class TestMultiLoRAModelHelpers:
         found = list(_iter_multi_lora_modules(chunks))
 
         assert len(found) == 3
+
+    def test_init_adapter_slot_unseeded_keeps_slot_weights(self) -> None:
+        container = _MultiLoRAContainer(n_layers=2)
+        for module in container.mods:
+            with torch.no_grad():
+                module.adapters[0].linear_in.weight.fill_(7.0)
+
+        init_adapter_slot(container, 0, rank=8, alpha=16)
+
+        for module in container.mods:
+            assert torch.all(module.adapters[0].linear_in.weight == 7.0)
+            assert module.alpha_values[0] == 16
+
+    def test_init_adapter_slot_seeded_reinitializes_every_layer(self) -> None:
+        container = _MultiLoRAContainer(n_layers=2)
+        for module in container.mods:
+            with torch.no_grad():
+                module.adapters[0].linear_in.weight.fill_(7.0)
+                module.adapters[0].linear_out.weight.fill_(7.0)
+
+        init_adapter_slot(container, 0, rank=4, alpha=16, seed=123)
+
+        for module in container.mods:
+            # reset_adapter ran: A re-drawn (xavier, so not the fill value), B zero-initialized.
+            assert not torch.all(module.adapters[0].linear_in.weight == 7.0)
+            assert torch.count_nonzero(module.adapters[0].linear_out.weight) == 0
+            assert module.alpha_values[0] == 16
+            assert module.rank_values[0] == 4
 
     def test_set_tokens_per_adapter_slot(self) -> None:
         container = _MultiLoRAContainer(n_layers=2)
@@ -1003,6 +1032,28 @@ class TestMultiLoRALinearGPU:
         b = mlora.adapters[idx].linear_out.weight
         assert not torch.allclose(a, torch.full_like(a, 7.0))  # A re-initialized (xavier)
         assert torch.count_nonzero(b) == 0  # B zero-initialized
+
+    def test_init_adapter_slot_seeded_is_reproducible(self):
+        mlora = self._build()
+        init_adapter_slot([mlora], 0, rank=4, alpha=16, seed=99)
+        first = mlora.adapters[0].linear_in.weight.detach().clone()
+
+        # Perturb the weights and advance the tracker streams arbitrarily.
+        with torch.no_grad():
+            mlora.adapters[0].linear_in.weight.fill_(3.0)
+        mlora.clear_adapter_slot(0)
+
+        init_adapter_slot([mlora], 0, rank=4, alpha=16, seed=99)
+        assert torch.equal(mlora.adapters[0].linear_in.weight, first)
+
+        init_adapter_slot([mlora], 0, rank=4, alpha=16, seed=100)
+        assert not torch.equal(mlora.adapters[0].linear_in.weight, first)
+
+        # The tracker streams were restored: an unseeded re-init still works and differs per call.
+        mlora.clear_adapter_slot(0)
+        after_clear = mlora.adapters[0].linear_in.weight.detach().clone()
+        mlora.clear_adapter_slot(0)
+        assert not torch.equal(mlora.adapters[0].linear_in.weight, after_clear)
 
     def test_reset_adapter_deterministic_via_rng_tracker(self):
         from megatron.core.process_groups_config import ProcessGroupCollection
