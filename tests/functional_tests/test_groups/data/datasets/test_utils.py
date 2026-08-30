@@ -33,6 +33,7 @@ from megatron.bridge.data.datasets.utils import (
     _make_indexed_dataset_compatibility,
     _OnlineSampleMapping,
     _response_value_formater,
+    build_index_files,
     build_index_from_memdata,
     handle_index,
     safe_map,
@@ -320,6 +321,24 @@ class TestDataUtils:
 
             assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.npy")
             assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.info")
+
+    def test_build_index_files_raises_when_a_file_fails(self):
+        jsonl_example = '{"input": "a", "output": "b"}\n'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            good_fn = f"{temp_dir}/good.jsonl"
+            missing_fn = f"{temp_dir}/missing.jsonl"
+            with open(good_fn, "w") as f:
+                f.write(jsonl_example)
+
+            # safe_map yields None for the failed file, build_index_files must surface that
+            # as an error naming the file instead of tripping over sum([1, None]).
+            with pytest.raises(RuntimeError, match=r"1 of 2 data files") as exc_info:
+                build_index_files([good_fn, missing_fn], 10, workers=1, build_index_fn=build_index_from_memdata)
+
+            assert missing_fn in str(exc_info.value)
+            assert good_fn not in str(exc_info.value)
+            assert os.path.exists(f"{good_fn}.idx.npy")
 
 
 class TestSafeMap:
