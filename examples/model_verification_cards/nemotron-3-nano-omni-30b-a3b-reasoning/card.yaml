@@ -6,14 +6,13 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Verification uses the immutable public model and CORD v2 revisions.
-  CPU and distributed GPU import, deterministic Megatron inference, 100-step
+  CPU and distributed GPU import and export, deterministic Megatron inference, 100-step
   one-node H100 full-model SFT, in-batch-packed 8K SFT, and LoRA PEFT runs
   completed. The H100 fine-tuning variants preserve real image-text samples and
   natural routing while using lower-precision optimizer state; 4K SFT and PEFT
   use HybridEP, while packed CP2 uses the standard all-to-all dispatcher. Strict
-  CPU and GPU round trips preserved all 7,349 tensors bitwise, but Transformers
-  5.8.0 cannot natively reload the local custom-code exports because its
-  dynamic-module cache omits transitive configuration imports. The one-step
+  CPU and GPU round trips preserve all 7,349 tensors bitwise and reload with
+  the same native-loader notices as the pinned Hugging Face source. The one-step
   HF/Megatron comparison predicts the same token but remains below the 0.99
   cosine gate. Unsupported and incomplete workflows remain explicitly
   identified rather than inferred from focused unit coverage.
@@ -22,10 +21,10 @@ verification_index:
     verified:
       - hf_to_megatron_cpu
       - hf_to_megatron_gpu
-      - inference
-    unverified:
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
+      - inference
+    unverified:
       - manual_forward_pass
   training:
     H100:
@@ -79,8 +78,9 @@ items:
       the source checkpoint's exact 7,349-key set, shapes, dtypes, and values.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 7783fc356b7d4768525eabf9825f9108c6544f4c  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
@@ -90,18 +90,20 @@ items:
       --hf-path
       work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/cpu-hf-export-clean
       --torch-dtype bfloat16 --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-25
     expected_result: >
-      CPU export completes in 14 indexed shards. Its exact comparison contains
-      all 7,349 source tensors (7,300 BF16, 24 int64, and 25 float32), with
-      identical keys, shapes, dtypes, and values and maximum difference zero.
-      The item remains unverified because the Transformers 5.8.0 local
-      custom-code loader omits transitive configuration modules before
-      from_pretrained can reload the otherwise bitwise-identical export.
+      CPU export completes in 14 indexed shards totaling 66,031,270,520 bytes.
+      Its exact comparison contains all 7,349 source tensors and
+      33,015,632,238 values, with identical keys, shapes, dtypes, and values
+      and no dtype conversions. Transformers reloads the local custom-code
+      export natively with the source-equivalent warning set: one generated
+      vision summary buffer is missing and four source-only audio/vision
+      buffers are unexpected.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 7783fc356b7d4768525eabf9825f9108c6544f4c  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8
@@ -113,14 +115,14 @@ items:
       work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-hf-export-clean
       --torch-dtype bfloat16 --tp 2 --pp 1 --ep 4 --etp 1
       --trust-remote-code --distributed-save --save-every-n-ranks 1
-    last_verified: null
+    last_verified: 2026-08-25
     expected_result: >
-      Strict export completed in 17 indexed shards. All 7,349 tensors match the
-      immutable HF source in keys, shapes, dtypes, and values, with maximum
-      difference zero. The item remains unverified because Transformers 5.8.0
-      local custom-code loading omits the transitive configuration_nemotron_h
-      and configuration_radio modules from the model cache, preventing a native
-      from_pretrained reload even though those files exist in the export.
+      Distributed export completes in 17 indexed shards totaling
+      66,031,270,520 bytes. All 7,349 tensors and 33,015,632,238 values match
+      the immutable HF source exactly in keys, shapes, dtypes, and values with
+      no dtype conversions. Transformers reloads the local custom-code export
+      natively with the same one missing generated buffer and four unexpected
+      source-only buffers reported when reloading the pinned source itself.
 
   manual_forward_pass:
     status: unverified

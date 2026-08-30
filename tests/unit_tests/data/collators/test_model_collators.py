@@ -2139,12 +2139,20 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         post_process=True,
         _language_is_pipeline_parallel=True,
         _language_max_sequence_length=32,
-        context_parallel_lm=1,
+        dynamic_resolution=False,
+        _dynamic_resolution=False,
+        _drop_vision_class_token=True,
+        _pixel_shuffle=True,
+        _conv_merging=False,
+        _max_num_tiles=12,
+        patch_dim=16,
         img_seq_len=1,
+        context_parallel_lm=1,
     )
     preprocess_kwargs = {}
-    if "imgs_sizes" in signature(LLaVAModel._preprocess_data).parameters:
-        preprocess_kwargs["imgs_sizes"] = batch["imgs_sizes"]
+    for parameter in ("imgs_sizes", "position_ids"):
+        if parameter in signature(LLaVAModel._preprocess_data).parameters:
+            preprocess_kwargs[parameter] = batch[parameter]
 
     preprocessed = LLaVAModel._preprocess_data(
         pp_model,
@@ -2164,6 +2172,15 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
 
     assert final_embedding.shape == (32, 1, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (1, 32)
+    image_spans = torch.tensor([6, 14, 15, 19, 20])
+    if len(preprocessed) == 5:
+        final_input_ids, final_position_ids = preprocessed[3:]
+        assert final_input_ids.shape == final_position_ids.shape == (1, 32)
+        assert torch.all(final_input_ids[0, image_spans] == 0)
+    assert torch.all(final_labels[0, image_spans] == IGNORE_INDEX)
+    assert torch.all(final_loss_mask[0, image_spans] == 0)
+    assert final_loss_mask.nonzero(as_tuple=False).tolist() == [[0, 0], [0, 7], [0, 21]]
+    assert final_labels[0, [0, 7, 21]].tolist() == [11, 21, 31]
 
 
 def test_nemotron_omni_llava_collate_fixed_packing_rejects_misaligned_sequence_length(monkeypatch):
@@ -2528,12 +2545,20 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         post_process=True,
         _language_is_pipeline_parallel=True,
         _language_max_sequence_length=32,
-        context_parallel_lm=1,
+        dynamic_resolution=False,
+        _dynamic_resolution=False,
+        _drop_vision_class_token=True,
+        _pixel_shuffle=True,
+        _conv_merging=False,
+        _max_num_tiles=12,
+        patch_dim=16,
         img_seq_len=1,
+        context_parallel_lm=1,
     )
     preprocess_kwargs = {}
-    if "imgs_sizes" in signature(LLaVAModel._preprocess_data).parameters:
-        preprocess_kwargs["imgs_sizes"] = batch["imgs_sizes"]
+    for parameter in ("imgs_sizes", "position_ids"):
+        if parameter in signature(LLaVAModel._preprocess_data).parameters:
+            preprocess_kwargs[parameter] = batch[parameter]
 
     preprocessed = LLaVAModel._preprocess_data(
         pp_model,
@@ -2553,6 +2578,19 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
 
     assert final_embedding.shape == (32, 3, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (3, 32)
+    image_spans = ((1, [2]), (2, [2, 3, 7, 8]))
+    if len(preprocessed) == 5:
+        final_input_ids, final_position_ids = preprocessed[3:]
+        assert final_input_ids.shape == final_position_ids.shape == (3, 32)
+    for row, columns in image_spans:
+        if len(preprocessed) == 5:
+            assert torch.all(final_input_ids[row, columns] == 0)
+        assert torch.all(final_labels[row, columns] == IGNORE_INDEX)
+        assert torch.all(final_loss_mask[row, columns] == 0)
+    assert final_loss_mask.nonzero(as_tuple=False).tolist() == [[0, 0], [1, 3], [2, 9]]
+    assert final_labels[0, 0].item() == 11
+    assert final_labels[1, 3].item() == 21
+    assert final_labels[2, 9].item() == 31
 
 
 def test_nemotron_omni_llava_collate_counts_common_padding_in_model_merge_limit(monkeypatch):

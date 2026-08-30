@@ -468,6 +468,79 @@ class TestCudaGraphOverrides:
         assert recipe.rng.te_rng_tracker is True
 
 
+class TestParamGatherOverlap:
+    @pytest.mark.parametrize(
+        ("cuda_graph_impl", "expected_optimizer_step_overlap"),
+        [
+            pytest.param("none", True, id="graphs-disabled"),
+            pytest.param("full_iteration", False, id="full-iteration"),
+        ],
+    )
+    def test_post_overrides_guard_optimizer_step_overlap_for_full_iteration_graphs(
+        self,
+        monkeypatch,
+        cuda_graph_impl,
+        expected_optimizer_step_overlap,
+    ):
+        """Full-iteration graphs keep regular param gather overlap but not optimizer-step dispatch."""
+        from utils import overrides as override_utils
+
+        from megatron.bridge.training.comm_overlap import CommOverlapConfig
+
+        base_config = SimpleNamespace(
+            num_gpus=64,
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=2,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=None,
+            gtp_weight_remat_size=1,
+            expert_gtp_weight_remat_size=1,
+            global_batch_size=256,
+        )
+        monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+        recipe = SimpleNamespace(
+            optimizer=SimpleNamespace(
+                optimizer="adam",
+                use_precision_aware_optimizer=False,
+                overlap_param_gather=True,
+                overlap_param_gather_with_optimizer_step=False,
+            ),
+            model=SimpleNamespace(
+                tensor_model_parallel_size=2,
+                pipeline_model_parallel_size=4,
+                context_parallel_size=2,
+                virtual_pipeline_model_parallel_size=5,
+                expert_model_parallel_size=1,
+                expert_tensor_parallel_size=None,
+                cuda_graph_impl=cuda_graph_impl,
+                cuda_graph_modules=[],
+                cuda_graph_scope=None,
+            ),
+            train=SimpleNamespace(global_batch_size=256),
+            comm_overlap=CommOverlapConfig(
+                tp_comm_overlap=False,
+                overlap_param_gather=True,
+                overlap_param_gather_with_optimizer_step=False,
+            ),
+        )
+
+        recipe = override_utils.set_post_overrides(
+            recipe,
+            model_family_name="llama",
+            model_recipe_name="llama3_70b",
+            gpu="b200",
+            num_gpus=64,
+            compute_dtype="bf16",
+            task="pretrain",
+        )
+
+        assert recipe.optimizer.overlap_param_gather_with_optimizer_step is expected_optimizer_step_overlap
+        assert recipe.comm_overlap.overlap_param_gather_with_optimizer_step is expected_optimizer_step_overlap
+        assert recipe.optimizer.overlap_param_gather is True
+        assert recipe.comm_overlap.overlap_param_gather is True
+
+
 # ---------------------------------------------------------------------------
 # Consistency check: full override chain produces expected final state
 # ---------------------------------------------------------------------------
