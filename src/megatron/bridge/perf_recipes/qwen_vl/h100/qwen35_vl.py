@@ -65,7 +65,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 16× H100, FP8 current-scaling, PP=2 VP=12."""
+    """Qwen3.5-VL 35B-A3B pretrain: 16× H100, FP8 current-scaling, PP=2 VP=10."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     _qwen35_vl_common(cfg)
@@ -73,7 +73,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 12
+    cfg.model.virtual_pipeline_model_parallel_size = 10
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
