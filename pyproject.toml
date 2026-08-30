@@ -130,7 +130,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@4329ff84bfbdaa778a33cba02a15fb0807c64689",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@27486e03cfc1fa41f6932dcecdc47c71c47eac3e",
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -169,11 +169,12 @@ requires-dist = []
 # above) changes — an out-of-date entry sends uv back to building TE.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.17.1+4329ff84"
+version = "2.18.0+27486e03"
 requires-dist = [
     "einops",
     "importlib-metadata>=1.0",
     "nvdlfw-inspect",
+    "nvidia-cudnn-frontend>=1.25.0",
     "onnx",
     "onnxscript",
     "packaging",
@@ -242,6 +243,7 @@ build = [
     "numpy",
     "ninja",
     "nvidia-mathdx",
+    "nvidia-cudnn-frontend>=1.25.0",
 ]
 # CVE-carrying WAN diffusion codecs, needed only by WAN video caching
 # (src/megatron/bridge/diffusion/models/wan/inference/utils.py). All three are suppressed
