@@ -90,7 +90,6 @@ dependencies = [
     "tqdm>=4.67.1",
     "hydra-core>1.3,<=1.3.2",
     "megatron-core[dev,mlm]",
-    "torch-memory-saver",
     "qwen-vl-utils",
     "nvidia-resiliency-ext",
     "flash-linear-attention",
@@ -155,11 +154,6 @@ url = "https://pypi.nvidia.com"
 # flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
 # resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
 [[tool.uv.dependency-metadata]]
-name = "torch-memory-saver"
-version = "0.0.10b1"
-requires-dist = []
-
-[[tool.uv.dependency-metadata]]
 name = "flash-mla"
 version = "1.0.0+9edee0c"
 requires-dist = []
@@ -191,7 +185,6 @@ megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
-torch-memory-saver = { git = "https://github.com/fzyzcjy/torch_memory_saver.git", rev = "9bc9a442e6d108c7b7903def199896a005143aaf" }
 
 [project.optional-dependencies]
 recipes = [
