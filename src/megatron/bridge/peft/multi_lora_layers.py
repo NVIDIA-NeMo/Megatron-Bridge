@@ -19,8 +19,9 @@
 via per-layer ``tokens_per_adapter`` set by :func:`set_tokens_per_adapter_slot`.
 
 Forward stacks the raw weights of all adapters and uses ``torch._grouped_mm``
-for a single fused kernel; TP/SP collectives are issued once around the two
-GEMMs to match the layout of the wrapped base linear.
+as an eligible fast path, with per-slot linear operations as the fallback;
+TP/SP collectives are issued once around the two projections to match the
+layout of the wrapped base linear.
 
 :class:`MultiLoRAGroupedExpertLinear` is the MoE counterpart, wrapping a grouped
 expert linear (``mlp.experts.linear_fc{1,2}`` of a ``TEGroupedMLP``) with one
@@ -36,6 +37,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.mappings import (
     all_to_all,
@@ -55,12 +57,70 @@ from megatron.bridge.peft.utils import (
 )
 
 
+_GROUPED_MM_ALIGNMENT_BYTES = 16
+_GROUPED_MM_AUTOGRAD_DTYPES = (torch.bfloat16, torch.float16)
+_GROUPED_MM_MIN_CUDA_CAPABILITY = (8, 0)
+
+
+def _has_grouped_mm_layout(tensor: torch.Tensor) -> bool:
+    """Return whether a tensor satisfies PyTorch's CUDA grouped-MM layout contract."""
+    if tensor.ndim not in (2, 3) or tensor.numel() == 0:
+        return False
+
+    alignment = _GROUPED_MM_ALIGNMENT_BYTES // tensor.element_size()
+    if tensor.data_ptr() % _GROUPED_MM_ALIGNMENT_BYTES != 0:
+        return False
+    if tensor.ndim == 3 and tensor.stride(0) % alignment != 0:
+        return False
+
+    rows, columns = tensor.shape[-2:]
+    row_stride, column_stride = tensor.stride()[-2:]
+    row_major = column_stride == 1 and row_stride >= max(1, columns) and row_stride % alignment == 0
+    column_major = row_stride == 1 and column_stride >= max(1, rows) and column_stride % alignment == 0
+    return row_major or column_major
+
+
+def _can_use_grouped_mm(x: torch.Tensor, grouped_weights: torch.Tensor) -> bool:
+    """Return whether grouped MM is safe for forward and backward."""
+    if not hasattr(torch, "_grouped_mm") or not x.is_cuda or not grouped_weights.is_cuda:
+        return False
+    if x.dtype not in _GROUPED_MM_AUTOGRAD_DTYPES or grouped_weights.dtype != x.dtype:
+        return False
+    if torch.cuda.get_device_capability(x.device) < _GROUPED_MM_MIN_CUDA_CAPABILITY:
+        return False
+
+    # Backward applies the same 16-byte stride validation to its contiguous
+    # output gradient, whose row stride is the projection's output width.
+    output_width = grouped_weights.shape[-1]
+    if output_width * x.element_size() % _GROUPED_MM_ALIGNMENT_BYTES != 0:
+        return False
+    return _has_grouped_mm_layout(x) and _has_grouped_mm_layout(grouped_weights)
+
+
+def _dense_multi_lora_mm(
+    x: torch.Tensor,
+    stacked_weights: torch.Tensor,
+    *,
+    token_splits: Tuple[int, ...],
+    offsets: torch.Tensor,
+) -> torch.Tensor:
+    """Apply one dense Multi-LoRA projection with an eligible grouped-MM fast path."""
+    grouped_weights = stacked_weights.transpose(-2, -1)
+    if all(split > 0 for split in token_splits) and _can_use_grouped_mm(x, grouped_weights):
+        return torch._grouped_mm(x, grouped_weights, offsets)
+
+    inputs = x.split(token_splits, dim=0)
+    return torch.cat(
+        [F.linear(adapter_input, adapter_weight) for adapter_input, adapter_weight in zip(inputs, stacked_weights)]
+    )
+
+
 class MultiLoRALinear(AdapterWrapper):
     """Megatron parallel linear wrapped with *N* concurrent LoRA adapters.
 
     Each adapter slot is a :class:`ParallelLinearAdapter` stored in an
-    ``nn.ModuleList``. Forward uses grouped GEMM with a single set of
-    TP/SP comms for efficiency.
+    ``nn.ModuleList``. Forward uses grouped GEMM when eligible and otherwise
+    falls back to per-slot linear operations, with one set of TP/SP comms.
 
     For bridge export compatibility, use :func:`expose_adapter_slot` to
     temporarily expose one slot as ``.adapter``.
@@ -80,11 +140,11 @@ class MultiLoRALinear(AdapterWrapper):
         a2a_experimental: bool = False,
     ) -> None:
         nn.Module.__init__(self)
-        # The grouped-GEMM forward below never runs each adapter's own
+        # The fused Multi-LoRA forward below never runs each adapter's own
         # ParallelLinearAdapter.forward, so adapter dropout would be silently
         # dropped. Reject dropout>0 loudly instead of pretending to apply it.
         assert dropout == 0.0, (
-            f"MultiLoRALinear grouped-GEMM path does not apply adapter dropout "
+            f"MultiLoRALinear fused projection path does not apply adapter dropout "
             f"(got dropout={dropout}); set dropout/--lora-dropout to 0."
         )
         self.to_wrap = to_wrap
@@ -100,14 +160,14 @@ class MultiLoRALinear(AdapterWrapper):
 
         # input_is_parallel distinguishes column-parallel base (False, e.g. linear_qkv,
         # linear_fc1) from row-parallel base (True, e.g. linear_proj, linear_fc2).
-        # It controls which TP collective runs between the two grouped GEMMs and
+        # It controls which TP collective runs between the two adapter projections and
         # whether the second GEMM's output needs to be all-gathered to match the
         # wrapped base linear's output layout.
         self.input_is_parallel = attrs.input_is_parallel
         self.disable_sequence_parallel_comm = attrs.disable_sequence_parallel_comm
         # False for replicated bases (TELinear parallel_mode="duplicated", e.g. MLA
         # q/kv down-projections): their adapters are unsharded and need no TP
-        # collectives between the two grouped GEMMs.
+        # collectives between the two adapter projections.
         self.base_linear_is_parallel = attrs.base_linear_is_parallel
         self.use_a2a = a2a_experimental
         # Mirrors ParallelLinearAdapter's lin_out_gather_output: row-parallel
@@ -144,8 +204,9 @@ class MultiLoRALinear(AdapterWrapper):
         )
 
         self.tokens_per_adapter: Optional[torch.Tensor] = None
-        # Host-side sum of tokens_per_adapter (set alongside it); lets forward
-        # detect an SP-sharded input without a per-layer device sync.
+        # Immutable host metadata is cached alongside tokens_per_adapter so
+        # forward never synchronizes each layer to recover split sizes.
+        self.tokens_per_adapter_splits: Optional[Tuple[int, ...]] = None
         self.tokens_per_adapter_total: Optional[int] = None
         device = next(to_wrap.parameters()).device
         dtype = next(to_wrap.parameters()).dtype
@@ -162,6 +223,8 @@ class MultiLoRALinear(AdapterWrapper):
             return linear_output, bias
 
         tokens_per_adapter = self.tokens_per_adapter
+        token_splits = self.tokens_per_adapter_splits
+        assert tokens_per_adapter is not None and token_splits is not None
         x = layernorm_output.contiguous()
 
         # SP gather (once) — for column-parallel base layers without an LN-fused
@@ -188,14 +251,15 @@ class MultiLoRALinear(AdapterWrapper):
                     f"set_tokens_per_adapter_slot() was given this micro-batch's counts."
                 )
             start = parallel_state.get_tensor_model_parallel_rank() * x_flat.shape[0]
-            tokens_per_adapter = _narrow_token_counts_to_window(tokens_per_adapter, start, x_flat.shape[0])
+            token_splits = _narrow_token_counts_to_window(token_splits, start, x_flat.shape[0])
+            tokens_per_adapter = tokens_per_adapter.new_tensor(token_splits)
 
         offsets = tokens_per_adapter.cumsum(dim=0, dtype=torch.int32)
 
         stacked_A = torch.stack([a.linear_in.weight for a in self.adapters])
         stacked_B = torch.stack([a.linear_out.weight for a in self.adapters])
 
-        mid = torch._grouped_mm(x_flat, stacked_A.transpose(-2, -1), offsets)
+        mid = _dense_multi_lora_mm(x_flat, stacked_A, token_splits=token_splits, offsets=offsets)
 
         # TP collective between A and B: row-parallel base needs an all-reduce
         # of the partial sums; every other base (column-parallel and replicated
@@ -207,7 +271,7 @@ class MultiLoRALinear(AdapterWrapper):
         else:
             mid = gather_from_tensor_model_parallel_region(mid)
 
-        out = torch._grouped_mm(mid, stacked_B.transpose(-2, -1), offsets)
+        out = _dense_multi_lora_mm(mid, stacked_B, token_splits=token_splits, offsets=offsets)
 
         # Per-token scaling is applied *before* the output-side TP/SP comms.
         # ``per_token_scaling`` is indexed by the full token count
@@ -595,7 +659,7 @@ class MultiLoRAGroupedExpertLinear(MultiLoRALinear):
 _MULTI_LORA_TYPES = (MultiLoRALinear,)
 
 
-def _narrow_token_counts_to_window(counts: torch.Tensor, start: int, num_rows: int) -> torch.Tensor:
+def _narrow_token_counts_to_window(counts: Sequence[int], start: int, num_rows: int) -> Tuple[int, ...]:
     """Intersect contiguous per-slot token spans with the window ``[start, start + num_rows)``.
 
     ``counts[i]`` tokens of slot ``i`` occupy the rows ``[cum[i-1], cum[i])`` of the
@@ -603,8 +667,14 @@ def _narrow_token_counts_to_window(counts: torch.Tensor, start: int, num_rows: i
     sequence-parallel shard sees only ``num_rows`` of those rows starting at
     ``start``, so its spans are the per-slot overlap with that window.
     """
-    cum = counts.cumsum(dim=0)
-    return (cum.clamp(max=start + num_rows) - (cum - counts).clamp(min=start)).clamp(min=0).to(counts.dtype)
+    end = start + num_rows
+    slot_start = 0
+    narrowed = []
+    for count in counts:
+        slot_end = slot_start + count
+        narrowed.append(max(0, min(slot_end, end) - max(slot_start, start)))
+        slot_start = slot_end
+    return tuple(narrowed)
 
 
 def _iter_multi_lora_modules(model):
@@ -622,12 +692,13 @@ def set_tokens_per_adapter_slot(model, tokens_per_adapter: torch.Tensor) -> None
     upcoming forward that belong to adapter slot ``i``. Must sum to the total
     token count of the micro-batch.
     """
-    # One host sync per micro-batch: layers whose base linear consumes the
-    # SP-sharded sequence (replicated bases) compare their row count against
-    # this total to narrow the spans to their shard without a per-layer sync.
-    total = int(tokens_per_adapter.sum().item())
+    # One host sync per micro-batch: cache immutable split sizes for every
+    # layer's fallback and any sequence-parallel narrowing.
+    token_splits = tuple(int(count) for count in tokens_per_adapter.tolist())
+    total = sum(token_splits)
     for module in _iter_multi_lora_modules(model):
         module.tokens_per_adapter = tokens_per_adapter
+        module.tokens_per_adapter_splits = token_splits
         module.tokens_per_adapter_total = total
 
 

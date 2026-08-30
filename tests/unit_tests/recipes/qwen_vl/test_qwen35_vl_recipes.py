@@ -119,6 +119,8 @@ class _FakeModelCfg:
         self.pipeline_model_parallel_size = 1
         self.pipeline_dtype = None
         self.virtual_pipeline_model_parallel_size = None
+        self.num_layers_in_first_pipeline_stage = None
+        self.num_layers_in_last_pipeline_stage = None
         self.context_parallel_size = 1
         self.expert_model_parallel_size = 1
         self.expert_tensor_parallel_size = 1
@@ -727,6 +729,8 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_dtype is None
     assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
