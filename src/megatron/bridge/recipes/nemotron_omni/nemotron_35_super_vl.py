@@ -16,6 +16,7 @@
 
 from megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl import (
     NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
+    NEMOTRON_35_SUPER_VL_HF_REVISION,
 )
 from megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl import (
     nemotron_35_super_vl_peft_16gpu_h100_bf16_config as nemotron_35_super_vl_peft_config,
@@ -33,4 +34,5 @@ __all__ = [
     "nemotron_35_super_vl_pretrain_config",
     "nemotron_35_super_vl_sft_config",
     "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
+    "NEMOTRON_35_SUPER_VL_HF_REVISION",
 ]

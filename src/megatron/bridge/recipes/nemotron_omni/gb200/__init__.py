@@ -19,4 +19,5 @@ __all__ = [
     "nemotron_35_super_vl_peft_16gpu_gb200_bf16_config",
     "nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config",
     "nemotron_35_super_vl_sft_64gpu_gb200_bf16_config",
+    "nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config",
 ]

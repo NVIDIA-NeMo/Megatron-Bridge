@@ -32,6 +32,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 NEMOTRON_35_SUPER_VL_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
+NEMOTRON_35_SUPER_VL_HF_REVISION = "e86197a3bad449de618a5835f26835ce770c6f10"  # pragma: allowlist secret
 
 
 def _nemotron_35_super_vl_base() -> ConfigContainer:
@@ -329,6 +330,8 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
 
 
 __all__ = [
+    "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
+    "NEMOTRON_35_SUPER_VL_HF_REVISION",
     "nemotron_35_super_vl_peft_16gpu_h100_bf16_config",
     "nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config",
     "nemotron_35_super_vl_sft_64gpu_h100_bf16_config",

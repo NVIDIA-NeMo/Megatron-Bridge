@@ -24,6 +24,7 @@ import torch
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
     EnergonDatasetConfig,
+    GPTSFTDatasetConfig,
     NemotronOmniEnergonTaskEncoderConfig,
 )
 from megatron.bridge.data.collators.registry import resolve_model_collate
@@ -45,6 +46,7 @@ _super_vl_gb200_recipe_module = importlib.import_module(
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 _SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
+_SUPER_VL_HF_REVISION = "e86197a3bad449de618a5835f26835ce770c6f10"  # pragma: allowlist secret
 _PUBLIC_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: allowlist secret
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 _TEST_HF_ID = "unit-test/nemotron-omni"
@@ -103,6 +105,11 @@ def fake_processor(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_h100_recipe_module, "_DEFAULT_HF_PATH", _TEST_HF_ID)
     monkeypatch.setattr(
         _super_vl_h100_recipe_module,
+        "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
+        _TEST_SUPER_VL_HF_ID,
+    )
+    monkeypatch.setattr(
+        _super_vl_gb200_recipe_module,
         "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
         _TEST_SUPER_VL_HF_ID,
     )
@@ -770,6 +777,76 @@ def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.model.seq_length == 4096
     assert cfg.dataset.seq_length == 4096
     assert cfg.checkpoint.async_save is False
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_super_vl_long_context_sft_uses_coderforge_packing_and_cp(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, GPTSFTDatasetConfig)
+    assert cfg.dataset.hf_dataset.dataset_name == "coderforge"
+    assert cfg.dataset.hf_dataset.load_kwargs == {"revision": _super_vl_gb200_recipe_module._CODERFORGE_REVISION}
+    assert cfg.dataset.seq_length == 131072
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 16
+    assert cfg.dataset.do_validation is False
+    assert cfg.dataset.do_test is False
+    assert cfg.dataset.seed == 1234
+    assert cfg.tokenizer.tokenizer_model == _TEST_SUPER_VL_HF_ID
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": _SUPER_VL_HF_REVISION,
+        "trust_remote_code": True,
+    }
+    assert cfg.rng.seed == 5678
+
+    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 38
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.context_parallel_size == 8
+    assert cfg.model.cp_comm_type == "a2a"
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.seq_length == 131072
+    assert cfg.model.mamba_chunk_size == 128
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 8
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.optimizer.lr == 5e-6
+    assert cfg.optimizer.min_lr == 0.0
+    assert cfg.optimizer.adam_beta2 == 0.95
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.async_save is False
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
 
