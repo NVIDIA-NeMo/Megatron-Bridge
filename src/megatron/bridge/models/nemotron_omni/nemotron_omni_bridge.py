@@ -372,6 +372,12 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
 class Nemotron35SuperVLBridge(NemotronOmniBridge):
     """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
 
+    def postprocess_hf_export_artifacts(self, path: Path) -> None:
+        """Require the direct Transformers entrypoint used by Super VL exports."""
+        modeling_path = path / "modeling_nemotron_h_omni.py"
+        if not modeling_path.is_file():
+            raise FileNotFoundError(f"Nemotron 3.5 Super VL export is missing required artifact: {modeling_path}")
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniModelProvider:
         """Create the shared Omni provider with Super-VL checkpoint features enabled."""
         provider = super().provider_bridge(hf_pretrained)

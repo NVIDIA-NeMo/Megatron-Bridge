@@ -456,6 +456,21 @@ def test_nemotron_omni_export_requires_modeling_entrypoint(tmp_path):
         bridge.postprocess_hf_export_artifacts(tmp_path)
 
 
+def test_nemotron_35_super_vl_export_accepts_direct_modeling_entrypoint(tmp_path):
+    modeling_path = tmp_path / "modeling_nemotron_h_omni.py"
+    modeling_source = "from .configuration_nemotron_h_omni import NemotronH_Omni_Reasoning_V3_Config\n"
+    modeling_path.write_text(modeling_source)
+
+    Nemotron35SuperVLBridge().postprocess_hf_export_artifacts(tmp_path)
+
+    assert modeling_path.read_text() == modeling_source
+
+
+def test_nemotron_35_super_vl_export_requires_direct_modeling_entrypoint(tmp_path):
+    with pytest.raises(FileNotFoundError, match="missing required artifact.*modeling_nemotron_h_omni.py"):
+        Nemotron35SuperVLBridge().postprocess_hf_export_artifacts(tmp_path)
+
+
 def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):
     bridge = NemotronOmniBridge()
     source_tensors = {
