@@ -28,6 +28,7 @@ import torch
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
+    _get_num_moe_layers,
     calc_params_l2_norm,
     create_value_head_hook,
     freeze_moe_router,
@@ -83,6 +84,8 @@ def make_default_model_config():
         num_layers=24,
         moe_layer_freq=1,
         mtp_num_layers=None,
+        mtp_use_repeated_layer=False,
+        hybrid_layer_pattern=None,
         kv_channels=128,
         num_attention_heads=32,
         hidden_size=4096,
@@ -109,6 +112,62 @@ def make_default_model_config():
         moe_z_loss_scale=None,
         is_hybrid_model=False,
     )
+
+
+@pytest.mark.parametrize(
+    ("num_layers", "mtp_num_layers", "hybrid_pattern", "moe_layer_freq", "repeated_mtp", "expected"),
+    [
+        pytest.param(
+            52,
+            2,
+            "MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME/*E/*E",
+            None,
+            True,
+            24,
+            id="nemotron_3_5",
+        ),
+        pytest.param(
+            88,
+            2,
+            "MEMEMEM*EMEMEMEM*EMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEMEM*EMEMEMEM*EMEMEMEME/*E/*E",
+            None,
+            True,
+            41,
+            id="nemotron_3_super",
+        ),
+        pytest.param(
+            108,
+            2,
+            (
+                "MEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*"
+                "EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME/*E/*E"
+            ),
+            None,
+            True,
+            49,
+            id="nemotron_3_ultra",
+        ),
+        pytest.param(61, 1, None, [0] * 3 + [1] * 58, False, 59, id="deepseek_v3"),
+        pytest.param(45, 0, None, [0] * 3 + [1] * 42, False, 42, id="step_3_7"),
+        pytest.param(4, 2, "MEME/*E/*E", None, False, 4, id="hybrid_distinct_mtp"),
+        pytest.param(4, 2, "MEME/**/**", None, False, 2, id="hybrid_dense_mtp"),
+        pytest.param(4, 2, None, [1, 0, 1, 1], True, 4, id="non_hybrid_repeated_mtp"),
+        pytest.param(4, 2, None, [1, 0, 1, 1], False, 5, id="non_hybrid_distinct_mtp"),
+        pytest.param(4, 2, None, [1, 0, 1, 0], False, 2, id="non_hybrid_dense_mtp"),
+    ],
+)
+def test_get_num_moe_layers(num_layers, mtp_num_layers, hybrid_pattern, moe_layer_freq, repeated_mtp, expected):
+    """Test representative architecture and edge-case contributor counts."""
+    model_config = SimpleNamespace(
+        num_layers=num_layers,
+        moe_layer_freq=moe_layer_freq,
+        mtp_num_layers=mtp_num_layers,
+        mtp_use_repeated_layer=repeated_mtp,
+        is_hybrid_model=hybrid_pattern is not None,
+        hybrid_layer_pattern=hybrid_pattern,
+    )
+
+    assert _get_num_moe_layers(model_config) == expected
 
 
 class TestTrainingLog:
@@ -991,6 +1050,13 @@ class TestTrainingLog:
         assert result is True
         mock_report_memory.assert_called_once()
 
+    @pytest.mark.parametrize(
+        ("model_num_layers", "mtp_num_layers", "hybrid_pattern", "moe_layer_freq", "expected_num_moe_layers"),
+        [
+            pytest.param(12, None, None, 2, 6, id="non_hybrid"),
+            pytest.param(4, 2, "MMME/*E/*E", None, 3, id="hybrid"),
+        ],
+    )
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -1012,6 +1078,11 @@ class TestTrainingLog:
         mock_config,
         mock_global_state,
         loss_dict,
+        model_num_layers,
+        mtp_num_layers,
+        hybrid_pattern,
+        moe_layer_freq,
+        expected_num_moe_layers,
     ):
         """Test MoE (Mixture of Experts) logging when enabled."""
         # Get fresh total_loss_dict for this test
@@ -1030,9 +1101,11 @@ class TestTrainingLog:
         mock_config.model.moe_router_load_balancing_type = "aux_loss"
         mock_config.model.moe_z_loss_coeff = 0.1
         mock_config.model.moe_per_layer_logging = True
-        mock_config.model.num_layers = 12
-        mock_config.model.moe_layer_freq = 2
-        mock_config.model.mtp_num_layers = None
+        mock_config.model.num_layers = model_num_layers
+        mock_config.model.moe_layer_freq = moe_layer_freq
+        mock_config.model.mtp_num_layers = mtp_num_layers
+        mock_config.model.is_hybrid_model = hybrid_pattern is not None
+        mock_config.model.hybrid_layer_pattern = hybrid_pattern
 
         training_log(
             loss_dict=loss_dict,
@@ -1056,6 +1129,9 @@ class TestTrainingLog:
         call_args = mock_track_moe.call_args
         assert "load_balancing_loss" in call_args.kwargs["track_names"]
         assert "z_loss" in call_args.kwargs["track_names"]
+        assert call_args.kwargs["num_layers"] == model_num_layers
+        assert call_args.kwargs["num_moe_layers"] == expected_num_moe_layers
+        assert call_args.kwargs["mtp_num_layers"] == mtp_num_layers
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
