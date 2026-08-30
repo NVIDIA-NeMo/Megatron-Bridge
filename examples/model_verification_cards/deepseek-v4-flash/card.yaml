@@ -8,19 +8,24 @@ summary: >
   from functional training items are sanity checks rather than optimized
   performance results.
 
+  The Megatron-backed DeepSeek V4 workflows in this card require the
+  Megatron-Core dev branch; the default MCore submodule revision in Megatron
+  Bridge r0.6.0 is insufficient. Follow the public setup instructions in
+  examples/models/deepseek_v4/README.md.
+
   DeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision.
-  The verified 64-GPU GB200 MXFP8 library pretraining run uses
-  PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused
-  cross entropy, and selective recompute without activation offload. It completed
-  100 finite steps with full-state checkpoints at steps 50 and 100. A direct
-  step-50 continuation restored optimizer, scheduler, data-order, and RNG state,
-  completed steps 51-100, and passed both loss-sentinel comparisons. A capacity-1.5
-  performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert
-  assignments and 64.23% of routing probability mass; that result is benchmark-only and
-  is excluded from the natural-routing library recipe and verification metrics. CPU
-  conversion remains unverified because the available nodes lacked sufficient RAM. Standard
-  Megatron KV-cache inference is unsupported for DSV4 hybrid attention; inference uses
-  the HF-native path after export.
+  The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with
+  imported model weights, natural routing, grouped GEMM, TE fused cross entropy, and
+  selective recompute without activation offload. It completed 100 finite steps with
+  full-state checkpoints at steps 50 and 100. A direct step-50 continuation restored
+  optimizer, scheduler, data-order, and RNG state, completed steps 51-100, and passed
+  both loss-sentinel comparisons. A capacity-1.5 performance screen averaged 206.56
+  TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert assignments and 64.23% of
+  routing probability mass; that result is benchmark-only and is excluded from the
+  natural-routing library recipe and verification metrics. CPU conversion remains
+  unverified because the available nodes lacked sufficient RAM. Standard Megatron
+  KV-cache inference is unsupported for DSV4 hybrid attention; inference uses the
+  HF-native path after export.
 
   The GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes,
   selective whole-MoE recompute, and attention activation offload while preserving

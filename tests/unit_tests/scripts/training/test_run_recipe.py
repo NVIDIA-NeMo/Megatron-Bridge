@@ -69,6 +69,7 @@ def _load_module():
         "energon",
         "squad",
         "tulu3",
+        "coderforge",
         "openmathinstruct2",
         "openmathinstruct2-thinking",
         "gsm8k",
@@ -925,12 +926,13 @@ def test_named_finetuning_dataset_maps_to_internal_config():
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, [])
 
 
-def test_tulu3_dataset_is_listed_in_launcher_help():
+@pytest.mark.parametrize("dataset_name", ["tulu3", "coderforge"])
+def test_named_dataset_is_listed_in_launcher_help(dataset_name):
     module, _ = _load_module()
 
     help_text = module._build_parser().format_help()
 
-    assert "tulu3" in help_text
+    assert dataset_name in help_text
 
 
 @pytest.mark.parametrize(
