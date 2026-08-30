@@ -1026,7 +1026,6 @@ def training_log(
         # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
         # No-op when neither logger is configured: the original writer is returned as-is.
         moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
-        # MCore cannot infer hybrid or repeated-MTP contributor counts from layer frequency.
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
