@@ -364,6 +364,16 @@ def test_load_prompts_from_file_with_jsonl_and_truncate(text_generation, tmp_pat
     assert text_generation.load_prompts(None, str(prompt_file), 2, ["d"]) == ["json prompt", "raw prompt"]
 
 
+def test_load_prompts_preserves_empty_jsonl_prompt(text_generation, tmp_path):
+    prompt_file = tmp_path / "prompts.jsonl"
+    prompt_file.write_text('{"prompt": ""}\n{"metadata": "raw fallback"}\n', encoding="utf-8")
+
+    assert text_generation.load_prompts(None, str(prompt_file), None, ["default"]) == [
+        "",
+        '{"metadata": "raw fallback"}',
+    ]
+
+
 def test_load_prompts_truncates_only_file_prompts(text_generation, tmp_path):
     prompt_file = tmp_path / "prompts.txt"
     prompt_file.write_text("file-1\nfile-2\nfile-3\n", encoding="utf-8")

@@ -108,7 +108,8 @@ def load_prompts(
                     continue
                 if prompt_file_num_truncate is not None and file_prompts_collected >= prompt_file_num_truncate:
                     break
-                collected.append(_get_prompt_from_json_line(raw_prompt) or raw_prompt)
+                json_prompt = _get_prompt_from_json_line(raw_prompt)
+                collected.append(raw_prompt if json_prompt is None else json_prompt)
                 file_prompts_collected += 1
     if not collected:
         collected = list(default_prompts)
