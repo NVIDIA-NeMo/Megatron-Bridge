@@ -18,6 +18,7 @@ from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
     _enable_overlap_param_gather_with_optimizer_step,
     _llama_benchmark_common,
+    _llama31_8b_common,
     _perf_precision,
     llama31_8b_pretrain_config,
     llama31_405b_pretrain_config,
@@ -30,7 +31,6 @@ def llama31_8b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Llama3.1 8B pretrain: 8× GB200, NVFP4."""
     cfg = llama31_8b_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
-    cfg.mixed_precision = precision_config
     cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
     cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
     cfg.mixed_precision.first_last_layers_bf16 = False
@@ -89,7 +89,6 @@ def llama31_8b_pretrain_72gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Llama3.1 8B pretrain: 72× GB300, NVFP4."""
     cfg = llama31_8b_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
-    cfg.mixed_precision = precision_config
     cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
     cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
     cfg.mixed_precision.first_last_layers_bf16 = False
@@ -148,7 +147,6 @@ def llama31_8b_pretrain_512gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Llama3.1 8B pretrain: 512× GB300, FP8 current-scaling."""
     cfg = llama31_8b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    cfg.mixed_precision = precision_config
     cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
     cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
     cfg.mixed_precision.first_last_layers_bf16 = False
