@@ -813,6 +813,59 @@ class TestTargetPrefixValidation:
     @pytest.mark.parametrize(
         "target",
         [
+            "numpy.lib.npyio.load",
+            "torch.serialization.load",
+            "transformers.dynamic_module_utils.get_class_in_module",
+            "transformers.dynamic_module_utils.get_class_from_dynamic_module",
+        ],
+    )
+    def test_instantiate_rejects_canonical_aliases_and_dynamic_code_helpers(self, target):
+        """Test that aliases and dynamic-code helpers cannot bypass exact target checks."""
+        with pytest.raises(InstantiationException, match="resolves to the unsafe target"):
+            instantiate({"_target_": target, "_call_": False})
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "torch.serialization.os.system",
+            "transformers.dynamic_module_utils.os.system",
+        ],
+    )
+    def test_instantiate_rejects_imported_module_traversal(self, target):
+        """Test that allowed modules cannot expose callables from disallowed modules."""
+        with pytest.raises(InstantiationException, match="is not in the allowlist"):
+            instantiate({"_target_": target, "_call_": False})
+
+    def test_instantiate_rejects_transformers_module_loader_before_execution(self, monkeypatch, tmp_path):
+        """Test that the Transformers module loader cannot execute attacker-controlled source."""
+        marker = tmp_path / "dynamic-module-executed"
+        module_path = tmp_path / "payload.py"
+        module_path.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\nclass Payload: pass\n")
+        monkeypatch.setattr("transformers.dynamic_module_utils.HF_MODULES_CACHE", str(tmp_path))
+        config = {
+            "_target_": "transformers.dynamic_module_utils.get_class_in_module",
+            "class_name": "Payload",
+            "module_path": module_path.name,
+        }
+
+        with pytest.raises(InstantiationException, match="resolves to the unsafe target"):
+            instantiate(config)
+
+        assert not marker.exists()
+
+    def test_instantiate_rejects_unsafe_alias_hidden_in_unused_kwarg(self):
+        """Test that recursive instantiation rejects unsafe targets before filtering kwargs."""
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
+            "name": "safe",
+            "unused": {"_target_": "numpy.lib.npyio.load", "_call_": False},
+        }
+        with pytest.raises(InstantiationException, match="resolves to the unsafe target"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target",
+        [
             "megatron.bridge.utils.instantiate_utils.target_allowlist.add_prefix",
             "megatron.bridge.utils.instantiate_utils.target_allowlist.disable",
             "megatron.training.config.instantiate_utils.target_allowlist.add_prefix",

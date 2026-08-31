@@ -95,13 +95,6 @@ def _benchmark_common(
         cfg.model.moe_hybridep_num_sms = 32
 
 
-def _enable_overlap_param_gather_with_optimizer_step(cfg: ConfigContainer) -> None:
-    """Enable optimizer-step parameter gather overlap on optimizer and comm-overlap configs."""
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = True
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.overlap_param_gather_with_optimizer_step = True
-
-
 def _perf_precision(compute_dtype: str):
     """Return mixed-precision config tuned for perf benchmarks.
 
