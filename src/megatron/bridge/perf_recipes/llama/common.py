@@ -80,6 +80,7 @@ def _llama31_8b_common(cfg: ConfigContainer) -> None:
     cfg.ddp.bucket_size = 768000000
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.average_in_collective = False
+    cfg.ddp.check_for_nan_in_grad = False
     cfg.model.add_bias_linear = False
     cfg.model.apply_rope_fusion = True
     cfg.model.attention_dropout = 0.0
