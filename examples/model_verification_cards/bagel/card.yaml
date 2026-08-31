@@ -5,10 +5,11 @@ title: bagel_7b_mot
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. The H100 FSDP leaf records a standalone real-data BAGEL training
-  run. It must not be compared directly with the official BAGEL run: Bridge
-  used block-23 language-model recompute without EMA, while the official run
-  used full recompute and performed an EMA update. This card currently claims
+  results. The H100 FSDP leaf records standalone raw metrics for a real-data
+  BAGEL training run using the official BAGEL Qwen2 FLOPs formula. It must not
+  be compared directly with the official BAGEL run: Bridge used block-23
+  language-model recompute without EMA, while the official run used full
+  recompute and performed an EMA update. This card currently claims
   BAGEL pretraining performance verification only; conversion, inference,
   fine-tuning, and checkpoint-resume verification remain incomplete or
   unsupported by maintained public workflows.
@@ -35,7 +36,7 @@ model:
   min_transformers_version: "5.12.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.04
-  bridge_commit: 9352d97a805559271561556cf27d93bfdb607fe7  # pragma: allowlist secret
+  bridge_commit: 8d1c3a12f86fee68eea014bc8960189fd69a49fb  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -227,29 +228,32 @@ items:
         checkpoint.load=work/model-verification/bagel/seed42-mcore-init
         checkpoint.load_optim=true checkpoint.load_rng=true
         dataset.dataloader_load=work/model-verification/bagel/seed42-mcore-init
-        ddp.overlap_grad_reduce=true ddp.overlap_param_gather=true
+        ddp.overlap_grad_reduce=false ddp.overlap_param_gather=true
         ddp.fsdp_double_buffer=false
         checkpoint.save=null checkpoint.save_interval=0
         validation.eval_iters=0 validation.eval_interval=0
         logger.log_interval=1 logger.log_throughput=true
-      last_verified: 2026-08-26
+      last_verified: 2026-08-31
       metrics:
         initial_loss: 14.683310
-        final_loss: 10.810520
-        last_10_steps_step_time_ms_avg: 7751.820
-        last_10_steps_model_tflops_per_gpu_avg: 307.500
-        last_10_steps_tokens_per_second_per_gpu_avg: 4397.581
-        peak_allocated_memory_gib: 58.933
-        peak_reserved_memory_gib: 61.648
+        final_loss: 10.809916
+        last_10_steps_step_time_ms_avg: 7697.160
+        last_10_steps_model_tflops_per_gpu_avg: 234.268
+        last_10_steps_tokens_per_second_per_gpu_avg: 4428.810
+        peak_allocated_memory_gib: 58.594
+        peak_reserved_memory_gib: 62.919
       expected_result: >
         The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16
         steps at GBS/MBS 32/1 with one microbatch, block-23 language-model
         recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total
         losses, and no skipped or NaN iterations. Steps 21-30 average
-        7,751.820 ms, 307.500 model TFLOP/s/GPU, and 4,397.581 logical
-        tokens/GPU/s from 1,090,856.3 logical tokens per step; logical tokens
-        include text, ViT, VAE-latent, and special tokens and exclude physical
-        padding. Peak allocated/reserved memory is 58.933/61.648 GiB. Do not
-        compare this result directly with the official BAGEL full-recompute
-        run because that run also performs an EMA update, while this one does
-        neither full language-model recompute nor EMA.
+        7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,428.810
+        logical tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical
+        tokens include text, ViT, VAE-latent, and special tokens and exclude
+        physical padding. The variable packed sequence length averages
+        34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is
+        58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw
+        metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU
+        under official BAGEL. Do not compute a relative speedup: that run uses
+        full language-model recompute and performs an EMA update, while the
+        Bridge run uses block-23 recompute without EMA.
