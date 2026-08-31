@@ -2244,6 +2244,10 @@ class GroupedExpertLinearAdapter(nn.Module):
             if not self.input_is_parallel:
                 hidden = self._gather_along_last_dim(hidden)
             hidden = self.activation(hidden)
+            # Scale the rank-sized bottleneck rather than the full-width output. The
+            # output projection is bias-free, so this is exact and avoids allocating
+            # a second output-sized temporary.
+            hidden = hidden * (self.alpha / self.dim)
 
             if self.config.cpu_offloading and self.config.cpu_offloading_activations:
                 hidden.activation_offloading = True
@@ -2285,9 +2289,7 @@ class GroupedExpertLinearAdapter(nn.Module):
         use_te_fp8 = fp8_enabled and self._can_use_te_grouped_linear_fp8(x)
         use_grouped_mm = not fp8_enabled and self._can_use_grouped_mm(x)
         if not use_te_fp8 and not use_grouped_mm:
-            return self._forward_per_expert(x, expert_splits=expert_splits, expert_tp_size=expert_tp_size) * (
-                self.alpha / self.dim
-            )
+            return self._forward_per_expert(x, expert_splits=expert_splits, expert_tp_size=expert_tp_size)
 
         active_expert_indices = []
         grouped_inputs = []
@@ -2326,6 +2328,10 @@ class GroupedExpertLinearAdapter(nn.Module):
         if not self.input_is_parallel:
             hidden = self._gather_along_last_dim(hidden)
         hidden = self.activation(hidden)
+        # Scale the rank-sized bottleneck rather than the full-width output. The
+        # grouped output projection is bias-free, so this is exact and avoids
+        # allocating a second output-sized temporary.
+        hidden = hidden * (self.alpha / self.dim)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             hidden.activation_offloading = True
@@ -2346,7 +2352,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             expert_output = self.dropout(expert_output)
 
         if all(pad_len == 0 for pad_len in pad_lengths):
-            return expert_output * (self.alpha / self.dim)
+            return expert_output
 
         outputs = []
         start = 0
@@ -2355,7 +2361,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             outputs.append(unpad_seq_to_mult(output_chunk, pad_len) if pad_len > 0 else output_chunk)
             start += padded_size
 
-        return torch.cat(outputs, dim=0) * (self.alpha / self.dim)
+        return torch.cat(outputs, dim=0)
 
     def sharded_state_dict(
         self,
@@ -2650,21 +2656,27 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         if self.dropout_position == "pre":
             x = self.dropout(x)
 
+        # Scale the rank-sized bottleneck rather than the full-width output. Both
+        # output projections are bias-free, so this is exact and avoids allocating
+        # a second output-sized temporary.
+        scale = self.alpha / self.dim
         if self._is_fc1:
             # Shared A → activation → per-expert B.
             x, _ = self.linear_in(x)
             x = self.activation(x)
+            x = x * scale
             x, _ = self.linear_out(x, m_splits)
         else:
             # Per-expert A → activation → shared B.
             x, _ = self.linear_in(x, m_splits)
             x = self.activation(x)
+            x = x * scale
             x, _ = self.linear_out(x)
 
         if self.dropout_position == "post":
             x = self.dropout(x)
 
-        return x * (self.alpha / self.dim)
+        return x
 
     def sharded_state_dict(
         self,
