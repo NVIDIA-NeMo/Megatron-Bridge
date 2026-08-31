@@ -43,7 +43,10 @@ def configure_gtp_remat(model_config: Any) -> None:
         return
 
     transformer_config = get_transformer_config(model_config)
-    from megatron.core.tensor_parallel import gtp_api
+    try:
+        from megatron.core.tensor_parallel import gtp_api
+    except ImportError as exc:
+        raise RuntimeError("GTP is unavailable in this Megatron Core revision.") from exc
 
     if not gtp_api.HAVE_GTP:
         raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
@@ -62,7 +65,10 @@ def classify_gtp_remat_chains(model: list[torch.nn.Module], model_config: Any) -
         return
 
     transformer_config = get_transformer_config(model_config)
-    from megatron.core.tensor_parallel import gtp_api
+    try:
+        from megatron.core.tensor_parallel import gtp_api
+    except ImportError as exc:
+        raise RuntimeError("GTP is unavailable in this Megatron Core revision.") from exc
 
     gtp_api.classify_gtp_remat_chains(
         model,

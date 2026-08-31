@@ -25,6 +25,7 @@ from megatron.bridge.training.gtp import (
     configure_gtp_remat,
     get_data_distribution_group,
 )
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 def _gtp_config(*, dense_size: int = 2, expert_size: int = 1) -> SimpleNamespace:
@@ -41,6 +42,7 @@ def _gtp_config(*, dense_size: int = 2, expert_size: int = 1) -> SimpleNamespace
     )
 
 
+@pytest.mark.skipif(HAS_MCORE_DEV_BRANCH, reason="MCore dev predates GTP")
 def test_transformer_config_derives_gtp_sizes_from_weight_shards():
     config = TransformerConfig(
         num_layers=2,
@@ -58,6 +60,7 @@ def test_transformer_config_derives_gtp_sizes_from_weight_shards():
     assert config.expert_gtp_weight_remat_size == 3
 
 
+@pytest.mark.skipif(HAS_MCORE_DEV_BRANCH, reason="MCore dev predates GTP")
 @pytest.mark.parametrize("num_weight_shards", [1, 3])
 def test_transformer_config_rejects_invalid_gtp_weight_shards(num_weight_shards):
     config = TransformerConfig(
@@ -72,6 +75,7 @@ def test_transformer_config_rejects_invalid_gtp_weight_shards(num_weight_shards)
         config.finalize()
 
 
+@pytest.mark.skipif(HAS_MCORE_DEV_BRANCH, reason="MCore dev predates GTP")
 @patch("megatron.core.tensor_parallel.gtp_api.configure_gtp_remat_from_recipe")
 @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
 def test_configure_gtp_remat_forwards_transformer_recipe(mock_configure):
@@ -87,6 +91,7 @@ def test_configure_gtp_remat_forwards_transformer_recipe(mock_configure):
     )
 
 
+@pytest.mark.skipif(HAS_MCORE_DEV_BRANCH, reason="MCore dev predates GTP")
 @patch("megatron.core.tensor_parallel.gtp_api.classify_gtp_remat_chains")
 def test_classify_gtp_remat_chains_receives_all_model_chunks(mock_classify):
     config = _gtp_config()

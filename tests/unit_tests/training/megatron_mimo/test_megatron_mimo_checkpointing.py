@@ -948,6 +948,7 @@ class TestMimoOptimizerLoadCompat:
             tp=process_group(rank=0),
             gtp_remat=process_group(rank=0),
             pp=process_group(rank=0),
+            dp=process_group(rank=0),
             dp_cp=process_group(rank=0),
         )
 
