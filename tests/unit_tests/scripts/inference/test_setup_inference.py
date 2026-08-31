@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import importlib.util
+import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -72,6 +74,38 @@ def _launcher_args(*extra_options: str) -> list[str]:
         "--container-image",
         "image.sqsh",
         *extra_options,
+    ]
+
+
+def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
+    fake_uv = tmp_path / "uv"
+    uv_args = tmp_path / "uv-args.txt"
+    fake_uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$UV_ARGS_FILE"\n', encoding="utf-8")
+    fake_uv.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{tmp_path}:{env['PATH']}",
+            "UV_ARGS_FILE": str(uv_args),
+            "VIRTUAL_ENV": str(tmp_path / "active-environment"),
+        }
+    )
+
+    subprocess.run(
+        [str(REPO_ROOT / "scripts" / "inference" / "infer.sh"), "--help"],
+        check=True,
+        env=env,
+    )
+
+    assert uv_args.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        "--active",
+        "--no-sync",
+        "--with",
+        "nemo-run==0.10.0",
+        "python",
+        str(REPO_ROOT / "scripts" / "inference" / "setup_inference.py"),
+        "--help",
     ]
 
 
