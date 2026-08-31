@@ -402,7 +402,7 @@ def test_deepseek_v4_adam_mxfp8_recipe_uses_validated_optimizer_defaults(monkeyp
     assert cfg.ddp.overlap_param_gather is True
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.grad_reduce_in_fp32 is True
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.apply_rope_fusion is True
@@ -432,7 +432,7 @@ def test_deepseek_v4_muon_bf16_recipe_uses_validated_optimizer_defaults(monkeypa
     assert cfg.ddp.use_distributed_optimizer is False
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.grad_reduce_in_fp32 is True
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.apply_rope_fusion is True
@@ -449,7 +449,7 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.apply_rope_fusion is True
     assert cfg.model.use_fused_mhc is True
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
@@ -504,7 +504,7 @@ def test_deepseek_v4_recipes_disable_blackwell_only_fusions_when_unavailable(
 
     cfg = getattr(mod, recipe_name)()
 
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.apply_rope_fusion is True
     assert cfg.model.use_fused_mhc is False
 
