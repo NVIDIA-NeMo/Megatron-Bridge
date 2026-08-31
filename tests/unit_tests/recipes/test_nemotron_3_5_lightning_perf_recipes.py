@@ -67,6 +67,10 @@ _GB_FSDP_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config,
 )
+_GB_FULL_ITERATION_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+)
 _NEMOTRON_3_RECIPES = (
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
@@ -227,6 +231,9 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
+    if recipe_factory in _GB_FULL_ITERATION_RECIPES:
+        base_cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
+        base_cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"]
     if recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
         assert cfg.env_vars == base_cfg.env_vars
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss

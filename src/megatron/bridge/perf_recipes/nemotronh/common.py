@@ -28,6 +28,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
+from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -89,6 +90,28 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.checkpoint.async_save = False
 
     _benchmark_common(cfg)
+
+
+def _enable_nemotron_3_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
+    """Enable capture-safe full-iteration CUDA graphs for Nemotron 3 MoE recipes."""
+    set_full_iteration_cuda_graph(cfg.model)
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.overlap_param_gather_with_optimizer_step = False
+
+    # Full-iteration capture requires static expert-rank input shapes. Paged
+    # stashing handles the padded activations without CPU activation offload.
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = []
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
 
 def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:

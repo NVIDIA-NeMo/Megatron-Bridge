@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
+    _enable_nemotron_3_full_iteration_mxfp8,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     load_quantization_recipe,
@@ -120,7 +121,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB200, MXFP8."""
+    """Nemotron 3 Super pretrain: 64× GB200, MXFP8, full-iteration CUDA graph."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
@@ -146,6 +147,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.mixed_precision.fp8_dot_product_attention = True
+    _enable_nemotron_3_full_iteration_mxfp8(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -153,8 +155,8 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
@@ -520,16 +522,17 @@ def _build_nemotron_3_5_lightning_gb200_mxfp8() -> ConfigContainer:
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8."""
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, MXFP8, full-iteration CUDA graph."""
     cfg = _build_nemotron_3_5_lightning_gb200_mxfp8()
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
+    _enable_nemotron_3_full_iteration_mxfp8(cfg)
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
