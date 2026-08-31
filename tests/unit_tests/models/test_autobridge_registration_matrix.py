@@ -84,6 +84,9 @@ EXPECTED_REGISTRATIONS = {
     "Qwen3VLMoeForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.Qwen3VLMoEBridge",
     "Qwen3_5ForCausalLM": "megatron.bridge.models.qwen.qwen35_bridge.Qwen35Bridge",
     "Qwen3_5ForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35VLBridge",
+    "Qwen3_5ForSequenceClassification": (
+        "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35SequenceClassificationBridge"
+    ),
     "Qwen3_5ForTokenClassification": (
         "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35TokenClassificationBridge"
     ),
@@ -121,6 +124,7 @@ STRING_REGISTRATIONS = {
     "Qwen3ASRForConditionalGeneration",
     "Qwen3_5ForCausalLM",
     "Qwen3_5ForConditionalGeneration",
+    "Qwen3_5ForSequenceClassification",
     "Qwen3_5ForTokenClassification",
     "Qwen3_5MoeForCausalLM",
     "Qwen3_5MoeForConditionalGeneration",
