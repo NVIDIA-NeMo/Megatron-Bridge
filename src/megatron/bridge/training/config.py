@@ -1423,6 +1423,17 @@ class ConfigContainer(Container):
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
+        from megatron.bridge.training.gtp import is_gtp_remat_active
+
+        if is_gtp_remat_active(self.model):
+            if self.dist.use_decentralized_pg:
+                raise ValueError(
+                    "GTP is not supported with dist.use_decentralized_pg=True. "
+                    "Set dist.use_decentralized_pg=False to use the standard MCore process-group runtime."
+                )
+            if self.ddp.average_in_collective:
+                raise ValueError("GTP requires ddp.average_in_collective=False.")
+
         self.logger.finalize()
         self.train.finalize()
         self.scheduler.finalize()
@@ -1670,7 +1681,7 @@ class ConfigContainer(Container):
                     f"Sequence length in dataset config: {data_seq_length}"
                 )
 
-        # Validate DeepEP or HybridEP is supported for the current GPU architecture
+        # Validate the selected flex dispatcher backend for the current GPU architecture
         if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:

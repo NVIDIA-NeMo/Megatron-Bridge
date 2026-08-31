@@ -219,6 +219,9 @@ class NemotronOmniModel(MegatronModule):
         self.post_process = post_process
         self.add_encoder = add_encoder
         self.add_decoder = add_decoder
+        # Inference controllers inspect the top-level model for the padded
+        # vocabulary size. Keep it consistent with the nested HybridModel.
+        self.vocab_size = language_vocab_size
         self.image_token_index = image_token_index
         self.sound_token_index = sound_token_index
         self.patch_dim = patch_dim
