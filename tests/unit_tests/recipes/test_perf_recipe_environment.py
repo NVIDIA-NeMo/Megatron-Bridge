@@ -124,7 +124,7 @@ def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
-def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults():
+def test_benchmark_common_disables_checkpoint_io_and_forces_moe_load_balancing():
     cfg = SimpleNamespace(
         train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
         validation=SimpleNamespace(eval_iters=1, eval_interval=1),
@@ -147,7 +147,7 @@ def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults()
         mixed_precision=SimpleNamespace(grad_reduce_in_fp32=True),
     )
 
-    _benchmark_common(cfg, force_moe_load_balancing=True)
+    _benchmark_common(cfg)
 
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
@@ -160,7 +160,7 @@ def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults()
 
     cfg.model.moe_router_force_load_balancing = False
     _benchmark_common(cfg)
-    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_router_force_load_balancing is True
 
 
 def test_every_flat_recipe_builder_declares_its_environment_inline():
