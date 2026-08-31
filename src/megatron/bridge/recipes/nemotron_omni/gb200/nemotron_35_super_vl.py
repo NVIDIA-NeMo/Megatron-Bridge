@@ -217,6 +217,7 @@ def nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config() -> ConfigCo
     )
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _CODERFORGE_REVISION}
     cfg.dataset.seed = 1234
+    cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
     cfg.tokenizer.tokenizer_model = NEMOTRON_35_SUPER_VL_HF_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {
         "revision": NEMOTRON_35_SUPER_VL_HF_REVISION,

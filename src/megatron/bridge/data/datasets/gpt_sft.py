@@ -26,7 +26,6 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import Dataset
 
-from megatron.bridge.data.conversation_processing import get_processor_tokenizer
 from megatron.bridge.data.datasets.utils import (
     _chat_preprocess,
     _get_samples_mapping,
@@ -796,8 +795,9 @@ class GPTSFTChatDataset(GPTSFTDataset):
 
         # Validate tokenizer if using HF chat template
         if self.use_hf_tokenizer_chat_template:
-            hf_tokenizer = get_processor_tokenizer(self.tokenizer)
-            if not callable(getattr(hf_tokenizer, "apply_chat_template", None)):
+            if not hasattr(self.tokenizer, "_tokenizer") or not hasattr(
+                self.tokenizer._tokenizer, "apply_chat_template"
+            ):
                 raise ValueError(
                     "Dataset configured to use HF tokenizer chat template, but tokenizer does not have "
                     "apply_chat_template method. Please ensure you're using a HuggingFace tokenizer with "

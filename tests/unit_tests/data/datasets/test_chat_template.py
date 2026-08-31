@@ -384,36 +384,6 @@ class TestGPTSFTChatDataset:
             )
 
     @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
-    def test_chat_dataset_accepts_nested_mcore_hf_tokenizer(self, mock_dataset_class):
-        """The current MCore tokenizer wraps the HF tokenizer two levels deep."""
-        mock_dataset = MagicMock()
-        mock_dataset.__len__.return_value = 10
-        mock_dataset_class.return_value = mock_dataset
-
-        class _HFTokenizer:
-            added_tokens_decoder = {}
-
-            def __call__(self, *args, **kwargs):
-                return None
-
-            def apply_chat_template(self, *args, **kwargs):
-                return {"input_ids": [1, 2]}
-
-        tokenizer = SimpleNamespace(
-            _tokenizer=SimpleNamespace(tokenizer=_HFTokenizer()),
-            eos_id=2,
-        )
-
-        dataset = GPTSFTChatDataset(
-            file_path="test.jsonl",
-            tokenizer=tokenizer,
-            max_seq_length=512,
-            use_hf_tokenizer_chat_template=True,
-        )
-
-        assert dataset.use_hf_tokenizer_chat_template is True
-
-    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_chat_dataset_legacy_mode(self, mock_dataset_class):
         """Test GPTSFTChatDataset in legacy mode (no HF template)."""
         mock_dataset = MagicMock()

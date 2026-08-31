@@ -799,6 +799,7 @@ def test_super_vl_long_context_sft_uses_coderforge_packing_and_cp(fake_processor
     assert cfg.dataset.do_validation is False
     assert cfg.dataset.do_test is False
     assert cfg.dataset.seed == 1234
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.tokenizer.tokenizer_model == _TEST_SUPER_VL_HF_ID
     assert cfg.tokenizer.hf_tokenizer_kwargs == {
         "revision": _SUPER_VL_HF_REVISION,
