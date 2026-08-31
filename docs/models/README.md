@@ -16,6 +16,7 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 | Family | Model documentation |
 |----------------|---------------------|
 | **Bailing** | [Ling 2.0](bailing/ling-2.md) |
+| **BERT** | [Megatron-Style BERT](bert/megatron-bert.md) |
 | **DeepSeek** | [DeepSeek V2 (deprecated)](deepseek/deepseek-v2.md), [DeepSeek V3](deepseek/deepseek-v3.md), [DeepSeek V4](deepseek/deepseek-v4.md) |
 | **ERNIE** | [ERNIE 4.5 and ERNIE 4.5 VL](ernie/ernie45.md) |
 | **EXAONE** | [EXAONE 4, EXAONE 4.5 VL, and K-EXAONE](exaone/exaone.md) |
@@ -70,6 +71,10 @@ Each model documentation page typically includes:
 
 - Bailing, DeepSeek, ERNIE, EXAONE, Falcon, Gemma, GLM, GPT-OSS, HY V3, Kimi, Llama, MiniMax, Mistral, Moonlight, Nemotron, OLMoE, Qwen, Sarvam, StepFun, and Xiaomi-MiMo
 - MoE and hybrid variants including Bailing, DeepSeek, GLM, GPT-OSS, MiniMax, Nemotron-3, OLMoE, Qwen3-MoE, Qwen3-Next, and Sarvam
+
+### Encoder-Only Backbones
+
+- BERT (Pre-LayerNorm, Megatron-style `MegatronBertForMaskedLM` only — vanilla Post-LayerNorm BERT checkpoints such as `bert-base-uncased` are not supported)
 
 ### Multimodal Variants
 

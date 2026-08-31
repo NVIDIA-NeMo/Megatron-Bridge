@@ -1146,13 +1146,19 @@ class MegatronModelBridge(
     @staticmethod
     def _is_vocab_export_task(task: WeightConversionTask[Any]) -> bool:
         """Return whether a conversion task emits an HF token embedding or language-model head."""
-        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight")
+        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight", "output_layer.bias")
         global_param_name = task.global_param_name.removesuffix("_scale_inv")
         if not global_param_name.endswith(vocab_param_suffixes):
             return False
 
         hf_param = getattr(task.mapping, "hf_param", None)
-        vocab_hf_param_suffixes = ("embed_tokens.weight", "word_embeddings.weight", "lm_head.weight", "head.weight")
+        vocab_hf_param_suffixes = (
+            "embed_tokens.weight",
+            "word_embeddings.weight",
+            "lm_head.weight",
+            "head.weight",
+            "predictions.bias",
+        )
         return isinstance(hf_param, str) and hf_param.endswith(vocab_hf_param_suffixes)
 
     def _truncate_vocab_padding(
@@ -2028,10 +2034,13 @@ class MegatronModelBridge(
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         mappings_by_global_name = self._validate_conversion_mappings(
@@ -2270,10 +2279,13 @@ class MegatronModelBridge(
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         mappings_by_global_name = self._validate_conversion_mappings(
