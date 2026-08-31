@@ -218,8 +218,10 @@ def test_dora_replicated_base_matches_dense_forward_and_gradients() -> None:
     rank = dist.get_rank()
     x_local = x_full.chunk(_TP_SIZE, dim=0)[rank]
     grad_local = grad_full.chunk(_TP_SIZE, dim=0)[rank]
+    base_output_local, _ = base(x_local)
     actual, _ = wrapped(x_local)
-    expected = F.linear(x_local, direction) * (magnitude / torch.linalg.norm(direction, dim=1)).view(1, 1, -1)
+    magnitude_scale = (magnitude / torch.linalg.norm(direction, dim=1)).view(1, 1, -1)
+    expected = (base_output_local.detach() + F.linear(F.linear(x_local, full_a), full_b)) * magnitude_scale
     torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
 
     actual.backward(grad_local)
@@ -231,7 +233,12 @@ def test_dora_replicated_base_matches_dense_forward_and_gradients() -> None:
     magnitude_reference = magnitude.detach().clone().requires_grad_()
     direction_reference = base_weight + b_reference @ a_reference
     norm_reference = torch.linalg.norm(direction_reference, dim=1).detach()
-    reference = F.linear(x_full, direction_reference) * (magnitude_reference / norm_reference).view(1, 1, -1)
+    base_output_parts = [torch.empty_like(base_output_local) for _ in range(_TP_SIZE)]
+    dist.all_gather(base_output_parts, base_output_local.detach())
+    base_output_full = torch.cat(base_output_parts, dim=0)
+    reference = (base_output_full + F.linear(F.linear(x_full, a_reference), b_reference)) * (
+        magnitude_reference / norm_reference
+    ).view(1, 1, -1)
     reference_grads = torch.autograd.grad(
         (reference * grad_full).sum(), (a_reference, b_reference, magnitude_reference)
     )
@@ -275,6 +282,7 @@ def test_multi_lora_replicated_base_matches_dense_forward_and_gradients() -> Non
         wrapped,
         torch.tensor([_LOCAL_TOKENS, _LOCAL_TOKENS], device="cuda", dtype=torch.int32),
     )
+    base_output_local, _ = base(x_local)
     actual, _ = wrapped(x_local)
     expected_adapter = torch.cat(
         [
@@ -285,8 +293,8 @@ def test_multi_lora_replicated_base_matches_dense_forward_and_gradients() -> Non
         ],
         dim=0,
     )
-    expected = F.linear(x_full, base_weight) + expected_adapter
-    torch.testing.assert_close(actual, expected.chunk(_TP_SIZE, dim=0)[rank], rtol=1e-5, atol=1e-5)
+    expected_local = base_output_local.detach() + expected_adapter.chunk(_TP_SIZE, dim=0)[rank]
+    torch.testing.assert_close(actual, expected_local, rtol=1e-5, atol=1e-5)
 
     actual.backward(grad_local)
     actual_grads: list[tuple[torch.Tensor, torch.Tensor]] = []
@@ -308,7 +316,7 @@ def test_multi_lora_replicated_base_matches_dense_forward_and_gradients() -> Non
         dim=0,
     )
     reference_grads = torch.autograd.grad(
-        ((F.linear(x_full, base_weight) + reference_adapter) * grad_full).sum(),
+        (reference_adapter * grad_full).sum(),
         (*a_references, *b_references),
     )
 
