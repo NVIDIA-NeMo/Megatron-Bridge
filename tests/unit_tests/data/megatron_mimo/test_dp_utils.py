@@ -5,6 +5,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
+from megatron.bridge.data.megatron_mimo.collate import megatron_mimo_collate_fn
 from megatron.bridge.data.megatron_mimo.dp_utils import (
     get_megatron_mimo_dp_info,
     get_megatron_mimo_sampling_info,
@@ -229,6 +230,40 @@ class TestSliceBatchForMegatronMIMO:
 
         assert sliced["tokens"].shape[0] == 2
         assert sliced["modality_inputs"]["vision"]["pixel_values"].shape[0] == 2
+
+    def test_sparse_modality_rows_follow_their_sample_dp_shard(self):
+        """Compacted modality rows must retain their owning language sample."""
+
+        def make_sample(owner: int, *, has_vision: bool) -> dict:
+            modality_inputs = {}
+            if has_vision:
+                modality_inputs["vision"] = {"pixel_values": torch.tensor([owner])}
+            return {
+                "input_ids": torch.tensor([owner, owner]),
+                "labels": torch.tensor([owner, owner]),
+                "loss_mask": torch.ones(2),
+                "attention_mask": torch.ones(2),
+                "position_ids": torch.arange(2),
+                "modality_inputs": modality_inputs,
+            }
+
+        batch = megatron_mimo_collate_fn(
+            [
+                make_sample(0, has_vision=False),
+                make_sample(1, has_vision=False),
+                make_sample(2, has_vision=True),
+                make_sample(3, has_vision=True),
+            ],
+            modality_names=["vision"],
+        )
+
+        shard_0 = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
+        shard_1 = slice_batch_for_megatron_mimo(batch, dp_rank=1, dp_size=2)
+
+        assert shard_0["input_ids"][:, 0].tolist() == [0, 1]
+        assert "vision" not in shard_0["modality_inputs"]
+        assert shard_1["input_ids"][:, 0].tolist() == [2, 3]
+        assert shard_1["modality_inputs"]["vision"]["pixel_values"].flatten().tolist() == [2, 3]
 
     def test_preserves_non_tensor_values(self):
         batch = {
