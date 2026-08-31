@@ -15,7 +15,6 @@
 import copy
 from unittest.mock import Mock, patch
 
-
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
