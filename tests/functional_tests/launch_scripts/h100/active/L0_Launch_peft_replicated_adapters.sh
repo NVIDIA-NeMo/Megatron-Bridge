@@ -17,5 +17,7 @@
 set -xeuo pipefail
 
 export CUDA_VISIBLE_DEVICES="0,1"
+# Keep TE and the dense mathematical oracle on the same strict-FP32 path.
+export NVIDIA_TF32_OVERRIDE=0
 uv run python -m torch.distributed.run --nproc_per_node=2 -m pytest -v -s -x --tb=short \
   tests/unit_tests/peft/test_replicated_peft_distributed.py
