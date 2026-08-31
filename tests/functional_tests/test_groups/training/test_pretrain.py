@@ -46,13 +46,13 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.gtp import get_transformer_config
 from megatron.bridge.training.pretrain import pretrain
-from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 from tests.functional_tests.utils import (
     broadcast_path,
     clear_directories,
     initialize_distributed,
     verify_checkpoint_files,
 )
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 class Llama32TestModelProvider(GPTModelProvider):
