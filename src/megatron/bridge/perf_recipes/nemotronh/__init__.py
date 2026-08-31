@@ -39,6 +39,7 @@ from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
     nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config,
     nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
     nemotron_3_super_pretrain_64gpu_gb300_bf16_config,
     nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,

@@ -891,14 +891,27 @@ class TestSaveCheckpoint:
         assert future_incomplete_checkpoint.is_dir()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
 
-    @pytest.mark.parametrize("previous_step, previous_checkpoint_remains", [(10, False), (20, True)])
+    @pytest.mark.parametrize(
+        "previous_tracker, previous_checkpoint_name, previous_checkpoint_remains",
+        [
+            ("10", "iter_0000010", False),
+            ("20", "iter_0000020", True),
+            ("release", "release", True),
+        ],
+    )
     def test_sync_persistent_save_honors_retain_interval(
-        self, tmp_path, save_checkpoint_fixtures, previous_step, previous_checkpoint_remains
+        self,
+        tmp_path,
+        save_checkpoint_fixtures,
+        previous_tracker,
+        previous_checkpoint_name,
+        previous_checkpoint_remains,
     ):
         """Persistent saves retain only interval checkpoints and the latest checkpoint."""
-        previous_checkpoint = tmp_path / f"iter_{previous_step:07d}"
+        previous_checkpoint = tmp_path / previous_checkpoint_name
         previous_checkpoint.mkdir()
-        (tmp_path / "latest_checkpointed_iteration.txt").write_text(str(previous_step))
+        tracker = tmp_path / "latest_checkpointed_iteration.txt"
+        tracker.write_text(previous_tracker)
         current_checkpoint = tmp_path / "iter_0000030"
 
         state = save_checkpoint_fixtures["mock_state"]
@@ -956,6 +969,7 @@ class TestSaveCheckpoint:
 
         assert previous_checkpoint.exists() is previous_checkpoint_remains
         assert current_checkpoint.is_dir()
+        assert tracker.read_text() == "30"
 
     def test_async_persistent_save_defers_retain_interval_cleanup(self, tmp_path, save_checkpoint_fixtures):
         """The previous checkpoint remains available until its async replacement is durable."""
@@ -4364,6 +4378,8 @@ class TestFSDPDTensorFunctionality:
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
                 patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
+                patch("megatron.bridge.training.checkpointing.handle_mla_down_proj_in_state_dict", None),
+                patch("megatron.bridge.training.checkpointing.handle_mtp_in_state_dict", None),
             ):
                 raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
                 result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)

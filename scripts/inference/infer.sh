@@ -21,6 +21,6 @@ cd "${REPO_ROOT}"
 
 UV_ARGS=(--no-project --with nemo-run==0.10.0)
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    UV_ARGS=(--active --no-sync)
+    UV_ARGS=(--active --no-sync --with nemo-run==0.10.0)
 fi
 exec uv run "${UV_ARGS[@]}" python "${SCRIPT_DIR}/setup_inference.py" "$@"

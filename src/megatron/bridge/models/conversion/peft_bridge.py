@@ -1178,9 +1178,7 @@ class MegatronPeftBridge:
             # Nothing to merge on this rank (e.g., non-owning PP rank or filtered mapping).
             return converted_weights_dict
 
-        if len(adapter_weights) > 1 and all(
-            w.adapter_key in ADAPTER_NAME_MAP.values() for w in adapter_weights if w.adapter_key
-        ):
+        if all(w.adapter_key in ADAPTER_NAME_MAP.values() for w in adapter_weights):
             return self._merge_canonical_adapter_from_weights(megatron_model, converted_weights_dict, adapter_weights)
 
         assert len(adapter_weights) == 1, "Expected a single adapter weight for standard LoRA merging"
@@ -1425,8 +1423,10 @@ class MegatronPeftBridge:
                     target_adapter_key = adapter_key
                     break
 
-            if target_adapter is None:
+            if target_adapter_key is None:
                 raise ValueError(f"Adapter name mapping not found for {hf_name}")
+            if target_adapter is None:
+                continue
 
             linear_in_weight = target_adapter.linear_in_weight.weight
             linear_out_weight = target_adapter.linear_out_weight.weight

@@ -55,6 +55,11 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
+from megatron.bridge.training.gtp import (
+    classify_gtp_remat_chains,
+    configure_gtp_remat,
+    get_data_distribution_group,
+)
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import (
     memory_efficient_fp32_optimizer_state_loading,
@@ -500,7 +505,7 @@ def setup(
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-        dp_group=pg_collection.dp,
+        dp_group=get_data_distribution_group(pg_collection, cfg.model),
         eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
     )
     timers("train/valid/test-data-iterators-setup").stop()
@@ -584,10 +589,13 @@ def _register_setup_pre_wrap_hook(
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build distributed model from either ModelConfig or ModelProviderMixin."""
     model_config = cfg.model
+    if not isinstance(model_config, ModelConfig):
+        model_config.finalize()
+    configure_gtp_remat(model_config)
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
-        return builder.build_distributed_models(
+        model = builder.build_distributed_models(
             pg_collection=pg_collection,
             ddp_config=cfg.ddp,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
@@ -596,8 +604,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
         )
     else:
-        model_config.finalize()
-        return model_config.provide_distributed_model(
+        model = model_config.provide_distributed_model(
             ddp_config=cfg.ddp,
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
@@ -605,6 +612,8 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
         )
+    classify_gtp_remat_chains(model, model_config)
+    return model
 
 
 def _update_model_config_funcs(
