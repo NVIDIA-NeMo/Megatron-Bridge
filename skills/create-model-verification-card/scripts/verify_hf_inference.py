@@ -131,11 +131,17 @@ def _prepare_inputs(processor: Any, args: argparse.Namespace) -> Any:
                 add_generation_prompt=True,
                 **template_options,
             )
-            return processor(
+            inputs = processor(
                 text=[formatted_prompt],
                 images=[_load_pil_image(args.image)],
                 return_tensors="pt",
             )
+            # Some custom processors return media-layout metadata used only while rendering
+            # placeholders. Transformers generation rejects keys absent from the model's public
+            # forward signature even when that model accepts arbitrary keyword arguments.
+            for key in ("num_patches", "num_tokens", "imgs_sizes"):
+                inputs.pop(key, None)
+            return inputs
         messages = [
             {
                 "role": "user",

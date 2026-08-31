@@ -82,7 +82,13 @@ class _SeparateImageProcessor(_Processor):
         self.direct_text = text
         self.direct_images = images
         assert return_tensors == "pt"
-        return _Batch(input_ids=torch.tensor([[1, 2, 3]]), pixel_values=torch.tensor([1]))
+        return _Batch(
+            input_ids=torch.tensor([[1, 2, 3]]),
+            pixel_values=torch.tensor([1]),
+            num_patches=torch.tensor([1]),
+            num_tokens=torch.tensor([4]),
+            imgs_sizes=torch.tensor([[2, 2]]),
+        )
 
 
 class _Model:
@@ -256,6 +262,7 @@ def test_separate_image_processing_renders_text_then_passes_pil(monkeypatch):
     inputs = module._prepare_inputs(processor, args)
 
     assert inputs["pixel_values"].tolist() == [1]
+    assert set(inputs) == {"input_ids", "pixel_values"}
     assert processor.messages == [{"role": "user", "content": "<image>\nDescribe the image."}]
     assert processor.template_kwargs == {
         "tokenize": False,
