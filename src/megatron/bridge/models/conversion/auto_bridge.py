@@ -1155,6 +1155,10 @@ class AutoBridge(Generic[MegatronModelT]):
             save_every_n_ranks=save_every_n_ranks,
             weight_dtype=weight_dtype,
         )
+        if model_bridge is not None and (not dist.is_initialized() or dist.get_rank() == 0):
+            weight_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_weights", None)
+            if weight_postprocessor is not None:
+                weight_postprocessor(model_bridge, Path(path))
 
     def save_hf_weights(
         self,

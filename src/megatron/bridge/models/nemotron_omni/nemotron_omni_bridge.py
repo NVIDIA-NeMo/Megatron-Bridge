@@ -33,6 +33,7 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
 """
 
 import copy
+import json
 import warnings
 from collections.abc import Iterable
 from dataclasses import fields
@@ -40,6 +41,7 @@ from pathlib import Path
 
 import torch
 from megatron.core.activations import squared_relu
+from safetensors.torch import save_file
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
@@ -394,39 +396,44 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         provider.vision_final_layernorm = bool(provider.mtp_num_layers)
         return provider
 
-    @torch.no_grad()
-    def stream_weights_megatron_to_hf(
-        self,
-        megatron_model: NemotronOmniModel | list[NemotronOmniModel],
-        hf_pretrained: PreTrainedCausalLM,
-        cpu: bool = True,
-        show_progress: bool = True,
-        conversion_tasks: list[WeightConversionTask] | None = None,
-        merge_adapter_weights: bool = True,
-        weight_dtype: torch.dtype | None = None,
-    ) -> Iterable[HFWeightTuple]:
-        """Export weights and close the deterministic RADIO summary buffer."""
-        summary_idxs_exported = False
-        for weight in super().stream_weights_megatron_to_hf(
-            megatron_model,
-            hf_pretrained,
-            cpu=cpu,
-            show_progress=show_progress,
-            conversion_tasks=conversion_tasks,
-            merge_adapter_weights=merge_adapter_weights,
-            weight_dtype=weight_dtype,
-        ):
-            summary_idxs_exported = summary_idxs_exported or weight.param_name == self._HF_SUMMARY_IDXS_BUFFER
-            yield weight
+    def postprocess_hf_export_weights(self, path: Path) -> None:
+        """Add the deterministic RADIO summary buffer omitted by the source index."""
+        index_path = path / "model.safetensors.index.json"
+        if not index_path.is_file():
+            raise FileNotFoundError(f"Nemotron 3.5 Super VL export is missing its weight index: {index_path}")
 
-        if summary_idxs_exported:
+        index = json.loads(index_path.read_text())
+        weight_map = index.get("weight_map")
+        if not isinstance(weight_map, dict):
+            raise ValueError(f"Nemotron 3.5 Super VL export has an invalid weight map: {index_path}")
+        if self._HF_SUMMARY_IDXS_BUFFER in weight_map:
             return
 
-        vision_config = hf_pretrained.config.vision_config
-        summary_idxs = torch.tensor(vision_config.summary_idxs, dtype=torch.long)
-        if not cpu and torch.cuda.is_available():
-            summary_idxs = summary_idxs.to(device=torch.cuda.current_device())
-        yield from HFWeightTuple(self._HF_SUMMARY_IDXS_BUFFER, summary_idxs).iter_finalized(cpu=cpu)
+        config_path = path / "config.json"
+        config = json.loads(config_path.read_text())
+        summary_idxs = config.get("vision_config", {}).get("summary_idxs")
+        if (
+            not isinstance(summary_idxs, list)
+            or not summary_idxs
+            or not all(isinstance(value, int) for value in summary_idxs)
+        ):
+            raise ValueError(f"Nemotron 3.5 Super VL export has invalid vision summary indexes: {config_path}")
+
+        summary_tensor = torch.tensor(summary_idxs, dtype=torch.long)
+        shard_name = "model-summary-idxs.safetensors"
+        shard_path = path / shard_name
+        temporary_shard_path = path / f".{shard_name}.tmp"
+        save_file({self._HF_SUMMARY_IDXS_BUFFER: summary_tensor}, temporary_shard_path)
+        temporary_shard_path.replace(shard_path)
+
+        weight_map[self._HF_SUMMARY_IDXS_BUFFER] = shard_name
+        metadata = index.setdefault("metadata", {})
+        metadata["total_size"] = (
+            int(metadata.get("total_size", 0)) + summary_tensor.numel() * summary_tensor.element_size()
+        )
+        temporary_index_path = path / ".model.safetensors.index.json.tmp"
+        temporary_index_path.write_text(json.dumps(index, indent=4) + "\n")
+        temporary_index_path.replace(index_path)
 
     def _mtp_hf_prefix(self) -> str:
         """Nemotron 3.5 Super VL nests MTP below ``language_model``."""

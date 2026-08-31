@@ -489,6 +489,13 @@ class MegatronModelBridge(
             path: Directory containing the exported Hugging Face artifacts.
         """
 
+    def postprocess_hf_export_weights(self, path: Path) -> None:
+        """Apply model-specific fixes after Hugging Face weights are saved.
+
+        Args:
+            path: Directory containing the complete exported Hugging Face checkpoint.
+        """
+
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None

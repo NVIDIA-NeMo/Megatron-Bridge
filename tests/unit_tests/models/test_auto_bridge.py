@@ -1376,6 +1376,35 @@ class TestAutoBridge:
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_postprocesses_complete_weights(self, _mock_dist_avail, _mock_dist_init, tmp_path):
+        """Model bridges can close derived buffers after weight export."""
+
+        class _WeightPostprocessor:
+            SUPPORTS_HF_PRETRAINED_EXPORT = True
+            ADDITIONAL_FILE_PATTERNS = None
+
+            def postprocess_hf_export_weights(self, path):
+                assert (path / "weights-saved").is_file()
+                (path / "weights-postprocessed").touch()
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.save_artifacts.side_effect = lambda path, **_: Path(path).mkdir(parents=True, exist_ok=True)
+        model_bridge = _WeightPostprocessor()
+        bridge = AutoBridge(mock_hf_model)
+
+        def _save_weights(_model, path, *_args, **_kwargs):
+            (Path(path) / "weights-saved").touch()
+
+        with (
+            patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=model_bridge)),
+            patch.object(AutoBridge, "save_hf_weights", side_effect=_save_weights),
+        ):
+            bridge.save_hf_pretrained([Mock()], tmp_path)
+
+        assert (tmp_path / "weights-postprocessed").is_file()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
     def test_save_hf_pretrained_config_only(self, _mock_dist_avail, _mock_dist_init, tmp_path):
         """Config-only save without a reference writes config.json and calls save_hf_weights."""
         bridge = AutoBridge(PretrainedConfig())
