@@ -1289,6 +1289,7 @@ class ParallelLinearAdapter(nn.Module):
             x, _ = self.linear_in(x)
 
         x = self.activation(x)
+        x = x * (self.alpha / self.dim)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             x.activation_offloading = True
@@ -1308,8 +1309,6 @@ class ParallelLinearAdapter(nn.Module):
         # Add dropout if available
         if self.dropout_position == "post":
             x = self.dropout(x)
-
-        x = x * (self.alpha / self.dim)
 
         if pad_len > 0:
             # Remove MoE padding.
