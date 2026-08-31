@@ -212,6 +212,7 @@ def gpt_oss_20b_pretrain_72gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_impl = "local"
     cfg.model.cuda_graph_modules = "full_iteration"
+    cfg.model.cuda_graph_scope = None
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_expert_rank_capacity_factor = 5
     cfg.model.moe_mlp_glu_interleave_size = 32
@@ -266,6 +267,7 @@ def gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_impl = "local"
     cfg.model.cuda_graph_modules = "full_iteration"
+    cfg.model.cuda_graph_scope = None
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_expert_rank_capacity_factor = 7
     cfg.model.moe_mlp_glu_interleave_size = 32
