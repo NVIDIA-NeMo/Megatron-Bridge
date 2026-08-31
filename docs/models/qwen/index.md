@@ -5,12 +5,15 @@ Qwen model documentation is organized by model variant.
 ```{toctree}
 :hidden:
 
-qwen.md
+qwen3-235b-a22b.md
+qwen3-30b-a3b.md
+qwen3-8b.md
 qwen3-moe.md
 qwen3-next.md
 qwen2.5-vl.md
 qwen3-vl.md
-qwen35-vl.md
+qwen3.6-35b-a3b.md
+qwen3.8-27b.md
 qwen2-audio.md
 qwen25-omni.md
 qwen3-omni.md
@@ -19,12 +22,15 @@ qwen3-asr.md
 
 | Variant | Guide |
 |---------|-------|
-| Qwen | [qwen.md](qwen.md) |
+| Qwen3-235B-A22B | [qwen3-235b-a22b.md](qwen3-235b-a22b.md) |
+| Qwen3-30B-A3B | [qwen3-30b-a3b.md](qwen3-30b-a3b.md) |
+| Qwen3-8B | [qwen3-8b.md](qwen3-8b.md) |
 | Qwen3-MoE | [qwen3-moe.md](qwen3-moe.md) |
 | Qwen3-Next | [qwen3-next.md](qwen3-next.md) |
 | Qwen2.5-VL | [qwen2.5-vl.md](qwen2.5-vl.md) |
 | Qwen3-VL | [qwen3-vl.md](qwen3-vl.md) |
-| Qwen3.5 / 3.6 | [qwen35-vl.md](qwen35-vl.md) |
+| Qwen3.6-35B-A3B | [qwen3.6-35b-a3b.md](qwen3.6-35b-a3b.md) |
+| Qwen3.8-27B | [qwen3.8-27b.md](qwen3.8-27b.md) |
 | Qwen2-Audio | [qwen2-audio.md](qwen2-audio.md) |
 | Qwen2.5-Omni | [qwen25-omni.md](qwen25-omni.md) |
 | Qwen3-Omni | [qwen3-omni.md](qwen3-omni.md) |

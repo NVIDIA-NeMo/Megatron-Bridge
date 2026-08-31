@@ -56,10 +56,10 @@ def _by_megatron(registry):
     return {m.megatron_param: m for m in registry.mappings}
 
 
-def _dummy_task():
+def _dummy_task(*, weight_dtype=None):
     from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 
-    return WeightConversionTask(param_name="", global_param_name="", mapping=None)
+    return WeightConversionTask(param_name="", global_param_name="", mapping=None, weight_dtype=weight_dtype)
 
 
 def _deepseek_v4_hf_config():
@@ -151,13 +151,16 @@ class TestDeepSeekV4QuantizedExport:
 
         assert result is weight
 
-    def test_export_uses_legacy_flat_indexer_weight_name_when_source_requires_it(self):
+    @pytest.mark.parametrize("weight_dtype", [None, torch.bfloat16])
+    def test_export_uses_legacy_flat_indexer_weight_name_when_source_requires_it(self, weight_dtype):
         bridge = DeepSeekV4Bridge()
         scorer_name = "layers.1.attn.indexer.scorer.weights_proj.weight"
         flat_name = "layers.1.attn.indexer.weights_proj.weight"
         weight = torch.randn(4, 4, dtype=torch.bfloat16)
 
-        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {scorer_name: weight}, {flat_name: weight})
+        result = bridge.maybe_modify_converted_hf_weight(
+            _dummy_task(weight_dtype=weight_dtype), {scorer_name: weight}, {flat_name: weight}
+        )
 
         assert scorer_name not in result
         assert result[flat_name] is weight
