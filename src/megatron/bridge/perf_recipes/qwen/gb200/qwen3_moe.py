@@ -453,7 +453,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = 3
     cfg.model.expert_model_parallel_size = 32
-    _benchmark_common(cfg, force_moe_load_balancing=True)
+    _benchmark_common(cfg)
     cfg.checkpoint.save_interval = 500
     cfg.validation.eval_iters = 32
     cfg.validation.eval_interval = 500
