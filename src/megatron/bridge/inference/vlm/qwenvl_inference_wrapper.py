@@ -21,7 +21,7 @@ import torch
 try:
     from megatron.core.inference.config import MediaPromptSpec, MultimodalPromptConfig
 except ImportError as exc:
-    if not all(name in str(exc) for name in ("MediaPromptSpec", "MultimodalPromptConfig")):
+    if exc.name != "megatron.core.inference.config" or "MediaPromptSpec" not in str(exc):
         raise
 
     @dataclass(frozen=True)
