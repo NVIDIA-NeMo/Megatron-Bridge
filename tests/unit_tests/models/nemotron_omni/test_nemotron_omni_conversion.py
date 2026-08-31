@@ -471,6 +471,31 @@ def test_nemotron_35_super_vl_export_requires_direct_modeling_entrypoint(tmp_pat
         Nemotron35SuperVLBridge().postprocess_hf_export_artifacts(tmp_path)
 
 
+def test_nemotron_35_super_vl_export_closes_summary_idxs_buffer():
+    bridge = Nemotron35SuperVLBridge()
+    hf_pretrained = MagicMock()
+    hf_pretrained.config.vision_config.summary_idxs = [0, 1]
+    converted = HFWeightTuple("language_model.weight", torch.ones(1))
+
+    with patch.object(NemotronOmniBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained))
+
+    assert exported[0] == converted
+    assert exported[1].param_name == "vision_model.summary_idxs"
+    assert torch.equal(exported[1].weight, torch.tensor([0, 1], dtype=torch.long))
+
+
+def test_nemotron_35_super_vl_export_does_not_duplicate_summary_idxs_buffer():
+    bridge = Nemotron35SuperVLBridge()
+    hf_pretrained = MagicMock()
+    existing = HFWeightTuple("vision_model.summary_idxs", torch.tensor([0, 1], dtype=torch.long))
+
+    with patch.object(NemotronOmniBridge, "stream_weights_megatron_to_hf", return_value=iter([existing])):
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained))
+
+    assert exported == [existing]
+
+
 def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):
     bridge = NemotronOmniBridge()
     source_tensors = {

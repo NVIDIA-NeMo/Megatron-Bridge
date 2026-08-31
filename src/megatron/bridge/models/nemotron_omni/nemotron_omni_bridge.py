@@ -372,6 +372,8 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
 class Nemotron35SuperVLBridge(NemotronOmniBridge):
     """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
 
+    _HF_SUMMARY_IDXS_BUFFER = "vision_model.summary_idxs"
+
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Require the direct Transformers entrypoint used by Super VL exports."""
         modeling_path = path / "modeling_nemotron_h_omni.py"
@@ -391,6 +393,40 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         provider.temporal_ckpt_compat = False
         provider.vision_final_layernorm = bool(provider.mtp_num_layers)
         return provider
+
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model: NemotronOmniModel | list[NemotronOmniModel],
+        hf_pretrained: PreTrainedCausalLM,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+    ) -> Iterable[HFWeightTuple]:
+        """Export weights and close the deterministic RADIO summary buffer."""
+        summary_idxs_exported = False
+        for weight in super().stream_weights_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+        ):
+            summary_idxs_exported = summary_idxs_exported or weight.param_name == self._HF_SUMMARY_IDXS_BUFFER
+            yield weight
+
+        if summary_idxs_exported:
+            return
+
+        vision_config = hf_pretrained.config.vision_config
+        summary_idxs = torch.tensor(vision_config.summary_idxs, dtype=torch.long)
+        if not cpu and torch.cuda.is_available():
+            summary_idxs = summary_idxs.to(device=torch.cuda.current_device())
+        yield from HFWeightTuple(self._HF_SUMMARY_IDXS_BUFFER, summary_idxs).iter_finalized(cpu=cpu)
 
     def _mtp_hf_prefix(self) -> str:
         """Nemotron 3.5 Super VL nests MTP below ``language_model``."""
