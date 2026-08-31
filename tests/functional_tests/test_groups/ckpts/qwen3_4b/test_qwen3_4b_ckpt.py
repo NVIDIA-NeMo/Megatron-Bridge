@@ -163,6 +163,7 @@ class TestQwen3Ckpt:
                 "1",
                 "--log-throughput",
                 "--no-load-optim",
+                "--no-save-optim",
                 "--no-load-rng",
             ],
         )
