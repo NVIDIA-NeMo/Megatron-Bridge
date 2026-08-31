@@ -133,10 +133,10 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
 
     dtype = getattr(torch, args.dtype)
     if args.image:
-        from transformers import AutoModelForMultimodalLM, AutoProcessor
+        from transformers import AutoModelForImageTextToText, AutoProcessor
 
         processor = AutoProcessor.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        model_cls = AutoModelForMultimodalLM
+        model_cls = AutoModelForImageTextToText
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 

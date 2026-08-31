@@ -170,7 +170,7 @@ def test_runtime_supports_explicit_multi_gpu_device_map(
     monkeypatch.setitem(
         sys.modules,
         "transformers",
-        SimpleNamespace(AutoModelForMultimodalLM=_AutoModel, AutoProcessor=_AutoProcessor),
+        SimpleNamespace(AutoModelForImageTextToText=_AutoModel, AutoProcessor=_AutoProcessor),
     )
     args = SimpleNamespace(
         device="cuda",
