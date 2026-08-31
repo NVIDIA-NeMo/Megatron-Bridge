@@ -23,6 +23,7 @@ from megatron.core.utils import unwrap_model
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.hybridep import register_hybridep_thd_padding
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -113,6 +114,9 @@ class DistillationProvider(TransformerConfig):
             self.full_model = student_model
             student_model = getattr(student_model, self.distill_submodule)
             teacher_model = getattr(teacher_model, self.distill_submodule)
+            # Runtime hooks registered on the composite roots do not follow an extracted submodule.
+            register_hybridep_thd_padding(student_model, student_model.config)
+            register_hybridep_thd_padding(teacher_model, teacher_model.config)
 
         kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
         modelopt_cfg = {

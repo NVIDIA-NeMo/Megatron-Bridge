@@ -23,6 +23,7 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.hybridep import set_hybridep_padding_for_layout
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -308,6 +309,8 @@ def forward_step(
 
     if loss_mask is not None:
         loss_mask = loss_mask.contiguous()
+
+    set_hybridep_padding_for_layout(model, forward_args.get("packed_seq_params"), config=config)
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

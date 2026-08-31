@@ -140,6 +140,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         """Finalize provider state after configuration overrides are applied."""
         pass
 
+    def _configure_runtime_model(self, model: ModelT) -> None:
+        """Install provider-specific runtime behavior on a newly created model."""
+
     def apply_overrides_and_finalize(
         self,
         dtype: torch.dtype | None = None,
@@ -738,6 +741,7 @@ def _create_model(
                 post_process=post_process,
                 vp_stage=i,
             )
+            model_provider._configure_runtime_model(this_model)
             this_model.model_type = model_type
             this_model.vp_stage = i
             model.append(this_model)
@@ -748,6 +752,7 @@ def _create_model(
             pre_process=pre_process,
             post_process=post_process,
         )
+        model_provider._configure_runtime_model(model)
         model.model_type = model_type
 
     if not isinstance(model, list):

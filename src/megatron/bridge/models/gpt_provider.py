@@ -37,6 +37,7 @@ from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.models.hybridep import register_hybridep_thd_padding
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -224,6 +225,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     _pg_collection: Optional[ProcessGroupCollection] = None
 
+    def _configure_runtime_model(self, model: MCoreGPTModel) -> None:
+        """Install runtime layout selection for automatic HybridEP padding."""
+        register_hybridep_thd_padding(model, self)
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 
@@ -322,6 +327,8 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 vp_stage=vp_stage,
                 mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
             )
+
+        self._configure_runtime_model(model)
 
         # If using full TE layer, need to set TP, CP group since the module call
         # is not routed through megatron core, which normally handles passing the

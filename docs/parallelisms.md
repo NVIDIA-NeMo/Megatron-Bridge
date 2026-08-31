@@ -225,20 +225,24 @@ model_config = GPTModelProvider(
 apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="hybridep")
 ```
 
-Megatron Bridge automatically enables `moe_hybridep_pad_uneven_dispatch_inputs`
-when an eager model config uses the HybridEP flex backend. HybridEP requires
-equal per-rank dispatch shapes, but dynamically packed THD batches can produce
-different local token counts. The safety path takes the group-wide maximum token
-count, aligns it for the kernel, pads each rank before dispatch, and removes the
-padding after combine.
+For eager HybridEP models whose padding setting is disabled, Megatron Bridge
+automatically enables `moe_hybridep_pad_uneven_dispatch_inputs` only while a
+runtime forward uses THD packed-sequence metadata. Dynamically packed THD batches
+can produce different local token counts, while HybridEP requires equal per-rank
+dispatch shapes. The safety path takes the group-wide maximum token count, aligns
+it for the kernel, pads each rank before dispatch, and removes the padding after
+combine.
 
-This adds a MAX all-reduce and temporary padding overhead, including when every
-rank already supplies the same number of tokens. The safety path does not enable
-HybridEP or sequence packing; configure those separately.
+Dense BSHD forwards preserve the configured setting and therefore stay on the
+unpadded path by default. This avoids the per-MoE-layer MAX all-reduce, host scalar
+synchronization, and temporary padding allocations when fixed-width BSHD ranks
+already have equal token counts. Explicitly enabling the setting continues to
+apply it to both layouts. The safety path does not enable HybridEP or sequence
+packing; configure those separately.
 
 CUDA-graph configs preserve their explicit padding setting because the uneven-input
 path performs a host scalar synchronization that is not capture-safe. They must
-provide equal per-rank dispatch shapes. Disable CUDA graphs when runtime token
+provide equal per-rank dispatch shapes. Disable CUDA graphs when runtime THD token
 counts can differ so Bridge can enable safe padding.
 
 **GPU Architecture Requirements:**

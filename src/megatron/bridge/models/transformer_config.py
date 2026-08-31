@@ -71,12 +71,6 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
         config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
 
 
-_HYBRIDEP_PADDING_FIELDS = (
-    "moe_hybridep_pad_uneven_dispatch_inputs",
-    "moe_hybridep_pad_variable_tokens",
-)
-
-
 def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> None:
     """Default expert tensor parallelism to one when expert parallelism is enabled.
 
@@ -86,48 +80,6 @@ def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> N
     """
     if config.expert_tensor_parallel_size is None and config.expert_model_parallel_size > 1:
         config.expert_tensor_parallel_size = 1
-
-
-def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
-    """Ensure eager HybridEP can dispatch different token counts across ranks.
-
-    Bridge model configs are finalized before runtime batches expose whether their
-    THD token counts differ by rank. HybridEP requires equal dispatch shapes, so use
-    Megatron Core's padding path for eager Bridge-configured HybridEP dispatchers.
-    CUDA-graph configs retain their explicit setting because the padding path's host
-    scalar synchronization is not capture-safe; those configs require equal inputs.
-    """
-
-    def _uses_legacy_full_iteration(value: object) -> bool:
-        values = value if isinstance(value, list) else [value]
-        return any(
-            "full_iteration" in item.split(",")
-            if isinstance(item, str)
-            else getattr(item, "name", None) == "full_iteration"
-            for item in values
-        )
-
-    cuda_graph_impl = getattr(config, "cuda_graph_impl", "none")
-    cuda_graphs_enabled = (
-        cuda_graph_impl not in (None, "none")
-        or getattr(config, "enable_cuda_graph", False)
-        or getattr(config, "external_cuda_graph", False)
-        or _uses_legacy_full_iteration(getattr(config, "cuda_graph_modules", None))
-        or _uses_legacy_full_iteration(getattr(config, "cuda_graph_scope", None))
-    )
-    if (
-        config.moe_token_dispatcher_type != "flex"
-        or config.moe_flex_dispatcher_backend != "hybridep"
-        or cuda_graphs_enabled
-    ):
-        return
-
-    padding_fields = tuple(field_name for field_name in _HYBRIDEP_PADDING_FIELDS if hasattr(config, field_name))
-    if not padding_fields:
-        raise AttributeError("Megatron Core TransformerConfig does not expose a HybridEP uneven-input padding field")
-    for padding_field in padding_fields:
-        if not getattr(config, padding_field):
-            setattr(config, padding_field, True)
 
 
 @dataclass
@@ -175,7 +127,6 @@ class TransformerConfig(MCoreTransformerConfig):
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
-        _enable_safe_hybridep_dispatch(self)
         MCoreTransformerConfig.__post_init__(self)
 
         # In-batch packing produces variable-length packed sequences across microbatches,
@@ -252,7 +203,6 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
-        _enable_safe_hybridep_dispatch(self)
         MCoreMLATransformerConfig.__post_init__(self)
 
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
@@ -309,7 +259,6 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
-        _enable_safe_hybridep_dispatch(self)
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True

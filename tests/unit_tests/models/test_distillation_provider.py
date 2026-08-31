@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -20,7 +21,23 @@ import torch
 from megatron.bridge.models.distillation_provider import DistillationProvider, convert_to_distillation_provider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.hybridep import HYBRIDEP_PADDING_FIELDS
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
+
+
+class _PackedLanguageModel(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+    def forward(self, *, packed_seq_params=None):
+        return self.config
+
+
+class _CompositeModel(torch.nn.Module):
+    def __init__(self, language_model):
+        super().__init__()
+        self.language_model = language_model
 
 
 class TestDistillationProvider:
@@ -259,6 +276,50 @@ class TestDistillationProvider:
         # The full model is retained for export; only the distilled submodule is returned as the model.
         assert student.full_model is student_full
         assert result[0] is student_full.language_model
+
+    def test_convert_hook_distill_submodule_preserves_hybridep_layout_selection(self):
+        """The extracted student and teacher submodules retain THD-only HybridEP hooks."""
+        student_base, teacher = self._make_pair()
+        padding_field = next(
+            field for field in HYBRIDEP_PADDING_FIELDS if field in GPTModelProvider.__dataclass_fields__
+        )
+        student = convert_to_distillation_provider(
+            student_base, teacher, kd_config=ModelOptDistillConfig(), distill_submodule="language_model"
+        )
+        config_kwargs = {
+            "moe_token_dispatcher_type": "flex",
+            "moe_flex_dispatcher_backend": "hybridep",
+            "cuda_graph_impl": "none",
+            padding_field: False,
+        }
+        student_config = SimpleNamespace(**config_kwargs)
+        teacher_config = SimpleNamespace(**config_kwargs)
+        student_language_model = _PackedLanguageModel(student_config)
+        teacher_language_model = _PackedLanguageModel(teacher_config)
+        student_full = _CompositeModel(student_language_model)
+        teacher_full = _CompositeModel(teacher_language_model)
+        teacher.provide_distributed_model = Mock(return_value=[teacher_full])
+        kd_cfg = SimpleNamespace(criterion={}, loss_balancer=None)
+
+        with (
+            patch("megatron.bridge.models.distillation_provider.unwrap_model", side_effect=lambda model: model),
+            patch(
+                "megatron.bridge.models.distillation_provider.mtd_mcore.setup_distillation_config", return_value=kd_cfg
+            ),
+            patch("megatron.bridge.models.distillation_provider.mtd.convert", side_effect=lambda model, mode: model),
+            patch("megatron.bridge.models.distillation_provider.mtd_mcore.adjust_distillation_model_for_mcore"),
+        ):
+            result = student._convert_hook([student_full])
+
+        student_language_model(packed_seq_params=SimpleNamespace(qkv_format="thd"))
+        teacher_language_model(packed_seq_params=SimpleNamespace(qkv_format="thd"))
+        assert getattr(student_config, padding_field) is True
+        assert getattr(teacher_config, padding_field) is True
+
+        result[0]()
+        teacher_language_model()
+        assert getattr(student_config, padding_field) is False
+        assert getattr(teacher_config, padding_field) is False
 
     def test_setattr_mirrors_to_teacher(self):
         """Test __setattr__ mirrors attributes to teacher when teacher has that attribute."""
