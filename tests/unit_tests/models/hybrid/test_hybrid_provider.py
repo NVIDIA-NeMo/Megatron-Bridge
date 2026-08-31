@@ -19,7 +19,14 @@ import pytest
 import torch
 from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer import ModuleSpec
-from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+
+
+try:
+    from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+except ModuleNotFoundError as exc:
+    if exc.name != "megatron.core.transformer.attention_layer_config":
+        raise
+    from megatron.core.transformer.transformer_config import TransformerConfig as AttentionLayerConfig
 from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnBackend
 
