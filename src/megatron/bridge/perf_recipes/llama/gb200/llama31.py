@@ -56,9 +56,11 @@ def llama31_8b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.fp8_dot_product_attention = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.use_transformer_engine_op_fuser = True
+    cfg.validation.eval_global_batch_size = 16
     cfg.validation.eval_interval = 768
     cfg.validation.eval_iters = 64
     cfg.train.eval_iters = 64
+    cfg.validation.eval_micro_batch_size = 2
     cfg.scheduler.lr_decay_iters = 1199984
     cfg.scheduler.lr_decay_steps = 19199744
     cfg.scheduler.lr_warmup_iters = 16
@@ -114,8 +116,10 @@ def llama31_8b_pretrain_72gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.fp8_dot_product_attention = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.use_transformer_engine_op_fuser = True
+    cfg.validation.eval_global_batch_size = 72
     cfg.validation.eval_interval = 171
     cfg.validation.eval_iters = 15
+    cfg.validation.eval_micro_batch_size = 1
     cfg.train.eval_iters = 15
     cfg.scheduler.lr_decay_iters = 1199936
     cfg.scheduler.lr_decay_steps = 86395392
@@ -171,8 +175,10 @@ def llama31_8b_pretrain_512gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.ddp.fp8_param_gather = True
     cfg.model.tp_comm_bootstrap_backend = 'gloo'
     cfg.model.tp_comm_overlap = True
+    cfg.validation.eval_global_batch_size = 64
     cfg.validation.eval_interval = 192
     cfg.validation.eval_iters = 16
+    cfg.validation.eval_micro_batch_size = 1
     cfg.train.eval_iters = 16
     cfg.scheduler.lr_decay_iters = 1199936
     cfg.scheduler.lr_decay_steps = 76795904

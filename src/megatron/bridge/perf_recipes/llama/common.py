@@ -246,3 +246,7 @@ def _llama31_8b_common(cfg: ConfigContainer) -> None:
     cfg.rng.te_rng_tracker = True
     cfg.ddp.align_param_gather = False
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.validation.full_validation = False
+    cfg.validation.multiple_validation_sets = False
+    cfg.validation.skip_train = False
+    cfg.validation.test_mode = False
