@@ -1,0 +1,18 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Editable install for performance scripts so "utils" (and utils.datasets, etc.) is importable.
+# Usage: pip install -e .   (from this directory, or pip install -e scripts/performance from repo root)
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "megatron-bridge-performance"
+version = "0.1.0"
+description = "Megatron-Bridge performance scripts and utils (installable for import resolution)"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["utils", "utils.*"]
