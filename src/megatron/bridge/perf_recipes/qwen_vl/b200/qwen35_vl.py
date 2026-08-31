@@ -21,7 +21,7 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     _perf_precision,
     _qwen35_vl_common,
     _qwen35_vl_post,
-    _qwen35_vl_post_clear_scope_with_overlap,
+    _qwen35_vl_post_clear_scope,
     qwen35_vl_35b_a3b_pretrain_mock_config,
     qwen35_vl_122b_a10b_pretrain_mock_config,
     qwen35_vl_397b_a17b_pretrain_mock_config,
@@ -144,7 +144,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -189,8 +189,6 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× B200, MXFP8."""
     cfg = qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -236,7 +234,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -281,8 +279,6 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× B200, MXFP8."""
     cfg = qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
