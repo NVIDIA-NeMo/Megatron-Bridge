@@ -396,11 +396,11 @@
     },
     {
       "architecture": "DeepseekV4ForCausalLM",
-      "base_container": "nvcr.io/nvidia/nemo:26.08.rc4",
-      "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+      "base_container": "nvcr.io/nvidia/nemo:26.08",
+      "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
       "entries": [
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
           "command_topologies": [
             {
               "nodes": "1"
@@ -412,7 +412,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-hf-to-megatron-cpu",
-          "expected_result": "CPU import requires approximately 570 GB merely for the full BF16 weight materialization, plus conversion overhead. Prior attempts exhausted the available node memory, but that resource limit does not establish a product-level lack of support. A high-memory-node run must complete and produce a reloadable checkpoint before this item is promoted.\n",
+          "expected_result": "CPU import requires approximately 570 GB of CPU RAM for the full BF16 weight materialisation (285B parameters x 2 bytes). Verification requires a high-memory node with enough additional headroom for conversion workspace and strict checkpoint reload.\n",
           "hardware": null,
           "last_verified": null,
           "metrics": {},
@@ -433,12 +433,12 @@
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --ep 4 --hf-model deepseek-ai/DeepSeek-V4-Flash --megatron-path work/model-verification/dsv4-flash/import-gpu --torch-dtype bfloat16 --trust-remote-code"
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --ep 4 --hf-model deepseek-ai/DeepSeek-V4-Flash --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1 --megatron-path work/model-verification/dsv4-flash/import-gpu --torch-dtype bfloat16 --trust-remote-code"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-hf-to-megatron-gpu",
-          "expected_result": "The command exits successfully and creates iter_0000000. The checkpoint is reloadable and paired GPU export produces correct HF weights.\n",
+          "expected_result": "The command exits successfully and creates a reloadable iter_0000000 Megatron checkpoint.\n",
           "hardware": null,
           "last_verified": "2026-08-04",
           "metrics": {},
@@ -449,19 +449,19 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
           "command_topologies": [
             {
               "nodes": "1"
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model deepseek-ai/DeepSeek-V4-Flash --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1 --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --hf-path work/model-verification/dsv4-flash/export-cpu --torch-dtype bfloat16 --trust-remote-code"
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model deepseek-ai/DeepSeek-V4-Flash --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1 --megatron-path work/model-verification/dsv4-flash/import-cpu/iter_0000000 --hf-path work/model-verification/dsv4-flash/export-cpu --torch-dtype bfloat16 --trust-remote-code"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-megatron-to-hf-cpu",
-          "expected_result": "CPU export requires approximately 570 GB merely for the full BF16 weight set, plus tensor-merging overhead. Prior attempts exhausted the available node memory, but that resource limit does not establish a product-level lack of support. A high-memory-node run must complete and produce a reloadable Hugging Face checkpoint before this item is promoted.\n",
+          "expected_result": "CPU export requires a high-memory node with enough headroom for the full BF16 weight set and tensor-merging workspace, followed by strict Hugging Face reload.\n",
           "hardware": null,
           "last_verified": null,
           "metrics": {},
@@ -472,25 +472,27 @@
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "2859a3ee0f02743c54b390de91fee878c6de8909",
           "command_topologies": [
             {
               "expert_parallel": "8",
+              "expert_tensor_parallel": "1",
               "gpus_per_node": "4",
               "nodes": "2",
-              "pipeline_parallel": "4",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "1",
               "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --ep 8 --pp 4 --hf-model deepseek-ai/DeepSeek-V4-Flash --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --hf-path work/model-verification/dsv4-flash/export-gpu --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code"
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --tp 1 --pp 1 --ep 8 --etp 1 --hf-model deepseek-ai/DeepSeek-V4-Flash --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1 --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --hf-path work/model-verification/dsv4-flash/export-gpu --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code --not-strict"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-megatron-to-hf-gpu",
-          "expected_result": "The command exits successfully and writes 46 BF16 safetensors shards covering all transformer-layer parameters. The export completes 4176/4176 weight conversions with zero errors.\n",
+          "expected_result": "Two GB200 nodes produced 46 complete safetensors shards containing all 35,020 expected non-scale source keys. BF16 export intentionally omitted 34,167 quantization-scale companions; 35,017 exported tensors are BF16 and the three I32 tid2eid routing tables exactly match their source values after the expected integer cast. Two independent Transformers processes each strictly reloaded all 1,500 model modules across four GPUs with no CPU or disk placement and produced the same bounded greedy token. --not-strict permits only the intentional scale omission; exact key, shard, dtype, routing-table value, and reload checks remain required correctness gates.\n",
           "hardware": null,
-          "last_verified": "2026-08-05",
+          "last_verified": "2026-08-21",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_gpu",
@@ -499,23 +501,23 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
           "command_topologies": [
             {
               "expert_parallel": "4",
               "gpus_per_node": "4",
-              "nodes": "2",
+              "nodes": "1",
               "pipeline_parallel": "1",
-              "total_gpus": 8
+              "total_gpus": 4
             }
           ],
           "commands": [
-            "./scripts/inference/infer.sh --executor slurm --task model-comparison --nodes 2 --gpus-per-node 4 --ep 4 --hf_model_path deepseek-ai/DeepSeek-V4-Flash --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --pp 1 --ep 4 --prompt \"The capital of France is the city of\" --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1"
+            "./scripts/inference/infer.sh --task model-comparison --nodes 1 --gpus-per-node 4 --ep 4 --hf_model_path deepseek-ai/DeepSeek-V4-Flash --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --pp 1 --ep 4 --prompt \"The capital of France is the city of\" --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-manual-forward-pass",
-          "expected_result": "Blocked: loading the HF model and Megatron model simultaneously on 4 GB200 GPUs (4 x 192 GB = 768 GB) exceeds the available GPU memory for the combined 285 B parameter model. Requires 8 or more nodes for side-by-side comparison.\n",
+          "expected_result": "The attempted four-GPU side-by-side load exceeded the available 768 GB of aggregate GPU memory. Verification requires a larger allocation sized from measured peak memory; no minimum working topology has been established.\n",
           "hardware": null,
           "last_verified": null,
           "metrics": {},
@@ -526,7 +528,7 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -544,7 +546,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-inference",
-          "expected_result": "Optimized KV-cache autoregressive inference currently conflicts with DSv4HybridAttention's requirement that inference_context be None. The maintained legacy full-prefix task intentionally disables that context and is therefore a plausible non-cached compatibility path, but no exact DeepSeek V4 run has completed. The command must finish one synchronous deterministic greedy generation before this item is promoted.\n",
+          "expected_result": "Optimized KV-cache autoregressive inference conflicts with DSv4HybridAttention's requirement that inference_context be None. The maintained legacy full-prefix task disables that context and remains a plausible non-cached compatibility path, but the exact model command must complete deterministic greedy generation before this item is promoted.\n",
           "hardware": null,
           "last_verified": null,
           "metrics": {},
@@ -555,68 +557,73 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "dff6445009ebd054028a883ea6d84f9a16ad6b9c",
           "command_topologies": [
             {
               "gpus_per_node": "4",
               "nodes": "16",
-              "recipe": "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config",
+              "recipe": "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config",
               "total_gpus": 64
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config --dataset megatron-indexed --max_steps 100 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/rp2 dataset.num_workers=0 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_warmup_iters=40 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null --save_dir work/model-verification/dsv4-flash/pretrain-ref --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=60"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config --mode pretrain --dataset megatron-indexed --max_steps 100 --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000 'dataset.blend=[[\"work/data/the-pile/my-gpt3_08_text_document\"],null]' dataset.path_to_cache=work/cache/the-pile dataset.num_workers=0 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.finetune=false checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false --save_dir work/model-verification/dsv4-flash/pretrain-ref --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120"
           ],
           "dimensions": {},
-          "enabled_features": {},
-          "entry_id": "deepseek-v4-flash-pretrain-gb200",
-          "expected_result": "On 64 GB200 (16 nodes x 4 GPUs), the recipe runs with TP=1/PP=8/EP=8/CP=1/DP=1 and GBS/MBS 256/1. Data is RP2 tokenized with Llama SentencePiece (token IDs 0-31999 are within DSV4 vocab 0-129279; NullTokenizer is used). The run completes 100 steps from random initialisation with finite loss, no skipped or NaN iterations, and complete checkpoints at steps 50 and 100. Note: set dataset.num_workers=0 to avoid an NCCL pipeline timeout during data loading.\n",
-          "hardware": "GB200",
-          "last_verified": "2026-08-04",
-          "metrics": {
-            "final_loss": 6.05023,
-            "initial_loss": 12.64786,
-            "last_10_steps_model_tflops_per_gpu_avg": 142.91,
-            "last_10_steps_step_time_ms_avg": 10415.76,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 1573.001
+          "enabled_features": {
+            "moe_dispatcher": "hybridep"
           },
-          "precision": "bf16",
+          "entry_id": "deepseek-v4-flash-pretrain-gb200",
+          "expected_result": "On 64 GB200 (16 nodes x 4 GPUs), TP1/PP4/VPP4/EP16/CP1 uses dense DP16, expert DP1, and GBS/MBS 256/1. The command loads the imported model weights while starting optimizer and RNG state fresh. It uses HybridEP natural routing, grouped GEMM, TE fused cross entropy, selective recompute over mhc and mla_up_proj, and MXFP8 parameter gather and gradient-buffer reuse without activation offload. Expert capacity, paged stash, CUDA graphs, and forced load balancing remain disabled. The run completed 100 finite LM/MTP-loss steps with no skipped or NaN iterations and wrote complete grouped-MXFP8 checkpoints containing model, optimizer, scheduler, data-order, and RNG state at steps 50 and 100. The item-specific Bridge revision pins the compatible Megatron-LM dev revision used by this workload without changing the card's default environment for other verification items.\n",
+          "hardware": "GB200",
+          "last_verified": "2026-08-27",
+          "metrics": {
+            "final_loss": 3.280722,
+            "initial_loss": 7.250204,
+            "last_10_steps_model_tflops_per_gpu_avg": 189.69,
+            "last_10_steps_step_time_ms_avg": 7856.37,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2085.441495
+          },
+          "precision": "fp8_mx",
           "source_pointer": "items.pretrain.GB200",
           "status": "verified",
           "variant": null,
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
           "command_topologies": [
             {
-              "context_parallel": "2",
+              "context_parallel": "1",
               "expert_parallel": "8",
               "gpus_per_node": "4",
-              "nodes": "16",
+              "nodes": "8",
               "pipeline_parallel": "4",
-              "recipe": "deepseek_v4_flash_sft_openmath_thinking_packed_config",
-              "total_gpus": 64
+              "recipe": "deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config",
+              "sequence_length": "1024",
+              "total_gpus": 32
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config --step-func dsv4_step --pretrained_checkpoint work/models/deepseek-v4-flash-megatron --save_dir work/model-verification/dsv4-flash/sft-ref --save_interval 100 --max_steps 100 model.pipeline_model_parallel_size=4 'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL' model.context_parallel_size=2 model.expert_model_parallel_size=8 model.moe_grouped_gemm=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 dataset.seq_length=1024 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
+            "./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config --mode sft --step-func dsv4_step --pretrained_checkpoint work/models/deepseek-v4-flash-megatron --save_dir work/model-verification/dsv4-flash/sft-ref --save_interval 100 --max_steps 100 --seq_length 1024 --pipeline_model_parallel_size 4 --context_parallel_size 1 --expert_model_parallel_size 8 'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL' scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.save_optim=false ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
           ],
           "dimensions": {},
           "enabled_features": {
-            "context_parallel_size": 2,
+            "moe_dispatcher": "hybridep",
             "sequence_packing": "offline"
           },
           "entry_id": "deepseek-v4-flash-sft-gb200",
-          "expected_result": "On 64 GB200 (16 nodes x 4 GPUs), TP=1/PP=4/EP=8/CP=2/DP=1, GBS/MBS 128/1. OpenMathInstruct-2 thinking data with offline packing, seq_length=1024. Full recompute (granularity=full) is required to fit in memory at seq=1024 with CP=2. HybridEP dispatcher and DSA kernel fusion are enabled via the GB200-specific recipe. The run completes 100 steps with finite LM and MTP losses, no skipped or NaN iterations, and a complete step-100 checkpoint. moe_grouped_gemm=False is preserved for export compatibility. dist.distributed_timeout_minutes must be 180 or above to allow offline data packing (approximately 63 minutes) before training begins.\n",
+          "expected_result": "On 32 GB200 (8 nodes x 4 GPUs), TP1/PP4/EP8/CP1 with dense DP8 and expert DP1, GBS/MBS 128/1. OpenMathInstruct-2 thinking data uses offline packing at seq_length=1024 with fixed token and cumulative-boundary shapes. The GB200 recipe uses selective recompute over moe, mhc, mla_up_proj, and layernorm, attention activation offload, HybridEP dispatch, and DSA kernel fusion without enabling the optional DSA indexer loss. The run completed 100 steps with finite LM and MTP losses, no skipped or NaN iterations, and a complete model checkpoint at step 100. A fresh process reloaded that checkpoint and completed finite step 101. moe_grouped_gemm=True is a recipe default. dist.distributed_timeout_minutes must be 180 or above to allow offline data packing (approximately 63 minutes) before training begins.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-07",
+          "last_verified": "2026-08-20",
           "metrics": {
-            "final_loss": 0.2837,
-            "initial_loss": 0.94383,
-            "last_10_steps_model_tflops_per_gpu_avg": 13.62,
-            "last_10_steps_step_time_ms_avg": 13806.5,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 148.336
+            "final_loss": 0.2834835,
+            "initial_loss": 0.9435847,
+            "last_10_steps_model_tflops_per_gpu_avg": 42.18,
+            "last_10_steps_step_time_ms_avg": 8575.85,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 477.620294,
+            "peak_allocated_memory_gib": 184.96,
+            "peak_reserved_memory_gib": 187.04
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
@@ -625,7 +632,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "2859a3ee0f02743c54b390de91fee878c6de8909",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -633,18 +640,22 @@
               "nodes": "2",
               "total_gpus": 8
             },
-            {}
+            {
+              "gpus_per_node": "4",
+              "nodes": "2",
+              "total_gpus": 8
+            }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --ep 8 --hf-model deepseek-ai/DeepSeek-V4-Flash --megatron-path work/model-verification/dsv4-flash/sft-ref/iter_0000100 --hf-path work/model-verification/dsv4-flash/sft-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code --not-strict",
-            "uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py --hf-model work/model-verification/dsv4-flash/sft-export --prompt \"In one short sentence, explain why Paris is important to France.\" --max-new-tokens 32 --chat-template --disable-thinking"
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 4 --ep 8 --hf-model deepseek-ai/DeepSeek-V4-Flash --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1 --megatron-path work/model-verification/dsv4-flash/sft-ref/iter_0000100 --hf-path work/model-verification/dsv4-flash/sft-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --trust-remote-code --not-strict",
+            "./scripts/inference/infer.sh --task hf-inference --nodes 2 --gpus-per-node 4 --tasks-per-node 1 --hf-model work/model-verification/dsv4-flash/sft-export --prompt \"In one short sentence, explain why Paris is important to France.\" --max-new-tokens 32 --chat-template --disable-thinking --trust-remote-code --dtype bfloat16 --device-map auto --autocast --require-gpu-only"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-sft-export-inference-gb200",
-          "expected_result": "The exported BF16 SFT checkpoint reloads successfully as DeepseekV4ForCausalLM. Two independent greedy runs produce byte-identical token IDs and exactly 32 new tokens with this literal completion: \"Paris is important to France because it is the country's capital and a major center for politics, culture, and economy. It is also a symbol of French history\"\n",
+          "expected_result": "The objective-preserving step-100 SFT checkpoint exported successfully on two GB200 nodes. Its 46 complete safetensors shards contain all 35,020 expected non-scale source keys: 35,017 BF16 tensors and three value-matched I32 tid2eid routing tables, with 34,167 quantization-scale companions intentionally omitted for BF16. Two maintained-verifier processes independently reloaded all 1,500 model modules across four GPUs each, reported no missing, unexpected, mismatched, or error loading entries, used no CPU or disk placement, and generated exactly 32 new tokens at the 32-token maximum with identical output. The literal completion was: \"Paris is important to France because it is the country's capital, a major economic and cultural center, and a symbol of French history, art, and architecture.\"\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-06",
+          "last_verified": "2026-08-21",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.GB200",
@@ -666,7 +677,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config --step-func dsv4_step --pretrained_checkpoint work/models/deepseek-v4-flash-megatron --save_dir work/model-verification/dsv4-flash/sft-ref --save_interval 100 --max_steps 100 model.pipeline_model_parallel_size=4 'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL' model.context_parallel_size=2 model.cp_partition_mode=contiguous model.expert_model_parallel_size=8 model.moe_grouped_gemm=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 dataset.seq_length=1024 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config --step-func dsv4_step --pretrained_checkpoint work/models/deepseek-v4-flash-megatron --save_dir work/model-verification/dsv4-flash/sft-long-context-ref --save_interval 100 --max_steps 100 model.pipeline_model_parallel_size=4 'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL' model.context_parallel_size=2 model.cp_partition_mode=contiguous model.expert_model_parallel_size=8 model.moe_grouped_gemm=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 dataset.seq_length=1024 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -674,7 +685,7 @@
             "sequence_packing": "offline"
           },
           "entry_id": "deepseek-v4-flash-sft-long-context-gb200",
-          "expected_result": "Same run as sft.GB200. CP=2 with contiguous partitioning and offline-packed OpenMathInstruct-2 at seq_length=1024 demonstrates sequence packing and context parallelism working together over 100 training steps with finite loss and no skipped or NaN iterations.\n",
+          "expected_result": "CP=2 with contiguous partitioning and offline-packed OpenMathInstruct-2 at seq_length=1024 demonstrates sequence packing and context parallelism working together over 100 training steps with finite loss and no skipped or NaN iterations.\n",
           "hardware": "GB200",
           "last_verified": "2026-08-07",
           "metrics": {
@@ -691,55 +702,80 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "043d9cdaa1ac0cb52437d8d417a9f3150dfcae3b",
+          "command_topologies": [
+            {
+              "context_parallel": "1",
+              "expert_parallel": "8",
+              "gpus_per_node": "4",
+              "nodes": "8",
+              "pipeline_parallel": "4",
+              "recipe": "deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config",
+              "sequence_length": "1024",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 8 --gpus-per-node 4 --recipe deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config --mode lora --step-func dsv4_step --pretrained_checkpoint work/models/deepseek-v4-flash-megatron --save_dir work/model-verification/dsv4-flash/peft-ref --save_interval 100 --max_steps 100 --seq_length 1024 --pipeline_model_parallel_size 4 --context_parallel_size 1 --expert_model_parallel_size 8 'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL' scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.save_optim=false ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
+          ],
           "dimensions": {},
-          "enabled_features": {},
+          "enabled_features": {
+            "cuda_graph": {
+              "implementation": "transformer_engine",
+              "scopes": [
+                "moe_router",
+                "moe_preprocess"
+              ]
+            },
+            "moe_dispatcher": "hybridep",
+            "sequence_packing": "offline"
+          },
           "entry_id": "deepseek-v4-flash-peft-gb200",
-          "expected_result": "No exact DeepSeek V4 PEFT recipe is currently exported. Recipe absence does not establish an architectural lack of support; this item remains unverified until a public recipe and bounded run pass the PEFT gates.\n",
+          "expected_result": "On 32 GB200 (8 nodes x 4 GPUs), TP1/PP4/EP8/CP1 with dense DP8 and expert DP1, GBS/MBS 128/1. The recipe applies rank-32, alpha-32 LoRA with zero dropout to linear_q_down_proj, linear_q_up_proj, linear_kv_proj, linear_proj, linear_fc1, and linear_fc2. Routed experts use separate per-expert adapters; shared experts are also adapted. The run preserves the packed OpenMath thinking data, objective, natural routing, seed, and warmup/decay horizon used by the verified SFT item while freezing the base model and using PEFT's own 1e-4 peak learning rate. It disables activation recompute and offload because the reduced PEFT training-state footprint fits with 53.712 GiB peak allocated memory. Transformer Engine CUDA graphs cover moe_router and moe_preprocess, while HybridEP uses 32 flex-dispatcher SMs, 8 ranks per NVLink domain, 128-token combine chunks, a 72-GPU domain, and MNNVL. All 100 steps completed with finite LM/MTP losses and zero skipped or NaN iterations. LM/MTP losses were 0.9435847/0.2250465 at step 1 and 0.2914867/0.02638751 at step 100. The adapter-only checkpoint reloaded after the same base checkpoint in a fresh process and completed finite step 101 with LM loss 0.2827368 and MTP loss 0.02594211.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-08-25",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.2914867,
+            "initial_loss": 0.9435847,
+            "last_10_steps_model_tflops_per_gpu_avg": 52.0,
+            "last_10_steps_step_time_ms_avg": 6944.33,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 589.83372,
+            "peak_allocated_memory_gib": 53.712,
+            "peak_reserved_memory_gib": 53.953
           },
           "precision": "bf16",
           "source_pointer": "items.peft.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "peft"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "dff6445009ebd054028a883ea6d84f9a16ad6b9c",
           "command_topologies": [
             {
               "gpus_per_node": "4",
               "nodes": "16",
-              "recipe": "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config",
+              "recipe": "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config",
               "total_gpus": 64
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config --dataset megatron-indexed --max_steps 100 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/rp2 dataset.num_workers=0 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_warmup_iters=40 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false train.empty_unused_memory_level=2 --load_dir work/model-verification/dsv4-flash/pretrain-ref --save_dir work/model-verification/dsv4-flash/pretrain-resumed --save_interval 50 checkpoint.ckpt_step=50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=60"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config --mode pretrain --dataset megatron-indexed --max_steps 100 'dataset.blend=[[\"work/data/the-pile/my-gpt3_08_text_document\"],null]' dataset.path_to_cache=work/cache/the-pile dataset.num_workers=0 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.finetune=false checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false --load_dir work/model-verification/dsv4-flash/pretrain-ref --save_dir work/model-verification/dsv4-flash/pretrain-resumed --save_interval 50 checkpoint.ckpt_step=50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-checkpoint-resume-gb200",
-          "expected_result": "The command restores optimizer, scheduler, data-order, and RNG state from pretrain-ref step 50 and runs steps 51-100 in a separate output root. Step-51 loss 6.767332 matches the uninterrupted reference 6.767334 exactly (absolute delta 0.000002, 0.00003%). Step-100 loss 6.054250 matches reference 6.050228 with delta 0.004022 (0.066%), within the declared 1% tolerance. Both sentinels match and all five metrics are recorded.\n",
+          "expected_result": "The direct 64-GPU TP1/PP4/VPP4/EP16 continuation restores model, optimizer, scheduler, data-order, and RNG state from the complete step-50 reference checkpoint, starts at step 51, and finishes at step 100 in a distinct output root. All 50 resumed steps are finite with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and a complete full-state step-100 checkpoint is saved. Step-51 resumed/reference LM loss is 4.028752/4.028773, an absolute difference of 0.000021. Step-100 resumed/reference LM loss is 3.261145/3.280722, an absolute difference of 0.019577. Both sentinels pass the declared 1% relative and 1e-6 absolute gate.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-04",
+          "last_verified": "2026-08-27",
           "metrics": {
-            "final_loss": 6.05425,
-            "initial_loss": 6.76733,
-            "last_10_steps_model_tflops_per_gpu_avg": 101.56,
-            "last_10_steps_step_time_ms_avg": 14648.11,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 1118.506
+            "final_loss": 3.261145,
+            "initial_loss": 4.028752,
+            "last_10_steps_model_tflops_per_gpu_avg": 186.64,
+            "last_10_steps_step_time_ms_avg": 7995.85,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2049.062951
           },
-          "precision": "bf16",
+          "precision": "fp8_mx",
           "source_pointer": "items.checkpoint_resume.GB200",
           "status": "verified",
           "variant": null,
@@ -761,7 +797,7 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-pretrain-performance-gb200",
-          "expected_result": "On 128 GB200 (32 nodes x 4 GPUs, --segment=16 for NVLink locality), PP=1/EP=64/CP=1/TP=1/DP=2, GBS/MBS 2048/1, FP8-MX with HybridEP dispatcher and full-iteration CUDA graphs. The 50-step run completes with finite losses, no skipped or NaN iterations, and all five metrics recorded. First iteration takes approximately 24 minutes for CUDA graph compilation and kernel warmup; subsequent iterations run at approximately 8.1 seconds per step at steady state. The --segment=16 flag is required to ensure nodes are allocated within NVLink domains for MNNVL communication.\n",
+          "expected_result": "On 128 GB200, PP1/EP64/CP1/TP1/DP2 with GBS/MBS 2048/1, FP8-MX, HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps with finite losses, no skipped or NaN iterations, and all five metrics recorded. This benchmark uses forced routing, a static expert-rank capacity, paged stash, and a different batch/objective contract, so its metrics must not be compared with natural-routing library pretraining as convergence evidence.\n",
           "hardware": "GB200",
           "last_verified": "2026-08-06",
           "metrics": {
@@ -816,7 +852,7 @@
       "min_transformers_version": "5.12.0",
       "slug": "deepseek-v4-flash",
       "source_card": "examples/model_verification_cards/deepseek-v4-flash/card.yaml",
-      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nThe Megatron-backed DeepSeek V4 workflows in this card require the Megatron-Core dev branch; the default MCore submodule revision in Megatron Bridge r0.6.0 is insufficient. Follow the public setup instructions in examples/models/deepseek_v4/README.md.\nDeepSeek-V4-Flash support verification covers GPU conversion, training, and checkpoint resume on GB200. CPU conversion remains unverified because full BF16 materialization requires a high-memory CPU node. Optimized Megatron KV-cache inference is unavailable for DSv4HybridAttention, while the maintained non-cached full-prefix compatibility path remains unverified for this model. PEFT also remains unverified because no exact model recipe is currently exported. SFT export requires nemo_26.08.rc4 or later (TE 2.18) and the Bridge fix for stream_weights_megatron_to_hf None-task handling.\nKnown issues tracked for follow-up PRs: - DSv4ExpertGatedMLPMapping: moe_grouped_gemm=True export produces malformed expert\n  weight shapes due to apply_swiglu_sharded_factory shard reassembly in the export path.\n  Workaround: use moe_grouped_gemm=False for export. Training with moe_grouped_gemm=True\n  is unaffected.\n- MCore moe_hybridep_pad_uneven_dispatch_inputs missing from dev HEAD; apply 1-line patch\n  to megatron/core/transformer/transformer_config.py until upstream MCore PR lands.\n",
+      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nThe Megatron-backed DeepSeek V4 workflows in this card require the Megatron-Core dev branch; the default MCore submodule revision in Megatron Bridge r0.6.0 is insufficient. Follow the public setup instructions in examples/models/deepseek_v4/README.md.\nDeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision. The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused cross entropy, and selective recompute without activation offload. It completed 100 finite steps with full-state checkpoints at steps 50 and 100. A direct step-50 continuation restored optimizer, scheduler, data-order, and RNG state, completed steps 51-100, and passed both loss-sentinel comparisons. A capacity-1.5 performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert assignments and 64.23% of routing probability mass; that result is benchmark-only and is excluded from the natural-routing library recipe and verification metrics. CPU conversion remains unverified because the available nodes lacked sufficient RAM. Standard Megatron KV-cache inference is unsupported for DSV4 hybrid attention; inference uses the HF-native path after export.\nThe GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes, selective whole-MoE recompute, and attention activation offload while preserving the base SFT objective. Its final objective-preserving configuration completed 100 finite steps and a fresh-process checkpoint reload. GPU export of both the imported model and the step-100 SFT checkpoint produced exact BF16 inventories and passed independent strict GPU-only HF reloads. The public post-SFT workflow also produced identical bounded greedy completions from two independent reloads. A separate 100-step CP2 run verifies offline packing with contiguous context parallelism.\nThe GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections and to separate routed/shared expert FC1/FC2 projections. Its execution path uses scoped Transformer Engine CUDA graphs and tuned HybridEP dispatch. It completed 100 finite steps, saved an adapter-only checkpoint, and reloaded that checkpoint in a fresh process for finite step 101.\n",
       "title": "deepseek_v4_flash"
     },
     {
