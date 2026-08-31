@@ -101,12 +101,22 @@ def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
         return config
 
     from huggingface_hub import snapshot_download
+    from huggingface_hub.constants import HF_HUB_OFFLINE
 
+    # `snapshot_download` needs the repo tree listing to expand `allow_patterns` /
+    # `ignore_patterns`, and only caches that listing itself. A cache populated via
+    # per-file downloads (e.g. `transformers.AutoTokenizer.from_pretrained`, which
+    # uses `hf_hub_download`) has the snapshot files but no cached tree listing, so
+    # without `local_files_only` this call falls through to a network request for
+    # the tree and raises `OfflineModeIsEnabled` even though every requested file is
+    # already on disk. Pass `local_files_only` explicitly so offline mode is honored
+    # consistently with `hf_hub_download`.
     snapshot_path = snapshot_download(
         repo_id=tokenizer_model,
         revision=revision,
         allow_patterns=list(_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS),
         ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
+        local_files_only=HF_HUB_OFFLINE,
     )
 
     resolved_config = copy(config)

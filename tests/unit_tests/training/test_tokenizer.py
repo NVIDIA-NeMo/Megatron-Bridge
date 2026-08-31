@@ -128,6 +128,38 @@ class TestTokenizers:
 
     @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
     @patch("huggingface_hub.snapshot_download")
+    def test_build_hf_tokenizer_revision_resolution_honors_offline_mode(
+        self, mock_snapshot_download, mock_build_mcore_tokenizer, monkeypatch
+    ):
+        """`snapshot_download` only caches the repo *tree* listing it fetches itself, so a
+        cache pre-populated via per-file downloads (e.g. `transformers.AutoTokenizer.from_pretrained`,
+        which uses `hf_hub_download`) has the requested files on disk but no cached tree listing.
+        Without `local_files_only`, `snapshot_download` then falls through to a network call for
+        that listing and raises under `HF_HUB_OFFLINE=1`, even though every requested file is
+        already cached. `_resolve_hf_tokenizer_revision` must pass `local_files_only` explicitly
+        so it honors offline mode the same way `hf_hub_download` already does.
+        See https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/5807.
+        """
+        import huggingface_hub
+
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        mock_snapshot_download.return_value = "/cache/models--resolved/snapshots/abc123"
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="Qwen/Qwen3-8B",
+            hf_tokenizer_kwargs={"revision": "abc123"},
+        )
+
+        monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", True)
+        build_tokenizer(config)
+        assert mock_snapshot_download.call_args.kwargs["local_files_only"] is True
+
+        monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_OFFLINE", False)
+        build_tokenizer(config)
+        assert mock_snapshot_download.call_args.kwargs["local_files_only"] is False
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
     def test_build_tokenizer_skips_snapshot_resolution_without_remote_hf_revision(
         self, mock_snapshot_download, mock_build_mcore_tokenizer, tmp_path
     ):
