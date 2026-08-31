@@ -809,10 +809,9 @@ def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
     assert main_cfg.scheduler.lr_warmup_iters == 40
     assert main_cfg.scheduler.lr_decay_iters == 100
     assert main_cfg.checkpoint.save_interval == 50
-    assert perf_cfg.checkpoint.save_interval == 500
-    assert main_cfg.validation.eval_iters == main_cfg.validation.eval_interval == 0
-    assert perf_cfg.validation.eval_iters == 32
-    assert perf_cfg.validation.eval_interval == 500
+    assert perf_cfg.checkpoint.save_interval == main_cfg.checkpoint.save_interval
+    assert perf_cfg.validation.eval_iters == main_cfg.validation.eval_iters == 0
+    assert perf_cfg.validation.eval_interval == main_cfg.validation.eval_interval == 0
     assert main_cfg.ddp.check_for_nan_in_grad is True
     assert perf_cfg.ddp.check_for_nan_in_grad is False
     assert main_cfg.rerun_state_machine.check_for_nan_in_loss is True
