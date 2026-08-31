@@ -16,7 +16,6 @@
 
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
 )
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
@@ -82,17 +81,10 @@ def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     cfg.optimizer.overlap_param_gather = False
 
 
-def _qwen35_vl_post_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3.5/Qwen3.6-VL post-overrides and optimizer-step overlap."""
-    _qwen35_vl_post(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
-
-
-def _qwen35_vl_post_clear_scope_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3.5/Qwen3.6-VL post-overrides, clear graph scope, and enable overlap."""
+def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:
+    """Apply Qwen3.5/Qwen3.6-VL post-overrides and clear graph scope."""
     _qwen35_vl_post(cfg)
     cfg.model.cuda_graph_scope = []
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
 
 
 def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
@@ -113,21 +105,9 @@ def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_grad_reduce = False
 
 
-def _finalize_qwen3_vl_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3-VL perf defaults with optimizer-step param-gather overlap."""
-    _finalize_qwen3_vl(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
-
-
 def _finalize_qwen3_vl_with_moe_a2a_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults with MoE A2A overlap enabled."""
     _finalize_qwen3_vl(cfg)
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     cfg.comm_overlap.delay_wgrad_compute = True
     cfg.model.moe_shared_expert_overlap = False
-
-
-def _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3-VL perf defaults with MoE A2A and optimizer-step overlap."""
-    _finalize_qwen3_vl_with_moe_a2a_overlap(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
