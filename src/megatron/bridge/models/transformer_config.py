@@ -21,6 +21,11 @@ override system while maintaining compatibility with Megatron Core's post_init b
 import copy
 from dataclasses import dataclass, fields, is_dataclass
 
+
+try:
+    from megatron.core.model_parallel_config import resolve_tensor_parallel_weight_shards
+except ImportError:
+    resolve_tensor_parallel_weight_shards = None
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
     HeterogeneousTransformerConfig as MCoreHeterogeneousTransformerConfig,
 )
@@ -151,6 +156,12 @@ class TransformerConfig(MCoreTransformerConfig):
         config.finalize()
     """
 
+    # Keep GTP configuration available with frozen MCore revisions that predate it.
+    tensor_parallel_num_weight_shards: int | None = None
+    gtp_weight_remat_size: int = 1
+    expert_tensor_parallel_num_weight_shards: int | None = None
+    expert_gtp_weight_remat_size: int = 1
+
     _NO_COPY_KEYS = {"_pg_collection"}
 
     def __post_init__(self) -> None:
@@ -175,6 +186,20 @@ class TransformerConfig(MCoreTransformerConfig):
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
+        if resolve_tensor_parallel_weight_shards is not None:
+            _, self.gtp_weight_remat_size = resolve_tensor_parallel_weight_shards(
+                self.tensor_model_parallel_size,
+                self.tensor_parallel_num_weight_shards,
+                self.gtp_weight_remat_size,
+            )
+            expert_tensor_parallel_size = self.expert_tensor_parallel_size or self.tensor_model_parallel_size
+            _, self.expert_gtp_weight_remat_size = resolve_tensor_parallel_weight_shards(
+                expert_tensor_parallel_size,
+                self.expert_tensor_parallel_num_weight_shards,
+                self.expert_gtp_weight_remat_size,
+                shards_field="expert_tensor_parallel_num_weight_shards",
+                tp_field="expert_tensor_parallel_size",
+            )
         _enable_safe_hybridep_dispatch(self)
         MCoreTransformerConfig.__post_init__(self)
 
@@ -252,6 +277,20 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
+        if resolve_tensor_parallel_weight_shards is not None:
+            _, self.gtp_weight_remat_size = resolve_tensor_parallel_weight_shards(
+                self.tensor_model_parallel_size,
+                self.tensor_parallel_num_weight_shards,
+                self.gtp_weight_remat_size,
+            )
+            expert_tensor_parallel_size = self.expert_tensor_parallel_size or self.tensor_model_parallel_size
+            _, self.expert_gtp_weight_remat_size = resolve_tensor_parallel_weight_shards(
+                expert_tensor_parallel_size,
+                self.expert_tensor_parallel_num_weight_shards,
+                self.expert_gtp_weight_remat_size,
+                shards_field="expert_tensor_parallel_num_weight_shards",
+                tp_field="expert_tensor_parallel_size",
+            )
         _enable_safe_hybridep_dispatch(self)
         MCoreMLATransformerConfig.__post_init__(self)
 
@@ -309,6 +348,20 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
+        if resolve_tensor_parallel_weight_shards is not None:
+            _, self.gtp_weight_remat_size = resolve_tensor_parallel_weight_shards(
+                self.tensor_model_parallel_size,
+                self.tensor_parallel_num_weight_shards,
+                self.gtp_weight_remat_size,
+            )
+            expert_tensor_parallel_size = self.expert_tensor_parallel_size or self.tensor_model_parallel_size
+            _, self.expert_gtp_weight_remat_size = resolve_tensor_parallel_weight_shards(
+                expert_tensor_parallel_size,
+                self.expert_tensor_parallel_num_weight_shards,
+                self.expert_gtp_weight_remat_size,
+                shards_field="expert_tensor_parallel_num_weight_shards",
+                tp_field="expert_tensor_parallel_size",
+            )
         _enable_safe_hybridep_dispatch(self)
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:

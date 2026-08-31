@@ -16,9 +16,19 @@
 
 from __future__ import annotations
 
-from megatron.core.inference.text_generation_server.dynamic_text_gen_server.incremental_detokenizer import (
-    HuggingFaceFastIncrementalDetokenizer,
-)
+import pytest
+
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
+
+
+try:
+    from megatron.core.inference.text_generation_server.dynamic_text_gen_server.incremental_detokenizer import (
+        HuggingFaceFastIncrementalDetokenizer,
+    )
+except ModuleNotFoundError:
+    if not HAS_MCORE_DEV_BRANCH:
+        raise
+    HuggingFaceFastIncrementalDetokenizer = None
 from tokenizers import Tokenizer, models
 from transformers import PreTrainedTokenizerFast
 
@@ -127,6 +137,10 @@ def test_openai_server_preserves_hf_chat_template_contract():
     ]
 
 
+@pytest.mark.skipif(
+    HuggingFaceFastIncrementalDetokenizer is None,
+    reason="MCore dev removed its incremental detokenizer during server refactoring",
+)
 def test_openai_streaming_accepts_hf_fast_tokenizer_adapter():
     backend = Tokenizer(models.WordLevel(vocab={"[UNK]": 0, "hello": 1}, unk_token="[UNK]"))
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="[UNK]", eos_token="[UNK]")
