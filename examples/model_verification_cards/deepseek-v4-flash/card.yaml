@@ -113,7 +113,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 2 --gpus-per-node 4 --ep 8 --pp 4
+      --nodes 2 --gpus-per-node 4 --ep 8
       --hf-model deepseek-ai/DeepSeek-V4-Flash
       --megatron-path work/model-verification/dsv4-flash/import-gpu/iter_0000000
       --hf-path work/model-verification/dsv4-flash/export-gpu
@@ -128,8 +128,8 @@ items:
     status: unverified
     precision: bf16
     command: >
-      ./scripts/inference/infer.sh --executor slurm --task model-comparison
-      --nodes 2 --gpus-per-node 4 --ep 4
+      ./scripts/inference/infer.sh --task model-comparison
+      --nodes 2 --gpus-per-node 4
       --hf_model_path deepseek-ai/DeepSeek-V4-Flash
       --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000
       --pp 1 --ep 4
