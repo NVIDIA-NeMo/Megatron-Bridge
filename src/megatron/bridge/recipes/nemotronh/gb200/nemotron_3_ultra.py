@@ -115,6 +115,11 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config() -> Config
     return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(hybrid_ep_num_sms=16)
 
 
+def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContainer:
+    """Return the GB200 BF16 recipe with four EP16 replicas per pipeline stage."""
+    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(expert_model_parallel_size=16)
+
+
 def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config() -> ConfigContainer:
     """Return the GB200 BF16 recipe with two EP32 replicas per pipeline stage."""
     return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(expert_model_parallel_size=32)
@@ -210,6 +215,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config() -> ConfigContaine
 
 __all__ = [
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config",
+    "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config",
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config",
     "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config",
     "nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config",
