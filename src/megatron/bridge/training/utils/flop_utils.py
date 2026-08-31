@@ -41,9 +41,11 @@ _mcore_is_gated_delta_net_variant = cast(
 
 def _is_gated_delta_net_variant(experimental_attention_variant: str | None) -> bool:
     """Recognize GDN variants across current main and older MCore dev branches."""
+    if experimental_attention_variant == "gdn2":
+        return True
     if _mcore_is_gated_delta_net_variant is not None:
         return _mcore_is_gated_delta_net_variant(experimental_attention_variant)
-    return experimental_attention_variant in {"gated_delta_net", "gdn", "gdn2"}
+    return experimental_attention_variant in {"gated_delta_net", "gdn"}
 
 
 @dataclass(frozen=True)
