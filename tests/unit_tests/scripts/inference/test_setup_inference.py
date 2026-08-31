@@ -182,6 +182,7 @@ def test_submission_dry_run_aliases_are_consumed(submission_option):
     [
         (("--nodes", "0"), "--nodes"),
         (("--gpus-per-node", "0"), "--gpus-per-node"),
+        (("--tasks-per-node", "0"), "--tasks-per-node"),
         (("--cpus-per-task", "0"), "--cpus-per-task"),
         (("--srun-arg=",), "--srun-arg"),
     ],
@@ -273,6 +274,35 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
     assert executor.kwargs["container_mounts"] == ["/host:/container"]
     assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
     assert executor.env_vars == {}
+
+
+def test_slurm_executor_can_assign_multiple_gpus_to_one_task(tmp_path, monkeypatch):
+    module = _load_setup_inference_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, inference_args = module.parse_args(
+        _launcher_args(
+            "--gpus-per-node",
+            "4",
+            "--tasks-per-node",
+            "1",
+            "--device-map",
+            "balanced_low_0",
+        )
+    )
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["ntasks_per_node"] == 1
+    assert executor.kwargs["gpus_per_node"] == 4
+    assert inference_args == ["--device-map", "balanced_low_0"]
 
 
 def test_slurm_executor_can_request_exclusive_nodes(tmp_path, monkeypatch):

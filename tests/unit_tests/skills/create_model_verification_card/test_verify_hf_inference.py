@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -79,6 +80,15 @@ class _Model:
 
     def __init__(self):
         self.calls = []
+        self.to_calls = []
+
+    def to(self, device):
+        self.to_calls.append(device)
+        self.device = device
+        return self
+
+    def eval(self):
+        return self
 
     def generate(self, **kwargs):
         self.calls.append(kwargs)
@@ -119,6 +129,63 @@ def test_loading_info_requires_strict_reload():
                 "error_msgs": [],
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("device_map", "expected_device_map", "expected_to_calls"),
+    [
+        (None, None, ["cuda"]),
+        ("balanced_low_0", "balanced_low_0", []),
+    ],
+)
+def test_runtime_supports_explicit_multi_gpu_device_map(
+    monkeypatch, device_map, expected_device_map, expected_to_calls
+):
+    module = _load_module()
+    processor = _Processor()
+    model = _Model()
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(model_path, *, trust_remote_code):
+            assert model_path == "exported-model"
+            assert trust_remote_code
+            return processor
+
+    class _AutoModel:
+        @staticmethod
+        def from_pretrained(model_path, **kwargs):
+            assert model_path == "exported-model"
+            if expected_device_map is None:
+                assert "device_map" not in kwargs
+            else:
+                assert kwargs["device_map"] == expected_device_map
+            return model, {
+                "missing_keys": [],
+                "unexpected_keys": [],
+                "mismatched_keys": [],
+                "error_msgs": [],
+            }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(AutoModelForMultimodalLM=_AutoModel, AutoProcessor=_AutoProcessor),
+    )
+    args = SimpleNamespace(
+        device="cuda",
+        device_map=device_map,
+        dtype="bfloat16",
+        hf_model="exported-model",
+        image="image.png",
+        trust_remote_code=True,
+    )
+
+    _, loaded_model, loaded_processor = module._load_runtime(args)
+
+    assert loaded_model is model
+    assert loaded_processor is processor
+    assert model.to_calls == expected_to_calls
 
 
 def test_image_requires_chat_template(monkeypatch):

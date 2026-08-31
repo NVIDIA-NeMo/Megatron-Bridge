@@ -50,6 +50,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default="cuda", help="Torch device used for inference.")
     parser.add_argument(
+        "--device-map",
+        choices=("auto", "balanced", "balanced_low_0", "sequential"),
+        help="Optional Transformers device map for inference across multiple visible GPUs.",
+    )
+    parser.add_argument(
         "--dtype",
         choices=("bfloat16", "float16", "float32"),
         default="bfloat16",
@@ -137,14 +142,18 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
 
         processor = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
         model_cls = AutoModelForCausalLM
-    model, loading_info = model_cls.from_pretrained(
-        args.hf_model,
-        dtype=dtype,
-        trust_remote_code=args.trust_remote_code,
-        output_loading_info=True,
-    )
+    load_kwargs = {
+        "dtype": dtype,
+        "trust_remote_code": args.trust_remote_code,
+        "output_loading_info": True,
+    }
+    if args.device_map is not None:
+        load_kwargs["device_map"] = args.device_map
+    model, loading_info = model_cls.from_pretrained(args.hf_model, **load_kwargs)
     _validate_loading_info(loading_info)
-    model = model.to(args.device).eval()
+    if args.device_map is None:
+        model = model.to(args.device)
+    model = model.eval()
     return torch, model, processor
 
 
