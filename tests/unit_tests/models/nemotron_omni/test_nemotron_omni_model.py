@@ -27,14 +27,6 @@ from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-
-
-try:
-    from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
-except ModuleNotFoundError as exc:
-    if exc.name != "megatron.core.transformer.attention_layer_config":
-        raise
-    from megatron.core.transformer.transformer_config import TransformerConfig as AttentionLayerConfig
 from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
@@ -252,7 +244,7 @@ def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config(
     provider._pg_collection = pg_collection
 
     def create_model(**kwargs):
-        copied_config = AttentionLayerConfig.from_config(kwargs["language_transformer_config"])
+        copied_config = copy.deepcopy(kwargs["language_transformer_config"])
         assert copied_config._pg_collection is None
         return Mock()
 

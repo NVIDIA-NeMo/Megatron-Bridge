@@ -812,6 +812,12 @@ def _initialize_distributed(
                 model_config, "min_dynamic_context_parallel_size"
             ):
                 _optional_kwargs["min_dynamic_context_parallel_size"] = model_config.min_dynamic_context_parallel_size
+            for _name, _value in (
+                ("gtp_remat_size", model_config.gtp_weight_remat_size),
+                ("expert_gtp_remat_size", model_config.expert_gtp_weight_remat_size),
+            ):
+                if _name in _init_mp_params:
+                    _optional_kwargs[_name] = _value
             if "hybrid_context_parallel" in _init_mp_params:
                 _optional_kwargs["hybrid_context_parallel"] = model_config.hybrid_context_parallel
 
@@ -825,8 +831,6 @@ def _initialize_distributed(
                 expert_model_parallel_size=model_config.expert_model_parallel_size,
                 num_distributed_optimizer_instances=num_distributed_optimizer_instances,
                 expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
-                gtp_remat_size=model_config.gtp_weight_remat_size,
-                expert_gtp_remat_size=model_config.expert_gtp_weight_remat_size,
                 distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
                 nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
                 order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-cp-ep-pp-dp",
