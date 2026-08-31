@@ -485,7 +485,6 @@ class TestInitializeDistributedBranching:
     @patch("megatron.bridge.training.initialize.ProcessGroupCollection")
     @patch("megatron.bridge.training.initialize._create_pg_collection")
     @patch("megatron.bridge.training.initialize.parallel_state")
-    @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
     @patch("torch.cuda.device_count", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0)
@@ -512,8 +511,8 @@ class TestInitializeDistributedBranching:
         mock_model_config.hierarchical_context_parallel_sizes = None
         mock_model_config.expert_model_parallel_size = 4
         mock_model_config.expert_tensor_parallel_size = expert_tensor_parallel_size
-        mock_model_config.gtp_weight_remat_size = 2
-        mock_model_config.expert_gtp_weight_remat_size = 3
+        mock_model_config.gtp_weight_remat_size = 1
+        mock_model_config.expert_gtp_weight_remat_size = 1
 
         mock_dist_config = MagicMock()
         mock_dist_config.use_decentralized_pg = False
@@ -545,8 +544,8 @@ class TestInitializeDistributedBranching:
             mock_parallel_state.initialize_model_parallel.call_args.kwargs["expert_tensor_parallel_size"]
             == expected_expert_tensor_parallel_size
         )
-        assert mock_parallel_state.initialize_model_parallel.call_args.kwargs["gtp_remat_size"] == 2
-        assert mock_parallel_state.initialize_model_parallel.call_args.kwargs["expert_gtp_remat_size"] == 3
+        assert "gtp_remat_size" not in mock_parallel_state.initialize_model_parallel.call_args.kwargs
+        assert "expert_gtp_remat_size" not in mock_parallel_state.initialize_model_parallel.call_args.kwargs
 
     @patch("megatron.bridge.training.initialize._create_pg_collection")
     @patch("megatron.bridge.training.initialize.parallel_state")
