@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+import torch
 
 from megatron.bridge.data.datasets import gpt_sft as gpt_sft_module
 from megatron.bridge.data.datasets.gpt_sft import (
@@ -29,6 +30,7 @@ from megatron.bridge.data.datasets.gpt_sft import (
     GPTSFTDataset,
     get_dataset_root,
 )
+from megatron.bridge.data.datasets.utils import _JSONLMemMapDataset
 from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 
@@ -91,7 +93,14 @@ def create_mock_tokenizer():
     return mock_tokenizer
 
 
-def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default", global_sample_mapping=False):
+def get_gpt_sft(
+    tmp_path,
+    dataset_type="sft",
+    max_num_samples="default",
+    global_sample_mapping=False,
+    enable_in_batch_packing=False,
+    in_batch_packing_pad_to_multiple_of=1,
+):
     """Create a GPT SFT dataset for testing with mocked tokenizer.
 
     When ``max_num_samples`` is None the dataset builds no ``samples_mapping``,
@@ -124,6 +133,8 @@ def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default", global_
             truncation_field="output",
             memmap_workers=1,
             global_sample_mapping=global_sample_mapping,
+            enable_in_batch_packing=enable_in_batch_packing,
+            in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         )
     elif dataset_type == "packed":
         # Create a mock packed dataset file
@@ -153,10 +164,13 @@ def get_gpt_sft(tmp_path, dataset_type="sft", max_num_samples="default", global_
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
             memmap_workers=1,
+            enable_in_batch_packing=enable_in_batch_packing,
+            in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         )
 
     return dataset, num_samples
@@ -217,6 +231,25 @@ class TestDataGPTSFTDataset:
         assert context_ids == [101, 102, 103, 104, 201, 202, 203]
         assert label_ids == [301, 302]
 
+    def test_repeated_truncation_field_placeholder_handles_overflow(self, tmp_path):
+        dataset_path = tmp_path / "repeated_prompt.jsonl"
+        dataset_path.write_text(json.dumps({"input": "one two three four five", "output": "answer"}) + "\n")
+        dataset = GPTSFTDataset(
+            file_path=str(dataset_path),
+            tokenizer=create_mock_tokenizer(),
+            max_seq_length=8,
+            max_num_samples=None,
+            label_key="output",
+            prompt_template="{input} Again: {input} {output}",
+            truncation_field="input",
+            memmap_workers=1,
+        )
+
+        processed = dataset[0]
+
+        assert len(processed["input_ids"]) <= dataset.max_seq_length
+        assert processed["answer_ids"]
+
     def test_utils_func(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path)
 
@@ -260,6 +293,52 @@ class TestDataGPTSFTDataset:
         ]
         dataset.collate_fn(batch)
 
+    def test_in_batch_packing_emits_exact_thd_batch(self, tmp_path):
+        dataset, _ = get_gpt_sft(
+            tmp_path,
+            enable_in_batch_packing=True,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
+        assert isinstance(dataset.indexed_dataset, _JSONLMemMapDataset)
+        batch = [
+            {
+                "input_ids": [101, 102, 103, 104, 105],
+                "context_ids": [101, 102],
+                "answer_start_idx": 2,
+                "context_length": 2,
+                "answer_ids": [104, 105],
+                "metadata": {"id": "ex1"},
+                "token_count": 5,
+            },
+            {
+                "input_ids": [201, 202, 203, 204],
+                "context_ids": [201],
+                "answer_start_idx": 1,
+                "context_length": 1,
+                "answer_ids": [203, 204],
+                "metadata": {"id": "ex2"},
+                "token_count": 4,
+            },
+        ]
+
+        result = dataset.collate_fn(batch)
+
+        assert result["tokens"].tolist() == [[101, 102, 103, 104, 201, 202, 203, 2]]
+        assert result["labels"].tolist() == [[102, 103, 104, 105, 202, 203, 204, -100]]
+        assert result["loss_mask"].tolist() == [[0, 1, 1, 1, 1, 1, 1, 0]]
+        assert result["position_ids"].tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
+        assert result["attention_mask"] is None
+        assert result["padding_mask"].tolist() == [[False, False, False, False, False, False, False, True]]
+        assert result["cu_seqlens_q"].tolist() == [0, 4, 7]
+        assert result["cu_seqlens_kv"].tolist() == [0, 4, 7]
+        assert result["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+        assert result["cu_seqlens_kv_padded"].tolist() == [0, 4, 8]
+        assert result["max_seqlen_q"].item() == 4
+        assert result["max_seqlen_kv"].item() == 4
+        assert result["total_tokens"] == 8
+        assert result["metadata"] == [{"id": "ex1"}, {"id": "ex2"}]
+        assert result["token_count"] == [5, 4]
+
     def test_autogenerated_padding_sample_has_zero_loss_mask(self, tmp_path):
         # max_num_samples=None => no samples_mapping, so a negative index is treated
         # as an autogenerated padding row instead of being remapped to a real sample.
@@ -269,6 +348,47 @@ class TestDataGPTSFTDataset:
 
         assert batch["metadata"][1]["__AUTOGENERATED__"] is True
         assert batch["loss_mask"][1].sum().item() == 0
+
+    def test_in_batch_packing_autogenerated_sample_has_zero_loss_mask(self, tmp_path):
+        dataset, _ = get_gpt_sft(
+            tmp_path,
+            max_num_samples=None,
+            enable_in_batch_packing=True,
+        )
+
+        batch = dataset.collate_fn([dataset[0], dataset[-1]])
+
+        assert batch["metadata"][1]["__AUTOGENERATED__"] is True
+        second_start = int(batch["cu_seqlens_q"][1].item())
+        second_end = int(batch["cu_seqlens_q"][2].item())
+        assert batch["loss_mask"][0, second_start:second_end].sum().item() == 0
+
+    def test_single_dataloader_packs_one_logical_microbatch(self, tmp_path):
+        dataset, _ = get_gpt_sft(
+            tmp_path,
+            max_num_samples=None,
+            enable_in_batch_packing=True,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
+        micro_batch_size = 2
+        dataloader = build_pretraining_data_loader(
+            dataset=dataset,
+            consumed_samples=0,
+            dataloader_type="single",
+            micro_batch_size=micro_batch_size,
+            num_workers=0,
+            data_sharding=False,
+            collate_fn=dataset.collate_fn,
+            pin_memory=False,
+            data_parallel_rank=0,
+            data_parallel_size=1,
+        )
+
+        microbatch = next(iter(dataloader))
+
+        assert microbatch["tokens"].size(0) == 1
+        assert len(microbatch["metadata"]) == micro_batch_size
+        assert microbatch["cu_seqlens_q"].numel() == micro_batch_size + 1
 
     def test_batch_sampler_padding_rows_do_not_contribute_to_loss(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, max_num_samples=None)
@@ -381,6 +501,102 @@ class TestDataGPTSFTPackedDataset:
         assert processed["cu_seqlens_kv"].tolist() == processed["cu_seqlens_q"].tolist()
         assert processed["max_seqlen_q"].tolist() == [[3], [7]]
         assert processed["max_seqlen_kv"].tolist() == [[3], [7]]
+        assert processed["padding_mask"].dtype == torch.bool
+        assert processed["padding_mask"].tolist() == [
+            [False, False, False, False, False, False, True],
+            [False, False, False, False, False, False, False],
+        ]
+
+    def test_collate_fn_marks_offline_alignment_padding(self, tmp_path):
+        """Offline-packed rows expose physical alignment gaps to the MoE router."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset._pad_seq_to_mult = 4
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2, 2, 20, 21, 2, 2, 2]),
+                "seq_boundaries": [0, 5, 10],
+                "loss_mask": np.array([1, 1, 1, 0, 0, 1, 1, 0, 0, 0]),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["tokens"].tolist() == [[10, 11, 12, 2, 20, 21, 2, 2]]
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 5]]
+        assert processed["cu_seqlens_q_padded"].tolist() == [[0, 4, 8]]
+        assert processed["pad_between_seqs"] is True
+        assert processed["padding_mask"].dtype == torch.bool
+        assert processed["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
+
+    def test_collate_fn_preserves_supervised_terminal_eos(self, tmp_path):
+        """A supervised chat EOS remains part of the logical sequence."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 4
+        dataset._pad_seq_to_mult = 4
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2, 2]),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.array([1, 1, 1, 1, 0]),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"].tolist() == [[0, 4]]
+        assert processed["cu_seqlens_q_padded"].tolist() == [[0, 4]]
+        assert processed["pad_between_seqs"] is False
+        assert processed["padding_mask"].tolist() == [[False, False, False, False]]
+
+    def test_collate_fn_marks_offline_trailing_padding_without_alignment(self, tmp_path):
+        """Default offline packing masks padding added to reach the batch width."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_to_max_length = True
+        batch = [
+            {
+                "input_ids": np.array([10, 11, 12, 2]),
+                "seq_boundaries": [0, 4],
+                "loss_mask": np.ones(4, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["tokens"].tolist() == [[10, 11, 12, 2, 2, 2, 2, 2]]
+        assert processed["cu_seqlens_q"].tolist() == [[0, 3, 8]]
+        assert "cu_seqlens_q_padded" not in processed
+        assert processed["padding_mask"].tolist() == [[False, False, False, True, True, True, True, True]]
+
+    def test_collate_fn_keeps_padding_mask_key_stable_across_batches(self, tmp_path):
+        """Full-iteration graphs require an invariant input dictionary and tensor shape."""
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+        dataset.max_seq_length = 8
+        dataset.pad_to_max_length = True
+
+        padded = dataset.collate_fn(
+            [
+                {
+                    "input_ids": np.array([10, 11, 12, 2]),
+                    "seq_boundaries": [0, 4],
+                    "loss_mask": np.ones(4, dtype=np.int64),
+                }
+            ]
+        )
+        full = dataset.collate_fn(
+            [
+                {
+                    "input_ids": np.array([20, 21, 22, 23, 24, 25, 26, 27, 2]),
+                    "seq_boundaries": [0, 9],
+                    "loss_mask": np.ones(9, dtype=np.int64),
+                }
+            ]
+        )
+
+        assert padded["padding_mask"].shape == full["padding_mask"].shape == (1, 8)
+        assert padded["padding_mask"].any()
+        assert not full["padding_mask"].any()
 
     def test_utils_func_packed(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
@@ -433,6 +649,42 @@ class TestDataGPTSFTChatDataset:
         ]
         dataset.collate_fn(batch)
 
+    def test_in_batch_packing_preserves_chat_loss_mask(self, tmp_path):
+        dataset, _ = get_gpt_sft(
+            tmp_path,
+            dataset_type="chat",
+            enable_in_batch_packing=True,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
+        batch = [
+            {
+                "input_ids": np.array([101, 102, 103, 104, 105]),
+                "context_ids": np.array([101, 102]),
+                "answer_ids": np.array([104, 105]),
+                "loss_mask": np.array([0, 0, 0, 1, 1]),
+                "metadata": {"id": "chat1"},
+            },
+            {
+                "input_ids": np.array([201, 202, 203, 204]),
+                "context_ids": np.array([201]),
+                "answer_ids": np.array([203, 204]),
+                "loss_mask": np.array([0, 0, 1, 1]),
+                "metadata": {"id": "chat2"},
+            },
+        ]
+
+        result = dataset.collate_fn(batch)
+
+        assert result["tokens"].tolist() == [[101, 102, 103, 104, 201, 202, 203, 2]]
+        assert result["labels"].tolist() == [[102, 103, 104, 105, 202, 203, 204, -100]]
+        assert result["loss_mask"].tolist() == [[0, 0, 1, 1, 0, 1, 1, 0]]
+        assert result["position_ids"].tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
+        assert result["cu_seqlens_q"].tolist() == [0, 4, 7]
+        assert result["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+        assert result["attention_mask"] is None
+        assert result["metadata"] == [{"id": "chat1"}, {"id": "chat2"}]
+        assert result["token_count"] == [5, 4]
+
     def test_autogenerated_padding_sample_has_zero_loss_mask(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="chat")
         batch = [
@@ -477,6 +729,7 @@ class TestDataGPTSFTChatDataset:
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",

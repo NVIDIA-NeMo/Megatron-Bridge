@@ -16,6 +16,7 @@
 
 import contextlib
 import gc
+import inspect
 import os
 import random
 import shutil
@@ -66,6 +67,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -80,6 +82,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_train_state_filename,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
+    join_paths,
     read_run_config,
     read_train_state,
 )
@@ -823,6 +826,14 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"does not implement the CheckpointManager protocol."
             )
 
+        try:
+            inspect.signature(manager.save).bind(None, None)
+        except (TypeError, ValueError) as err:
+            raise TypeError(
+                f"Custom checkpoint manager '{checkpoint_config.custom_manager_class}' save method "
+                "must accept (ctx, callback_manager)."
+            ) from err
+
         return manager
 
     return DefaultCheckpointManager(checkpoint_config)
@@ -1167,12 +1178,14 @@ def save_checkpoint(
     # Collect rng state across data parallel ranks.
     if pg_collection is None:
         pg_collection = get_pg_collection(model)
-    rng_state = get_rng_state(
-        data_parallel_random_init=cfg.rng.data_parallel_random_init,
-        ckpt_format=ckpt_cfg.ckpt_format,
-        pg_collection=pg_collection,
-        module_name=module_name,
-    )
+    rng_state = None
+    if ckpt_cfg.save_rng:
+        rng_state = get_rng_state(
+            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            ckpt_format=ckpt_cfg.ckpt_format,
+            pg_collection=pg_collection,
+            module_name=module_name,
+        )
 
     # Collect rerun state across all ranks
     rerun_state_machine = get_rerun_state_machine()
@@ -1463,22 +1476,30 @@ def save_checkpoint(
             train_state_dict = train_state.state_dict()
 
             def train_state_finalize_fn() -> None:
+                previous_step = 0
+                if (
+                    ckpt_cfg.save_retain_interval is not None
+                    and not is_global_non_persistent_ckpt
+                    and file_exists(tracker_filename)
+                ):
+                    if MultiStorageClientFeature.is_enabled():
+                        msc = MultiStorageClientFeature.import_package()
+                        open_file = msc.open
+                    else:
+                        open_file = open
+                    with open_file(tracker_filename, "r") as f:
+                        previous_metadata = f.read().strip()
+                        if previous_metadata != "release":
+                            previous_step = int(previous_metadata)
+
                 train_state_dict["floating_point_operations_so_far"] = torch.tensor(
                     num_floating_point_operations_so_far, dtype=torch.float32
                 )
                 if MultiStorageClientFeature.is_enabled():
                     msc = MultiStorageClientFeature.import_package()
                     msc.torch.save(train_state_dict, train_state_local_filename)
-                    msc.torch.save(train_state_dict, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with msc.open(tracker_filename, "w") as f:
-                        f.write(str(step))
                 else:
                     torch.save(train_state_dict, train_state_local_filename)
-                    shutil.copy(train_state_local_filename, train_state_global_filename)
-                    # Write Megatron-LM tracker file for compatibility
-                    with open(tracker_filename, "w") as f:
-                        f.write(str(step))
 
                 cfg.to_yaml(config_filename)
 
@@ -1487,6 +1508,47 @@ def save_checkpoint(
                     tokenizer_instance = getattr(cfg.dataset, "tokenizer", None) if cfg.dataset else None
                     if tokenizer_instance is not None:
                         save_tokenizer_assets(tokenizer_instance, cfg.tokenizer, checkpoint_name)
+
+                if MultiStorageClientFeature.is_enabled():
+                    msc = MultiStorageClientFeature.import_package()
+                    msc.torch.save(train_state_dict, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with msc.open(tracker_filename, "w") as f:
+                        f.write(str(step))
+                else:
+                    shutil.copy(train_state_local_filename, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with open(tracker_filename, "w") as f:
+                        f.write(str(step))
+
+                if (
+                    ckpt_cfg.save_retain_interval is not None
+                    and not is_global_non_persistent_ckpt
+                    and previous_step > 0
+                    and previous_step != step
+                    and previous_step % ckpt_cfg.save_retain_interval != 0
+                ):
+                    previous_checkpoint = get_checkpoint_name(save_dir, previous_step)
+                    if os.path.islink(previous_checkpoint):
+                        print_rank_0(
+                            f"  skipping deleting checkpoint from iteration {previous_step:7d} "
+                            f"at {ckpt_cfg.save} since it is a symbolic link"
+                        )
+                    else:
+
+                        def remove_previous_checkpoint() -> None:
+                            with _CHECKPOINT_CLEANUP_LOCK:
+                                if MultiStorageClientFeature.is_enabled():
+                                    msc = MultiStorageClientFeature.import_package()
+                                    if msc.os.path.exists(previous_checkpoint):
+                                        msc.delete(previous_checkpoint, recursive=True)
+                                elif os.path.isdir(previous_checkpoint):
+                                    shutil.rmtree(previous_checkpoint)
+
+                        if ckpt_cfg.async_save:
+                            threading.Thread(target=remove_previous_checkpoint).start()
+                        else:
+                            remove_previous_checkpoint()
 
                 tp_rank = (tensor_rank if tensor_rank is not None else pg_collection.tp.rank()) + 1
                 tp_world_size = pg_collection.tp.size()
@@ -1528,7 +1590,7 @@ def save_checkpoint(
             wandb_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 wandb_writer=state.wandb_logger,
             )
 
@@ -1538,7 +1600,7 @@ def save_checkpoint(
             mlflow_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 mlflow_logger=state.mlflow_logger,
             )
 
@@ -1546,7 +1608,7 @@ def save_checkpoint(
             comet_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
-                train_state.step,
+                checkpoint_step,
                 comet_logger=state.comet_logger,
             )
 
@@ -1668,7 +1730,12 @@ def cleanup_old_non_persistent_checkpoint(
     """
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
         return
-    save_dir = Path(save_dir)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        save_dir = msc.Path(save_dir)
+    else:
+        msc = None
+        save_dir = Path(save_dir)
 
     iter_prefix = "iter_"
     iter_ckpts = save_dir.glob(f"{iter_prefix}*")
@@ -1694,7 +1761,10 @@ def cleanup_old_non_persistent_checkpoint(
         with _CHECKPOINT_CLEANUP_LOCK:
             for ckpt in _iter_ckpts:
                 if ckpt.exists():
-                    shutil.rmtree(ckpt)
+                    if msc is not None:
+                        msc.delete(str(ckpt), recursive=True)
+                    else:
+                        shutil.rmtree(ckpt)
 
     if do_async:
         threading.Thread(target=remove_iter_ckpts, args=(rm_iter_ckpts,)).start()
@@ -1759,13 +1829,25 @@ def maybe_save_dataloader_state(
     torch.distributed.barrier(group=pg_collection.dp)
 
     if get_pg_rank(pg_collection.dp) == 0:
+        # A retained Energon generation may outlive its model checkpoint. Replace the generation
+        # before reusing an iteration so rank files from a previous, larger DP world cannot survive.
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            if msc.os.path.isdir(iter_dir):
+                msc.delete(iter_dir, recursive=True)
+        elif os.path.isdir(iter_dir):
+            shutil.rmtree(iter_dir)
         ensure_directory_exists(data_state_save_path)
 
     torch.distributed.barrier(group=pg_collection.dp)
 
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
-    torch.save(dataloader_save_dict, data_state_save_path)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        msc.torch.save(dataloader_save_dict, data_state_save_path)
+    else:
+        torch.save(dataloader_save_dict, data_state_save_path)
 
 
 def maybe_load_dataloader_state(
@@ -1789,11 +1871,11 @@ def maybe_load_dataloader_state(
     on *every* rank: each tensor/pipeline/context rank pulls from its own data iterator (e.g.
     ``qwen3_vl`` ``get_batch``), so all of them must be rewound to the saved position.
 
-    Restore failure modes are deliberately loud. If the dataloader state directory is absent
-    entirely, the checkpoint predates dataloader-state saving and the dataloader starts fresh. But
-    if the directory exists while the current rank's state file does not, the data-parallel size
-    almost certainly changed since the checkpoint was saved; rather than silently resume with a
-    different data order, this raises.
+    Restore failure modes distinguish checkpoint generations. If the dataloader state root or the
+    selected iteration is absent, that checkpoint predates dataloader-state saving and the
+    dataloader starts fresh. If the selected iteration exists while the current rank's state file
+    does not, the data-parallel size almost certainly changed since the checkpoint was saved;
+    rather than silently resume with a different data order, this raises.
 
     Restoring is only correct when the task encoder is deterministic per sample (Energon replays the
     samples since the last checkpoint by re-running the pipeline) — see
@@ -1815,15 +1897,43 @@ def maybe_load_dataloader_state(
     if iterable is None or not hasattr(iterable, "restore_state"):
         return
 
-    if not os.path.isdir(dataloader_load_path):
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        is_dir = msc.os.path.isdir
+        is_file = msc.os.path.isfile
+    else:
+        msc = None
+        is_dir = os.path.isdir
+        is_file = os.path.isfile
+
+    if not is_dir(dataloader_load_path):
         # No dataloader state dir at all: the checkpoint predates this feature. Start from scratch.
         print_rank_0(f"no dataloader state under {dataloader_load_path}; dataloader starts from the beginning")
         return
 
-    dp_rank = get_pg_rank(pg_collection.dp)
     iter_dir = get_checkpoint_name(dataloader_load_path, iteration)
-    data_state_load_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
-    if not os.path.isfile(data_state_load_path):
+    if not is_dir(iter_dir):
+        # This checkpoint generation predates dataloader-state saving. Start from scratch.
+        print_rank_0(f"no dataloader state for iteration {iteration}; dataloader starts from the beginning")
+        return
+
+    state_file_pattern = join_paths(iter_dir, "train_dataloader_dprank*.pt")
+    saved_dp_size = (
+        len(msc.glob(state_file_pattern))
+        if msc is not None
+        else len(list(Path(iter_dir).glob("train_dataloader_dprank*.pt")))
+    )
+    current_dp_size = get_pg_size(pg_collection.dp)
+    if saved_dp_size != current_dp_size:
+        raise RuntimeError(
+            f"Dataloader state at {iter_dir} was saved for data-parallel size {saved_dp_size}, but the current "
+            f"data-parallel size is {current_dp_size}. Resuming would silently change the training data order; "
+            "refusing to continue."
+        )
+
+    dp_rank = get_pg_rank(pg_collection.dp)
+    data_state_load_path = join_paths(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
+    if not is_file(data_state_load_path):
         raise RuntimeError(
             f"Dataloader state directory {dataloader_load_path} exists but {data_state_load_path} is "
             f"missing. The data-parallel size likely changed since the checkpoint was saved (expected "
@@ -1832,7 +1942,11 @@ def maybe_load_dataloader_state(
         )
 
     print_rank_0(f"restoring dataloader state at iteration {iteration} from {data_state_load_path}")
-    loaded = energon_torch_load(data_state_load_path)
+    if msc is not None:
+        with msc.open(data_state_load_path, "rb") as state_file:
+            loaded = energon_torch_load(state_file)
+    else:
+        loaded = energon_torch_load(data_state_load_path)
     iterable.restore_state(loaded["dataloader_state_dict"])
 
 
@@ -1917,17 +2031,21 @@ def generate_state_dict(
     include_optimizer_state = ckpt_cfg.save_optim or is_loading
     if include_optimizer_state:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
-            if ckpt_cfg.ckpt_format == "torch_dist":
-                state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
-            elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
-                if optim_sd_kwargs is None:
-                    optim_sd_kwargs = {}
-                if "metadata" not in optim_sd_kwargs:
-                    optim_sd_kwargs["metadata"] = {}
-                # Use the metadata that was passed in (should include FSDP-specific metadata)
-                state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **optim_sd_kwargs)
-            else:
-                state_dict["optimizer"] = optimizer.state_dict()
+            with memory_efficient_precision_aware_optimizer_state_checkpointing(
+                optimizer,
+                enabled=ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu,
+            ):
+                if ckpt_cfg.ckpt_format == "torch_dist":
+                    state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
+                elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
+                    if optim_sd_kwargs is None:
+                        optim_sd_kwargs = {}
+                    if "metadata" not in optim_sd_kwargs:
+                        optim_sd_kwargs["metadata"] = {}
+                    # Use the metadata that was passed in (should include FSDP-specific metadata)
+                    state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **optim_sd_kwargs)
+                else:
+                    state_dict["optimizer"] = optimizer.state_dict()
         if opt_param_scheduler is not None:
             state_dict["opt_param_scheduler"] = opt_param_scheduler.state_dict()
 
@@ -2596,6 +2714,7 @@ def _load_checkpoint_from_path(
     # Step 2: Initialize scaffolding
     load_kwargs = {}
     ignore_rng_state = False
+    ignore_optimizer_state = False
     ignore_rerun_state = True
     run_config = None  # Initialize for later use
 
@@ -2714,6 +2833,9 @@ def _load_checkpoint_from_path(
         else:
             gen_sd_optim = None
             gen_sd_opt_param_scheduler = None
+            if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
+                ignore_optimizer_state = True
+                print_rank_0("Optimizer state was not saved in the torch-dist checkpoint; using a fresh optimizer")
 
         # Determine if rerun state will be loaded
         if tp_pp_match and not release and not cfg.checkpoint.finetune and "rerun_state_machine" in state_dict:
@@ -2798,9 +2920,13 @@ def _load_checkpoint_from_path(
                     f"(TP, PP) mismatch after resume ({run_tp_pp} vs {ckpt_tp_pp} from checkpoint): "
                     "RNG state will be ignored"
                 )
-            if cfg.checkpoint.load_optim:
+            checkpoint_saved_optimizer = run_config is None or run_config.get("checkpoint", {}).get("save_optim", True)
+            if cfg.checkpoint.load_optim and checkpoint_saved_optimizer:
                 gen_sd_optim = optimizer
                 gen_sd_opt_param_scheduler = opt_param_scheduler
+            elif cfg.checkpoint.load_optim:
+                ignore_optimizer_state = True
+                print_rank_0("Optimizer state was not saved in the FSDP checkpoint; using a fresh optimizer")
 
         optim_sd_kwargs = dict(
             metadata=_build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, cfg.checkpoint),
@@ -2952,7 +3078,7 @@ def _load_checkpoint_from_path(
     print_rank_0(f" checkpoint version {checkpoint_version}")
 
     # Load optimizer and scheduler
-    if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
+    if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim and not ignore_optimizer_state:
         try:
             if (
                 not skip_load_to_model_and_opt
@@ -2973,7 +3099,13 @@ def _load_checkpoint_from_path(
                     # DistributedOptimizer copies loaded tensors into main
                     # params via .copy_(), which fails on leaf Variables that
                     # require grad without this context.
-                    with torch.no_grad():
+                    with (
+                        torch.no_grad(),
+                        memory_efficient_precision_aware_optimizer_state_checkpointing(
+                            optimizer,
+                            enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
+                        ),
+                    ):
                         optimizer.load_state_dict(state_dict["optimizer"])
 
             if opt_param_scheduler is not None:
@@ -3429,7 +3561,8 @@ def _load_base_checkpoint(
         checkpoint_path = load_dir
         # load_dir is the iter_N dir itself, so the checkpoint root (holding the energon/ sibling) is
         # one level up.
-        _record_dataloader_state_dir(checkpointing_context, os.path.dirname(os.path.normpath(load_dir)))
+        checkpoint_root = os.path.dirname(load_dir.rstrip(os.sep))
+        _record_dataloader_state_dir(checkpointing_context, checkpoint_root)
         ckpt_format = _get_checkpoint_format(checkpoint_path)
         if not rank0:
             print_rank_0(f" loading {ckpt_format} checkpoint directly from {checkpoint_path}")

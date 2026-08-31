@@ -668,8 +668,10 @@ def num_floating_point_operations(
     # the result matches the legacy constant-length estimate.
     if seqlen_squared_sum is not None and seqlen_sum > 0:
         core_attn_seq_factor = seqlen_squared_sum / seqlen_sum
+        effective_seqlen_squared_sum = seqlen_squared_sum
     else:
         core_attn_seq_factor = effective_seq_length
+        effective_seqlen_squared_sum = seqlen_sum * effective_seq_length
 
     # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
     if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
@@ -1049,6 +1051,7 @@ def num_floating_point_operations(
         ffn_expansion_factor = 3 if cfg.model.gated_linear_unit is True else 2
 
         experimental_attention_variant = getattr(cfg.model, "experimental_attention_variant", None)
+        dsv4_hybrid_core_attn_term = 0
 
         if cfg.model.multi_latent_attention:
             """
@@ -1117,10 +1120,9 @@ def num_floating_point_operations(
                 window = getattr(cfg.model, "csa_window_size", 128)
 
                 sparse_attn_r0 = n_layers_r0 * cfg.model.num_attention_heads * window * v_head_dim * 2
-                avg_comp_128 = (core_attn_seq_factor // 128) / 2
-                sparse_attn_r128 = (
-                    n_layers_r128 * cfg.model.num_attention_heads * (window + avg_comp_128) * v_head_dim * 2
-                )
+                # Window work is token-linear; compressed-KV attention scales with sum_i(sequence_length_i^2).
+                sparse_attn_r128 = n_layers_r128 * cfg.model.num_attention_heads * window * v_head_dim * 2
+                sparse_attn_r128_core = n_layers_r128 * cfg.model.num_attention_heads * v_head_dim / 128
 
                 main_compressor_term = (
                     n_layers_r4 * cfg.model.hidden_size * (2 * v_head_dim) * 2
@@ -1138,8 +1140,9 @@ def num_floating_point_operations(
                     if idx_topk is None:
                         raise ValueError("dsa_indexer_topk must be set for dsv4_hybrid ratio==4 layers")
 
-                    effective_topk_4 = min(idx_topk, core_attn_seq_factor // 4)
-                    avg_comp_4 = effective_topk_4 * (1 - effective_topk_4 * 4 / (2 * core_attn_seq_factor))
+                    # Match MCore's nominal ratio-4 selection estimate, which uses the configured sequence length.
+                    effective_topk_4 = min(idx_topk, cfg.model.seq_length // 4)
+                    avg_comp_4 = effective_topk_4 * (1 - effective_topk_4 * 4 / (2 * cfg.model.seq_length))
                     sparse_attn_r4 = (
                         n_layers_r4 * cfg.model.num_attention_heads * (window + avg_comp_4) * v_head_dim * 2
                     )
@@ -1147,14 +1150,17 @@ def num_floating_point_operations(
                         n_layers_r4 * cfg.model.hidden_size * (2 * idx_head_dim) * 2
                         + n_layers_r4 * q_lora_rank * idx_n_heads * idx_head_dim
                         + n_layers_r4 * cfg.model.hidden_size * idx_n_heads
-                        + n_layers_r4 * idx_n_heads * idx_head_dim * (core_attn_seq_factor // 4)
                     )
+                    # Dense indexer scoring is quadratic and therefore uses the runtime squared-length sum below.
+                    indexer_scoring_core = n_layers_r4 * idx_n_heads * idx_head_dim / 4
                 else:
                     sparse_attn_r4 = 0
                     indexer_term = 0
+                    indexer_scoring_core = 0
 
                 sparse_attn_term = sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128
                 self_attn_term += 3 * 2 * (sparse_attn_term + main_compressor_term + indexer_term)
+                dsv4_hybrid_core_attn_term = 3 * 2 * (sparse_attn_r128_core + indexer_scoring_core)
             elif experimental_attention_variant == "dsa":
                 # DSA replaces dense MLA core attention with top-k attention while retaining a
                 # dense lightning indexer. The attention/indexer geometry follows equations 1-2
@@ -1398,17 +1404,13 @@ def num_floating_point_operations(
                 full_core = query_projection_size * core_attn_seq_factor / 2 * 2
                 self_attn_term = 3 * 2 * num_layers * (proj_per_layer + full_core)
 
-        # Handle GDN (Gated DeltaNet) hybrid attention variant.
-        # When experimental_attention_variant is "gated_delta_net", a fraction of the
-        # layers use GDN instead of standard attention. Override self_attn_term with a
-        # weighted sum of GDN and standard-attention per-layer costs.
-        if experimental_attention_variant == "gated_delta_net":
+        # Handle GDN (Gated DeltaNet) hybrid attention variants. MCore normalizes
+        # the deprecated "gated_delta_net" alias to "gdn" during config finalization.
+        if experimental_attention_variant in {"gated_delta_net", "gdn", "gdn2"}:
             linear_attention_freq = cfg.model.linear_attention_freq
             decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
-                raise ValueError(
-                    "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
-                )
+                raise ValueError("linear_attention_freq must be set for gated delta net attention variants")
             if isinstance(linear_attention_freq, int):
                 linear_attention_pattern = [
                     0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(decoder_num_layers)
@@ -1442,12 +1444,18 @@ def num_floating_point_operations(
 
             qk_dim = qk_head_dim * num_qk_heads
             v_dim = v_head_dim * num_v_heads
+            if experimental_attention_variant == "gdn2":
+                # GDN2 in_proj: q, k, v, z, f, b, w.
+                in_proj_dim = 4 * qk_dim + 3 * v_dim
+            else:
+                # GDN in_proj: q, k, v, z, beta, alpha.
+                in_proj_dim = 2 * qk_dim + 2 * v_dim + 2 * num_v_heads
 
             gdn_self_attn_per_layer = (
                 3
                 * 2
                 * (
-                    cfg.model.hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                    cfg.model.hidden_size * in_proj_dim
                     + conv_kernel_dim * (2 * qk_dim + v_dim)
                     + num_v_heads * (v_head_dim**2) * 4
                     + cfg.model.hidden_size * v_dim
@@ -1556,6 +1564,7 @@ def num_floating_point_operations(
             # Logit.
             + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
         )
+        total_floating_point_operations += effective_seqlen_squared_sum * dsv4_hybrid_core_attn_term
         return total_floating_point_operations + _compute_vit_flops()
 
     def _compute_vit_flops():

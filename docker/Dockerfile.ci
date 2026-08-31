@@ -55,6 +55,7 @@ ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
     UV_VERSION="0.7.2" \
     UV_HTTP_TIMEOUT=120 \
     NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
+    NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD=1 \
     HYBRID_EP_MULTINODE=1 \
     RDMA_CORE_HOME=/opt/rdma-core/build \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
@@ -102,7 +103,8 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
         apt-get autoremove -y && \
         rm -rf /var/lib/apt/lists/* && \
     popd; \
-    fi
+    fi && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
 COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
 COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
@@ -130,6 +132,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     if [ -n "$BASELINE_MCORE_REF" ]; then \
         export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+        export TMS_CUDA_MAJOR="$("${CUDA_HOME:-/usr/local/cuda}"/bin/nvcc --version | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | head -1)" && \
+        test -n "$TMS_CUDA_MAJOR" && \
         export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
             CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
             CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
@@ -144,6 +148,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    export TMS_CUDA_MAJOR="$("${CUDA_HOME:-/usr/local/cuda}"/bin/nvcc --version | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | head -1)" && \
+    test -n "$TMS_CUDA_MAJOR" && \
     # flash-mla (Megatron-LM's no_pypi_wheels group) has no PyPI wheel and is built from source by
     # the uv sync below. Point the compilers at the CCCL/libcu++ headers (under cccl/ in this base
     # image, not the default CUDA include path) and scope the build to the target archs.
@@ -171,7 +177,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
-    uv cache prune ${UV_CACHE_PRUNE_ARGS}
+    uv cache prune ${UV_CACHE_PRUNE_ARGS} && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
 COPY scripts/install_diffusion_deps.sh scripts/diffusion-deps.lock /opt/Megatron-Bridge/scripts/
 
@@ -181,6 +188,16 @@ ARG INSTALL_DIFFUSION_DEPS=false
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$INSTALL_DIFFUSION_DEPS" = "true" ]; then \
         bash scripts/install_diffusion_deps.sh; \
-    fi
+    fi && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
-COPY --chmod=644 . /opt/Megatron-Bridge
+COPY --chown=1000:1000 . /opt/Megatron-Bridge
+
+# CI writes coverage beside the checked-out source, installs that source editable into the
+# prepared environment, and uses /nemo_run for runtime outputs. Keep those paths owned by the
+# existing unprivileged base-image user instead of relying on a root final user.
+RUN install -d -o 1000 -g 1000 -m 0755 /nemo_run /home/ubuntu/.cache && \
+    chown -R 1000:1000 /opt/Megatron-Bridge
+
+ENV HOME=/home/ubuntu
+USER 1000:1000

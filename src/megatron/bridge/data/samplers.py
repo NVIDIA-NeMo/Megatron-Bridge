@@ -2,6 +2,7 @@
 
 """Dataloaders."""
 
+import multiprocessing
 import random
 from typing import Any, Callable, Iterator, Optional
 
@@ -152,6 +153,7 @@ class MegatronPretrainingSampler:
         self.consumed_samples = consumed_samples
         self.micro_batch_size = micro_batch_size
         self.data_parallel_rank = data_parallel_rank
+        self.data_parallel_size = data_parallel_size
         self.micro_batch_times_data_parallel_size = self.micro_batch_size * data_parallel_size
         self.drop_last = drop_last
 
@@ -180,6 +182,18 @@ class MegatronPretrainingSampler:
 
     def __iter__(self) -> Iterator[list[int]]:
         """Yields lists of indices for each microbatch assigned to this rank."""
+        remaining_samples = self.total_samples - self.consumed_samples
+        if (
+            not self.drop_last
+            and self.data_parallel_size > 1
+            and remaining_samples % self.micro_batch_times_data_parallel_size != 0
+        ):
+            raise ValueError(
+                "drop_last=False is unsupported for a partial distributed batch with "
+                f"dataloader_type='single': {remaining_samples} remaining samples are not divisible by "
+                f"micro_batch_size ({self.micro_batch_size}) x data_parallel_size ({self.data_parallel_size})."
+            )
+
         batch = []
         # Last batch will be dropped if drop_last is not set False
         for idx in range(self.consumed_samples, self.total_samples):
@@ -396,7 +410,7 @@ class RandomSeedDataset(Dataset):
     def __init__(self, dataset: Dataset, seed: int) -> None:
         """Initialize RandomSeedDataset."""
         self.base_seed = seed
-        self.curr_seed = seed
+        self.curr_seed = multiprocessing.Value("q", seed, lock=False)
         self.dataset = dataset
 
     def __len__(self) -> int:
@@ -405,11 +419,11 @@ class RandomSeedDataset(Dataset):
 
     def set_epoch(self, epoch: int) -> None:
         """Set the current epoch number to adjust the random seed."""
-        self.curr_seed = self.base_seed + epoch
+        self.curr_seed.value = self.base_seed + epoch
 
     def __getitem__(self, idx: int) -> Any:
         """Get an item from the dataset, setting the random seed first."""
-        seed = idx + self.curr_seed
+        seed = idx + self.curr_seed.value
         torch.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)

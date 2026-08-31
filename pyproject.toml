@@ -130,6 +130,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
+    "wandb==0.27.2",
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -154,13 +155,36 @@ url = "https://pypi.nvidia.com"
 # resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
 [[tool.uv.dependency-metadata]]
 name = "flash-mla"
-version = "1.0.0+b7643bd"
+version = "1.0.0+9edee0c"
 requires-dist = []
+
+# TransformerEngine's metadata hook compiles NCCL EP while resolving. Mirror the selected
+# MCore pin's metadata so a lock-only operation never invokes the build backend.
+[[tool.uv.dependency-metadata]]
+name = "transformer-engine"
+version = "2.18.0+27486e03"
+requires-dist = [
+    "pydantic<2.14",
+    "importlib-metadata>=1.0",
+    "packaging",
+    "torch>=2.1",
+    "einops",
+    "onnxscript",
+    "onnx",
+    "nvdlfw-inspect",
+    "nvidia-cudnn-frontend>=1.25.0",
+]
+
+[[tool.uv.dependency-metadata]]
+name = "fast-hadamard-transform"
+version = "1.0.4.post1"
+requires-dist = ["torch", "packaging", "ninja"]
 
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
 
 [project.optional-dependencies]
 recipes = [
@@ -173,11 +197,12 @@ tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
 ]
 te = [
-    "transformer-engine[pytorch,core_cu13]",
+    "megatron-core[te]",
 ]
 ssm = [
     "mamba-ssm",
     "causal-conv1d",
+    "tilelang>=0.1.9",
 ]
 audio = [
     "librosa",
@@ -201,6 +226,7 @@ test = [
     "pytest-timeout>=2.4.0",
     "pytest-mock>=3.14.0",
     "pytest-runner>=6.0.1",
+    "pytest-shard>=0.1.2",
     "pygithub",
     "click",
 ]

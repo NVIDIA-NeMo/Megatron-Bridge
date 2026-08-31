@@ -19,6 +19,7 @@ __all__ = [
     "gpt_oss_120b_peft_8gpu_h100_bf16_config",
     "gpt_oss_120b_pretrain_64gpu_h100_bf16_config",
     "gpt_oss_120b_sft_32gpu_h100_bf16_config",
+    "gpt_oss_120b_sft_48gpu_h100_bf16_32k_config",
     "gpt_oss_20b_peft_1gpu_h100_bf16_config",
     "gpt_oss_20b_peft_1gpu_h100_fp8cs_config",
     "gpt_oss_20b_peft_1gpu_h100_fp8mx_config",

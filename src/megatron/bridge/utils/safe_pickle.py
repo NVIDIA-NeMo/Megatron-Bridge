@@ -21,7 +21,7 @@ import zipfile
 from collections import OrderedDict
 from dataclasses import fields
 from types import MappingProxyType, ModuleType
-from typing import cast
+from typing import BinaryIO, cast
 
 
 _BUILTIN_SAFE_TYPES = frozenset(
@@ -239,6 +239,32 @@ class _RestrictedUnpickler(pickle.Unpickler):
         )
 
 
+def _safe_torch_load_from_bytes(data: bytes) -> object:
+    """Reconstruct tensor storage bytes without enabling arbitrary pickle globals."""
+    import torch
+
+    return torch.load(io.BytesIO(data), map_location="cpu", weights_only=True)
+
+
+class _TorchTensorRestrictedUnpickler(_RestrictedUnpickler):
+    """Restricted unpickler for plain tensors and containers of tensors."""
+
+    _SAFE_MODULES = MappingProxyType(
+        {
+            **_RestrictedUnpickler._SAFE_MODULES,
+            "torch._utils": frozenset({"_rebuild_tensor", "_rebuild_tensor_v2"}),
+        }
+    )
+
+    def find_class(self, module: str, name: str) -> object:
+        if (module, name) in {
+            ("megatron.core.safe_globals", "safe_load_from_bytes"),
+            ("torch.storage", "_load_from_bytes"),
+        }:
+            return _safe_torch_load_from_bytes
+        return super().find_class(module, name)
+
+
 class _NumpyRestrictedUnpickler(pickle.Unpickler):
     """Unpickler that allows safe builtins and the narrow set of numpy types needed for object array reconstruction.
 
@@ -316,7 +342,7 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
         )
 
 
-def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
+def energon_torch_load(path: str | BinaryIO, *, map_location: str = "cpu") -> object:
     """Load an Energon dataloader state ``.pt`` file through a restricted unpickler.
 
     Parses the torch zip format directly without calling ``torch.load``.  Security is enforced
@@ -335,7 +361,7 @@ def energon_torch_load(path: str, *, map_location: str = "cpu") -> object:
     that tensors sharing a storage (views, slices) remain aliased after restore.
 
     Args:
-        path: Path to the ``.pt`` file written by
+        path: Path to or binary stream for the ``.pt`` file written by
             :func:`~megatron.bridge.training.checkpointing.maybe_save_dataloader_state`.
         map_location: Device to map tensor storages to; defaults to ``"cpu"`` to avoid GPU
             allocation during restore.
@@ -426,6 +452,11 @@ def safe_pickle_load(fp) -> object:
 def safe_pickle_loads(data: bytes) -> object:
     """Deserialize pickle data using a restricted unpickler that only allows safe types."""
     return _RestrictedUnpickler(io.BytesIO(data)).load()
+
+
+def safe_torch_tensor_pickle_loads(data: bytes) -> object:
+    """Deserialize raw pickle data containing only safe containers and plain torch tensors."""
+    return _TorchTensorRestrictedUnpickler(io.BytesIO(data)).load()
 
 
 def safe_load_npy(data: bytes):

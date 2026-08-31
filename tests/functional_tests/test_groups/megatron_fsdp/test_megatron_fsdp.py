@@ -37,6 +37,7 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     runtime_config_update,
 )
+from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.state import GlobalState
@@ -408,6 +409,7 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MFSDP v2 is unavailable in this MCore revision")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
         """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
         initialize_distributed()

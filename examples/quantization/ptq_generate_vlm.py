@@ -182,7 +182,14 @@ def main(
         console.print(f"[green]Loaded Quantized Model:\n {unwrapped_model}[/green]")
         console.print("[green]Testing quantized VLM model with image and prompt...[/green]")
 
-    _custom_prompt_forward_loop_func(unwrapped_model, processor, is_rank_0, prompts, osl, test_image_path=image_path)
+    # .eval() above disables dropout/etc but not autograd -- without no_grad(),
+    # every decode step in the osl loop retains a full backward-pass graph it
+    # never uses, which was enough to OOM a 27B TP=8 model at ~79GB/79.18GB
+    # even after model loading and quantization validation had succeeded.
+    with torch.no_grad():
+        _custom_prompt_forward_loop_func(
+            unwrapped_model, processor, is_rank_0, prompts, osl, test_image_path=image_path
+        )
 
     if is_rank_0:
         console.print("[green]Generation completed successfully![/green]")
