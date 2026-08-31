@@ -79,6 +79,9 @@ def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     cfg.model.cuda_graph_impl = "none"
     clear_cuda_graph_modules(cfg.model)
     cfg.optimizer.overlap_param_gather = False
+    # Combined-1F1B requires a root schedule plan that preserves visual inputs.
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.comm_overlap.delay_wgrad_compute = False
 
 
 def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:

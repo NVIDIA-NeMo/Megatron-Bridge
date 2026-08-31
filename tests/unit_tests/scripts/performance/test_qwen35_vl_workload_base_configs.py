@@ -23,6 +23,12 @@ import pytest
 import torch
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.perf_recipes.qwen_vl.b200.qwen35_vl import (
+    qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config,
+    qwen35_vl_122b_a10b_pretrain_32gpu_b200_fp8cs_config,
+    qwen35_vl_122b_a10b_pretrain_32gpu_b200_fp8mx_config,
+)
 from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config,
@@ -75,6 +81,25 @@ def test_qwen35_vl_122b_h100_pipeline_layout(
     assert (num_layers // pp_size) % vp_size == 0
     assert pp_size == expected_pp_size
     assert vp_size == expected_vp_size
+
+
+@pytest.mark.parametrize(
+    "recipe_fn",
+    [
+        qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config,
+        qwen35_vl_122b_a10b_pretrain_32gpu_b200_fp8cs_config,
+        qwen35_vl_122b_a10b_pretrain_32gpu_b200_fp8mx_config,
+    ],
+)
+def test_qwen35_vl_122b_b200_ep_overlap_has_schedule_plan(
+    recipe_fn: Callable,
+) -> None:
+    """B200 VLM recipes must not select combined-1F1B without a schedule plan."""
+    config = recipe_fn()
+
+    assert config.comm_overlap.overlap_moe_expert_parallel_comm is not True or hasattr(
+        Qwen3VLModel, "build_schedule_plan"
+    ), "EP overlap selects combined-1F1B, but Qwen3VLModel has no build_schedule_plan"
 
 
 def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
