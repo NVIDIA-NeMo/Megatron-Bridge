@@ -18,8 +18,10 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -35,6 +37,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--image",
         help="Optional local image path or URL. Uses the model processor and a multimodal chat template.",
+    )
+    parser.add_argument(
+        "--separate-image-processing",
+        action="store_true",
+        help=(
+            "Render the chat template as text, then pass a PIL image to the processor separately. "
+            "Use this for processors whose image preprocessor does not accept the tensor produced by "
+            "Transformers' structured-chat media loader."
+        ),
     )
     parser.add_argument("--max-new-tokens", required=True, type=int, help="Maximum number of tokens to generate.")
     parser.add_argument("--chat-template", action="store_true", help="Format the prompt as a user chat turn.")
@@ -67,6 +78,8 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--disable-thinking requires --chat-template")
     if args.image and not args.chat_template:
         parser.error("--image requires --chat-template")
+    if args.separate_image_processing and not args.image:
+        parser.error("--separate-image-processing requires --image")
     return args
 
 
@@ -88,10 +101,41 @@ def _image_content(image: str) -> dict[str, str]:
     return {"type": "image", location_key: image}
 
 
+def _load_pil_image(image: str) -> Any:
+    """Load one local or public HTTP image into RGB PIL form."""
+    from PIL import Image
+
+    if urlparse(image).scheme in {"http", "https"}:
+        from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
+
+        is_safe, reason = is_safe_public_http_url(image)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch image URL ({reason}): {image}")
+        with safe_url_open(image) as response:
+            with Image.open(io.BytesIO(response.read())) as loaded:
+                return loaded.convert("RGB")
+
+    with Image.open(Path(image)) as loaded:
+        return loaded.convert("RGB")
+
+
 def _prepare_inputs(processor: Any, args: argparse.Namespace) -> Any:
     """Prepare text-only or processor-native multimodal model inputs."""
     if args.image:
         template_options = {"enable_thinking": False} if args.disable_thinking else {}
+        if args.separate_image_processing:
+            image_token = getattr(processor, "image_token", "<image>")
+            formatted_prompt = processor.apply_chat_template(
+                [{"role": "user", "content": f"{image_token}\n{args.prompt}"}],
+                tokenize=False,
+                add_generation_prompt=True,
+                **template_options,
+            )
+            return processor(
+                text=[formatted_prompt],
+                images=[_load_pil_image(args.image)],
+                return_tensors="pt",
+            )
         messages = [
             {
                 "role": "user",

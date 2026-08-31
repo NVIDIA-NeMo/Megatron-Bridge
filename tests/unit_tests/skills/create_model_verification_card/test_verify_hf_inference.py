@@ -75,6 +75,16 @@ class _Processor(_Tokenizer):
         self.tokenizer = _Tokenizer()
 
 
+class _SeparateImageProcessor(_Processor):
+    image_token = "<image>"
+
+    def __call__(self, *, text, images, return_tensors):
+        self.direct_text = text
+        self.direct_images = images
+        assert return_tensors == "pt"
+        return _Batch(input_ids=torch.tensor([[1, 2, 3]]), pixel_values=torch.tensor([1]))
+
+
 class _Model:
     device = "cpu"
 
@@ -208,6 +218,52 @@ def test_image_requires_chat_template(monkeypatch):
 
     with pytest.raises(SystemExit):
         module._parse_args()
+
+
+def test_separate_image_processing_requires_image(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_hf_inference.py",
+            "--hf-model",
+            "model",
+            "--prompt",
+            "prompt",
+            "--max-new-tokens",
+            "2",
+            "--separate-image-processing",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        module._parse_args()
+
+
+def test_separate_image_processing_renders_text_then_passes_pil(monkeypatch):
+    module = _load_module()
+    processor = _SeparateImageProcessor()
+    image = object()
+    monkeypatch.setattr(module, "_load_pil_image", lambda _: image)
+    args = SimpleNamespace(
+        image="work/data/example.png",
+        prompt="Describe the image.",
+        disable_thinking=True,
+        separate_image_processing=True,
+    )
+
+    inputs = module._prepare_inputs(processor, args)
+
+    assert inputs["pixel_values"].tolist() == [1]
+    assert processor.messages == [{"role": "user", "content": "<image>\nDescribe the image."}]
+    assert processor.template_kwargs == {
+        "tokenize": False,
+        "add_generation_prompt": True,
+        "enable_thinking": False,
+    }
+    assert processor.direct_text == ["formatted text prompt"]
+    assert processor.direct_images == [image]
 
 
 def test_multimodal_main_uses_processor_chat_and_allows_early_stopping(monkeypatch):
