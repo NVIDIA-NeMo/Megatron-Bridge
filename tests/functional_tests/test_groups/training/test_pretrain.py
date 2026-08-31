@@ -21,6 +21,7 @@ import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state
 
+
 try:
     from megatron.core.tensor_parallel import gtp_api
 except ImportError:  # pragma: no cover - frozen MCore dev lacks GTP
