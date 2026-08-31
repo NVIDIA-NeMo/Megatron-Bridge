@@ -339,11 +339,18 @@ def slice_batch_for_megatron_mimo(
                 for modality_name, modality_value in value.items():
                     sample_indices = modality_sample_indices.get(modality_name)
                     if not isinstance(sample_indices, torch.Tensor):
-                        local_modalities[modality_name] = slice_batch_for_megatron_mimo(
-                            modality_value,
-                            dp_rank,
-                            dp_size,
-                        )
+                        if _is_patch_packed_visual_dict(modality_value):
+                            local_modalities[modality_name] = _slice_patch_packed_visual_dict(
+                                modality_value,
+                                dp_rank,
+                                dp_size,
+                            )
+                        else:
+                            local_modalities[modality_name] = slice_batch_for_megatron_mimo(
+                                modality_value,
+                                dp_rank,
+                                dp_size,
+                            )
                         continue
                     selected = (sample_indices >= sample_start) & (sample_indices < sample_end)
                     if selected.any():
