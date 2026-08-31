@@ -20,7 +20,6 @@ from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -167,7 +166,6 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -220,7 +218,6 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

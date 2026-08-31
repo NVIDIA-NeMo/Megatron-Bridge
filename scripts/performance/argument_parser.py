@@ -869,8 +869,8 @@ def parse_cli_args():
     performance_args.add_argument(
         "--moe_flex_dispatcher_backend",
         type=lambda x: None if x == "None" else x,
-        help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
-        choices=["deepep", "hybridep", None],
+        help="MoE flex dispatcher backend. Options- deepep, hybridep, ncclep, None. If None, will use alltoall dispatcher.",
+        choices=["deepep", "hybridep", "ncclep", None],
         required=False,
         # -1 means the option was omitted and the recipe backend must be kept;
         # None means the user explicitly requested the alltoall dispatcher.
