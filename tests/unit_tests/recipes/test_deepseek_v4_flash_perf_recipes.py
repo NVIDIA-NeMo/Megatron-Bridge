@@ -18,6 +18,8 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
+    deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config,
+    deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
 )
@@ -127,3 +129,54 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+
+
+def test_deepseek_v4_flash_128gpu_b300_fp8mx_config() -> None:
+    cfg = deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_layout is not None
+    assert cfg.train.global_batch_size == 2048
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.5
+    assert is_full_iteration_cuda_graph(cfg.model)
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["NCCL_IGNORE_CPU_AFFINITY"] == 1
+
+
+def test_deepseek_v4_flash_128gpu_b200_fp8mx_config() -> None:
+    cfg = deepseek_v4_flash_pretrain_128gpu_b200_fp8mx_config()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_layout is not None
+    assert cfg.train.global_batch_size == 2048
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is False
+    assert cfg.model.moe_paged_stash is False
+    assert "mlp" in cfg.model.recompute_modules
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.dist.distributed_timeout_minutes == 30
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
