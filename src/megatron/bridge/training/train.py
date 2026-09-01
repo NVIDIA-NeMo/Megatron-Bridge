@@ -429,6 +429,8 @@ def train(
 
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
+            if global_state.train_state.step == start_iteration + 1:
+                start_iteration = global_state.train_state.step
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
             handle_profiling_stop(
                 config.profiling,
@@ -796,10 +798,10 @@ def train(
     if pre_hook_enabled:
         disable_forward_pre_hook(model, optimizer=optimizer)
 
-    # This will finalize all unfinalized async request and terminate
-    # a persistent async worker if persistent ckpt worker is enabled
+    # Finalize pending saves here, but leave manager termination to the outer
+    # lifecycle on normal completion or the exit branch below.
     fault_tolerance.on_checkpointing_start(global_state)
-    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
+    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=False)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
     # Shutdown NVRx straggler detection if enabled
