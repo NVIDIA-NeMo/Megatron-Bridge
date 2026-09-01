@@ -832,6 +832,29 @@ class TestGetModel:
             )
 
     @patch("megatron.bridge.models.model_provider._create_model")
+    def test_get_model_default_preserves_cpu_initialization(self, mock_create_model):
+        """Test the direct construction entry point's omitted override."""
+
+        class ModelConstructionObserved(Exception):
+            pass
+
+        def record_cpu_initialization(model_provider, *_args, **_kwargs):
+            assert model_provider.use_cpu_initialization is True
+            raise ModelConstructionObserved
+
+        mock_create_model.side_effect = record_cpu_initialization
+        model_provider = MockModelProvider()
+        model_provider.use_cpu_initialization = True
+
+        with pytest.raises(ModelConstructionObserved):
+            get_model(
+                model_provider,
+                DistributedDataParallelConfig(),
+                wrap_with_ddp=False,
+                pg_collection=_PG(),
+            )
+
+    @patch("megatron.bridge.models.model_provider._create_model")
     @patch("megatron.bridge.models.model_provider._print_num_params")
     @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.bridge.models.model_provider._ddp_wrap")
