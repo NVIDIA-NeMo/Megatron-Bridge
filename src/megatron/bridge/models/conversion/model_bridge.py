@@ -2117,6 +2117,11 @@ class MegatronModelBridge(
                         block_shape=(1, 32),
                         data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
                         scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
+                        scale_shape=tuple(scale_tensor.shape),
+                        compact_scale_shape=(
+                            math.prod(local_weights.shape[:-1]),
+                            math.ceil(local_weights.shape[-1] / 32),
+                        ),
                         with_gemm_swizzled_scales=bool(metadata["with_gemm_swizzled_scales"]),
                     )
                 elif "is_2D_scaled" in metadata and scale_tensor is not None:
@@ -2134,6 +2139,8 @@ class MegatronModelBridge(
                         block_shape=(row_block_size, block_len if isinstance(block_len, int) else None),
                         data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
                         scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
+                        scale_shape=tuple(scale_tensor.shape),
+                        compact_scale_shape=None,
                         with_gemm_swizzled_scales=False,
                     )
 
@@ -2142,8 +2149,15 @@ class MegatronModelBridge(
         torch.distributed.all_gather_object(fp8_layouts_list, local_fp8_layouts, group=pp_group)
         global_fp8_layouts: Dict[str, FP8ExportLayout] = {}
         for layouts in fp8_layouts_list:
-            if layouts:
-                global_fp8_layouts.update(layouts)
+            if not layouts:
+                continue
+            # Validate only after every PP rank has completed the collective.
+            for global_name, layout in layouts.items():
+                try:
+                    layout.validate()
+                except ValueError as error:
+                    raise ValueError(f"{global_name}: {error}") from None
+                global_fp8_layouts[global_name] = layout
 
         return global_fp8_layouts
 
@@ -2311,21 +2325,8 @@ class MegatronModelBridge(
         get_metadata = getattr(local_weights, "get_metadata", None)
         metadata = get_metadata() if callable(get_metadata) else {}
         if "with_gemm_swizzled_scales" in metadata:
-            if metadata["with_gemm_swizzled_scales"]:
-                raise ValueError("MXFP8 parameter export requires compact, non-swizzled scales")
-
             expected_m = math.prod(local_weights.shape[:-1])
             expected_k_tiles = math.ceil(local_weights.shape[-1] / 32)
-            if (
-                scale_tensor.ndim != 2
-                or scale_tensor.shape[0] < expected_m
-                or scale_tensor.shape[1] < expected_k_tiles
-            ):
-                raise ValueError(
-                    "MXFP8 scale tensor is smaller than the compact scale shape: "
-                    f"weight_shape={tuple(local_weights.shape)}, scale_shape={tuple(scale_tensor.shape)}, "
-                    f"expected_scale_shape=({expected_m}, {expected_k_tiles})"
-                )
             if scale_tensor.shape == (expected_m, expected_k_tiles):
                 return scale_tensor
             return scale_tensor[:expected_m, :expected_k_tiles].contiguous()

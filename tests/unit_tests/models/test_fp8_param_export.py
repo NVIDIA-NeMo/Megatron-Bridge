@@ -326,14 +326,35 @@ class TestFp8ParamExport:
         assert tasks[1].param_weight.shape == (96, 2)
         assert torch.all(tasks[1].param_weight == 1)
 
-    def test_mxfp8_scale_trim_rejects_swizzled_layout(self):
+    @pytest.mark.parametrize(
+        "scale_shape, swizzled, error_match",
+        [
+            pytest.param((128, 4), True, "compact, non-swizzled scales", id="swizzled"),
+            pytest.param((95, 2), False, "smaller than the compact scale shape", id="undersized"),
+        ],
+    )
+    def test_detect_fp8_params_propagates_remote_mxfp8_error(self, monkeypatch, scale_shape, swizzled, error_match):
         bridge = DummyBridge()
-        scale = torch.ones((128, 4), dtype=torch.uint8)
-        metadata = {"with_gemm_swizzled_scales": True}
-        fake_w = SimpleNamespace(get_metadata=lambda: metadata, shape=(96, 64))
+        model = SimpleNamespace(named_parameters=lambda: [])
+        remote_layout = FP8ExportLayout(
+            format_name="mxfp8",
+            block_shape=(1, 32),
+            data_dtype=torch.uint8,
+            scale_dtype=torch.uint8,
+            scale_shape=scale_shape,
+            compact_scale_shape=(96, 2),
+            with_gemm_swizzled_scales=swizzled,
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda *_a, **_k: [])
+        monkeypatch.setattr(f"{_MODEL_MB}.get_pg_size", lambda _g: 2)
 
-        with pytest.raises(ValueError, match="compact, non-swizzled scales"):
-            bridge._trim_blockwise_fp8_scale_inv_padding(fake_w, scale)
+        def ag(output_list, obj, group=None):
+            output_list[:] = [obj, {_QKV_GLOBAL: remote_layout}]
+
+        monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", ag)
+
+        with pytest.raises(ValueError, match=error_match):
+            bridge._detect_fp8_params([model], SimpleNamespace(), [], None, "_rowwise_scale_inv")
 
     def test_detect_fp8_params_without_top_level_te_class(self, monkeypatch):
         bridge = DummyBridge()
@@ -425,6 +446,8 @@ class TestFp8ParamExport:
         assert layouts[gname].block_shape == (1, 32)
         assert layouts[gname].data_dtype == torch.uint8
         assert layouts[gname].scale_dtype == torch.uint8
+        assert layouts[gname].scale_shape == (128, 4)
+        assert layouts[gname].compact_scale_shape == (96, 2)
         assert layouts[gname].with_gemm_swizzled_scales is False
 
     def test_build_export_fp8_tasks_remote_pp_tasks_are_concrete(self, monkeypatch):

@@ -36,7 +36,28 @@ class FP8ExportLayout:
     block_shape: tuple[int | None, int | None]
     data_dtype: torch.dtype | None
     scale_dtype: torch.dtype | None
+    scale_shape: tuple[int, ...]
+    compact_scale_shape: tuple[int, int] | None
     with_gemm_swizzled_scales: bool
+
+    def validate(self) -> None:
+        """Validate format-specific export invariants."""
+        if self.format_name != "mxfp8":
+            return
+        if self.with_gemm_swizzled_scales:
+            raise ValueError("MXFP8 parameter export requires compact, non-swizzled scales")
+
+        compact_shape = self.compact_scale_shape
+        if (
+            compact_shape is None
+            or len(self.scale_shape) != 2
+            or self.scale_shape[0] < compact_shape[0]
+            or self.scale_shape[1] < compact_shape[1]
+        ):
+            raise ValueError(
+                "MXFP8 scale tensor is smaller than the compact scale shape: "
+                f"scale_shape={self.scale_shape}, expected_scale_shape={compact_shape}"
+            )
 
 
 class MegatronQuantizationBridge:
