@@ -1164,7 +1164,6 @@ class ConfigContainer(Container):
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
             "context_parallel_size",
-            "expert_model_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1173,11 +1172,11 @@ class ConfigContainer(Container):
         ]
         if configured_parallelisms:
             raise ValueError(
-                "MFSDP V2 currently supports DP-only training; unsupported settings: "
-                + ", ".join(configured_parallelisms)
+                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
             )
-        if self.model.num_moe_experts is not None:
-            raise ValueError("MFSDP V2 does not currently support MoE models.")
+        if self.model.expert_model_parallel_size > 1:
+            if self.model.num_moe_experts is None:
+                raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
         if self.model.virtual_pipeline_model_parallel_size is not None:
             raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
         if self.dist.use_tp_pp_dp_mapping:
