@@ -14,6 +14,8 @@
 
 """Unit tests for flop_utils module."""
 
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -22,6 +24,7 @@ import pytest
 import torch
 
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.flop_utils import (
     GlobalFlopsRuntimeStats,
     _lora_seq_stats_cache,
@@ -700,7 +703,7 @@ class TestGDNLayerFlops:
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
             gated_linear_unit=True,
-            experimental_attention_variant="gated_delta_net",
+            experimental_attention_variant="gdn",
             linear_attention_freq=4,
             linear_conv_kernel_dim=4,
             linear_key_head_dim=128,
@@ -711,6 +714,39 @@ class TestGDNLayerFlops:
         defaults.update(overrides)
         return MockModelConfig(**defaults)
 
+    def test_flop_utils_imports_without_mcore_gdn_helper(self) -> None:
+        code = """
+import importlib
+import sys
+
+from megatron.core.models.gpt import experimental_attention_variant_module_specs
+from megatron.bridge.training import utils
+
+import megatron.bridge.training.utils.flop_utils
+
+experimental_attention_variant_module_specs.__dict__.pop("is_gated_delta_net_variant", None)
+del sys.modules["megatron.bridge.training.utils.flop_utils"]
+del utils.flop_utils
+flop_utils = importlib.import_module("megatron.bridge.training.utils.flop_utils")
+
+assert flop_utils._mcore_is_gated_delta_net_variant is None
+assert flop_utils._is_gated_delta_net_variant("gdn") is True
+"""
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(
+        ("variant", "expected"),
+        [("gated_delta_net", True), ("gdn", True), ("gdn2", True), ("mamba", False), (None, False)],
+    )
+    def test_gdn_variant_fallback_supports_older_mcore_dev(
+        self, monkeypatch: pytest.MonkeyPatch, variant: str | None, expected: bool
+    ) -> None:
+        monkeypatch.setattr(flop_utils, "_mcore_is_gated_delta_net_variant", None)
+
+        assert flop_utils._is_gated_delta_net_variant(variant) is expected
+
     def test_gdn_flops_differ_from_pure_attention(self):
         """GDN-enabled config should produce different FLOPs than pure-attention baseline."""
         batch_size = 1
@@ -720,6 +756,28 @@ class TestGDNLayerFlops:
         baseline_flops = num_floating_point_operations(baseline_cfg, batch_size=batch_size)
         assert gdn_flops != baseline_flops, "GDN FLOPs should differ from pure-attention FLOPs"
         assert gdn_flops > 0
+
+    def test_gdn_canonical_and_deprecated_alias_match(self):
+        """Canonical GDN and its deprecated alias should produce identical FLOPs."""
+        canonical_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn"))
+        deprecated_cfg = MockConfigContainer(
+            model=self._qwen35_27b_config(experimental_attention_variant="gated_delta_net")
+        )
+
+        canonical_flops = num_floating_point_operations(canonical_cfg, batch_size=1)
+        deprecated_flops = num_floating_point_operations(deprecated_cfg, batch_size=1)
+
+        assert canonical_flops == deprecated_flops
+
+    def test_gdn2_accounts_for_its_larger_input_projection(self):
+        """GDN2 should include its additional channel-wise input projections."""
+        gdn_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn"))
+        gdn2_cfg = MockConfigContainer(model=self._qwen35_27b_config(experimental_attention_variant="gdn2"))
+
+        gdn_flops = num_floating_point_operations(gdn_cfg, batch_size=1)
+        gdn2_flops = num_floating_point_operations(gdn2_cfg, batch_size=1)
+
+        assert gdn2_flops > gdn_flops
 
     def test_gdn_only_layers(self):
         """With linear_attention_freq=1 (no standard attn), self_attn_term should be pure GDN."""

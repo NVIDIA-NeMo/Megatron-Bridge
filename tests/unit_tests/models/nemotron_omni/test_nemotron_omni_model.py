@@ -18,6 +18,7 @@ import os
 import socket
 from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -26,11 +27,14 @@ from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
 from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
+    _pad_patch_grid_to_even,
     _pixel_shuffle_dynamic_resolution,
+    _project_multimodal_embeddings,
 )
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
@@ -100,6 +104,17 @@ class _SoundEncoderBoundaryModel(NemotronOmniModel):
         self.sound_projection = nn.Linear(2, 2, bias=False, dtype=torch.bfloat16)
         with torch.no_grad():
             self.sound_projection.weight.copy_(torch.eye(2, dtype=torch.bfloat16))
+
+
+class _RecordingProjection(nn.Module):
+    def __init__(self, *, fp8: bool):
+        super().__init__()
+        self.config = SimpleNamespace(fp8="hybrid" if fp8 else None, fp8_recipe="tensorwise")
+        self.input_shape = None
+
+    def forward(self, hidden_states):
+        self.input_shape = hidden_states.shape
+        return hidden_states * 2
 
 
 @dataclass
@@ -220,6 +235,35 @@ def test_canonical_model_advertises_collator_owned_packing():
     assert NemotronOmniModel.model_slices_context_parallel_inputs is True
 
 
+def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config():
+    class UncopyableProcessGroupCollection:
+        def __deepcopy__(self, memo):
+            raise TypeError("runtime process groups cannot be copied")
+
+    provider = _TinyOmniProvider()
+    pg_collection = UncopyableProcessGroupCollection()
+    provider._pg_collection = pg_collection
+
+    def create_model(**kwargs):
+        copied_config = AttentionLayerConfig.from_config(kwargs["language_transformer_config"])
+        assert copied_config._pg_collection is None
+        return Mock()
+
+    with (
+        patch.object(_TinyOmniProvider, "_build_vision_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_vision_projection_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_resolve_hybrid_stack_spec", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_sound_modules", return_value=(None, None)),
+        patch(
+            "megatron.bridge.models.nemotron_omni.nemotron_omni_provider.NemotronOmniModel",
+            side_effect=create_model,
+        ),
+    ):
+        provider.provide(pre_process=True, post_process=True)
+
+    assert provider._pg_collection is pg_collection
+
+
 def test_canonical_provider_rejects_ambiguous_legacy_class_name():
     provider = _TinyOmniProvider(nemotron_omni_contract=None)
 
@@ -251,6 +295,47 @@ def test_vision_projection_matches_hf_and_vllm_activation():
     assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
 
 
+def test_vision_backbone_fp8_policy_does_not_disable_language_or_projection_fp8():
+    provider = NemotronOmniModelProvider(
+        fp8="hybrid",
+        fp8_param=True,
+        use_vision_backbone_fp8_arch=False,
+    )
+
+    vision_config = provider._build_vision_config(provider)
+    vision_projection_config = provider._build_vision_projection_config(provider)
+
+    assert vision_config.fp8 is None
+    assert vision_config.fp8_param is False
+    assert provider.fp8 == "hybrid"
+    assert provider.fp8_param is True
+    assert vision_projection_config.fp8 == "hybrid"
+    assert vision_projection_config.fp8_param is True
+
+
+def test_multimodal_projection_pads_only_temporary_fp8_rows():
+    projection = _RecordingProjection(fp8=True)
+    embeddings = torch.arange(7 * 2 * 3, dtype=torch.float32).reshape(7, 2, 3).requires_grad_()
+
+    projected = _project_multimodal_embeddings(projection, embeddings)
+    projected.sum().backward()
+
+    assert projection.input_shape == (16, 1, 3)
+    assert projected.shape == embeddings.shape
+    assert torch.equal(projected, embeddings * 2)
+    assert torch.equal(embeddings.grad, torch.full_like(embeddings, 2))
+
+
+def test_multimodal_projection_does_not_pad_bf16_rows():
+    projection = _RecordingProjection(fp8=False)
+    embeddings = torch.arange(7 * 2 * 3, dtype=torch.float32).reshape(7, 2, 3)
+
+    projected = _project_multimodal_embeddings(projection, embeddings)
+
+    assert projection.input_shape == (14, 1, 3)
+    assert torch.equal(projected, embeddings * 2)
+
+
 def test_radio_cpe_uses_square_interpolate_then_crop_by_default():
     provider = _TinyOmniProvider()
 
@@ -261,6 +346,47 @@ def test_llava_provider_preserves_existing_radio_cpe_default():
     provider = NemotronOmniLlavaModelProvider(nemotron_omni_contract=NEMOTRON_OMNI_LLAVA_CONTRACT)
 
     assert provider.radio_interpolate_only_cpe is True
+
+
+def test_llava_provider_uses_exact_replacement_counts_with_production_tile_limit():
+    provider = NemotronOmniLlavaModelProvider(temporal_patch_dim=1)
+    llava_model = SimpleNamespace(_dynamic_resolution=True, _max_num_tiles=12, img_seq_len=256)
+
+    provider._configure_llava_preprocess_contract(llava_model)
+
+    assert llava_model._max_num_tiles == 12
+    assert llava_model._dynamic_resolution is False
+    assert llava_model.img_seq_len == 1
+
+
+def test_llava_forward_normalizes_all_one_frame_tensor_before_delegating():
+    class _RecordingLlava:
+        def __init__(self):
+            self.kwargs = None
+
+        def __call__(self, *args, **kwargs):
+            self.kwargs = kwargs
+            return args
+
+    model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
+    nn.Module.__init__(model)
+    model.llava_model = _RecordingLlava()
+
+    result = model.forward("input", num_frames=torch.ones(3, dtype=torch.int32), imgs_sizes=torch.ones(3, 2))
+
+    assert result == ("input",)
+    assert model.llava_model.kwargs["num_frames"] == 1
+    assert model.llava_model.kwargs["imgs_sizes"].shape == (3, 2)
+
+
+@pytest.mark.parametrize("num_frames", [2, torch.tensor([1, 2], dtype=torch.int32)])
+def test_llava_forward_rejects_video_frame_counts(num_frames):
+    model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
+    nn.Module.__init__(model)
+    model.llava_model = lambda *args, **kwargs: None
+
+    with pytest.raises(NotImplementedError, match="every num_frames value must be 1|num_frames must be 1"):
+        model.forward(num_frames=num_frames)
 
 
 def test_llava_model_emits_deprecation_notice(monkeypatch):
@@ -296,6 +422,153 @@ def test_dynamic_resolution_pixel_shuffle_groups_spatial_2x2_blocks():
             dtype=torch.float32,
         ),
     )
+
+
+def test_even_patch_grid_is_returned_unchanged():
+    features = torch.randn(1, 32 * 32, 8)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=32, width=32)
+
+    assert padded is features
+    assert (height, width) == (32, 32)
+
+
+def test_odd_patch_grid_is_zero_padded_so_pixel_shuffle_accepts_it():
+    # The CP vision split injects 1x1-patch placeholder images to keep every
+    # rank non-empty; pixel shuffle rejects odd grids outright.
+    features = torch.arange(8, dtype=torch.float32).reshape(1, 1, 8)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=1, width=1)
+
+    assert (height, width) == (2, 2)
+    assert torch.equal(padded[0, 0], features[0, 0])
+    assert padded[0, 1:].abs().sum() == 0
+    assert _pixel_shuffle_dynamic_resolution(padded, height=height, width=width).shape == (1, 1, 32)
+
+
+def test_odd_patch_grid_padding_keeps_real_patches_differentiable():
+    features = torch.randn(1, 3 * 5, 8, requires_grad=True)
+
+    padded, height, width = _pad_patch_grid_to_even(features, height=3, width=5)
+    _pixel_shuffle_dynamic_resolution(padded, height=height, width=width).sum().backward()
+
+    assert (height, width) == (4, 6)
+    assert torch.count_nonzero(features.grad) == features.numel()
+
+
+def test_vision_dp_over_cp_rejects_process_group_mismatch():
+    # The MCore splitter resolves the CP group from the global parallel state,
+    # so a pg_collection that disagrees with the config would shard against the
+    # wrong ranks instead of failing.
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.context_parallel_lm = 2
+    model.patch_dim = 16
+    model.config = SimpleNamespace(fp8_recipe=None)
+    model.pg_collection = SimpleNamespace(cp=SimpleNamespace(size=lambda: 1))
+
+    with pytest.raises(ValueError, match="config=2, group=1"):
+        model._split_images_across_context_parallel_ranks(
+            torch.zeros(1, 3, 32, 32),
+            torch.tensor([[32, 32]], dtype=torch.int32),
+            None,
+            num_frames=None,
+            temporal_patch_size=1,
+        )
+
+
+class _FakeDynamicVisionModel(nn.Module):
+    """Returns one feature row per patch implied by the sizes it is handed."""
+
+    temporal_patch_dim = 1
+    add_class_token = False
+
+    def __init__(self, hidden_size: int, patch_dim: int):
+        super().__init__()
+        self.scale = nn.Parameter(torch.zeros(1))
+        self.hidden_size = hidden_size
+        self.patch_dim = patch_dim
+        self.seen = {}
+
+    def forward(self, images, *, imgs_sizes, packed_seq_params, num_frames):
+        self.seen = {"images": images, "imgs_sizes": imgs_sizes, "num_frames": num_frames}
+        patches = sum(
+            (int(height) // self.patch_dim) * (int(width) // self.patch_dim) for height, width in imgs_sizes.tolist()
+        )
+        return torch.arange(patches * self.hidden_size, dtype=torch.float32).reshape(1, patches, self.hidden_size)
+
+
+def test_sharded_encode_projects_locally_then_gathers_the_global_features():
+    # The distributed equivalence test covers the numerics, but it runs in a
+    # torchrun subprocess. This exercises the same Bridge-side wiring in-process:
+    # the split feeds the tower, the placeholder grid gets padded, and the
+    # projector runs before the gather rather than after it.
+    from megatron.bridge.models.nemotron_omni import modeling_nemotron_omni as modeling
+
+    hidden_size = 8
+    patch_dim = 16
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.patch_dim = patch_dim
+    model.context_parallel_lm = 2
+    model.vision_dp_over_cp = True
+    model.config = SimpleNamespace(fp8_recipe=None)
+    model.pg_collection = SimpleNamespace(cp=SimpleNamespace(size=lambda: 2))
+    model.vision_model = _FakeDynamicVisionModel(hidden_size, patch_dim)
+    model.vision_projection = nn.Linear(hidden_size * 4, 5, bias=False)
+
+    # This rank keeps a single 1x1-patch placeholder, the shape MCore produces
+    # when a microbatch has fewer images than CP ranks.
+    local_num_frames = torch.tensor([1], dtype=torch.int32)
+    calls = {}
+
+    def fake_split(images, imgs_sizes, packed_seq_params, **kwargs):
+        calls["split"] = kwargs
+        local_sizes = torch.tensor([[patch_dim, patch_dim]], dtype=torch.int32)
+        return images[:, :1, :], local_sizes, packed_seq_params, False, 1, local_num_frames
+
+    def fake_gather(projected, num_padded_ranks):
+        calls["gather"] = {"width": projected.shape[-1], "num_padded_ranks": num_padded_ranks}
+        return projected
+
+    original_split = modeling.split_to_context_parallel_ranks_dynamic_res
+    original_gather = modeling.gather_from_context_parallel_ranks_dynamic_res
+    modeling.split_to_context_parallel_ranks_dynamic_res = fake_split
+    modeling.gather_from_context_parallel_ranks_dynamic_res = fake_gather
+    try:
+        encoded = model._encode_images(
+            torch.randn(1, 3, 32, 32),
+            torch.tensor([[32, 32]], dtype=torch.int32),
+            None,
+            None,
+        )
+    finally:
+        modeling.split_to_context_parallel_ranks_dynamic_res = original_split
+        modeling.gather_from_context_parallel_ranks_dynamic_res = original_gather
+
+    assert calls["split"]["patch_dim"] == patch_dim
+    # The tower must see this rank's shard, including the frame counts the
+    # splitter recomputed for it rather than the microbatch-wide ones.
+    assert model.vision_model.seen["images"].shape[1] == 1
+    assert model.vision_model.seen["num_frames"] is local_num_frames
+    # A 1x1 placeholder grid only survives pixel shuffle once padded to 2x2.
+    assert encoded.shape == (1, 5)
+    # Width 5 is the projector's output, so the gather ran on projected
+    # features; gathering first would have handed it the wider encoder output.
+    assert calls["gather"] == {"width": 5, "num_padded_ranks": 1}
+
+
+@pytest.mark.gpu
+def test_vision_dp_over_cp_is_disabled_when_cp_is_one(single_rank_model_parallel):
+    # Sharding images over a one-rank CP group is a no-op wrapped in two
+    # collectives, so the model must ignore the request rather than pay for it.
+    provider = _TinyOmniProvider(vision_dp_over_cp=True)
+    provider.finalize()
+
+    model = provider.provide()
+
+    assert provider.vision_dp_over_cp is True
+    assert model.vision_dp_over_cp is False
 
 
 def test_image_forward_replaces_expanded_placeholders_without_changing_length():

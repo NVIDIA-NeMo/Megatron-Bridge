@@ -27,7 +27,11 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pr
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
+from megatron.bridge.training.mixed_precision import (
+    MixedPrecisionConfig,
+    nemotron_3_super_bf16_with_nvfp4_mixed,
+    nemotron_3_ultra_bf16_with_nvfp4_mixed,
+)
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -62,10 +66,52 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
     return cfg
 
 
+def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
+    """Enable static-shape NCCL EP for an MXFP8 recipe.
+
+    The calling recipe builder still declares its own ``cfg.env_vars`` mapping inline, so the
+    launched environment stays readable next to the recipe instead of being derived here.
+    """
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_ncclep_zero_copy = False
+
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.comm_overlap.delay_wgrad_compute = False
+
+    cfg.model.offload_modules = []
+    cfg.model.moe_expert_rank_capacity_factor = 1.05
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+    cfg.model.moe_router_padding_for_quantization = True
+
+
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
     cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
-    # Disabled until MCore PR 4358 lands.
+    # Although MCore PR 4358 is merged,
+    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
+    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
+    cfg.fp4_param_gather = False
+    return cfg
+
+
+def _nemotron_3_ultra_nvfp4_precision() -> MixedPrecisionConfig:
+    """Return the NVFP4 precision config used by Nemotron 3 Ultra perf recipes."""
+    cfg = nemotron_3_ultra_bf16_with_nvfp4_mixed()
+    # Although MCore PR 4358 is merged,
+    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
+    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
     cfg.fp4_param_gather = False
     return cfg
 

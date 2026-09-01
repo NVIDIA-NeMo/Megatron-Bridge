@@ -15,6 +15,7 @@
 from typing import Any, Dict, List, Optional
 
 import torch
+from megatron.core.inference.config import MediaPromptSpec, MultimodalPromptConfig
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
@@ -36,6 +37,24 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
     Args:
         model (Qwen2VLModel): The Qwen2VL model
     """
+
+    supports_text = True
+    supports_image = True
+    supports_video = False
+    supports_audio = False
+
+    multimodal_prompt_config = MultimodalPromptConfig(
+        image_spec=MediaPromptSpec(
+            model_token="<|image_pad|>",
+            prefix="<|vision_start|>",
+            suffix="<|vision_end|>",
+        ),
+        video_spec=MediaPromptSpec(
+            model_token="<|video_pad|>",
+            prefix="<|vision_start|>",
+            suffix="<|vision_end|>",
+        ),
+    )
 
     def __init__(self, model, inference_context=None):
         super().__init__(model, inference_context=inference_context)

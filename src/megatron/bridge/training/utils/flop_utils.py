@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import torch
+from megatron.core.models.gpt import experimental_attention_variant_module_specs
 from megatron.core.models.hybrid.hybrid_layer_allocation import (
     Symbols,
     get_hybrid_layer_counts,
@@ -30,6 +33,17 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+_mcore_is_gated_delta_net_variant = cast(
+    Callable[[str | None], bool] | None,
+    getattr(experimental_attention_variant_module_specs, "is_gated_delta_net_variant", None),
+)
+
+
+def _is_gated_delta_net_variant(experimental_attention_variant: str | None) -> bool:
+    """Recognize GDN variants across current main and older MCore dev branches."""
+    if _mcore_is_gated_delta_net_variant is not None:
+        return _mcore_is_gated_delta_net_variant(experimental_attention_variant)
+    return experimental_attention_variant in {"gated_delta_net", "gdn", "gdn2"}
 
 
 @dataclass(frozen=True)
@@ -1404,17 +1418,13 @@ def num_floating_point_operations(
                 full_core = query_projection_size * core_attn_seq_factor / 2 * 2
                 self_attn_term = 3 * 2 * num_layers * (proj_per_layer + full_core)
 
-        # Handle GDN (Gated DeltaNet) hybrid attention variant.
-        # When experimental_attention_variant is "gated_delta_net", a fraction of the
-        # layers use GDN instead of standard attention. Override self_attn_term with a
-        # weighted sum of GDN and standard-attention per-layer costs.
-        if experimental_attention_variant == "gated_delta_net":
+        # Handle GDN (Gated DeltaNet) hybrid attention variants. MCore normalizes
+        # the deprecated "gated_delta_net" alias to "gdn" during config finalization.
+        if _is_gated_delta_net_variant(experimental_attention_variant):
             linear_attention_freq = cfg.model.linear_attention_freq
             decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
-                raise ValueError(
-                    "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
-                )
+                raise ValueError("linear_attention_freq must be set for gated delta net attention variants")
             if isinstance(linear_attention_freq, int):
                 linear_attention_pattern = [
                     0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(decoder_num_layers)
@@ -1448,12 +1458,18 @@ def num_floating_point_operations(
 
             qk_dim = qk_head_dim * num_qk_heads
             v_dim = v_head_dim * num_v_heads
+            if experimental_attention_variant == "gdn2":
+                # GDN2 in_proj: q, k, v, z, f, b, w.
+                in_proj_dim = 4 * qk_dim + 3 * v_dim
+            else:
+                # GDN in_proj: q, k, v, z, beta, alpha.
+                in_proj_dim = 2 * qk_dim + 2 * v_dim + 2 * num_v_heads
 
             gdn_self_attn_per_layer = (
                 3
                 * 2
                 * (
-                    cfg.model.hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                    cfg.model.hidden_size * in_proj_dim
                     + conv_kernel_dim * (2 * qk_dim + v_dim)
                     + num_v_heads * (v_head_dim**2) * 4
                     + cfg.model.hidden_size * v_dim
