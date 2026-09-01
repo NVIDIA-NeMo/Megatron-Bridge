@@ -11,7 +11,7 @@ from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from torch import nn
 
 from megatron.bridge.models.bailing.bailing_moe3_bridge import (
-    _FLASH_MTP_PATTERN,
+    _LING3_MTP_PATTERN,
     BailingMoeV3Bridge,
     _flash_hybrid_layer_pattern,
     _tiny_hybrid_layer_pattern,
@@ -62,6 +62,7 @@ def _tiny_config(**overrides):
         v_head_dim=128,
         short_conv_kernel_size=4,
         num_nextn_predict_layers=0,
+        mtp_use_kda=False,
         mtp_loss_scaling_factor=0.0,
         gated_attention_proj_granularity_type="head_wise",
         use_kda_lora=False,
@@ -262,10 +263,21 @@ def test_tiny_provider_maps_supported_config_variations() -> None:
     assert provider.mtp_loss_scaling_factor == 0.25
 
 
+def test_tiny_provider_defaults_linear_heads_when_hf_field_is_absent() -> None:
+    config = _tiny_config()
+    del config.num_kv_heads_for_linear_attn
+
+    provider = BailingMoeV3Bridge().provider_bridge(SimpleNamespace(config=config))
+
+    assert provider.linear_num_key_heads == config.num_attention_heads
+    assert provider.linear_num_value_heads == config.num_attention_heads
+
+
 @pytest.mark.parametrize(
     "override",
     [
-        {"num_nextn_predict_layers": 1},
+        {"num_nextn_predict_layers": 2},
+        {"num_nextn_predict_layers": 1, "mtp_use_kda": True},
         {"q_lora_rank": None},
         {"gated_attention_proj_granularity_type": "token_wise"},
         {"no_kda_lora": False},
@@ -368,7 +380,7 @@ def test_flash_provider_uses_direct_q_and_one_mtp_layer() -> None:
     assert provider.num_moe_experts == 512
     assert provider.ffn_hidden_size == 6144
     assert provider.mtp_num_layers == 1
-    assert provider.mtp_hybrid_override_pattern == _FLASH_MTP_PATTERN
+    assert provider.mtp_hybrid_override_pattern == _LING3_MTP_PATTERN
     assert provider.mtp_loss_scaling_factor == 0.0
     assert provider.position_embedding_type == "rope"
     assert provider.rotary_percent == 1.0
@@ -382,6 +394,41 @@ def test_flash_spec_uses_mcore_native_direct_q_and_standalone_kv_norm() -> None:
     assert mla.module is MLASelfAttention
     assert mla.submodules.q_layernorm is IdentityOp
     assert mla.submodules.kv_layernorm is TENorm
+
+
+def test_tiny_provider_uses_low_rank_q_and_one_mtp_layer() -> None:
+    bridge = BailingMoeV3Bridge()
+    provider = bridge.provider_bridge(
+        SimpleNamespace(config=_tiny_config(num_nextn_predict_layers=1, mtp_use_kda=False))
+    )
+
+    assert provider.mtp_num_layers == 1
+    assert provider.mtp_hybrid_override_pattern == _LING3_MTP_PATTERN
+    assert provider.mtp_loss_scaling_factor == 0.0
+
+
+def test_tiny_mapping_registry_covers_low_rank_q_mtp() -> None:
+    bridge = BailingMoeV3Bridge()
+    bridge.hf_config = _tiny_config(num_nextn_predict_layers=1, mtp_use_kda=False)
+    registry = bridge.mapping_registry()
+
+    mtp_prefix = "mtp.layers.0.mtp_model_layer.layers.0.self_attention"
+    assert (
+        registry.hf_to_megatron_lookup("model.layers.24.attention.q_a_proj.weight").megatron_param
+        == f"{mtp_prefix}.linear_q_down_proj.weight"
+    )
+    assert (
+        registry.hf_to_megatron_lookup("model.layers.24.attention.q_a_layernorm.weight").megatron_param
+        == f"{mtp_prefix}.q_layernorm.weight"
+    )
+    assert (
+        registry.hf_to_megatron_lookup("model.layers.24.attention.q_b_proj.weight").megatron_param
+        == f"{mtp_prefix}.linear_q_up_proj.weight"
+    )
+    assert (
+        registry.hf_to_megatron_lookup("model.layers.24.attention.kv_b_proj.weight").megatron_param
+        == f"{mtp_prefix}.linear_kv_up_proj.weight"
+    )
 
 
 def test_spec_reuses_mcore_projection_builders_and_overrides_only_ling_norms() -> None:
@@ -404,14 +451,18 @@ def test_spec_reuses_mcore_projection_builders_and_overrides_only_ling_norms() -
 
 
 @pytest.mark.parametrize(
-    ("config_factory", "expected_layers", "expected_group_size", "expected_dense_layers"),
+    ("config_factory", "expected_layers", "expected_group_size", "expected_dense_layers", "expected_mtp_layers"),
     [
-        (_tiny_config, 24, 4, 1),
-        (_flash_config, 42, 6, 2),
+        (_tiny_config, 24, 4, 1, 0),
+        (_flash_config, 42, 6, 2, 1),
     ],
 )
 def test_megatron_to_hf_config_restores_logical_architecture(
-    config_factory, expected_layers: int, expected_group_size: int, expected_dense_layers: int
+    config_factory,
+    expected_layers: int,
+    expected_group_size: int,
+    expected_dense_layers: int,
+    expected_mtp_layers: int,
 ) -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(SimpleNamespace(config=config_factory()))
@@ -436,12 +487,13 @@ def test_megatron_to_hf_config_restores_logical_architecture(
     assert exported["partial_rotary_factor"] == 0.5
     assert exported["rotary_dim"] == 64
     assert exported["rope_interleave"] is True
+    assert exported["num_nextn_predict_layers"] == expected_mtp_layers
 
 
 @pytest.mark.parametrize(
     ("config_factory", "invalid_mtp_layers"),
     [
-        (_tiny_config, 1),
+        (_tiny_config, 2),
         (_flash_config, 0),
     ],
 )

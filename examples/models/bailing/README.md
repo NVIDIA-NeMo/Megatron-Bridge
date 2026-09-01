@@ -54,6 +54,7 @@ bash examples/models/bailing/inference.sh
 
 | Variant | Hugging Face ID | Architecture notes |
 |---------|-----------------|--------------------|
+| Ling-3.0-tiny-base | `inclusionAI/Ling-3.0-tiny-base` | Hybrid KDA/MLA, 128 routed experts, one low-rank-Q MLA MTP layer |
 | Ling-3.0-tiny | `inclusionAI/Ling-3.0-tiny` | Hybrid KDA/MLA, 128 routed experts |
 | Ling-3.0-flash | `inclusionAI/Ling-3.0-flash` | Hybrid KDA/MLA with MTP, 512 routed experts |
 
@@ -92,19 +93,19 @@ export WORKSPACE=${WORKSPACE:-/workspace}
     --trust-remote-code
 ```
 
-### Tiny Training
+### Tiny Base SFT
 
-`ling_v3_tiny_pretrain_8gpu_h100_bf16_config` is a full-size, eight-GPU, fresh-initialization training smoke using mock data. It does not load the public Hugging Face checkpoint. The public Tiny checkpoint has no MTP tensors; the training smoke enables one MTP depth to exercise that training path.
+`ling_v3_tiny_base_sft_8gpu_h100_bf16_config` is an eight-GPU BF16 full-parameter SFT recipe for the public Tiny Base checkpoint. The recipe reads the model architecture and MTP configuration from Hugging Face, uses the matching public tokenizer, and includes the public SQuAD prompt/completion dataset with offline packing at sequence length 2048. The sequence length is an SFT workload default; it does not change Ling 3.0's 262144-token model context limit. Omit `--dataset` below to retain the recipe-level packed SQuAD configuration.
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 \
     scripts/training/run_recipe.py \
-    --recipe ling_v3_tiny_pretrain_8gpu_h100_bf16_config \
-    --mode pretrain --dataset mock \
-    --seq_length 128
+    --recipe ling_v3_tiny_base_sft_8gpu_h100_bf16_config \
+    --mode sft \
+    --pretrained_checkpoint /path/to/Ling-3.0-tiny-base
 ```
 
-Set `LING_V3_TINY_HF_PATH` to a trusted local Hugging Face reference containing `config.json` and the custom modeling files when recipe construction must run offline.
+The recipe keeps normal validation and checkpoint saving enabled. Pass `--dataset` only when selecting another supported dataset preset; that preset owns its packing policy. Set `LING_V3_TINY_BASE_HF_PATH` to the same trusted local Tiny Base directory when recipe construction must run offline; otherwise the pinned public model revision is used.
 
 ## Related Documentation
 
