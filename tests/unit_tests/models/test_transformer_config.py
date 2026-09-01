@@ -21,6 +21,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.transformer_config import (
+    _HYBRIDEP_PADDING_FIELDS,
     HeterogeneousTransformerConfig,
     MLATransformerConfig,
     TransformerConfig,
@@ -45,6 +46,20 @@ def _make_config(**kwargs) -> TransformerConfig:
     return TransformerConfig(**defaults)
 
 
+def _make_hybridep_config(config_type=TransformerConfig, **kwargs):
+    """Build a HybridEP config using the padding field exposed by this MCore ref."""
+    defaults = dict(
+        num_layers=2,
+        hidden_size=64,
+        num_attention_heads=4,
+        num_moe_experts=8,
+        moe_token_dispatcher_type="flex",
+        moe_flex_dispatcher_backend="hybridep",
+    )
+    padding_field = next(field for field in _HYBRIDEP_PADDING_FIELDS if field in config_type.__dataclass_fields__)
+    return config_type(**defaults, **{padding_field: False}, **kwargs), padding_field
+
+
 class TestEnableSafeHybridepDispatch:
     """Tests for cross-branch Megatron Core HybridEP padding compatibility."""
 
@@ -56,9 +71,16 @@ class TestEnableSafeHybridepDispatch:
             cuda_graph_impl="none",
         )
 
-        _enable_safe_hybridep_dispatch(cfg)
+        _enable_safe_hybridep_dispatch(cfg, uses_thd=True)
 
         assert cfg.moe_hybridep_pad_variable_tokens is True
+
+    def test_bshd_preserves_disabled_padding(self):
+        cfg, padding_field = _make_hybridep_config()
+
+        _enable_safe_hybridep_dispatch(cfg, uses_thd=False)
+
+        assert getattr(cfg, padding_field) is False
 
     def test_cuda_graph_config_does_not_require_padding_field(self):
         cfg = SimpleNamespace(
@@ -67,7 +89,7 @@ class TestEnableSafeHybridepDispatch:
             cuda_graph_impl="full_iteration",
         )
 
-        _enable_safe_hybridep_dispatch(cfg)
+        _enable_safe_hybridep_dispatch(cfg, uses_thd=True)
 
 
 # ---------------------------------------------------------------------------
@@ -251,19 +273,16 @@ class TestTransformerConfigFinalize:
             cfg.finalize()
         assert cfg.expert_tensor_parallel_size is None
 
-    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
-        """HybridEP must safely handle different token counts on each EP rank."""
-        cfg = _make_config(
-            num_moe_experts=8,
-            moe_token_dispatcher_type="flex",
-            moe_flex_dispatcher_backend="hybridep",
-            moe_hybridep_pad_uneven_dispatch_inputs=False,
-        )
+    def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
+        """Generic model finalization must not infer the recipe tensor layout."""
+        cfg, padding_field = _make_hybridep_config()
+
 
         with patch(_FINALIZE_PATCH):
             cfg.finalize()
 
-        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is True
+        assert getattr(cfg, padding_field) is False
+
 
     def test_non_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         """Other flex backends must retain their configured padding behavior."""
@@ -323,21 +342,15 @@ class TestMLATransformerConfigFinalize:
             cfg.finalize()
         assert cfg.expert_tensor_parallel_size == 1
 
-    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
-        cfg = MLATransformerConfig(
-            num_layers=2,
-            hidden_size=64,
-            num_attention_heads=4,
-            num_moe_experts=8,
-            moe_token_dispatcher_type="flex",
-            moe_flex_dispatcher_backend="hybridep",
-            moe_hybridep_pad_uneven_dispatch_inputs=False,
-        )
+    def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
+        cfg, padding_field = _make_hybridep_config(MLATransformerConfig)
+
 
         with patch(_MLA_FINALIZE_PATCH):
             cfg.finalize()
 
-        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is True
+        assert getattr(cfg, padding_field) is False
+
 
 
 # ---------------------------------------------------------------------------
@@ -386,15 +399,34 @@ class TestHeterogeneousTransformerConfigFinalize:
             cfg.finalize()
         assert cfg.sequence_parallel is True
 
-    def test_hybridep_finalization_enables_uneven_dispatch_padding(self):
-        cfg = self._make_hetero(
-            num_moe_experts=8,
-            moe_token_dispatcher_type="flex",
-            moe_flex_dispatcher_backend="hybridep",
-            moe_hybridep_pad_uneven_dispatch_inputs=False,
-        )
+    def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
+        cfg, padding_field = _make_hybridep_config(HeterogeneousTransformerConfig)
+
 
         with patch(_HETERO_FINALIZE_PATCH):
             cfg.finalize()
 
-        assert cfg.moe_hybridep_pad_uneven_dispatch_inputs is True
+        assert getattr(cfg, padding_field) is False
+
+    def test_pipeline_dtype_propagated_from_params_dtype_when_pp_gt1(self):
+        cfg = self._make_valid_hetero(
+            params_dtype=torch.bfloat16,
+            pipeline_dtype=None,
+            pipeline_model_parallel_size=2,
+        )
+
+        cfg.finalize()
+
+        assert cfg.pipeline_dtype is torch.bfloat16
+
+    def test_explicit_pipeline_dtype_is_preserved_when_pp_gt1(self):
+        cfg = self._make_valid_hetero(
+            params_dtype=torch.bfloat16,
+            pipeline_dtype=torch.float16,
+            pipeline_model_parallel_size=2,
+        )
+
+        cfg.finalize()
+
+        assert cfg.pipeline_dtype is torch.float16
+
