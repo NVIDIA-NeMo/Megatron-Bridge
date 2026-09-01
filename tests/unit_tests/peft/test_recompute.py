@@ -14,6 +14,8 @@
 
 """Unit tests for PEFT-specific recompute helpers."""
 
+import gc
+import weakref
 from types import SimpleNamespace
 
 import pytest
@@ -85,7 +87,7 @@ def test_maybe_enable_recompute_inputs_grad_patches_block(monkeypatch, block_cls
     model = DummyModel(block_cls)
     patched_registry = maybe_enable_recompute_inputs_grad(model, set())
 
-    assert id(model) in patched_registry
+    assert len(patched_registry) == 1
 
     patched_forward = model.block.forward
 
@@ -98,3 +100,25 @@ def test_maybe_enable_recompute_inputs_grad_patches_block(monkeypatch, block_cls
     # Second invocation should be a no-op (no duplicate patch)
     maybe_enable_recompute_inputs_grad(model, patched_registry)
     assert model.block.forward is patched_forward
+
+
+def test_recompute_patch_registry_tracks_model_lifetime(monkeypatch):
+    _patch_recompute_blocks(monkeypatch)
+    recompute_mod.PEFT_RECOMPUTE_PATCHED.clear()
+
+    # Python permits ID reuse after an object is collected. Make that reuse
+    # deterministic so a stale integer registry entry cannot hide the bug.
+    monkeypatch.setattr(recompute_mod, "id", lambda model: 12345, raising=False)
+
+    first_model = DummyModel(DummyHybridStack)
+    maybe_enable_recompute_inputs_grad(first_model)
+    first_model_ref = weakref.ref(first_model)
+    del first_model
+    gc.collect()
+    assert first_model_ref() is None
+
+    second_model = DummyModel(DummyHybridStack)
+    maybe_enable_recompute_inputs_grad(second_model)
+    second_model.block(torch.zeros(2, 2))
+
+    assert second_model.block.last_input_requires_grad is True
