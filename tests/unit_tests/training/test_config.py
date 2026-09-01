@@ -677,6 +677,40 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(
+        "use_gloo_process_groups, expect_assertion_error",
+        [(False, True), (True, False)],
+    )
+    def test_memory_efficient_fully_reshardable_checkpoint_requires_gloo(
+        self, monkeypatch, use_gloo_process_groups, expect_assertion_error
+    ):
+        """Require Gloo only when memory-efficient fully reshardable checkpoints are enabled."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(use_gloo_process_groups=use_gloo_process_groups)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
+        chkpt_cfg = create_test_checkpoint_config(
+            dist_ckpt_optim_fully_reshardable=True,
+            distrib_optim_fully_reshardable_mem_efficient=True,
+        )
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            checkpoint_config=chkpt_cfg,
+            ddp_config=ddp_cfg,
+        )
+        try:
+            if expect_assertion_error:
+                with pytest.raises(AssertionError, match="requires dist.use_gloo_process_groups=True"):
+                    container.validate()
+            else:
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_scheduler_lr_decay_iters_default(self, monkeypatch):
         """Test `lr_decay_iters` defaults to `train_iters` and `lr_decay_steps` calculation."""
         gpt_model_cfg = create_test_gpt_config()
