@@ -61,7 +61,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
     AdapterWeightConversionTask,
     MegatronPeftBridge,
 )
-from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
+from megatron.bridge.models.conversion.quant_bridge import FP8ExportLayout, MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
@@ -2053,11 +2053,11 @@ class MegatronModelBridge(
         sorted_global_param_names_all_pp_ranks: List[str],
         pp_group: Any,
         fp8_scale_inv_attr: str,
-    ) -> Dict[str, bool | int]:
-        """Detect supported FP8 parameters and gather flags across pipeline parallel ranks.
+    ) -> Dict[str, FP8ExportLayout]:
+        """Detect supported FP8 parameters and gather layouts across pipeline parallel ranks.
 
         This method scans all parameters in the megatron model to determine which ones are
-        blockwise or MXFP8 tensors with valid scale metadata. It then gathers these flags
+        blockwise or MXFP8 tensors with valid scale metadata. It then gathers these layouts
         across all pipeline parallel ranks to ensure consistent decisions.
 
         Args:
@@ -2069,10 +2069,9 @@ class MegatronModelBridge(
                 underscore is accepted for backward compatibility.
 
         Returns:
-            Dictionary mapping global parameter names to truthy FP8 flags. A positive
-            integer value carries the block length needed by remote pipeline ranks.
+            Dictionary mapping global parameter names to FP8 export layouts.
         """
-        local_fp8_flags: Dict[str, bool | int] = {}
+        local_fp8_layouts: Dict[str, FP8ExportLayout] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
         scale_inv_metadata_key = fp8_scale_inv_attr.removeprefix("_")
 
@@ -2105,16 +2104,21 @@ class MegatronModelBridge(
                         if isinstance(candidate_metadata, dict):
                             metadata = candidate_metadata
 
+                rowwise_data = metadata.get("rowwise_data")
                 scale_tensor = metadata.get(scale_inv_metadata_key)
                 is_mxfp8 = (
                     getattr(model_config, "fp8_recipe", None) == "mxfp8"
-                    and metadata.get("rowwise_data") is not None
+                    and rowwise_data is not None
                     and "with_gemm_swizzled_scales" in metadata
                 )
                 if is_mxfp8 and scale_tensor is not None:
-                    # MXFP8 scales every row independently, so remote PP ranks need a
-                    # concrete row-block size of one for mappings such as vocab export.
-                    local_fp8_flags[global_name] = 1
+                    local_fp8_layouts[global_name] = FP8ExportLayout(
+                        format_name="mxfp8",
+                        block_shape=(1, 32),
+                        data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
+                        scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
+                        with_gemm_swizzled_scales=bool(metadata["with_gemm_swizzled_scales"]),
+                    )
                 elif "is_2D_scaled" in metadata and scale_tensor is not None:
                     has_valid_row_ratio = (
                         metadata.get("is_2D_scaled")
@@ -2123,22 +2127,25 @@ class MegatronModelBridge(
                         and scale_tensor.shape[0] > 0
                         and local_weights.shape[0] % scale_tensor.shape[0] == 0
                     )
-                    local_fp8_flags[global_name] = (
-                        local_weights.shape[0] // scale_tensor.shape[0] if has_valid_row_ratio else True
+                    row_block_size = local_weights.shape[0] // scale_tensor.shape[0] if has_valid_row_ratio else None
+                    block_len = getattr(metadata.get("quantizer"), "block_len", None)
+                    local_fp8_layouts[global_name] = FP8ExportLayout(
+                        format_name="blockwise",
+                        block_shape=(row_block_size, block_len if isinstance(block_len, int) else None),
+                        data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
+                        scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
+                        with_gemm_swizzled_scales=False,
                     )
 
         # Gather across PP ranks to ensure consistent insertion decisions
-        fp8_flags_list: list[Dict[str, bool | int]] = [None] * get_pg_size(pp_group)
-        torch.distributed.all_gather_object(fp8_flags_list, local_fp8_flags, group=pp_group)
-        global_fp8_flags: Dict[str, bool | int] = {}
-        for d in fp8_flags_list:
-            if not d:
-                continue
-            for k, v in d.items():
-                if v:
-                    global_fp8_flags[k] = v
+        fp8_layouts_list: list[Dict[str, FP8ExportLayout]] = [None] * get_pg_size(pp_group)
+        torch.distributed.all_gather_object(fp8_layouts_list, local_fp8_layouts, group=pp_group)
+        global_fp8_layouts: Dict[str, FP8ExportLayout] = {}
+        for layouts in fp8_layouts_list:
+            if layouts:
+                global_fp8_layouts.update(layouts)
 
-        return global_fp8_flags
+        return global_fp8_layouts
 
     def build_export_fp8_tasks(
         self,
@@ -2177,8 +2184,8 @@ class MegatronModelBridge(
             sorted_global_param_names_all_pp_ranks,
         )
 
-        # 1) Determine which global params use a supported FP8 layout and gather flags across PP ranks
-        global_fp8_flags = self._detect_fp8_params(
+        # 1) Determine which global params use a supported FP8 layout and gather layouts across PP ranks
+        global_fp8_layouts = self._detect_fp8_params(
             megatron_model,
             model_config,
             sorted_global_param_names_all_pp_ranks,
@@ -2191,7 +2198,7 @@ class MegatronModelBridge(
         expanded_global_names: list[str] = []
         for global_name in sorted_global_param_names_all_pp_ranks:
             expanded_global_names.append(global_name)
-            if global_fp8_flags.get(global_name, False):
+            if global_name in global_fp8_layouts:
                 expanded_global_names.append(f"{global_name}{scale_inv_suffix}")
 
         global_names_index_dict = {name: idx for idx, name in enumerate(expanded_global_names)}
@@ -2217,7 +2224,8 @@ class MegatronModelBridge(
                 # Main (weight/bias) task
                 export_weight_tensor = local_weights
                 fp8_metadata = {}
-                if global_fp8_flags.get(global_name, False):
+                fp8_layout = global_fp8_layouts.get(global_name)
+                if fp8_layout is not None:
                     fp8_metadata = local_weights.get_metadata() if local_weights is not None else {}
                     rowwise_data = fp8_metadata.get("rowwise_data")
                     if rowwise_data is not None:
@@ -2235,7 +2243,7 @@ class MegatronModelBridge(
                 )
 
                 # Optional scale_inv task (only for globally-detected FP8 params)
-                if global_fp8_flags.get(global_name, False):
+                if fp8_layout is not None:
                     scale_global_name = f"{global_name}{scale_inv_suffix}"
                     scale_local_name = f"{local_name}{scale_inv_suffix}"
                     scale_tensor = fp8_metadata.get(fp8_scale_inv_attr.removeprefix("_"))
@@ -2255,7 +2263,7 @@ class MegatronModelBridge(
                         mapping=_HFNameSuffixMapping(
                             base_mapping_for_scale,
                             scale_inv_suffix,
-                            self._fp8_scale_block_size(global_fp8_flags.get(global_name)),
+                            fp8_layout.block_shape[0],
                         ),
                     )
 
@@ -2273,7 +2281,7 @@ class MegatronModelBridge(
                 mapping = _HFNameSuffixMapping(
                     base_mapping_for_scale,
                     scale_inv_suffix,
-                    self._fp8_scale_block_size(global_fp8_flags.get(base_global_name)),
+                    global_fp8_layouts[base_global_name].block_shape[0],
                 )
             else:
                 mapping = mappings_by_global_name[global_name]
@@ -2289,11 +2297,6 @@ class MegatronModelBridge(
             )
 
         return self._require_concrete_tasks(tasks)
-
-    @staticmethod
-    def _fp8_scale_block_size(fp8_flag: bool | int | None) -> int | None:
-        """Extract the gathered FP8 row-block size without treating bool as int."""
-        return fp8_flag if isinstance(fp8_flag, int) and not isinstance(fp8_flag, bool) else None
 
     def _trim_blockwise_fp8_scale_inv_padding(
         self,

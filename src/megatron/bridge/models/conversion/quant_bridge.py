@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Iterable, List, Mapping, Optional, Tuple, TypeVar, Union
 
 import torch
@@ -25,6 +26,17 @@ if TYPE_CHECKING:
 
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 HFPreTrained = TypeVar("HFPreTrained")
+
+
+@dataclass(frozen=True)
+class FP8ExportLayout:
+    """Topology-neutral FP8 parameter layout used during checkpoint export."""
+
+    format_name: str
+    block_shape: tuple[int | None, int | None]
+    data_dtype: torch.dtype | None
+    scale_dtype: torch.dtype | None
+    with_gemm_swizzled_scales: bool
 
 
 class MegatronQuantizationBridge:

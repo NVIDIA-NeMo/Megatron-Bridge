@@ -31,6 +31,7 @@ from megatron.bridge.models.conversion.model_bridge import (
     _HFNameSuffixMapping,
 )
 from megatron.bridge.models.conversion.param_mapping import split_qkv_weights
+from megatron.bridge.models.conversion.quant_bridge import FP8ExportLayout
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -66,7 +67,11 @@ def _patch_export_task_context(monkeypatch, bridge, global_name: str, **kwargs):
     monkeypatch.setattr(bridge, "mapping_registry", kwargs["registry_factory"])
     monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda *_a, **_k: False)
     monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda *_a, **_k: [global_name])
-    monkeypatch.setattr(bridge, "_detect_fp8_params", kwargs.get("detect_fp8", lambda *_a, **_k: {global_name: True}))
+    monkeypatch.setattr(
+        bridge,
+        "_detect_fp8_params",
+        kwargs.get("detect_fp8", lambda *_a, **_k: {global_name: SimpleNamespace(block_shape=(None, None))}),
+    )
     monkeypatch.setattr(
         f"{_MODEL_MB}.unwrap_model",
         lambda models: models if isinstance(models, list) else [models],
@@ -359,13 +364,13 @@ class TestFp8ParamExport:
 
         def ag(output_list, obj, group=None):
             output_list[0] = obj
-            output_list[1] = {"decoder.layers.1.other.weight": True}
+            output_list[1] = {"decoder.layers.1.other.weight": next(iter(obj.values()))}
 
         monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", ag)
-        flags = bridge._detect_fp8_params(
+        layouts = bridge._detect_fp8_params(
             [model], model.config, [gname, "decoder.layers.1.other.weight"], None, "_rowwise_scale_inv"
         )
-        assert flags[gname] and flags["decoder.layers.1.other.weight"]
+        assert layouts[gname] and layouts["decoder.layers.1.other.weight"]
 
     def test_detect_fp8_params_ignores_tensor_without_blockwise_metadata(self, monkeypatch):
         bridge = DummyBridge()
@@ -414,8 +419,13 @@ class TestFp8ParamExport:
 
         monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", _ag1)
 
-        flags = bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv")
-        assert flags == {gname: 1}
+        layouts = bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv")
+        assert isinstance(layouts[gname], FP8ExportLayout)
+        assert layouts[gname].format_name == "mxfp8"
+        assert layouts[gname].block_shape == (1, 32)
+        assert layouts[gname].data_dtype == torch.uint8
+        assert layouts[gname].scale_dtype == torch.uint8
+        assert layouts[gname].with_gemm_swizzled_scales is False
 
     def test_build_export_fp8_tasks_remote_pp_tasks_are_concrete(self, monkeypatch):
         bridge = DummyBridge()
@@ -428,7 +438,7 @@ class TestFp8ParamExport:
             registry_factory=lambda: MegatronMappingRegistry(MappingT()),
             pp_rank=1,
             pp_size=2,
-            detect_fp8=lambda *_a, **_k: {gname: 1},
+            detect_fp8=lambda *_a, **_k: {gname: SimpleNamespace(block_shape=(1, 32))},
         )
 
         model = SimpleNamespace(
