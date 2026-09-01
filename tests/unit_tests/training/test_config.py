@@ -34,14 +34,12 @@ from megatron.bridge.data.builders import (
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
-from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.models.transformer_config import (
     _HYBRIDEP_PADDING_FIELDS,
     HeterogeneousTransformerConfig,
     TransformerConfig,
 )
-
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -1311,7 +1309,6 @@ class TestConfigContainerValidation:
             assert "_enable_in_batch_packing" not in model_cfg.__dict__
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
-
 
     def test_enable_in_batch_packing_sets_collate_padding_multiple(self, monkeypatch):
         """Test in-batch packing forwards CP/SP divisibility requirements to collate-time packers."""

@@ -277,12 +277,10 @@ class TestTransformerConfigFinalize:
         """Generic model finalization must not infer the recipe tensor layout."""
         cfg, padding_field = _make_hybridep_config()
 
-
         with patch(_FINALIZE_PATCH):
             cfg.finalize()
 
         assert getattr(cfg, padding_field) is False
-
 
     def test_non_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         """Other flex backends must retain their configured padding behavior."""
@@ -345,12 +343,10 @@ class TestMLATransformerConfigFinalize:
     def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         cfg, padding_field = _make_hybridep_config(MLATransformerConfig)
 
-
         with patch(_MLA_FINALIZE_PATCH):
             cfg.finalize()
 
         assert getattr(cfg, padding_field) is False
-
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +398,6 @@ class TestHeterogeneousTransformerConfigFinalize:
     def test_hybridep_finalization_preserves_uneven_dispatch_padding(self):
         cfg, padding_field = _make_hybridep_config(HeterogeneousTransformerConfig)
 
-
         with patch(_HETERO_FINALIZE_PATCH):
             cfg.finalize()
 
@@ -429,4 +424,3 @@ class TestHeterogeneousTransformerConfigFinalize:
         cfg.finalize()
 
         assert cfg.pipeline_dtype is torch.float16
-
