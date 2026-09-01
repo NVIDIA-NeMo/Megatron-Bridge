@@ -39,7 +39,7 @@ _TINY_NUM_LOGICAL_LAYERS = 24
 _TINY_GROUP_SIZE = 4
 _FLASH_NUM_LOGICAL_LAYERS = 42
 _FLASH_GROUP_SIZE = 6
-_FLASH_MTP_PATTERN = "+E"
+_LING3_MTP_PATTERN = "+E"
 
 
 def _build_hybrid_pattern(*, num_layers: int, group_size: int, first_dense: int) -> str:
@@ -174,8 +174,11 @@ def _validate_tiny_config(hf_config: Any) -> None:
     _tiny_hybrid_layer_pattern(hf_config)
     if getattr(hf_config, "q_lora_rank", None) is None:
         raise ValueError("Ling 3.0 Tiny requires low-rank-Q MLA with q_lora_rank set.")
-    if getattr(hf_config, "num_nextn_predict_layers", 0) != 0:
-        raise ValueError("Ling 3.0 Tiny does not support MTP; expected num_nextn_predict_layers=0.")
+    num_mtp_layers = int(getattr(hf_config, "num_nextn_predict_layers", 0) or 0)
+    if num_mtp_layers not in (0, 1):
+        raise ValueError("Ling 3.0 Tiny supports zero or one MTP layer; expected num_nextn_predict_layers in {0, 1}.")
+    if num_mtp_layers and getattr(hf_config, "mtp_use_kda", False):
+        raise ValueError("Ling 3.0 Tiny MTP is an MLA layer; expected mtp_use_kda=false.")
 
 
 def _validate_flash_config(hf_config: Any) -> None:
@@ -229,7 +232,7 @@ def _layer_positions(hf_config: Any) -> tuple[tuple[int, int], ...]:
 
 
 def _append_mtp_mappings(mappings: list[Any], hf_config: Any) -> None:
-    """Append Flash's direct-Q MLA plus MoE MTP mappings."""
+    """Append Ling 3.0 MLA plus MoE MTP mappings."""
     num_mtp_layers = int(getattr(hf_config, "num_nextn_predict_layers", 0) or 0)
     num_main_layers = hf_config.num_hidden_layers
     for mtp_layer in range(num_mtp_layers):
@@ -239,16 +242,36 @@ def _append_mtp_mappings(mappings: list[Any], hf_config: Any) -> None:
         # ``transformer_layer`` does not apply when an MTP pattern is present.
         mg_attention = f"mtp.layers.{mtp_layer}.mtp_model_layer.layers.0"
         mg_mlp = f"mtp.layers.{mtp_layer}.mtp_model_layer.layers.1"
+        q_mappings = (
+            [
+                AutoMapping(
+                    f"{mg_attention}.self_attention.linear_q_proj.weight",
+                    f"{hf_layer}.attention.q_proj.weight",
+                )
+            ]
+            if hf_config.q_lora_rank is None
+            else [
+                AutoMapping(
+                    f"{mg_attention}.self_attention.linear_q_down_proj.weight",
+                    f"{hf_layer}.attention.q_a_proj.weight",
+                ),
+                ReplicatedMapping(
+                    f"{mg_attention}.self_attention.q_layernorm.weight",
+                    f"{hf_layer}.attention.q_a_layernorm.weight",
+                ),
+                AutoMapping(
+                    f"{mg_attention}.self_attention.linear_q_up_proj.weight",
+                    f"{hf_layer}.attention.q_b_proj.weight",
+                ),
+            ]
+        )
         mappings.extend(
             [
                 ReplicatedMapping(
                     f"{mg_attention}.input_layernorm.weight",
                     f"{hf_layer}.input_layernorm.weight",
                 ),
-                AutoMapping(
-                    f"{mg_attention}.self_attention.linear_q_proj.weight",
-                    f"{hf_layer}.attention.q_proj.weight",
-                ),
+                *q_mappings,
                 AutoMapping(
                     f"{mg_attention}.self_attention.linear_kv_down_proj.weight",
                     f"{hf_layer}.attention.kv_a_proj_with_mqa.weight",
@@ -402,7 +425,7 @@ class BailingMoeV3Bridge(MegatronModelBridge):
         provider.rope_type = "rope"
 
         linear_head_dim = hf_config.head_dim
-        linear_num_heads = hf_config.num_kv_heads_for_linear_attn or hf_config.num_attention_heads
+        linear_num_heads = getattr(hf_config, "num_kv_heads_for_linear_attn", None) or hf_config.num_attention_heads
         provider.linear_key_head_dim = linear_head_dim
         provider.linear_value_head_dim = linear_head_dim
         provider.linear_num_key_heads = linear_num_heads
@@ -421,7 +444,7 @@ class BailingMoeV3Bridge(MegatronModelBridge):
         provider.moe_router_load_balancing_type = "none"
 
         num_mtp_layers = int(provider.mtp_num_layers or 0)
-        provider.mtp_hybrid_override_pattern = _FLASH_MTP_PATTERN if num_mtp_layers else None
+        provider.mtp_hybrid_override_pattern = _LING3_MTP_PATTERN if num_mtp_layers else None
         provider.is_hybrid_model = True
         return provider
 
@@ -458,7 +481,13 @@ class BailingMoeV3Bridge(MegatronModelBridge):
             if actual != expected:
                 raise ValueError(f"Ling 3.0 export requires {name}={expected!r}, got {actual!r}.")
 
-        expected_mtp_pattern = None if variant == "Tiny" else _FLASH_MTP_PATTERN
+        actual_mtp_layers = int(provider.mtp_num_layers or 0)
+        if variant == "Tiny" and actual_mtp_layers not in (0, 1):
+            raise ValueError(f"Ling 3.0 Tiny export requires mtp_num_layers=0 or 1, got {actual_mtp_layers}.")
+        if variant == "Flash" and actual_mtp_layers != 1:
+            raise ValueError(f"Ling 3.0 Flash export requires mtp_num_layers=1, got {actual_mtp_layers}.")
+
+        expected_mtp_pattern = _LING3_MTP_PATTERN if actual_mtp_layers else None
         expected_mtp_patterns = () if expected_mtp_pattern is None else (expected_mtp_pattern,)
         if provider.mtp_hybrid_override_pattern != expected_mtp_pattern:
             raise ValueError(
@@ -501,21 +530,15 @@ class BailingMoeV3Bridge(MegatronModelBridge):
             num_hidden_layers = _TINY_NUM_LOGICAL_LAYERS
             layer_group_size = _TINY_GROUP_SIZE
             first_k_dense_replace = 1
-            expected_mtp_layers = 0
         elif main_pattern == _FLASH_PATTERN:
             variant = "Flash"
             num_hidden_layers = _FLASH_NUM_LOGICAL_LAYERS
             layer_group_size = _FLASH_GROUP_SIZE
             first_k_dense_replace = 2
-            expected_mtp_layers = 1
         else:
             raise ValueError(f"Unsupported Ling 3.0 Hybrid pattern: {main_pattern!r}.")
 
         actual_mtp_layers = int(provider.mtp_num_layers or 0)
-        if actual_mtp_layers != expected_mtp_layers:
-            raise ValueError(
-                f"Ling 3.0 {variant} export requires mtp_num_layers={expected_mtp_layers}, got {actual_mtp_layers}."
-            )
 
         cls._validate_export_structure(provider, variant=variant, mtp_patterns=tuple(pattern_parts[1:]))
 
@@ -538,6 +561,7 @@ class BailingMoeV3Bridge(MegatronModelBridge):
             partial_rotary_factor=0.5,
             rotary_dim=provider.qk_pos_emb_head_dim,
             rope_interleave=True,
+            num_nextn_predict_layers=actual_mtp_layers,
             mtp_use_kda=False,
         )
         return hf_config
