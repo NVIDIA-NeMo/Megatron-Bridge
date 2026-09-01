@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.bagel.conversion import BagelBridge, BagelConfig
 from megatron.bridge.models.bagel.provider import BagelModelProvider
 
 
-__all__ = ["BagelModelProvider"]
+__all__ = ["BagelBridge", "BagelConfig", "BagelModelProvider"]

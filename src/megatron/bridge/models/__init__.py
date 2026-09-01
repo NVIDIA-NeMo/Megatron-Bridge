@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # Import model providers for easy access
+from megatron.bridge.models.bagel import BagelBridge, BagelConfig, BagelModelProvider
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
@@ -211,6 +212,9 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "BagelBridge",
+    "BagelConfig",
+    "BagelModelProvider",
     "BailingMoeV2Bridge",
     # DeepSeek Models
     "DeepSeekV2Bridge",

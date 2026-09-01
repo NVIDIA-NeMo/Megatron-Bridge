@@ -603,7 +603,12 @@ def _initialize_auxiliary(reader: _TensorSource, mimo_model) -> None:
     )
 
 
-def _assert_exact_target_coverage(mimo_model: torch.nn.Module, initialized_targets: Mapping[int, str]) -> None:
+def _assert_exact_target_coverage(
+    mimo_model: torch.nn.Module,
+    initialized_targets: Mapping[int, str],
+    *,
+    require_fp32_main_values: bool,
+) -> None:
     """Require every semantic MCore parameter and position buffer exactly once."""
 
     # Some focused unit tests use a structural SimpleNamespace. Production
@@ -627,10 +632,14 @@ def _assert_exact_target_coverage(mimo_model: torch.nn.Module, initialized_targe
             details.append(f"unexpected={unexpected}")
         raise ValueError("Native BAGEL target coverage differs from the MCore model: " + "; ".join(details))
 
-    missing_main_values = sorted(
-        name
-        for name, parameter in mimo_model.named_parameters()
-        if parameter.requires_grad and not hasattr(parameter, _HIGH_PRECISION_VALUE_ATTR)
+    missing_main_values = (
+        sorted(
+            name
+            for name, parameter in mimo_model.named_parameters()
+            if parameter.requires_grad and not hasattr(parameter, _HIGH_PRECISION_VALUE_ATTR)
+        )
+        if require_fp32_main_values
+        else []
     )
     if missing_main_values:
         raise ValueError(
@@ -689,7 +698,11 @@ def initialize_bagel_from_native_checkpoint(
         finally:
             _ACTIVE_TARGETS.reset(target_token)
         reader.assert_all_consumed()
-        _assert_exact_target_coverage(mimo_model, initialized_targets)
+        _assert_exact_target_coverage(
+            mimo_model,
+            initialized_targets,
+            require_fp32_main_values=validate_metadata,
+        )
         fp32_main_tensors_preserved = (
             sum(hasattr(parameter, _HIGH_PRECISION_VALUE_ATTR) for parameter in mimo_model.parameters())
             if isinstance(mimo_model, torch.nn.Module)
