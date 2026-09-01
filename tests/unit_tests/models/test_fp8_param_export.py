@@ -161,6 +161,179 @@ class TestHFNameSuffixMapping:
 
 
 class TestFp8ParamExport:
+    def test_build_export_mxfp8_tasks_keeps_native_grouped_global_order_and_vp_stage(self, monkeypatch):
+        bridge = DummyBridge()
+        dense_first = "decoder.layers.0.self_attention.linear_qkv.weight"
+        grouped = "decoder.layers.1.mlp.experts.linear_fc1.weight"
+        dense_last = "decoder.layers.2.mlp.linear_fc2.weight"
+        global_names = [dense_first, grouped, dense_last]
+        native_grouped_weight = torch.nn.Parameter(torch.zeros(2, 8, 16))
+        weights_by_vp = {
+            (0, dense_first): torch.nn.Parameter(torch.zeros(8, 16)),
+            (1, grouped): native_grouped_weight,
+            (1, dense_last): torch.nn.Parameter(torch.zeros(8, 16)),
+        }
+        mappings = {
+            dense_first: _IdentityMapping("hf.dense_first", dense_first),
+            f"{grouped}0": _IdentityMapping("hf.grouped.0", f"{grouped}0"),
+            dense_last: _IdentityMapping("hf.dense_last", dense_last),
+        }
+
+        class Registry:
+            def set_process_groups_from_pg_collection(self, _pg_collection):
+                pass
+
+            def megatron_to_hf_lookup(self, name):
+                return mappings.get(name)
+
+        config = SimpleNamespace(
+            expert_model_parallel_size=1,
+            moe_single_grouped_weight=True,
+            num_moe_experts=2,
+            share_embeddings_and_output_weights=False,
+        )
+        models = [
+            SimpleNamespace(config=config, named_parameters=lambda: [(dense_first, weights_by_vp[(0, dense_first)])]),
+            SimpleNamespace(
+                config=config,
+                named_parameters=lambda: [
+                    (grouped, weights_by_vp[(1, grouped)]),
+                    (dense_last, weights_by_vp[(1, dense_last)]),
+                ],
+            ),
+        ]
+        grouped_member_calls = []
+        monkeypatch.setattr(bridge, "mapping_registry", Registry)
+        monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+        monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _models: global_names)
+        monkeypatch.setattr(
+            bridge,
+            "_validate_conversion_mappings",
+            lambda _registry, names, _hf_keys: {name: mappings[name] for name in names},
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pp_rank", lambda _models: 0)
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pg_collection_from_model", lambda _models: None)
+        monkeypatch.setattr(f"{_MODEL_MB}.unwrap_model", lambda value: value if isinstance(value, list) else [value])
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda _model: [])
+        monkeypatch.setattr(
+            f"{_MODEL_MB}._megatron_local_name_to_global",
+            lambda _models, _config, local_name, _vp_stage: local_name,
+        )
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_module_and_param_from_name",
+            lambda _models, local_name, vp_stage: (
+                SimpleNamespace(config=config),
+                weights_by_vp[(vp_stage, local_name)],
+            ),
+        )
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.is_grouped_mxfp8tensor", lambda weight: weight is native_grouped_weight, raising=False
+        )
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_grouped_quantized_members",
+            lambda weight, *, create_if_missing: (
+                grouped_member_calls.append((weight, create_if_missing)) or list(weight.unbind(0))
+            ),
+            raising=False,
+        )
+        hf_pretrained = SimpleNamespace(
+            config=SimpleNamespace(),
+            state=SimpleNamespace(
+                source=SimpleNamespace(get_all_keys=lambda: ["hf.dense_first", "hf.dense_last"]),
+            ),
+        )
+
+        tasks = bridge.build_export_mxfp8_tasks(hf_pretrained, models)
+
+        assert [task.global_param_name for task in tasks] == global_names
+        assert [task.vp_stage for task in tasks] == [0, 1, 1]
+        assert tasks[1].param_weight is native_grouped_weight
+        assert grouped_member_calls == [(native_grouped_weight, True)]
+
+    def test_build_export_mxfp8_tasks_expands_bf16_grouped_members(self, monkeypatch):
+        bridge = DummyBridge()
+        grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
+        members = torch.arange(2 * 8 * 16, dtype=torch.bfloat16).view(2, 8, 16)
+        parameter = torch.nn.Parameter(members.clone())
+        mappings = {
+            f"{grouped}{expert_id}": _IdentityMapping(f"hf.grouped.{expert_id}", f"{grouped}{expert_id}")
+            for expert_id in range(2)
+        }
+
+        class Registry:
+            def set_process_groups_from_pg_collection(self, _pg_collection):
+                pass
+
+            def megatron_to_hf_lookup(self, name):
+                return mappings.get(name)
+
+        config = SimpleNamespace(
+            expert_model_parallel_size=1,
+            moe_single_grouped_weight=True,
+            num_moe_experts=2,
+            share_embeddings_and_output_weights=False,
+        )
+        model = SimpleNamespace(config=config, named_parameters=lambda: [(grouped, parameter)])
+        monkeypatch.setattr(bridge, "mapping_registry", Registry)
+        monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+        monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _models: [grouped])
+        monkeypatch.setattr(
+            bridge,
+            "_validate_conversion_mappings",
+            lambda _registry, names, _hf_keys: {name: mappings[name] for name in names},
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pp_rank", lambda _models: 0)
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pg_collection_from_model", lambda _models: None)
+        monkeypatch.setattr(f"{_MODEL_MB}.unwrap_model", lambda models: models)
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda _model: [])
+        monkeypatch.setattr(f"{_MODEL_MB}._megatron_local_name_to_global", lambda *_args: grouped)
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_module_and_param_from_name",
+            lambda *_args: (SimpleNamespace(config=config), parameter),
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        hf_pretrained = SimpleNamespace(config=SimpleNamespace())
+
+        tasks = bridge.build_export_mxfp8_tasks(hf_pretrained, [model])
+
+        assert [task.global_param_name for task in tasks] == [f"{grouped}0", f"{grouped}1"]
+        torch.testing.assert_close(tasks[0].param_weight, members[0])
+        torch.testing.assert_close(tasks[1].param_weight, members[1])
+
+    def test_build_export_mxfp8_tasks_keeps_remote_placeholders_concrete(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_qkv.weight"
+        mapping = _IdentityMapping("hf.qkv", global_name)
+
+        class Registry:
+            def set_process_groups_from_pg_collection(self, _pg_collection):
+                pass
+
+        model = SimpleNamespace(
+            config=SimpleNamespace(share_embeddings_and_output_weights=False),
+            named_parameters=lambda: [],
+        )
+        monkeypatch.setattr(bridge, "mapping_registry", Registry)
+        monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+        monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _models: [global_name])
+        monkeypatch.setattr(
+            bridge,
+            "_validate_conversion_mappings",
+            lambda _registry, names, _hf_keys: {name: mapping for name in names},
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pp_rank", lambda _models: 1)
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pg_collection_from_model", lambda _models: None)
+        monkeypatch.setattr(f"{_MODEL_MB}.unwrap_model", lambda models: models)
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda _model: [])
+
+        tasks = bridge.build_export_mxfp8_tasks(SimpleNamespace(config=SimpleNamespace()), [model])
+
+        assert len(tasks) == 1
+        assert tasks[0].global_param_name == global_name
+        assert tasks[0].param_weight is None
+        assert tasks[0].megatron_module is None
+        assert tasks[0].vp_stage is None
+
     @pytest.mark.parametrize(
         "export_weight_dtype, expect_unquantized",
         [("fp8", True), ("bf16", False)],
