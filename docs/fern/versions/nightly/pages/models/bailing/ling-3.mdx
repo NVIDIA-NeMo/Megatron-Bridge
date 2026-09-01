@@ -41,4 +41,5 @@ For a different supported dataset, pass `--dataset` explicitly; that dataset pre
 
 - Bridge implementation: [`src/megatron/bridge/models/bailing`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/bailing)
 - Tiny Base SFT recipe: [`src/megatron/bridge/recipes/bailing/h100/ling_v3_tiny_base.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/bailing/h100/ling_v3_tiny_base.py)
+- Tiny Base verification card: [`examples/model_verification_cards/ling-3.0-tiny-base/card.yaml`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/ling-3.0-tiny-base/card.yaml)
 - Examples: [`examples/models/bailing`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/bailing)
