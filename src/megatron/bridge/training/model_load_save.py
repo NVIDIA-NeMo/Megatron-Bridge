@@ -608,8 +608,9 @@ def save_megatron_model(
     # Complete tokenizer construction and persistence before save_checkpoint publishes
     # the root selectors for this checkpoint.
     if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import get_checkpoint_name
         from megatron.training.checkpointing import save_tokenizer_assets
+
+        from megatron.bridge.training.checkpointing import get_checkpoint_name
 
         tokenizer_error: Exception | None = None
         try:
