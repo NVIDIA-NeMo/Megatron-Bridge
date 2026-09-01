@@ -34,7 +34,6 @@ from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
-from megatron.bridge.models.hybridep import register_hybridep_thd_padding
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -169,10 +168,6 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
     # If True, restore modelopt_state that contains quantization, sparsity, and speculative decoding state.
     restore_modelopt_state: bool = False
-
-    def _configure_runtime_model(self, model: MCoreHybridModel) -> None:
-        """Install runtime layout selection for automatic HybridEP padding."""
-        register_hybridep_thd_padding(model, self)
 
     def finalize(self) -> None:
         """Finalize the Hybrid model provider.
@@ -323,7 +318,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         pg_collection = self._pg_collection
         self._pg_collection = None
         try:
-            model = MCoreHybridModel(
+            return MCoreHybridModel(
                 config=self,
                 hybrid_stack_spec=hybrid_stack_spec,
                 vocab_size=padded_vocab_size,
@@ -343,6 +338,3 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
             )
         finally:
             self._pg_collection = pg_collection
-
-        self._configure_runtime_model(model)
-        return model

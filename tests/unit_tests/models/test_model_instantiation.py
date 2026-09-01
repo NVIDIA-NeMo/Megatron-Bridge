@@ -123,18 +123,6 @@ class TestCreateModel:
         assert result[0] is mock_model
         assert mock_model.model_type == ModelType.encoder_or_decoder
 
-    @patch("megatron.bridge.models.model_provider.is_pp_first_stage", return_value=True)
-    @patch("megatron.bridge.models.model_provider.is_pp_last_stage", return_value=True)
-    @patch("megatron.bridge.models.model_provider.tensor_parallel")
-    def test_create_model_configures_provider_runtime(self, mock_tensor_parallel, mock_is_last, mock_is_first):
-        mock_model = MockMegatronModule()
-        model_provider = MockModelProvider(mock_model)
-        model_provider._configure_runtime_model = Mock()
-
-        _create_model(model_provider, ModelType.encoder_or_decoder, pg_collection=_PG())
-
-        model_provider._configure_runtime_model.assert_called_once_with(mock_model)
-
     @patch("megatron.bridge.models.model_provider.is_pp_first_stage")
     @patch("megatron.bridge.models.model_provider.is_pp_last_stage")
     @patch("megatron.bridge.models.model_provider.tensor_parallel")

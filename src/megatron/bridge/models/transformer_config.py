@@ -71,6 +71,12 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
         config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
 
 
+_HYBRIDEP_PADDING_FIELDS = (
+    "moe_hybridep_pad_uneven_dispatch_inputs",
+    "moe_hybridep_pad_variable_tokens",
+)
+
+
 def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> None:
     """Default expert tensor parallelism to one when expert parallelism is enabled.
 
@@ -80,6 +86,52 @@ def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> N
     """
     if config.expert_tensor_parallel_size is None and config.expert_model_parallel_size > 1:
         config.expert_tensor_parallel_size = 1
+
+
+def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig, *, uses_thd: bool) -> None:
+    """Enable uneven-input padding for an eager HybridEP THD recipe.
+
+    The combined training recipe owns the tensor layout, so it requests this
+    path only when its dataset produces THD packed-sequence metadata. CUDA-graph
+    configs retain their explicit setting because the padding path's host scalar
+    synchronization is not capture-safe; those configs require equal inputs.
+    """
+
+    def _uses_legacy_full_iteration(value: object) -> bool:
+        values = value if isinstance(value, list) else [value]
+        return any(
+            "full_iteration" in item.split(",")
+            if isinstance(item, str)
+            else getattr(item, "name", None) == "full_iteration"
+            for item in values
+        )
+
+    has_cuda_graph_impl = hasattr(config, "cuda_graph_impl")
+    cuda_graph_impl = getattr(config, "cuda_graph_impl", "none")
+    uses_legacy_full_iteration = not has_cuda_graph_impl and (
+        _uses_legacy_full_iteration(getattr(config, "cuda_graph_modules", None))
+        or _uses_legacy_full_iteration(getattr(config, "cuda_graph_scope", None))
+    )
+    cuda_graphs_enabled = (
+        cuda_graph_impl not in (None, "none")
+        or getattr(config, "enable_cuda_graph", False)
+        or getattr(config, "external_cuda_graph", False)
+        or uses_legacy_full_iteration
+    )
+    if (
+        not uses_thd
+        or getattr(config, "moe_token_dispatcher_type", None) != "flex"
+        or getattr(config, "moe_flex_dispatcher_backend", None) != "hybridep"
+        or cuda_graphs_enabled
+    ):
+        return
+
+    padding_fields = tuple(field_name for field_name in _HYBRIDEP_PADDING_FIELDS if hasattr(config, field_name))
+    if not padding_fields:
+        raise AttributeError("Megatron Core TransformerConfig does not expose a HybridEP uneven-input padding field")
+    for padding_field in padding_fields:
+        if not getattr(config, padding_field):
+            setattr(config, padding_field, True)
 
 
 @dataclass

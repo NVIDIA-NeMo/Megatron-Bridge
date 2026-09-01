@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import modelopt.torch.distill as mtd
@@ -22,7 +21,6 @@ import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
 
-from megatron.bridge.models.hybridep import HYBRIDEP_PADDING_FIELDS, register_hybridep_thd_padding
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _cu_seqlens_for_cp_partition,
@@ -170,28 +168,6 @@ class _RecordingModel:
             **kwargs,
         }
         return self.output
-
-
-class _ScheduleModel(torch.nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.padding_seen_by_schedule = None
-
-    def forward(
-        self,
-        input_ids=None,
-        position_ids=None,
-        attention_mask=None,
-        labels=None,
-        packed_seq_params=None,
-    ):
-        raise AssertionError("schedule-plan test must bypass model forward")
-
-    def build_schedule_plan(self, input_ids, position_ids, attention_mask, **kwargs):
-        padding_field = next(field for field in HYBRIDEP_PADDING_FIELDS if hasattr(self.config, field))
-        self.padding_seen_by_schedule = getattr(self.config, padding_field)
-        return torch.tensor(1.0)
 
 
 class _VpStageWrapper:
@@ -762,59 +738,6 @@ class TestGetBatch:
 
         assert model.forward_kwargs is not None
         assert torch.equal(model.forward_kwargs["padding_mask"], padding_mask)
-
-    @pytest.mark.parametrize(("packed", "expected_padding"), [(True, True), (False, False)])
-    def test_schedule_plan_selects_hybridep_padding_from_runtime_layout(self, monkeypatch, packed, expected_padding):
-        padding_field = "moe_hybridep_pad_uneven_dispatch_inputs"
-        config = SimpleNamespace(
-            is_hybrid_model=False,
-            mtp_num_layers=0,
-            overlap_moe_expert_parallel_comm=True,
-            moe_token_dispatcher_type="flex",
-            moe_flex_dispatcher_backend="hybridep",
-            cuda_graph_impl="none",
-            **{padding_field: False},
-        )
-        model = _ScheduleModel(config)
-        register_hybridep_thd_padding(model, config)
-        state = Mock()
-        state.cfg = _make_cfg(enable_offline_packing=packed, offline_packing_specs=object() if packed else None)
-        state.timers = _NoopTimer()
-        state.straggler_timer = _NoopTimer()
-        tokens = torch.tensor([[1, 2, 3, 4]])
-        labels = torch.tensor([[2, 3, 4, 5]])
-        loss_mask = torch.ones(1, 4)
-        position_ids = torch.arange(4).unsqueeze(0)
-        packed_metadata = {"cu_seqlens_q": torch.tensor([0, 2, 4], dtype=torch.int32)} if packed else None
-
-        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
-        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
-        monkeypatch.setattr(
-            "megatron.bridge.training.gpt_step.accumulate_flops_metadata", lambda *args, **kwargs: None
-        )
-        monkeypatch.setattr(
-            "megatron.bridge.training.gpt_step.get_packed_seq_params",
-            lambda metadata: SimpleNamespace(qkv_format="thd"),
-        )
-
-        output, returned_loss_mask = _forward_step_common(
-            state,
-            iter(()),
-            model,
-            return_schedule_plan=True,
-            _get_batch_fn=lambda *args, **kwargs: (
-                tokens,
-                labels,
-                loss_mask,
-                None,
-                position_ids,
-                packed_metadata,
-            ),
-        )
-
-        assert torch.equal(output, torch.tensor(1.0))
-        assert torch.equal(returned_loss_mask, loss_mask)
-        assert model.padding_seen_by_schedule is expected_padding
 
     def test_mcore_expert_bias_padding_mask_compat(self, monkeypatch):
         """The pinned MCore expert-bias path must receive a broadcastable mask."""

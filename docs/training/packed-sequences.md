@@ -164,16 +164,12 @@ The durable constraints for packed sequences in Bridge are:
   evaluation CP constraints and `CP * TP` when sequence parallelism is enabled
 - for fine-tuning with CP enabled, per-token loss behavior and reduction
   settings matter
-- Megatron Bridge automatically enables safe uneven-input padding only for eager
-  HybridEP forwards whose runtime metadata declares THD layout; dense BSHD
-  forwards preserve their explicit padding setting and avoid the extra collective
-- the THD safety path pads only to the group-wide aligned maximum before dispatch
-  and trims the padding after combine
+- combined recipes using offline, in-batch, or Energon native packing
+  automatically enable safe uneven-input padding for eager HybridEP; unpacked
+  BSHD recipes preserve their configured setting
+- the THD safety path pads only to the group-wide aligned maximum before
+  dispatch and trims the padding after combine
 - CUDA-graph-friendly packed metadata requires additional padding constraints
-
-Keep the language-model tensor layout stable across in-flight training
-microbatches. Interleaving THD and BSHD forwards before activation-checkpoint
-recomputation is not supported because the HybridEP padding mode is model state.
 
 Model-family support is not universal. Some families and recipe paths explicitly
 opt out of packed sequences or related packing modes.
@@ -181,7 +177,9 @@ opt out of packed sequences or related packing modes.
 HybridEP CUDA-graph configs preserve their explicit uneven-input setting because
 the safety path performs a host scalar synchronization that is not capture-safe.
 They must provide equal per-rank dispatch shapes. Disable CUDA graphs when packed
-runtime THD token counts can differ so Bridge can enable safe padding.
+THD token counts can differ so the recipe can enable safe padding. Direct model-
+provider callers must explicitly enable the setting when they supply uneven THD
+inputs because no combined recipe is available to infer their layout.
 
 ## Relationship to Long-Sequence Training
 

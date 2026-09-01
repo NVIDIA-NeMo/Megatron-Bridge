@@ -21,7 +21,6 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, get_pg_size, unwrap_model
 
-from megatron.bridge.models.hybridep import set_hybridep_padding_for_layout
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import (
     get_packed_seq_params,
@@ -294,8 +293,6 @@ def forward_step(
             else:
                 packed_metadata["total_tokens"] = input_ids.size(1) if input_ids is not None else labels.size(1)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_metadata)
-
-    set_hybridep_padding_for_layout(model, forward_args.get("packed_seq_params"), config=config)
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

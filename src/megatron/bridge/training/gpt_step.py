@@ -37,7 +37,6 @@ from megatron.core.utils import (
     unwrap_model,
 )
 
-from megatron.bridge.models.hybridep import set_hybridep_padding_for_layout
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
@@ -605,8 +604,6 @@ def _forward_step_common(
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
         if padding_mask is not None:
             forward_args["padding_mask"] = padding_mask
-
-    set_hybridep_padding_for_layout(model, forward_args.get("packed_seq_params"), config=config)
 
     with straggler_timer:
         if return_schedule_plan:
