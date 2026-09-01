@@ -7,6 +7,7 @@ import torch
 from safetensors.torch import save_file
 
 from megatron.bridge.models.bagel.checkpoint import (
+    _assert_exact_target_coverage,
     _copy_parameter,
     _fuse_glu,
     _fuse_qkv,
@@ -296,6 +297,21 @@ def test_fp32_main_hook_survives_float16_module_conversion():
     assert module.weight.dtype == torch.bfloat16
     assert torch.equal(module.weight.get_high_precision_init_val(), source)
     module.weight.clear_high_precision_init_val()
+
+
+def test_official_bf16_checkpoint_does_not_require_fp32_main_values():
+    model = torch.nn.Module()
+    model.weight = torch.nn.Parameter(torch.zeros(1, dtype=torch.bfloat16))
+    latent_position = SimpleNamespace(pos_embed=torch.zeros(1))
+    model.modality_submodules = {"diffusion": SimpleNamespace(encoders={"latent_position_ids": latent_position})}
+    initialized_targets = {
+        id(model.weight): "weight",
+        id(latent_position.pos_embed): "latent_position_ids.pos_embed",
+    }
+
+    with pytest.raises(ValueError, match="FP32 main-weight"):
+        _assert_exact_target_coverage(model, initialized_targets, require_fp32_main_values=True)
+    _assert_exact_target_coverage(model, initialized_targets, require_fp32_main_values=False)
 
 
 def test_full_native_checkpoint_maps_language_vision_and_auxiliary(tmp_path):

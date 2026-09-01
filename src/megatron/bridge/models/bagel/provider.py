@@ -20,10 +20,11 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import torch
+from megatron.core.transformer.utils import sharded_state_dict_default
 
 from megatron.bridge.models.bagel.checkpoint import initialize_bagel_from_native_checkpoint
 from megatron.bridge.models.bagel.dependencies import configure_official_bagel_repo, import_official_bagel_module
@@ -36,6 +37,35 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 logger = logging.getLogger(__name__)
+
+
+def _complete_mot_layer_sharded_state_dict(
+    layer: torch.nn.Module,
+    prefix: str = "",
+    sharded_offsets: tuple = (),
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Include MoT layer norms omitted by the current upstream sharded-state helper."""
+    state = type(layer).sharded_state_dict(
+        layer,
+        prefix=prefix,
+        sharded_offsets=sharded_offsets,
+        metadata=metadata,
+    )
+    for name in ("input_layernorm", "input_layernorm_gen"):
+        module = getattr(layer, name)
+        module_prefix = f"{prefix}{name}."
+        expected = set(module.state_dict(prefix=module_prefix))
+        if not expected.issubset(state):
+            state.update(
+                sharded_state_dict_default(
+                    module,
+                    prefix=module_prefix,
+                    sharded_offsets=sharded_offsets,
+                    metadata=metadata,
+                )
+            )
+    return state
 
 
 def gelu_pytorch_tanh(value: torch.Tensor) -> torch.Tensor:
@@ -79,6 +109,7 @@ class BagelModelProvider(GPTModelProvider):
     moe_token_dispatcher_type: str = "alltoall"
     bagel_repo: str | None = None
     model_path: str | None = None
+    official_config_values: dict[str, Any] | None = None
     vision_model_path: str | None = None
     vae_path: str | None = None
     latent_patch_size: int = 2
@@ -160,18 +191,22 @@ class BagelModelProvider(GPTModelProvider):
 
     def _official_config(self) -> Any:
         """Load the official local BAGEL configuration without model weights."""
-        if self.bagel_repo is None or self.model_path is None:
-            raise ValueError("BAGEL model requires model.bagel_repo and model.model_path")
-        configure_official_bagel_repo(self.bagel_repo)
+        if self.bagel_repo is not None:
+            configure_official_bagel_repo(self.bagel_repo)
         bagel_module = import_official_bagel_module("modeling.bagel")
         BagelConfig = bagel_module.BagelConfig
         Qwen2Config = bagel_module.Qwen2Config
         SiglipVisionConfig = bagel_module.SiglipVisionConfig
 
-        config_path = Path(self.model_path) / "config.json"
-        if not config_path.is_file():
-            raise ValueError(f"BAGEL config is missing: {config_path}")
-        values = json.loads(config_path.read_text(encoding="utf-8"))
+        if self.model_path is not None:
+            config_path = Path(self.model_path) / "config.json"
+            if not config_path.is_file():
+                raise ValueError(f"BAGEL config is missing: {config_path}")
+            values = json.loads(config_path.read_text(encoding="utf-8"))
+        elif self.official_config_values is not None:
+            values = self.official_config_values
+        else:
+            raise ValueError("BAGEL model requires model_path or official_config_values")
         llm_config = Qwen2Config(**values["llm_config"])
         official_architecture = (
             llm_config.num_hidden_layers,
@@ -190,7 +225,7 @@ class BagelModelProvider(GPTModelProvider):
             self.vocab_size,
         )
         if official_architecture != provider_architecture:
-            raise ValueError("BAGEL provider architecture does not match model_path/config.json")
+            raise ValueError("BAGEL provider architecture does not match the official config")
         llm_config.layer_module = "Qwen2MoTDecoderLayer"
         llm_config.qk_norm = True
         llm_config.tie_word_embeddings = False
@@ -355,6 +390,10 @@ class BagelModelProvider(GPTModelProvider):
             post_process=post_process,
             vp_stage=vp_stage,
         )
+        # Current MCore MoT serialization skips TENorm children because they do
+        # not define sharded_state_dict(), making converted checkpoints incomplete.
+        for layer in model.language_model.decoder.layers:
+            layer.sharded_state_dict = MethodType(_complete_mot_layer_sharded_state_dict, layer)
         output_projection = model.modality_submodules["diffusion"].output_projections[0]
         torch.nn.init.zeros_(output_projection.weight)
         if output_projection.bias is not None:

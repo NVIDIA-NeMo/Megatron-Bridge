@@ -24,7 +24,7 @@ from types import ModuleType
 
 _BAGEL_INSTALL_HINT = (
     "Run `uv sync --extra bagel`, clone the pinned ByteDance-Seed/Bagel source, "
-    "and pass that checkout through `bagel_repo`."
+    "and pass that checkout through `bagel_repo` or expose it on `PYTHONPATH`."
 )
 
 

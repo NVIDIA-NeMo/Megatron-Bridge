@@ -30,7 +30,7 @@ from megatron.bridge.models.bagel.bagel_step import (
 from megatron.bridge.models.bagel.data.batch import _attention_metadata
 from megatron.bridge.models.bagel.data.external import BagelRNGIterator
 from megatron.bridge.models.bagel.diffusion import BagelDiffusionScheduler
-from megatron.bridge.models.bagel.provider import BagelModelProvider
+from megatron.bridge.models.bagel.provider import BagelModelProvider, _complete_mot_layer_sharded_state_dict
 from megatron.bridge.recipes.bagel.h100.bagel import (
     bagel_7b_finetune_8gpu_h100_bf16_config,
     bagel_7b_pretrain_8gpu_h100_bf16_config,
@@ -57,6 +57,16 @@ class RandomIterator:
 
     def load_state_dict(self, state):
         self.position = state["position"]
+
+
+class _LayerWithUnshardedNorms(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.input_layernorm = torch.nn.LayerNorm(2)
+        self.input_layernorm_gen = torch.nn.LayerNorm(2)
+
+    def sharded_state_dict(self, **_kwargs):
+        return {"existing": torch.tensor(1)}
 
 
 def _draw_process_rng() -> tuple[float, float, float]:
@@ -106,6 +116,18 @@ def test_attention_metadata_preserves_sample_boundaries():
         reconstructed,
         torch.tensor([[True, False, False], [True, True, False], [False, False, True]]),
     )
+
+
+def test_mot_sharded_state_includes_unsharded_input_norms(monkeypatch):
+    def sharded_state(module, prefix, **_kwargs):
+        return {f"{prefix}{key}": value for key, value in module.state_dict().items()}
+
+    monkeypatch.setattr("megatron.bridge.models.bagel.provider.sharded_state_dict_default", sharded_state)
+    state = _complete_mot_layer_sharded_state_dict(_LayerWithUnshardedNorms(), prefix="layer.")
+
+    assert "existing" in state
+    assert "layer.input_layernorm.weight" in state
+    assert "layer.input_layernorm_gen.weight" in state
 
 
 def test_diffusion_scheduler_uses_shifted_linear_interpolation():

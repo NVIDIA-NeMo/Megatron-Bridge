@@ -9,20 +9,21 @@ summary: >
   BAGEL training run using the official BAGEL Qwen2 FLOPs formula. It must not
   be compared directly with the official BAGEL run: Bridge used block-23
   language-model recompute without EMA, while the official run used full
-  recompute and performed an EMA update. This card currently claims
-  BAGEL pretraining performance verification only; conversion, inference,
-  fine-tuning, and checkpoint-resume verification remain incomplete or
-  unsupported by maintained public workflows.
+  recompute and performed an EMA update. This card currently claims BAGEL
+  pretraining performance verification only. GPU Hugging Face import and
+  deterministic image-understanding inference are implemented, but their
+  clean-commit public-launcher verification remains pending; fine-tuning and
+  checkpoint-resume verification are also incomplete or unsupported.
 verification_index:
   model_level:
     unverified:
+      - hf_to_megatron_gpu
       - manual_forward_pass
+      - inference
     unsupported:
       - hf_to_megatron_cpu
-      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
-      - inference
   training:
     H100:
       unverified: [pretrain, sft, checkpoint_resume]
@@ -50,14 +51,20 @@ items:
       CPU conversion launcher.
 
   hf_to_megatron_gpu:
-    status: unsupported
-    precision: null
-    command: null
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 1
+      --hf-model ByteDance-Seed/BAGEL-7B-MoT
+      --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b
+      --megatron-path work/model-verification/bagel/hf-to-megatron
+      --torch-dtype bfloat16
     last_verified: null
     expected_result: >
-      The BAGEL checkpoint adapter initializes a training model from native
-      assets, but no maintained convert.sh import workflow currently writes a
-      standalone Megatron checkpoint from the pinned Hugging Face revision.
+      The public GPU importer must consume only the official EMA model state,
+      write a standalone Megatron checkpoint, and strictly reload every model
+      tensor with matching keys, shapes, dtypes, and values.
 
   megatron_to_hf_cpu:
     status: unsupported
@@ -89,13 +96,16 @@ items:
       do not constitute this end-to-end comparison.
 
   inference:
-    status: unsupported
-    precision: null
+    status: unverified
+    precision: bf16
     command: null
     last_verified: null
     expected_result: >
-      This Bridge integration exposes BAGEL training but does not provide a
-      maintained public deterministic generation or understanding launcher.
+      The deterministic BAGEL image-understanding example must be routed
+      through the maintained public inference launcher, load the converted
+      checkpoint, run greedy decoding on a pinned public image and prompt, and
+      record the literal completion and generated-token count. The current
+      generic VLM launcher does not support BAGEL's model inputs.
 
   pretrain:
     H100:

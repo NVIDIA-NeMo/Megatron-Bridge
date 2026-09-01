@@ -59,11 +59,30 @@ sample lengths. It reports theoretical training TFLOP/s per GPU. As in the
 official implementation, this numerator does not separately count the vision
 encoder, VAE, EMA, optimizer, or activation recomputation.
 
+## Image-Understanding Inference
+
+Run deterministic greedy inference from a converted Megatron checkpoint:
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  examples/models/bagel/inference_bagel.py \
+  --bagel-repo work/dependencies/Bagel \
+  --hf-model ByteDance-Seed/BAGEL-7B-MoT \
+  --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b \
+  --checkpoint work/checkpoints/bagel-mcore-init \
+  --image work/images/example.jpg \
+  --prompt "Describe this image."
+```
+
+The example uses BAGEL's official tokenizer and image preprocessing. It
+recomputes the short sequence for each generated token because the current
+MCore BAGEL wrapper does not expose a maintained KV-cache interface.
+
 ## Current Limitations
 
 - Tensor, pipeline, and context parallel sizes must all be one.
 - The maintained recipes use Megatron FSDP with data parallelism.
-- Generation, understanding inference, and Hugging Face export are not
-  provided by this training integration.
+- Image generation and Hugging Face export are not provided. The maintained
+  understanding inference example currently supports TP=PP=CP=1 only.
 - Official and Bridge throughput results are not directly comparable when
   recompute or EMA settings differ.
