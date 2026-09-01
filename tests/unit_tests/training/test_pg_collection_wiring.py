@@ -160,6 +160,7 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
     monkeypatch.setattr(train_module, "is_full_iteration_cuda_graph", lambda _config: False)
     monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
     monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
+    monkeypatch.setattr(train_module, "checkpoint_and_decide_exit", lambda *args, **kwargs: False)
     monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
     monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
     monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)
@@ -190,6 +191,104 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
 
     start_nsys_profiler.assert_called_once_with(profiling)
     stop_nsys_profiler.assert_called_once()
+
+
+def test_train_saves_final_checkpoint_when_last_iteration_is_skipped(monkeypatch):
+    """A counted final iteration must not bypass its configured checkpoint."""
+    from megatron.bridge.training import train as train_module
+
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            manual_gc=False,
+            check_weight_hash_across_dp_replicas_interval=None,
+            train_iters=10,
+            micro_batch_size=1,
+            iterations_to_skip={10},
+            exit_signal_handler=False,
+            exit_duration_in_mins=None,
+            exit_interval=None,
+        ),
+        validation=SimpleNamespace(eval_interval=0, start_eval_at_iter=None),
+        profiling=None,
+        straggler=None,
+        ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
+        optimizer=SimpleNamespace(
+            use_distributed_optimizer=False,
+            optimizer_cuda_graph=False,
+        ),
+        model=SimpleNamespace(
+            virtual_pipeline_model_parallel_size=None,
+            cuda_graph_warmup_steps=0,
+            cuda_graph_use_single_mempool=False,
+            moe_expert_rank_capacity_factor=None,
+        ),
+        logger=SimpleNamespace(log_throughput_to_tensorboard=False),
+        checkpoint=SimpleNamespace(
+            save="/checkpoints",
+            save_interval=10,
+            non_persistent_save_interval=None,
+        ),
+        tensor_inspect=None,
+    )
+    state = SimpleNamespace(
+        cfg=config,
+        train_state=SimpleNamespace(
+            step=9,
+            consumed_train_samples=9,
+            skipped_train_samples=0,
+            floating_point_operations_so_far=0,
+        ),
+        timers=Mock(),
+        straggler_timer=Mock(),
+        energy_monitor=None,
+        nvrx_straggler_manager=None,
+        tensorboard_logger=None,
+        wandb_logger=None,
+        _comet_logger=None,
+    )
+    model_config = SimpleNamespace(cuda_graph_impl=None)
+    rerun_state_machine = SimpleNamespace(current_iteration=9)
+    pg_collection = SimpleNamespace(
+        dp=SimpleNamespace(size=lambda: 1),
+        pp=SimpleNamespace(size=lambda: 1),
+    )
+    save_checkpoint = Mock()
+
+    monkeypatch.setattr(train_module, "get_model_config", lambda _model: model_config)
+    monkeypatch.setattr(train_module, "get_rerun_state_machine", lambda: rerun_state_machine)
+    monkeypatch.setattr(train_module, "get_num_microbatches", lambda: 1)
+    monkeypatch.setattr(train_module, "update_num_microbatches", lambda *args, **kwargs: None)
+    monkeypatch.setattr(train_module, "should_disable_forward_pre_hook", lambda *args: False)
+    monkeypatch.setattr(train_module, "get_forward_backward_func", lambda **kwargs: Mock())
+    monkeypatch.setattr(train_module, "is_full_iteration_cuda_graph", lambda _config: False)
+    monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
+    monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
+    monkeypatch.setattr(train_module, "save_checkpoint_and_time", save_checkpoint)
+    monkeypatch.setattr(train_module, "check_nvrx_straggler_detection", lambda _manager: False)
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
+    monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)
+    monkeypatch.setattr(train_module, "should_fire", lambda *args: False)
+    monkeypatch.setattr(train_module, "nvtx_range_push", lambda **kwargs: None)
+    monkeypatch.setattr(train_module, "nvtx_range_pop", lambda **kwargs: None)
+    monkeypatch.setattr(train_module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(train_module.fault_tolerance, "on_checkpointing_start", lambda _state: None)
+    monkeypatch.setattr(train_module.fault_tolerance, "on_checkpointing_end", lambda **kwargs: None)
+
+    train_module.train(
+        forward_step_func=Mock(),
+        model=[Mock()],
+        optimizer=Mock(),
+        scheduler=Mock(),
+        train_data_iterator=None,
+        valid_data_iterator=None,
+        global_state=state,
+        checkpoint_manager=Mock(),
+        pg_collection=pg_collection,
+    )
+
+    assert state.train_state.step == 10
+    save_checkpoint.assert_called_once()
 
 
 def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch):

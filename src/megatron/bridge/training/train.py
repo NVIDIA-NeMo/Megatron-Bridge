@@ -439,6 +439,19 @@ def train(
                 prof,
                 nsys_nvtx_context,
             )
+            should_exit = checkpoint_and_decide_exit(
+                global_state,
+                model,
+                optimizer,
+                scheduler,
+                num_floating_point_operations_so_far,
+                checkpoint_manager,
+                train_data_iterator,
+                pg_collection=pg_collection,
+                callback_manager=callback_manager,
+            )
+            if should_exit:
+                break
             continue
 
         # Capture CUDA Graphs after warmup.
