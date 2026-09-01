@@ -17,9 +17,11 @@
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
 
 from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config,
@@ -28,6 +30,7 @@ from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
 )
 from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config,
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config,
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config,
 )
@@ -72,6 +75,33 @@ def test_qwen35_vl_122b_h100_pipeline_layout(
     assert (num_layers // pp_size) % vp_size == 0
     assert pp_size == expected_pp_size
     assert vp_size == expected_vp_size
+
+
+def test_qwen35_vl_35b_h100_fp8cs_pipeline_layout_builds_all_layers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 35B FP8-CS benchmark topology should allocate all 40 language layers."""
+    patch_recipe_construction_dependencies(monkeypatch)
+    config = qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config()
+    model = config.model
+    allocation_config = SimpleNamespace(
+        pipeline_model_parallel_layout=getattr(model, "pipeline_model_parallel_layout", None),
+        num_layers_in_first_pipeline_stage=getattr(model, "num_layers_in_first_pipeline_stage", None),
+        num_layers_in_last_pipeline_stage=getattr(model, "num_layers_in_last_pipeline_stage", None),
+        account_for_embedding_in_pipeline_split=False,
+        account_for_loss_in_pipeline_split=False,
+        num_layers=40,
+        pipeline_model_parallel_size=model.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=model.virtual_pipeline_model_parallel_size,
+    )
+
+    allocated_layers = sum(
+        get_num_layers_to_build(allocation_config, vp_stage=vp_stage, pp_rank=pp_rank)
+        for pp_rank in range(model.pipeline_model_parallel_size)
+        for vp_stage in range(model.virtual_pipeline_model_parallel_size)
+    )
+
+    assert allocated_layers == 40
 
 
 def test_qwen35_vl_35b_h100_measured_performance_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
