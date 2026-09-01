@@ -1593,9 +1593,6 @@ class ConfigContainer(Container):
                     "Legacy checkpointing requires ckpt_format='torch_dist' or 'fsdp_dtensor'"
                 )
 
-        # Memory-efficient fully reshardable optimizer checkpointing uses Gloo
-        # for the DP state exchange. Validate this cross-config requirement here
-        # because CheckpointConfig.finalize() cannot inspect DistributedInitConfig.
         if self.checkpoint.dist_ckpt_optim_fully_reshardable:
             assert (
                 not self.checkpoint.distrib_optim_fully_reshardable_mem_efficient or self.dist.use_gloo_process_groups
