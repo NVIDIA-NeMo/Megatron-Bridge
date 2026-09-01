@@ -1238,6 +1238,31 @@ class TestCheckpointAndDecideExit:
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")
     @patch("megatron.bridge.training.train.barrier_and_log")
     @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_local_checkpoint_does_not_suppress_persistent_exit_checkpoint(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """A planned exit must persist state even when a local save is also due."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            checkpoint_save_interval=100,
+            exit_interval=10,
+            step=10,
+        )
+        state.cfg.checkpoint.non_persistent_save_interval = 10
+        state.cfg.checkpoint.non_persistent_ckpt_type = "local"
+
+        result = checkpoint_and_decide_exit(state, **self._create_mock_args())
+
+        assert result is True
+        assert mock_save_checkpoint.call_count == 2
+        assert mock_save_checkpoint.call_args_list[0].kwargs["non_persistent_ckpt"] is True
+        assert mock_save_checkpoint.call_args_list[1].kwargs.get("non_persistent_ckpt", False) is False
+
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
     def test_no_checkpoint_when_disabled(self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint):
         """Test that no checkpoint is saved when checkpointing is disabled."""
         mock_check_nvrx.return_value = False

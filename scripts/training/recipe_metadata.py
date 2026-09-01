@@ -63,7 +63,13 @@ BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
     }
 )
 
-LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset()
+# This flattened Qwen recipe is the real-data convergence entry point. The
+# same-named benchmark remains available through scripts/performance.
+LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset(
+    {
+        "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
+    }
+)
 
 PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
 TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})

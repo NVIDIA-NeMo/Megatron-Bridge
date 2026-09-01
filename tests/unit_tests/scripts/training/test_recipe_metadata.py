@@ -234,6 +234,16 @@ def test_known_cross_package_collisions_have_explicit_benchmark_precedence():
         assert module.resolved_benchmark_recipe_metadata(recipe_name) is None
 
 
+def test_qwen3_30b_gb200_mxfp8_collision_selects_library_recipe():
+    module = _load_module()
+    recipe_name = "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"
+
+    assert recipe_name in module.LIBRARY_RECIPE_PRECEDENCE_COLLISIONS
+    assert module.available_benchmark_recipe_metadata(recipe_name) is not None
+    assert module.resolved_benchmark_recipe_metadata(recipe_name) is None
+    assert module.selected_benchmark_recipe(["--recipe", recipe_name]) is None
+
+
 def test_unregistered_recipe_family_is_rejected():
     module = _load_module()
 
