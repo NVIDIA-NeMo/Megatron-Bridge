@@ -1,7 +1,7 @@
 # Nemotron 3.5 Lightning
-[Nemotron 3 Super](https://huggingface.co/collections/nvidia/nvidia-nemotron-v3)is a large language model (LLM) trained by NVIDIA, designed to deliver strong agentic, reasoning, and conversational capabilities. It is employs a hybrid **Latent Mixture-of-Experts (LatentMoE)** architecture, utilizing interleaved Mamba-2 and MoE layers, along with select Attention layers. Distinct from the Nano model, the Super model incorporates **Multi-Token Prediction (MTP)** layers for faster text generation and improved quality, and it is trained using **NVFP4** quantization to maximize compute efficiency. The model has **12B active parameters** and **120B parameters in total**.
+[NVIDIA Nemotron 3.5 Lightning 30B-A3B BF16](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16) is a large language model trained by NVIDIA for reasoning, agentic, and conversational workloads. It uses a hybrid Mixture-of-Experts architecture with interleaved Mamba-2, MoE, and Attention layers, together with Multi-Token Prediction (MTP). This BF16 reference checkpoint has 30B total parameters and 3B active parameters.
 
-NeMo Megatron Bridge supports pretraining, full parameters finetuning, and LoRA finetuning this model. The finetuned model can be converted back to the 🤗 Hugging Face format for downstream evaluation.
+NeMo Megatron Bridge supports pretraining, full-parameter fine-tuning, and LoRA fine-tuning of this model. The fine-tuned model can be converted back to the 🤗 Hugging Face format for downstream evaluation.
 
 ```{important}
 Run all commands from `/opt/Megatron-Bridge` (e.g. `docker run -w /opt/Megatron-Bridge ...`)
