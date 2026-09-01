@@ -44,7 +44,7 @@ except ImportError:
 
 
 def get_rank_safe() -> int:
-    """Get rank before or after distributed initialization without hiding malformed inputs."""
+    """Match MCore main rank resolution while keeping malformed launcher values fail-fast on MCore dev."""
     if torch.distributed.is_initialized():
         return torch.distributed.get_rank()
     if "RANK" in os.environ:
