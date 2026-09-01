@@ -69,8 +69,6 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
-from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils import comet_utils, mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
