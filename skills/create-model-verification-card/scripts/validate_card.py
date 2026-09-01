@@ -156,8 +156,11 @@ RESUME_KEYS = frozenset(
         "loss_relative_tolerance",
         "loss_absolute_tolerance",
         "sentinels_match",
+        "execution_only_overrides",
     }
 )
+RESUME_REQUIRED_KEYS = RESUME_KEYS - {"execution_only_overrides"}
+RESUME_EXECUTION_ONLY_OVERRIDE_ALLOWLIST = frozenset({"model.cuda_graph_impl"})
 FORBIDDEN_KEY_FRAGMENTS = (
     "account",
     "cluster",
@@ -959,7 +962,7 @@ def _validate_resume(
     _check_keys(
         comparison,
         allowed=RESUME_KEYS,
-        required=RESUME_KEYS,
+        required=RESUME_REQUIRED_KEYS,
         path=comparison_path,
         errors=errors,
     )
@@ -974,6 +977,27 @@ def _validate_resume(
     relative_tolerance = comparison.get("loss_relative_tolerance")
     if _is_finite_number(relative_tolerance) and float(relative_tolerance) > 1.0e-2:
         errors.append(f"{_pointer(*comparison_path, 'loss_relative_tolerance')}: must not exceed 1%")
+
+    execution_only_overrides = comparison.get("execution_only_overrides")
+    if execution_only_overrides is not None:
+        execution_override_path = (*comparison_path, "execution_only_overrides")
+        if (
+            not isinstance(execution_only_overrides, list)
+            or not execution_only_overrides
+            or not all(isinstance(field, str) and field for field in execution_only_overrides)
+        ):
+            errors.append(f"{_pointer(*execution_override_path)}: expected a non-empty list of field names")
+        else:
+            duplicates = sorted(
+                {field for field in execution_only_overrides if execution_only_overrides.count(field) > 1}
+            )
+            if duplicates:
+                errors.append(f"{_pointer(*execution_override_path)}: field names must be unique")
+            unsupported = sorted(set(execution_only_overrides) - RESUME_EXECUTION_ONLY_OVERRIDE_ALLOWLIST)
+            if unsupported:
+                errors.append(
+                    f"{_pointer(*execution_override_path)}: unsupported execution-only fields: {', '.join(unsupported)}"
+                )
 
     if status != "verified":
         return
@@ -1127,9 +1151,36 @@ def _validate_resume_against_pretrain(
         for setting in {*reference_settings, *resume_settings}
         if reference_settings.count(setting) != resume_settings.count(setting)
     ]
+    differing_names = {"<positional>" if kind == "positional" else name for kind, name, _ in differing_settings}
+    comparison = item.get("resume_comparison")
+    declared_overrides = comparison.get("execution_only_overrides") if isinstance(comparison, Mapping) else None
+    valid_declared_overrides = (
+        set(declared_overrides)
+        if isinstance(declared_overrides, list)
+        and declared_overrides
+        and all(isinstance(field, str) for field in declared_overrides)
+        and set(declared_overrides) <= RESUME_EXECUTION_ONLY_OVERRIDE_ALLOWLIST
+        else set()
+    )
+    if differing_names == valid_declared_overrides:
+        return
+    stale_overrides = sorted(valid_declared_overrides - differing_names)
+    if stale_overrides:
+        errors.append(
+            f"{_pointer(*resume_path, 'resume_comparison', 'execution_only_overrides')}: "
+            f"declared fields do not differ from the reference: {', '.join(stale_overrides)}"
+        )
+    undeclared_differences = differing_names - valid_declared_overrides
+    if not undeclared_differences:
+        return
+    undeclared_settings = [
+        setting
+        for setting in differing_settings
+        if ("<positional>" if setting[0] == "positional" else setting[1]) in undeclared_differences
+    ]
     errors.append(
         f"{_pointer(*resume_command_path)}: reference and resume launch settings must match; "
-        f"differences found in {_resume_setting_names(differing_settings)}"
+        f"differences found in {_resume_setting_names(undeclared_settings)}"
     )
 
 
