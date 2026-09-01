@@ -200,7 +200,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -308,7 +308,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -360,7 +360,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -468,7 +468,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -571,6 +571,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
 def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× GB300, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
+    cfg.model.moe_router_force_load_balancing = False
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.comm_overlap.tp_comm_overlap = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
