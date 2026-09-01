@@ -109,6 +109,7 @@ class _FakeMoonlightModelProvider:
         self.pipeline_model_parallel_layout = None
         self.moe_token_dispatcher_type = "alltoall"
         self.moe_enable_deepep = False
+        self.moe_hybridep_pad_uneven_dispatch_inputs = False
         self.moe_shared_expert_overlap = True
 
         # Set parallelism defaults if not provided
