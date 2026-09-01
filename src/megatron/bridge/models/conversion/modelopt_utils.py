@@ -245,23 +245,35 @@ def _select_state(state: object, weight_dim: int, indices: torch.Tensor) -> obje
 
 
 def _gather_source_states(
-    source: _SourceState,
+    source: _SourceState | None,
     mapping: Any,
+    capture_error: str | None = None,
 ) -> list[_SourceState]:
     from modelopt.torch.export.quant_utils import (
         restore_quantized_weight_export_state,
         split_quantized_weight_export_state,
     )
 
-    assert source.state is not None
-    state_metadata, state_tensors = split_quantized_weight_export_state(source.state)
-    tensor_specs = tuple((tuple(tensor.shape), tensor.dtype) for tensor in state_tensors)
+    state_metadata = None
+    state_tensors: tuple[torch.Tensor, ...] = ()
+    tensor_specs = ()
+    if source is not None and source.state is not None:
+        state_metadata, state_tensors = split_quantized_weight_export_state(source.state)
+        tensor_specs = tuple((tuple(tensor.shape), tensor.dtype) for tensor in state_tensors)
+        state_metadata = replace(source, state=state_metadata)
     payloads = _all_gather_objects(
-        (replace(source, state=state_metadata), tensor_specs),
+        (state_metadata, tensor_specs, capture_error),
         mapping.tp_group,
     )
-    if any(specs != tensor_specs for _, specs in payloads[1:]):
-        raise RuntimeError(f"Inconsistent ModelOpt state tensors for {source.weight_shape}")
+    errors = [error for _, _, error in payloads if error is not None]
+    if errors:
+        raise RuntimeError("ModelOpt state capture failed: " + "; ".join(dict.fromkeys(errors)))
+    source_payloads = [(metadata, specs) for metadata, specs, _ in payloads if metadata is not None]
+    if len(source_payloads) != len(payloads):
+        raise RuntimeError("ModelOpt source state is missing on a tensor-parallel rank")
+    reference_metadata, reference_specs = source_payloads[0]
+    if any(specs != reference_specs for _, specs in source_payloads[1:]):
+        raise RuntimeError(f"Inconsistent ModelOpt state tensors for {reference_metadata.weight_shape}")
 
     gathered_tensors = [
         mapping.gather_from_tp_ranks(_stage_tensor_for_collective(tensor.contiguous(), mapping.tp_group))
@@ -275,18 +287,19 @@ def _gather_source_states(
                 [values[rank] for values in gathered_tensors],
             ),
         )
-        for rank, (source_metadata, _) in enumerate(payloads)
+        for rank, (source_metadata, _) in enumerate(source_payloads)
     ]
 
 
 def _transform_source_state(
     task: WeightConversionTask,
-    source: _SourceState,
+    source: _SourceState | None,
+    capture_error: str | None = None,
 ) -> dict[str, object | None]:
     names = _mapping_names(task.mapping)
     shards = (
-        _gather_source_states(source, task.mapping)
-        if source.state is not None
+        _gather_source_states(source, task.mapping, capture_error)
+        if source is None or capture_error is not None or source.state is not None
         else _all_gather_objects(source, task.mapping.tp_group)
     )
     quantized = [shard.state is not None for shard in shards]
@@ -442,7 +455,7 @@ def _stage_tensor_for_collective(tensor: torch.Tensor, group: Any) -> torch.Tens
     return tensor.to(torch.device("cuda", torch.cuda.current_device()))
 
 
-def _capture_current_source_state(task: WeightConversionTask) -> _SourceState:
+def _capture_current_source_state(task: WeightConversionTask) -> tuple[_SourceState | None, str | None]:
     from modelopt.torch.export.quant_utils import (
         restore_quantized_weight_export_state,
         split_quantized_weight_export_state,
@@ -465,17 +478,21 @@ def _capture_current_source_state(task: WeightConversionTask) -> _SourceState:
     except Exception as error:
         local_payload = None
         capture_error = f"{type(error).__name__}: {error}"
-    _raise_distributed_errors(
-        capture_error,
-        _world_group(),
-        f"ModelOpt state capture failed for {task.global_param_name}",
-    )
+    if capture_error is not None:
+        local_payload = (None, (), capture_error)
+    elif local_payload is not None:
+        local_payload = (*local_payload, None)
+
+    # Carry failures through the existing PP metadata path; the following TP
+    # metadata gather propagates them without a per-weight WORLD collective.
+    try:
+        source_metadata, tensor_specs, capture_error = task.mapping.broadcast_obj_from_pp_rank(local_payload)
+    except Exception as error:
+        return None, f"{type(error).__name__}: {error}"
+    if capture_error is not None:
+        return None, capture_error
 
     cache_prefix = f"modelopt:{task.global_param_name}"
-    source_metadata, tensor_specs = task.mapping.broadcast_obj_from_pp_rank(
-        local_payload,
-        cache_key=f"{cache_prefix}:metadata",
-    )
     values = []
     for index, _ in enumerate(tensor_specs):
         local_tensor = local_tensors[index] if local_source is not None else None
@@ -487,9 +504,12 @@ def _capture_current_source_state(task: WeightConversionTask) -> _SourceState:
                 cache_key=f"{cache_prefix}:tensor:{index}",
             )
         )
-    return replace(
-        source_metadata,
-        state=restore_quantized_weight_export_state(source_metadata.state, values),
+    return (
+        replace(
+            source_metadata,
+            state=restore_quantized_weight_export_state(source_metadata.state, values),
+        ),
+        None,
     )
 
 
@@ -497,16 +517,28 @@ def _gather_expert_outputs(
     outputs: Iterable[HFWeightTuple],
     group: Any,
 ) -> Iterable[HFWeightTuple]:
-    outputs = tuple(outputs)
-    metadata = tuple((name, tuple(tensor.shape), tensor.dtype) for name, tensor in outputs)
-    gathered_metadata = _all_gather_objects(metadata, group)
+    error = None
+    # Materialize inside the error envelope so every EP rank reaches the same
+    # metadata gather even when one local exporter fails.
+    try:
+        outputs = tuple(outputs)
+        metadata = tuple((name, tuple(tensor.shape), tensor.dtype) for name, tensor in outputs)
+    except Exception as exception:
+        outputs = ()
+        metadata = ()
+        error = f"{type(exception).__name__}: {exception}"
+    gathered = _all_gather_objects((metadata, error), group)
+    errors = [rank_error for _, rank_error in gathered if rank_error is not None]
+    if errors:
+        raise RuntimeError("ModelOpt expert export failed: " + "; ".join(dict.fromkeys(errors)))
+    gathered_metadata = [rank_metadata for rank_metadata, _ in gathered]
     if len(gathered_metadata) == 1:
         yield from outputs
         return
 
-    local_layout = tuple((shape, dtype) for _, shape, dtype in metadata)
+    reference_layout = tuple((shape, dtype) for _, shape, dtype in gathered_metadata[0])
     if any(
-        tuple((shape, dtype) for _, shape, dtype in rank_metadata) != local_layout
+        tuple((shape, dtype) for _, shape, dtype in rank_metadata) != reference_layout
         for rank_metadata in gathered_metadata[1:]
     ):
         raise RuntimeError("Inconsistent ModelOpt expert output tensors across EP")
@@ -544,8 +576,8 @@ def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
     def export_weight(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
         nonlocal remaining_names, transformed_states
         if transformed_states is None:
-            source = _capture_current_source_state(task)
-            transformed_states = _transform_source_state(task, source)
+            source, capture_error = _capture_current_source_state(task)
+            transformed_states = _transform_source_state(task, source, capture_error)
             remaining_names = set(expected_names)
 
         state = transformed_states.get(hf_name)

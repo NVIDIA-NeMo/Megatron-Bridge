@@ -190,6 +190,23 @@ def test_distributed_error_check_gathers_messages_only_on_failure(monkeypatch):
         modelopt_utils._raise_distributed_errors(None, group, "capture")
 
 
+def test_weight_export_does_not_use_world_error_collective(monkeypatch):
+    module = _fp8_linear()
+    hf_name = "model.layers.0.self_attn.o_proj.weight"
+    task = _task(ColumnParallelMapping("projection.weight", hf_name), module)
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    monkeypatch.setattr(
+        modelopt_utils,
+        "_raise_distributed_errors",
+        lambda *_args, **_kwargs: pytest.fail("weight export used a WORLD error collective"),
+    )
+
+    exported = dict(export_task.export_hook(hf_name, module.weight))
+
+    assert hf_name in exported
+
+
 def test_build_plan_excludes_fake_quant_amax_mappings():
     module = _fp8_linear()
     hf_name = "model.layers.0.self_attn.o_proj.weight"
@@ -223,7 +240,7 @@ def test_gated_state_is_split_before_tp_merge(monkeypatch):
     ]
     calls = []
 
-    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda _source, _mapping: shards)
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda _source, _mapping, _error=None: shards)
 
     def select(state, dim, indices):
         result = ("select", state, dim, tuple(indices.tolist()))
@@ -259,7 +276,7 @@ def test_qkv_state_uses_megatron_interleaving(monkeypatch):
     source = _source("qkv", (16, 8), "column", (4, 2, 2, 8, False))
     selections = []
 
-    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda value, _mapping: [value])
+    monkeypatch.setattr(modelopt_utils, "_gather_source_states", lambda value, _mapping, _error=None: [value])
 
     def select(state, dim, indices):
         selections.append((state, dim, tuple(indices.tolist())))
@@ -416,6 +433,113 @@ def test_two_rank_planning_and_expert_collectives(tmp_path):
         _distributed_topology_worker,
         args=(2, str(tmp_path / "modelopt-dist-init")),
         nprocs=2,
+        join=True,
+    )
+
+
+def _distributed_capture_failure_worker(rank, world_size, init_file):
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+    )
+    try:
+        pp_groups = [
+            torch.distributed.new_group([0, 2]),
+            torch.distributed.new_group([1, 3]),
+        ]
+        tp_groups = [
+            torch.distributed.new_group([0, 1]),
+            torch.distributed.new_group([2, 3]),
+        ]
+        tp_rank = rank % 2
+        pp_rank = rank // 2
+
+        module = _fp8_linear()
+        mapping = ColumnParallelMapping("projection.weight", "model.projection.weight")
+        mapping.pp_group = pp_groups[tp_rank]
+        mapping._tp_group = tp_groups[pp_rank]
+        owns_weight = pp_rank == 0
+        task = WeightConversionTask(
+            param_name="weight",
+            global_param_name="projection.weight",
+            mapping=mapping,
+            megatron_module=module if owns_weight else None,
+            param_weight=module.weight if owns_weight else None,
+        )
+
+        original_capture = modelopt_utils._capture_source_state
+        original_cuda_available = torch.cuda.is_available
+        if rank == 0:
+
+            def fail_capture(_task):
+                raise ValueError("rank-local PP capture failure")
+
+            modelopt_utils._capture_source_state = fail_capture
+        torch.cuda.is_available = lambda: False
+        try:
+            source, capture_error = modelopt_utils._capture_current_source_state(task)
+            modelopt_utils._transform_source_state(task, source, capture_error)
+        except RuntimeError as error:
+            assert "rank-local PP capture failure" in str(error)
+        else:
+            raise AssertionError("Every PP x TP rank must observe a capture failure")
+        finally:
+            modelopt_utils._capture_source_state = original_capture
+            torch.cuda.is_available = original_cuda_available
+
+        etp_group = tp_groups[pp_rank]
+        ep_group = pp_groups[tp_rank]
+        expert_mapping = ColumnParallelMapping("expert.weight", "model.expert.weight")
+        expert_mapping._tp_group = etp_group
+        source = _source(
+            quant_utils.capture_quantized_weight_export_state(module),
+            tuple(module.weight.shape),
+            "column",
+        )
+
+        def expert_outputs():
+            capture_error = "ValueError: rank-local ETP capture failure" if rank == 0 else None
+            states = modelopt_utils._gather_source_states(
+                None if rank == 0 else source,
+                expert_mapping,
+                capture_error,
+            )
+            assert states
+            yield HFWeightTuple(
+                f"expert.{rank}.weight",
+                torch.tensor([rank], dtype=torch.int64),
+            )
+
+        try:
+            list(modelopt_utils._gather_expert_outputs(expert_outputs(), ep_group))
+        except RuntimeError as error:
+            assert "rank-local ETP capture failure" in str(error)
+        else:
+            raise AssertionError("Every ETP x EP rank must observe an expert capture failure")
+
+        mismatched_outputs = [
+            HFWeightTuple(
+                f"expert.{rank}.weight",
+                torch.zeros(2 if pp_rank == 0 else 1),
+            )
+        ]
+        try:
+            list(modelopt_utils._gather_expert_outputs(mismatched_outputs, ep_group))
+        except RuntimeError as error:
+            assert "Inconsistent ModelOpt expert output tensors" in str(error)
+        else:
+            raise AssertionError("Every EP rank must observe an output layout mismatch")
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_four_rank_capture_failure_topologies(tmp_path):
+    torch.multiprocessing.spawn(
+        _distributed_capture_failure_worker,
+        args=(4, str(tmp_path / "modelopt-failure-init")),
+        nprocs=4,
         join=True,
     )
 
