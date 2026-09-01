@@ -140,9 +140,11 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         if not modeling_path.is_file():
             raise FileNotFoundError(f"Nemotron Omni export is missing required artifact: {modeling_path}")
 
-        modeling_source = modeling_path.read_text()
+        modeling_source = modeling_path.read_text(encoding="utf-8")
         if self._HF_DYNAMIC_MODULE_IMPORTS.strip() not in modeling_source:
-            modeling_path.write_text(modeling_source.rstrip() + self._HF_DYNAMIC_MODULE_IMPORTS + "\n")
+            modeling_path.write_text(
+                modeling_source.rstrip() + self._HF_DYNAMIC_MODULE_IMPORTS + "\n", encoding="utf-8"
+            )
 
     # ------------------------------------------------------------------
     # Provider translation
