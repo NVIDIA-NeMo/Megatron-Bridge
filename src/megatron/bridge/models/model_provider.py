@@ -509,7 +509,7 @@ class GetModelKwargs(TypedDict, total=False):
         use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
         wrap_with_ddp: Whether to wrap model with DDP.
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
-        use_cpu_initialization: Initialize model on CPU.
+        use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
         init_model_with_meta_device: Initialize model on meta device.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.

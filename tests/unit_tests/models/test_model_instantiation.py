@@ -801,50 +801,35 @@ class TestGetModel:
         ],
     )
     @patch("megatron.bridge.models.model_provider._create_model")
-    @patch("megatron.bridge.models.model_provider._print_num_params")
-    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_provide_distributed_model_cpu_initialization_override(
         self,
-        mock_get_model_config,
-        mock_ddp_wrap,
-        mock_fix_float8,
-        mock_print_params,
         mock_create_model,
         initial_value,
         override,
         expected_value,
     ):
         """Test tri-state CPU initialization overrides at model construction."""
-        config = create_test_config()
-        config.use_cpu_initialization = True
-        config.init_model_with_meta_device = False
-        config.fp16 = False
-        config.bf16 = False
 
-        mock_get_model_config.return_value = config
-        model = MockMegatronModule(config)
-        observed_values = []
+        class ModelConstructionObserved(Exception):
+            pass
 
         def record_cpu_initialization(model_provider, *_args, **_kwargs):
-            observed_values.append(model_provider.use_cpu_initialization)
-            return [model]
+            assert model_provider.use_cpu_initialization is expected_value
+            raise ModelConstructionObserved
 
         mock_create_model.side_effect = record_cpu_initialization
-        mock_fix_float8.return_value = [model]
-        mock_ddp_wrap.return_value = [model]
 
-        model_provider = MockModelProvider(model)
+        model_provider = MockModelProvider()
         model_provider.use_cpu_initialization = initial_value
-        with patch("megatron.bridge.models.model_provider.torch.distributed.is_initialized", return_value=True):
+        with (
+            patch("megatron.bridge.models.model_provider.torch.distributed.is_initialized", return_value=True),
+            pytest.raises(ModelConstructionObserved),
+        ):
             model_provider.provide_distributed_model(
                 wrap_with_ddp=False,
                 pg_collection=_PG(),
                 **override,
             )
-
-        assert observed_values == [expected_value]
 
     @patch("megatron.bridge.models.model_provider._create_model")
     @patch("megatron.bridge.models.model_provider._print_num_params")
