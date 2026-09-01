@@ -326,6 +326,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    # Real routing (no forced balancing) needs headroom over the uniform per-rank
+    # budget; an over-budget dispatch makes PagedStashRunner re-run the whole step
+    # eagerly and reset the full-iteration CUDA graph.
+    cfg.model.moe_expert_rank_capacity_factor = 4
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -486,6 +491,11 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    # Real routing (no forced balancing) needs headroom over the uniform per-rank
+    # budget; an over-budget dispatch makes PagedStashRunner re-run the whole step
+    # eagerly and reset the full-iteration CUDA graph.
+    cfg.model.moe_expert_rank_capacity_factor = 4
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
