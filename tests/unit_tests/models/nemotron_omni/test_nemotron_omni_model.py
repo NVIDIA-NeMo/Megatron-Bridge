@@ -18,6 +18,7 @@ import os
 import socket
 from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -26,6 +27,7 @@ from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
 from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
@@ -231,6 +233,35 @@ def test_canonical_model_advertises_collator_owned_packing():
     assert NemotronOmniModel.model_owns_packing is False
     assert NemotronOmniModel.model_owns_mtp_loss_mask_packing is False
     assert NemotronOmniModel.model_slices_context_parallel_inputs is True
+
+
+def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config():
+    class UncopyableProcessGroupCollection:
+        def __deepcopy__(self, memo):
+            raise TypeError("runtime process groups cannot be copied")
+
+    provider = _TinyOmniProvider()
+    pg_collection = UncopyableProcessGroupCollection()
+    provider._pg_collection = pg_collection
+
+    def create_model(**kwargs):
+        copied_config = AttentionLayerConfig.from_config(kwargs["language_transformer_config"])
+        assert copied_config._pg_collection is None
+        return Mock()
+
+    with (
+        patch.object(_TinyOmniProvider, "_build_vision_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_vision_projection_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_resolve_hybrid_stack_spec", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_sound_modules", return_value=(None, None)),
+        patch(
+            "megatron.bridge.models.nemotron_omni.nemotron_omni_provider.NemotronOmniModel",
+            side_effect=create_model,
+        ),
+    ):
+        provider.provide(pre_process=True, post_process=True)
+
+    assert provider._pg_collection is pg_collection
 
 
 def test_canonical_provider_rejects_ambiguous_legacy_class_name():
