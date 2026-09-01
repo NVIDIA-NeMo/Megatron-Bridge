@@ -117,7 +117,12 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_hybridep_sm16_config() -> Config
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config() -> ConfigContainer:
     """Return the GB200 BF16 recipe with four EP16 replicas per pipeline stage."""
-    return _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(expert_model_parallel_size=16)
+    cfg = _nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config(expert_model_parallel_size=16)
+    # Natural-routing hotspots can leave less than one allocator page of HBM
+    # headroom on expert ranks. Layernorm recompute supplies that margin with
+    # negligible compute overhead while preserving the proven EP16 execution.
+    cfg.model.recompute_modules = ["core_attn", "layernorm"]
+    return cfg
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep32_config() -> ConfigContainer:

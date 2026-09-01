@@ -197,7 +197,7 @@ def test_gb200_bf16_tuning_variants_change_one_axis() -> None:
 
     assert ep16_cfg.model.moe_flex_dispatcher_num_sms == 32
     assert ep16_cfg.model.expert_model_parallel_size == 16
-    assert ep16_cfg.model.recompute_modules == ["core_attn"]
+    assert ep16_cfg.model.recompute_modules == ["core_attn", "layernorm"]
     assert ep16_cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
 
     assert ep32_cfg.model.moe_flex_dispatcher_num_sms == 32
