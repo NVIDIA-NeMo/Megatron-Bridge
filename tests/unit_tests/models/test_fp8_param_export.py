@@ -164,6 +164,19 @@ class TestHFNameSuffixMapping:
         out = w.megatron_to_hf(t, None)
         assert out == ({}) if empty_out else {"model.a_scale_inv": t}
 
+    def test_megatron_to_hf_scale_passes_row_block_size(self):
+        class Base:
+            def megatron_to_hf_scale(self, megatron_weights, megatron_module, *, row_block_size):
+                assert row_block_size == 1
+                return {"model.a": megatron_weights}
+
+            def megatron_to_hf(self, megatron_weights, megatron_module):
+                raise AssertionError("scale export should use the explicit row block size")
+
+        w = _HFNameSuffixMapping(Base(), "_scale_inv", 1)
+        t = torch.tensor([3.0])
+        assert w.megatron_to_hf(t, None) == {"model.a_scale_inv": t}
+
 
 class TestFp8ParamExport:
     @pytest.mark.parametrize(
@@ -495,31 +508,13 @@ class TestFp8ParamExport:
         with pytest.raises(ValueError, match=gname.replace(".", r"\.")):
             bridge.build_export_fp8_tasks(SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model])
 
-    @pytest.mark.parametrize(
-        "hidden_size, last_dim, rows, expected_shapes, expected_error",
-        [
-            pytest.param(16, 4, 8, ((4, 4), (2, 4), (2, 4)), None, id="blockwise-4x4"),
-            pytest.param(4096, 32, 64, ((32, 32), (16, 32), (16, 32)), None, id="blockwise-128x128"),
-            pytest.param(128, 4, 256, ((128, 4), (64, 4), (64, 4)), None, id="mxfp8-1x32"),
-            pytest.param(10, 4, 8, None, "Cannot infer block divisor", id="invalid-feature-block"),
-            pytest.param(16, 4, 7, None, "Cannot infer row block factor", id="invalid-row-geometry"),
-            pytest.param(24, 6, 12, None, "Cannot scale head_size", id="invalid-row-block"),
-        ],
-    )
-    def test_split_qkv_compressed(self, hidden_size, last_dim, rows, expected_shapes, expected_error):
+    def test_split_qkv_does_not_infer_compressed_layout(self):
         provider = SimpleNamespace(
             num_attention_heads=4,
             num_query_groups=2,
-            hidden_size=hidden_size,
+            hidden_size=128,
             kv_channels=None,
             attention_output_gate=False,
         )
-        qkv = torch.randn(rows, last_dim)
-        if expected_error:
-            with pytest.raises(ValueError, match=expected_error):
-                split_qkv_weights(provider, qkv)
-            return
-        q, k, v = split_qkv_weights(provider, qkv)
-        assert q.shape == expected_shapes[0]
-        assert k.shape == expected_shapes[1]
-        assert v.shape == expected_shapes[2]
+        with pytest.raises(RuntimeError, match="shape"):
+            split_qkv_weights(provider, torch.randn(256, 4))

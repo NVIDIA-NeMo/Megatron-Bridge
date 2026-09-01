@@ -1755,7 +1755,25 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Dequantize if needed
         if megatron_weights is not None:
             megatron_weights = self.maybe_dequantize(megatron_weights)
+        return self._megatron_to_hf(megatron_weights, megatron_module, scale_row_block_size=None)
 
+    def megatron_to_hf_scale(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        *,
+        row_block_size: int,
+    ) -> Dict[str, torch.Tensor]:
+        """Gather and split QKV inverse scales using an explicit row block size."""
+        return self._megatron_to_hf(megatron_weights, megatron_module, scale_row_block_size=row_block_size)
+
+    def _megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        *,
+        scale_row_block_size: int | None,
+    ) -> Dict[str, torch.Tensor]:
         # ------------------------------------------------------------------
         # Broadcast / retrieve the transformer configuration so that every PP
         # rank (also the ones that will early-return) participates in the
@@ -1779,8 +1797,13 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Check if we're dealing with biases (1D) or weights (2D)
         if packed_qkv.ndim == 1:
+            if scale_row_block_size is not None:
+                raise ValueError("QKV inverse scales must be at least two-dimensional")
             # Split biases
             q, k, v = split_qkv_biases(config, packed_qkv)
+        elif scale_row_block_size is not None:
+            q, k, v = _split_qkv_weights_scale_by_row(config, packed_qkv, scale_row_block_size)
+            q, k, v = q.squeeze(-1), k.squeeze(-1), v.squeeze(-1)
         else:
             # Split weights
             q, k, v = split_qkv_weights(config, packed_qkv)
@@ -3276,8 +3299,7 @@ def split_qkv_weights(
         qkv (torch.Tensor): Interleaved QKV weights in Megatron format.
         feature_dim: Trailing tensor dimension used for reshape/split.
             Defaults to ``provider.hidden_size`` for base weights, but LoRA
-            paths can pass the adapter rank here to bypass the FP8 scale
-            inference logic.
+            paths can pass the adapter rank explicitly.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
@@ -3299,43 +3321,12 @@ def split_qkv_weights(
         hidden_size = 1
         qkv_reshaped = qkv.view(qkv_total_dim, head_size)
     elif feature_dim is not None:
-        # Explicit feature_dim (e.g. LoRA rank) — use it directly, no FP8 inference.
+        # Explicit feature_dim (e.g. LoRA rank).
         hidden_size = feature_dim
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
-        # FP8 scale tensors may compress their row and feature dimensions by different
-        # block sizes. Infer the row block from the tensor geometry so the same QKV
-        # slicing handles both 2D blockwise and 1x32 MXFP8 scales.
-        orig_hidden_size = provider.hidden_size
-        current_last_dim = qkv.shape[-1]
-
-        if current_last_dim == orig_hidden_size:
-            hidden_size = current_last_dim
-            scaled_head_size = head_size
-        else:
-            if orig_hidden_size % current_last_dim != 0:
-                raise ValueError(
-                    f"Cannot infer block divisor for qkv tensor: "
-                    f"provider.hidden_size={orig_hidden_size} is not divisible by qkv.shape[-1]={current_last_dim}"
-                )
-
-            hidden_size = current_last_dim
-            uncompressed_m = qkv_total_dim * head_size
-            actual_m = qkv.numel() // current_last_dim
-            if actual_m == 0 or uncompressed_m % actual_m != 0:
-                raise ValueError(
-                    "Cannot infer row block factor for qkv scale tensor: "
-                    f"shape={tuple(qkv.shape)}, qkv_total_dim={qkv_total_dim}, head_size={head_size}"
-                )
-            row_block = uncompressed_m // actual_m
-            if head_size % row_block != 0:
-                raise ValueError(
-                    "Cannot scale head_size for qkv scale tensor: "
-                    f"head_size={head_size} is not divisible by inferred row block factor={row_block}"
-                )
-            scaled_head_size = head_size // row_block
-
-        qkv_reshaped = qkv.view(qkv_total_dim, scaled_head_size, hidden_size)
+        hidden_size = provider.hidden_size
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
 
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
@@ -3393,10 +3384,16 @@ def split_qkv_weights_scale(
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
             weight matrices.
     """
+    return _split_qkv_weights_scale_by_row(provider, qkv, quant_block_size[0])
+
+
+def _split_qkv_weights_scale_by_row(
+    provider: TransformerConfig, qkv: torch.Tensor, row_block_size: int
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     head_num = provider.num_attention_heads
     num_query_groups = provider.num_query_groups
     heads_per_group = head_num // num_query_groups
-    head_size = (provider.kv_channels or (provider.hidden_size // head_num)) // quant_block_size[0]
+    head_size = (provider.kv_channels or (provider.hidden_size // head_num)) // row_block_size
 
     if getattr(provider, "attention_output_gate", False):
         qkv_total_dim = 2 * head_num + 2 * num_query_groups

@@ -216,7 +216,12 @@ class _HFNameSuffixMapping:
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[torch.nn.Module],
     ) -> Dict[str, torch.Tensor]:
-        out = self._base_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        scale_export = getattr(self._base_mapping, "megatron_to_hf_scale", None)
+        row_block_size = self.scale_block_size
+        if callable(scale_export) and isinstance(row_block_size, int):
+            out = scale_export(megatron_weights, megatron_module, row_block_size=row_block_size)
+        else:
+            out = self._base_mapping.megatron_to_hf(megatron_weights, megatron_module)
         if not out:
             return out
         # Append suffix to every exported HF parameter name.
