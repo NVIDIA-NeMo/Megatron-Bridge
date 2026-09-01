@@ -34,11 +34,13 @@ This module provides three bridges:
 
 import logging
 import os
+from collections.abc import Iterable
 
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ConcatenatedQKVMapping,
@@ -183,6 +185,9 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
 
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
 
+    # HF keys passed through verbatim from the source checkpoint on text-mode export.
+    _HF_PASSTHROUGH_PREFIXES = ("model.visual.",)
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen35VLMoEModelProvider | GPTModelProvider":
         """
         Create a Qwen35VLMoEModelProvider from a HuggingFace pretrained model.
@@ -306,6 +311,37 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         provider = GPTModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
         _apply_qwen35_moe_text_config(provider, text_config)
         return provider
+
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model: Qwen3VLModel | GPTModel | list[Qwen3VLModel | GPTModel],
+        hf_pretrained: PreTrainedCausalLM,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+    ) -> Iterable[HFWeightTuple]:
+        """Export weights; in text mode also pass the untouched vision tower through from the source."""
+        yield from super().stream_weights_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+        )
+        if self._conversion_mode() != "text":
+            return
+        source = getattr(getattr(hf_pretrained, "state", None), "source", None)
+        if source is None:
+            return
+        # All ranks yield (mirroring the converted stream), so distributed saves stay correct.
+        for name in source.get_all_keys():
+            if name.startswith(self._HF_PASSTHROUGH_PREFIXES):
+                yield from HFWeightTuple(name, source[name]).iter_finalized(cpu=cpu)
 
 
 @MegatronModelBridge.register_bridge(

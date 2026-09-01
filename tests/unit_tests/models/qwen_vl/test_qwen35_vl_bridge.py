@@ -21,7 +21,7 @@ import torch
 
 from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
@@ -816,6 +816,19 @@ class TestQwen35VLMoEBridgeExport:
         assert calls[0][1] is embedding_module
 
 
+class _FakeStateSource:
+    """Minimal stand-in for SafeTensorsStateSource: key listing + per-key tensor access."""
+
+    def __init__(self, tensors: dict):
+        self._tensors = tensors
+
+    def get_all_keys(self):
+        return list(self._tensors)
+
+    def __getitem__(self, key):
+        return self._tensors[key]
+
+
 @pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLMoEBridgeTextMode:
     """``QWEN35_CONVERSION_MODE=text`` converts a VL checkpoint language-model-only."""
@@ -860,3 +873,38 @@ class TestQwen35VLMoEBridgeTextMode:
 
         with pytest.raises(ValueError, match="Invalid QWEN35_CONVERSION_MODE"):
             bridge._conversion_mode()
+
+    def test_text_mode_export_passes_the_frozen_vision_tower_through(self, bridge, monkeypatch):
+        """Text mode yields the source's ``model.visual.*`` verbatim after the converted weights."""
+        monkeypatch.setenv("QWEN35_CONVERSION_MODE", "text")
+
+        converted = ("model.language_model.layers.0.self_attn.o_proj.weight", torch.ones(2, 2))
+        monkeypatch.setattr(
+            MegatronModelBridge, "stream_weights_megatron_to_hf", lambda self, *a, **kw: iter([converted])
+        )
+
+        visual = torch.full((2, 2), 7.0)
+        source = _FakeStateSource(
+            {
+                converted[0]: torch.zeros(2, 2),
+                "model.visual.blocks.0.attn.qkv.weight": visual,
+                # A missing LANGUAGE tensor must NOT be papered over with stale source weights.
+                "model.language_model.layers.1.self_attn.o_proj.weight": torch.zeros(2, 2),
+            }
+        )
+        hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        streamed = list(bridge.stream_weights_megatron_to_hf([Mock()], hf_pretrained))
+
+        assert streamed[0] == converted
+        assert [name for name, _ in streamed[1:]] == ["model.visual.blocks.0.attn.qkv.weight"]
+        torch.testing.assert_close(streamed[1][1], visual)
+
+    def test_vl_mode_export_streams_only_converted_weights(self, bridge, monkeypatch):
+        monkeypatch.delenv("QWEN35_CONVERSION_MODE", raising=False)
+
+        monkeypatch.setattr(MegatronModelBridge, "stream_weights_megatron_to_hf", lambda self, *a, **kw: iter([]))
+        source = _FakeStateSource({"model.visual.blocks.0.attn.qkv.weight": torch.ones(1)})
+        hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        assert list(bridge.stream_weights_megatron_to_hf([Mock()], hf_pretrained)) == []
