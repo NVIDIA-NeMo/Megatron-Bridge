@@ -1,10 +1,11 @@
+#!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,17 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.qwen.gb200.qwen3_moe import (
-    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
-)
-from megatron.bridge.recipes.qwen.gb200.qwen35 import (
-    qwen35_text_9b_pretrain_8gpu_gb200_bf16_config,
-    qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config,
-)
+# CI_TIMEOUT=10
+set -xeuo pipefail
 
-
-__all__ = [
-    "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
-    "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config",
-    "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config",
-]
+export CUDA_VISIBLE_DEVICES="0,1"
+# Keep TE and the dense mathematical oracle on the same strict-FP32 path.
+export NVIDIA_TF32_OVERRIDE=0
+uv run python -m torch.distributed.run --nproc_per_node=2 -m pytest -v -s -x --tb=short \
+  tests/unit_tests/peft/test_replicated_peft_distributed.py

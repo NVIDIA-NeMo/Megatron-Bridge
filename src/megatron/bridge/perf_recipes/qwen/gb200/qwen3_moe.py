@@ -29,6 +29,9 @@ from megatron.bridge.perf_recipes.qwen.common import (
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config,
 )
+from megatron.bridge.recipes.qwen.gb200.qwen3_moe import (
+    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config as _qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+)
 
 
 def qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
@@ -300,31 +303,12 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
 
 
 def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Qwen3 30B-A3B pretrain: 8× GB200, MXFP8, EP=8."""
-    cfg = qwen3_30b_a3b_pretrain_config()
-    cfg.mixed_precision = _perf_precision("fp8_mx")
-    cfg.model.bias_activation_fusion = True
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
-    cfg.model.moe_router_fusion = True
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 8
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 4
-
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_token_dispatcher_type = "flex"
+    """Qwen3 30B-A3B pretrain benchmark: GB200 MXFP8 recipe plus benchmark overrides."""
+    cfg = _qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config()
 
     _benchmark_common(cfg)
+
+    # Full-iteration graphs remain benchmark-only because they alter natural-routing auxiliary loss.
     _enable_hybridep_full_iteration_mxfp8(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

@@ -6851,7 +6851,7 @@
     },
     {
       "architecture": "Qwen3MoeForCausalLM",
-      "base_container": "nvcr.io/nvidia/nemo:26.06",
+      "base_container": "nvcr.io/nvidia/nemo:26.08",
       "bridge_commit": "aabb29d0ed15fc7ed881f0538352c6bd2d2fd52d",
       "entries": [
         {
@@ -7048,18 +7048,18 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "487f563983f00b190a1a8322d663f317ad8e611c",
+          "bridge_commit": "1a6383a7a526ec52de03c5d7faf086407eecab01",
           "command_topologies": [
             {
               "gpus_per_node": "4",
               "nodes": "2",
-              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config",
+              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
               "sequence_length": "4096",
               "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -7073,15 +7073,15 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "qwen3-30b-a3b-pretrain-gb200",
-          "expected_result": "On 8x GB200, this support-verification workload completes exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural routing, HybridEP, Transformer Engine CUDA graphs for moe_router and moe_preprocess, communication overlap, functional safety checks, and MXFP8 parameter all-gather remain active. Loss is finite from 12.41293 to 6.183484 with no skipped or NaN iterations, all five metrics are recorded, and complete eight-shard iter_0000050 and iter_0000100 checkpoints are saved. Timing and throughput are support sanity checks, not cross-model convergence or tuned performance claims.\n",
+          "expected_result": "On 8x GB200, this support-verification workload completes exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural routing, HybridEP, Transformer Engine CUDA graphs for moe_router and moe_preprocess, selective MoE activation recompute, communication overlap, functional safety checks, and MXFP8 parameter all-gather remain active. Loss is finite from 10.70991 to 6.046449 with no skipped or NaN iterations, all five metrics are recorded, and complete eight-shard iter_0000050 and iter_0000100 checkpoints are saved. Timing and throughput are support sanity checks, not cross-model convergence or tuned performance claims.\n",
           "hardware": "GB200",
-          "last_verified": "2026-07-23",
+          "last_verified": "2026-08-25",
           "metrics": {
-            "final_loss": 6.183484,
-            "initial_loss": 12.41293,
-            "last_10_steps_model_tflops_per_gpu_avg": 487.88,
-            "last_10_steps_step_time_ms_avg": 12362.34,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 21205.047
+            "final_loss": 6.046449,
+            "initial_loss": 10.70991,
+            "last_10_steps_model_tflops_per_gpu_avg": 357.22,
+            "last_10_steps_step_time_ms_avg": 15807.67,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 16583.342
           },
           "precision": "fp8_mx",
           "source_pointer": "items.pretrain.GB200",
@@ -7263,31 +7263,31 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "487f563983f00b190a1a8322d663f317ad8e611c",
+          "bridge_commit": "1a6383a7a526ec52de03c5d7faf086407eecab01",
           "command_topologies": [
             {
               "gpus_per_node": "4",
               "nodes": "2",
-              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config",
+              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
               "sequence_length": "4096",
               "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --load_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-resumed-checkpoints --save_interval 50 checkpoint.ckpt_step=50 train.empty_unused_memory_level=2 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --load_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-resumed-checkpoints --save_interval 50 checkpoint.ckpt_step=50 train.empty_unused_memory_level=2 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-30b-a3b-checkpoint-resume-gb200",
-          "expected_result": "The command restores optimizer, scheduler, data-order, and RNG state from iter_0000050, keeps the MXFP8 forward pre-hook active before the first resumed forward pass, begins at step 51, and finishes at step 100 in a distinct resumed root with finite losses and no skipped or NaN iterations. Step-51 loss 6.774675 matches the uninterrupted reference exactly; step-100 loss 6.187264 differs from reference 6.183484 by 0.061131%, within the declared one-percent gate. Both sentinels match, all five metrics are recorded, and a complete iter_0000100 checkpoint is saved.\n",
+          "expected_result": "The command restores optimizer, scheduler, data-order, and RNG state from iter_0000050, keeps the MXFP8 forward pre-hook active before the first resumed forward pass, begins at step 51, and finishes at step 100 in a distinct resumed root with finite losses and no skipped or NaN iterations. Step-51 loss 6.715488 and step-100 loss 6.046449 both match the uninterrupted reference exactly. Both sentinels match, all five metrics are recorded, and a complete iter_0000100 checkpoint is saved.\n",
           "hardware": "GB200",
-          "last_verified": "2026-07-23",
+          "last_verified": "2026-08-25",
           "metrics": {
-            "final_loss": 6.187264,
-            "initial_loss": 6.774675,
-            "last_10_steps_model_tflops_per_gpu_avg": 322.62,
-            "last_10_steps_step_time_ms_avg": 18694.97,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 14022.167
+            "final_loss": 6.046449,
+            "initial_loss": 6.715488,
+            "last_10_steps_model_tflops_per_gpu_avg": 277.77,
+            "last_10_steps_step_time_ms_avg": 20340.3,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 12887.912
           },
           "precision": "fp8_mx",
           "source_pointer": "items.checkpoint_resume.GB200",
