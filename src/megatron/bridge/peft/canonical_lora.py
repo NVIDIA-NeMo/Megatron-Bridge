@@ -409,6 +409,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                     is_expert=is_expert,
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                    replicate_adapter=attrs.replicate_adapter,
                 )
 
             if name == "linear_fc1" and _should_treat_linear_fc1_as_unfused(full_name):
