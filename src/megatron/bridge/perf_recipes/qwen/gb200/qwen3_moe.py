@@ -319,7 +319,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 2
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -331,8 +331,6 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     # eagerly and reset the full-iteration CUDA graph.
     cfg.model.moe_expert_rank_capacity_factor = 4
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
-
-    cfg.model.recompute_modules = ["core_attn", "moe_act", "layernorm"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
