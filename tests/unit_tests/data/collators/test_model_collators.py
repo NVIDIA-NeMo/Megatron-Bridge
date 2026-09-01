@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from inspect import signature
 from types import SimpleNamespace
 
 import pytest
@@ -2110,8 +2111,6 @@ def test_nemotron_omni_llava_collate_rejects_packed_post_merge_total_overflow(mo
 
 
 def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_merge_width(monkeypatch):
-    from types import SimpleNamespace
-
     from megatron.core.models.multimodal.llava_model import LLaVAModel
 
     from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
@@ -2150,7 +2149,12 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         img_seq_len=1,
         context_parallel_lm=1,
     )
-    final_embedding, final_labels, final_loss_mask, final_input_ids, final_position_ids = LLaVAModel._preprocess_data(
+    preprocess_kwargs = {}
+    for parameter in ("imgs_sizes", "position_ids"):
+        if parameter in signature(LLaVAModel._preprocess_data).parameters:
+            preprocess_kwargs[parameter] = batch[parameter]
+
+    preprocessed = LLaVAModel._preprocess_data(
         pp_model,
         image_embeddings=torch.ones(1, 5, hidden_size),
         language_embeddings=torch.ones(1, batch["input_ids"].shape[1], hidden_size),
@@ -2161,15 +2165,18 @@ def test_nemotron_omni_llava_collate_fixed_packing_matches_pipeline_parallel_mer
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        imgs_sizes=batch["imgs_sizes"],
-        position_ids=batch["position_ids"],
+        **preprocess_kwargs,
     )
+
+    final_embedding, final_labels, final_loss_mask = preprocessed[:3]
 
     assert final_embedding.shape == (32, 1, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (1, 32)
-    assert final_input_ids.shape == final_position_ids.shape == (1, 32)
     image_spans = torch.tensor([6, 14, 15, 19, 20])
-    assert torch.all(final_input_ids[0, image_spans] == 0)
+    if len(preprocessed) == 5:
+        final_input_ids, final_position_ids = preprocessed[3:]
+        assert final_input_ids.shape == final_position_ids.shape == (1, 32)
+        assert torch.all(final_input_ids[0, image_spans] == 0)
     assert torch.all(final_labels[0, image_spans] == IGNORE_INDEX)
     assert torch.all(final_loss_mask[0, image_spans] == 0)
     assert final_loss_mask.nonzero(as_tuple=False).tolist() == [[0, 0], [0, 7], [0, 21]]
@@ -2512,8 +2519,6 @@ def test_nemotron_omni_dynamic_collate_handles_mixed_shapes_within_one_sample(mo
 
 
 def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkeypatch):
-    from types import SimpleNamespace
-
     from megatron.core.models.multimodal.llava_model import LLaVAModel
 
     processor = _DynamicNemotronOmniProcessor()
@@ -2550,7 +2555,12 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         img_seq_len=1,
         context_parallel_lm=1,
     )
-    final_embedding, final_labels, final_loss_mask, final_input_ids, final_position_ids = LLaVAModel._preprocess_data(
+    preprocess_kwargs = {}
+    for parameter in ("imgs_sizes", "position_ids"):
+        if parameter in signature(LLaVAModel._preprocess_data).parameters:
+            preprocess_kwargs[parameter] = batch[parameter]
+
+    preprocessed = LLaVAModel._preprocess_data(
         pp_model,
         image_embeddings=torch.ones(1, 5, hidden_size),
         language_embeddings=torch.ones(3, batch["input_ids"].shape[1], hidden_size),
@@ -2561,16 +2571,20 @@ def test_nemotron_omni_llava_collate_reserves_fixed_width_for_model_merge(monkey
         inference_context=None,
         image_token_index=NEMO_IMAGE_TOKEN_ID,
         num_image_tiles=batch["num_image_tiles"],
-        imgs_sizes=batch["imgs_sizes"],
-        position_ids=batch["position_ids"],
+        **preprocess_kwargs,
     )
+
+    final_embedding, final_labels, final_loss_mask = preprocessed[:3]
 
     assert final_embedding.shape == (32, 3, hidden_size)
     assert final_labels.shape == final_loss_mask.shape == (3, 32)
-    assert final_input_ids.shape == final_position_ids.shape == (3, 32)
     image_spans = ((1, [2]), (2, [2, 3, 7, 8]))
+    if len(preprocessed) == 5:
+        final_input_ids, final_position_ids = preprocessed[3:]
+        assert final_input_ids.shape == final_position_ids.shape == (3, 32)
     for row, columns in image_spans:
-        assert torch.all(final_input_ids[row, columns] == 0)
+        if len(preprocessed) == 5:
+            assert torch.all(final_input_ids[row, columns] == 0)
         assert torch.all(final_labels[row, columns] == IGNORE_INDEX)
         assert torch.all(final_loss_mask[row, columns] == 0)
     assert final_loss_mask.nonzero(as_tuple=False).tolist() == [[0, 0], [1, 3], [2, 9]]

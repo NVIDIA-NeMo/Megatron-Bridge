@@ -15,14 +15,51 @@
 """MLA attention spec helpers for the DeepSeek family."""
 
 from dataclasses import replace
+from importlib.util import find_spec
 from typing import Optional
 
+from megatron.core.extensions.transformer_engine_spec_provider import TESpecProvider
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer.identity_op import IdentityOp
-from megatron.core.transformer.mla_qk_norm_config import get_backend
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
+
+
+def _get_backend(transformer_impl):
+    """Return MCore's selected linear/norm backend across the main and dev APIs."""
+    if find_spec("megatron.core.transformer.mla_qk_norm_config") is None:
+        if transformer_impl == "transformer_engine":
+            return TESpecProvider()
+        if transformer_impl == "local":
+            from megatron.core.models.backends import LocalSpecProvider
+
+            return LocalSpecProvider()
+        if transformer_impl == "inference_optimized":
+            from megatron.core.models.backends import InferenceSpecProvider
+
+            return InferenceSpecProvider()
+        raise ValueError(f"unknown transformer_impl={transformer_impl!r}")
+
+    from megatron.core.models.backends import get_backend
+
+    return get_backend(transformer_impl)
+
+
+def _resolve_qk_norm_config(config, submodules):
+    """Resolve MLA Q/KV modules across MCore's current and unreleased APIs."""
+    if find_spec("megatron.core.transformer.mla_qk_norm_config") is None:
+        return {
+            "linear_q_proj": submodules.linear_q_proj,
+            "linear_q_up_proj": submodules.linear_q_up_proj,
+            "linear_kv_up_proj": submodules.linear_kv_up_proj,
+            "q_layernorm": submodules.q_layernorm,
+            "kv_layernorm": submodules.kv_layernorm,
+        }
+
+    from megatron.core.transformer.mla_qk_norm_config import QKNormConfigResolver
+
+    return QKNormConfigResolver(config, submodules).resolve()
 
 
 class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
@@ -56,9 +93,9 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
         knows how to satisfy.
         """
         if self.config.q_lora_rank is not None:
-            return super()._resolve_qk_norm_config(submodules)
+            return _resolve_qk_norm_config(self.config, submodules)
 
-        backend = get_backend(self.config.transformer_impl)
+        backend = _get_backend(self.config.transformer_impl)
         if backend.column_parallel_layer_norm_linear() is None:
             raise ValueError(
                 "DeepSeek without a query LoRA (`q_lora_rank=None`) requires "
@@ -72,7 +109,7 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
         if submodules.q_layernorm not in (None, IdentityOp):
             submodules = replace(submodules, q_layernorm=IdentityOp)
 
-        layer_classes = super()._resolve_qk_norm_config(submodules)
+        layer_classes = _resolve_qk_norm_config(self.config, submodules)
         layer_classes["linear_q_proj"] = backend.column_parallel_linear()
         return layer_classes
 

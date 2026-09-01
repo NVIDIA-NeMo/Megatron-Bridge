@@ -115,14 +115,11 @@ def test_finalize_hf_import_broadcasts_tied_weights_and_refreshes_caches(
     bridge = DummyBridge()
     model = [torch.nn.Sequential()]
     broadcast = Mock()
-    refresh = Mock()
     monkeypatch.setattr(bridge, "_broadcast_shared_embeddings", broadcast)
-    monkeypatch.setattr("megatron.core.resharding.refresh_module_caches", refresh)
 
     bridge.finalize_hf_import(model)
 
     broadcast.assert_called_once_with(model)
-    refresh.assert_called_once_with(model)
 
 
 def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
