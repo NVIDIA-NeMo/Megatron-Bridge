@@ -34,7 +34,10 @@ from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTe
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear, set_tensor_model_parallel_attributes
 from megatron.core.tensor_parallel.mappings import (
+    all_gather_last_dim_from_tensor_parallel_region,
+    copy_to_tensor_model_parallel_region,
     gather_from_sequence_parallel_region,
+    reduce_from_tensor_model_parallel_region,
     scatter_to_sequence_parallel_region,
 )
 from megatron.core.tensor_parallel.random import is_checkpointing
@@ -1022,6 +1025,18 @@ class ParallelLinearAdapter(nn.Module):
         self.tp_group = _get_tensor_parallel_group(self.pg_collection, is_expert=is_expert)
         self.ep_group = _get_process_group(self.pg_collection, "ep")
         self.expert_dp_group = _get_process_group(self.pg_collection, "expt_dp")
+        if (
+            is_expert
+            and dropout > 0.0
+            and _process_group_size(self.tp_group, model_parallel_config.expert_tensor_parallel_size or 1) > 1
+        ):
+            raise NotImplementedError(
+                f"Expert-adapter dropout is not supported at expert_tensor_parallel_size > 1 "
+                f"(got dropout={dropout} for {base_linear_name}): dropout draws per-rank RNG on "
+                "tokens the MoE dispatcher replicates across the expert tensor parallel group, so "
+                "the resulting delta is not expressible by any merged weight. Route dropout "
+                "through the expert-parallel RNG tracker or set dropout=0.0."
+            )
         _sequence_parallel = model_parallel_config.sequence_parallel
         model_parallel_config.sequence_parallel = False  # SP is irrelevant for the lora linear layer
         self.config = model_parallel_config
@@ -1070,6 +1085,24 @@ class ParallelLinearAdapter(nn.Module):
 
         if not base_linear_is_parallel:
             lin_out_gather_output = True
+
+        # An expert linear whose input is already sharded (experts.linear_fc2) emits a
+        # full-width partial that the MoE token dispatcher sums across the expert-TP
+        # group. The adapter must contribute a partial term of that sum, not the full delta: keep linear_out's
+        # local shard and zero-embed it into full width in forward(), so each output
+        # element has exactly one non-zero contributor and the dispatcher's sum
+        # reconstructs B @ z exactly once. Gathering here instead would hand every
+        # rank the same full-width delta, and the sum would count it once per rank.
+        self._expert_row_parallel = bool(is_expert and input_is_parallel and base_linear_is_parallel)
+        # Shared-expert fc2 under moe_shared_expert_overlap is the same disease over
+        # the DENSE TP group: the base's own collectives are suppressed (which is what
+        # disable_tensor_parallel_comm reports) and SharedExpertMLP.post_forward_comm
+        # sums the full-width partials across TP.
+        self._shared_expert_row_parallel = bool(
+            not is_expert and disable_tensor_parallel_comm and input_is_parallel and base_linear_is_parallel
+        )
+        if self._expert_row_parallel or self._shared_expert_row_parallel:
+            lin_out_gather_output = False
 
         self.linear_out = ColumnParallelLinear(
             dim,
@@ -1205,6 +1238,93 @@ class ParallelLinearAdapter(nn.Module):
             raise NotImplementedError("out_init_method should be zero, normal, kaiming or xavier")
         return init_fn
 
+    def _reduce_expert_low_rank_activation(self, x: torch.Tensor) -> torch.Tensor:
+        """Complete ``A @ h`` across the expert-tensor-parallel group in both directions.
+
+        ``explicit_expert_comm`` (true for an ``is_expert`` linear when its TP group has
+        more than one rank or expert model parallelism is on) suppresses an expert
+        linear's own collectives because, for the base layers, the MoE token dispatcher
+        owns that communication. The adapter is not routed through the dispatcher the
+        same way, so two different completions are needed:
+
+        - ``input_is_parallel`` (experts.linear_fc2): ``linear_in`` is row-parallel and
+          its output all-reduce is suppressed, so ``A_r @ h_r`` is a per-rank partial
+          that is never summed. ``copy_to`` is forward-identity with a backward
+          all-reduce; ``reduce_from`` is a forward all-reduce with backward identity.
+          Composing them gives an all-reduce on both passes, the adjoint pair for a
+          sum whose result every rank consumes differently.
+        - otherwise (experts.linear_fc1): ``linear_in`` is column-parallel and its
+          ``gather_output`` all-gather is not suppressed, so the forward is already
+          right — but the gather's adjoint is a split, and ``explicit_expert_comm``
+          also forces ``allreduce_dgrad=False`` on the adapter's ``linear_out``, which
+          is what a dense column-parallel layer relies on to sum ``dL/dz`` across
+          ranks. ``copy_to``'s backward all-reduce restores exactly that sum.
+
+        A bare ``torch.distributed`` collective would not work here: it is invisible
+        to autograd. The group must be passed explicitly — MCore's default resolves
+        the dense TP group, not this adapter's expert-TP group.
+
+        Args:
+            x: Low-rank activation emitted by ``linear_in``.
+
+        Returns:
+            The activation with expert-TP arithmetic completed; ``x`` unchanged for
+            non-expert adapters or a one-rank expert-TP group.
+        """
+        if not self.is_expert:
+            return x
+        etp_size = _process_group_size(self.tp_group, self.config.expert_tensor_parallel_size or 1)
+        if etp_size <= 1:
+            return x
+        if self.tp_group is None:
+            raise ValueError(
+                f"{self.base_linear_name} requires initialized expert tensor parallel state "
+                f"when expert_tensor_parallel_size={etp_size}."
+            )
+        if self.input_is_parallel:
+            return reduce_from_tensor_model_parallel_region(
+                copy_to_tensor_model_parallel_region(x, group=self.tp_group), group=self.tp_group
+            )
+        return copy_to_tensor_model_parallel_region(x, group=self.tp_group)
+
+    def _embed_row_parallel_shard(self, x: torch.Tensor) -> torch.Tensor:
+        """Place this rank's ``linear_out`` shard into a full-width buffer of zeros.
+
+        The base emits a full-width partial and a downstream sum reduces those across
+        a group — the MoE token dispatcher over expert-TP for routed experts, and
+        ``SharedExpertMLP.post_forward_comm`` over the dense TP group for shared-expert
+        fc2 under ``moe_shared_expert_overlap`` — so the adapter must contribute a partial
+        term of that sum, not the full delta. Zero-embedding rather than gathering means each output element
+        has exactly one non-zero contributor, so the downstream sum reproduces
+        ``B @ z`` exactly once with no ``1/size`` factor. Padding is differentiable
+        and its adjoint is the matching slice, so ``dL/dB_r`` needs no compensation.
+
+        Args:
+            x: This rank's ``linear_out`` output shard.
+
+        Returns:
+            ``x`` zero-embedded at this rank's offset in the full output width, or
+            ``x`` unchanged when no downstream sum applies.
+        """
+        if self._expert_row_parallel:
+            size = _process_group_size(self.tp_group, self.config.expert_tensor_parallel_size or 1)
+        elif self._shared_expert_row_parallel:
+            size = _process_group_size(self.tp_group, self.config.tensor_model_parallel_size or 1)
+        else:
+            return x
+        if size <= 1:
+            return x
+        if self.tp_group is None:
+            raise ValueError(
+                f"{self.base_linear_name} requires an initialized tensor parallel group to "
+                f"zero-embed its row-parallel LoRA shard (group size {size})."
+            )
+        rank = _process_group_rank(self.tp_group)
+        shard_width = x.shape[-1]
+        left = rank * shard_width
+        right = (size - 1) * shard_width - left
+        return nn.functional.pad(x, (left, right))
+
     def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         """Forward pass of the parallel linear adapter.
 
@@ -1249,11 +1369,15 @@ class ParallelLinearAdapter(nn.Module):
             # ColumnParallelLinear returns output and bias; adapters do not use the bias.
             x, _ = self.linear_in(x)
 
+        x = self._reduce_expert_low_rank_activation(x)
+
         x = self.activation(x)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             x.activation_offloading = True
         x, _ = self.linear_out(x)
+
+        x = self._embed_row_parallel_shard(x)
 
         if not self.disable_sequence_parallel_comm and self.input_is_parallel and not self.is_expert:
             # for attention_dense and linear_fc2
@@ -1852,6 +1976,14 @@ class GroupedExpertLinearAdapter(nn.Module):
             self.expert_tp_group,
             model_parallel_config.expert_tensor_parallel_size or 1,
         )
+        if dropout > 0.0 and expert_tp_size > 1:
+            raise NotImplementedError(
+                f"Expert-adapter dropout is not supported at expert_tensor_parallel_size > 1 "
+                f"(got dropout={dropout} for {base_linear_name}): dropout draws per-rank RNG on "
+                "tokens the MoE dispatcher replicates across the expert tensor parallel group, so "
+                "the resulting delta is not expressible by any merged weight. Route dropout "
+                "through the expert-parallel RNG tracker or set dropout=0.0."
+            )
         tensor_parallel_size = _process_group_size(
             tensor_parallel_group,
             getattr(model_parallel_config, "tensor_model_parallel_size", 1) or 1,
@@ -1940,25 +2072,55 @@ class GroupedExpertLinearAdapter(nn.Module):
             raise ValueError(f"Expert splits for {self.base_linear_name} must be non-negative, got {splits}")
         return splits
 
-    def _gather_along_last_dim(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Gather a tensor across expert TP ranks by concatenating its last dimension."""
+    def _require_expert_tp_group(self, expert_tp_size: int) -> None:
+        """Raise when expert-TP arithmetic is required but no group is available."""
 
-        expert_tp_size = _process_group_size(self.expert_tp_group, self.config.expert_tensor_parallel_size or 1)
-        if expert_tp_size == 1:
-            return tensor
-        expert_tp_group = self.expert_tp_group
-        if expert_tp_group is None:
+        if self.expert_tp_group is None:
             raise ValueError(
                 f"{self.base_linear_name} requires initialized expert tensor parallel state "
                 f"when expert_tensor_parallel_size={expert_tp_size}."
             )
-        gathered = [torch.empty_like(tensor) for _ in range(expert_tp_size)]
-        torch.distributed.all_gather(
-            gathered,
-            tensor,
-            group=expert_tp_group,
-        )
-        return torch.cat(gathered, dim=-1)
+
+    def _complete_low_rank_activation(self, hidden: torch.Tensor) -> torch.Tensor:
+        """Complete the low-rank activation across expert-TP ranks, visibly to autograd.
+
+        - ``input_is_parallel`` (experts.linear_fc2): ``hidden`` is a per-rank partial
+          of ``A @ h`` because the base row-parallel reduce is suppressed under
+          ``explicit_expert_comm``. ``copy_to`` + ``reduce_from`` compose to an
+          all-reduce in both passes: forward sums the partials; backward sums
+          ``dL/dz`` across ranks that each consumed the full ``z`` through a
+          different ``B`` shard.
+        - otherwise (experts.linear_fc1): ``hidden`` is this rank's slice of the LoRA
+          rank axis; the all-gather mapping concatenates slices in forward and
+          reduce-scatters (sums) gradient slices in backward — the exact adjoint.
+
+        A bare ``torch.distributed.all_gather`` into fresh buffers is invisible to
+        autograd and severs the graph, which is the defect this replaces.
+        """
+        expert_tp_size = _process_group_size(self.expert_tp_group, self.config.expert_tensor_parallel_size or 1)
+        if expert_tp_size == 1:
+            return hidden
+        self._require_expert_tp_group(expert_tp_size)
+        if self.input_is_parallel:
+            return reduce_from_tensor_model_parallel_region(
+                copy_to_tensor_model_parallel_region(hidden, group=self.expert_tp_group),
+                group=self.expert_tp_group,
+            )
+        return all_gather_last_dim_from_tensor_parallel_region(hidden, group=self.expert_tp_group)
+
+    def _embed_expert_row_parallel_shard(self, expert_output: torch.Tensor) -> torch.Tensor:
+        """Zero-embed this rank's output shard so the dispatcher's expert-TP sum counts it once."""
+
+        if not self.input_is_parallel:
+            return expert_output
+        expert_tp_size = _process_group_size(self.expert_tp_group, self.config.expert_tensor_parallel_size or 1)
+        if expert_tp_size == 1:
+            return expert_output
+        self._require_expert_tp_group(expert_tp_size)
+        rank = _process_group_rank(self.expert_tp_group)
+        shard_width = expert_output.shape[-1]
+        left = rank * shard_width
+        return nn.functional.pad(expert_output, (left, (expert_tp_size - 1) * shard_width - left))
 
     def _can_use_grouped_mm(self, x: torch.Tensor) -> bool:
         """Return whether the grouped GEMM fast path is supported for this input."""
@@ -2241,15 +2403,13 @@ class GroupedExpertLinearAdapter(nn.Module):
                     expert_input.activation_offloading = True
 
             hidden = nn.functional.linear(expert_input, linear_in_weight[expert_idx])
-            if not self.input_is_parallel:
-                hidden = self._gather_along_last_dim(hidden)
+            hidden = self._complete_low_rank_activation(hidden)
             hidden = self.activation(hidden)
 
             if self.config.cpu_offloading and self.config.cpu_offloading_activations:
                 hidden.activation_offloading = True
             expert_output = nn.functional.linear(hidden, linear_out_weight[expert_idx])
-            if self.input_is_parallel:
-                expert_output = self._gather_along_last_dim(expert_output)
+            expert_output = self._embed_expert_row_parallel_shard(expert_output)
 
             if self.dropout_position == "post":
                 expert_output = self.dropout(expert_output)
@@ -2323,9 +2483,12 @@ class GroupedExpertLinearAdapter(nn.Module):
             active_expert_indices=active_expert_tuple,
             offs=offs,
         )
-        if not self.input_is_parallel:
-            hidden = self._gather_along_last_dim(hidden)
+        hidden = self._complete_low_rank_activation(hidden)
         hidden = self.activation(hidden)
+        # grouped_mm requires 16-byte-aligned strides; the completion above may hand
+        # back a freshly concatenated tensor, so normalize before tagging/projecting.
+        if not use_te_fp8 and not hidden.is_contiguous():
+            hidden = hidden.contiguous()
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             hidden.activation_offloading = True
@@ -2339,8 +2502,7 @@ class GroupedExpertLinearAdapter(nn.Module):
             active_expert_indices=active_expert_tuple,
             offs=offs,
         )
-        if self.input_is_parallel:
-            expert_output = self._gather_along_last_dim(expert_output)
+        expert_output = self._embed_expert_row_parallel_shard(expert_output)
 
         if self.dropout_position == "post":
             expert_output = self.dropout(expert_output)
@@ -2583,6 +2745,17 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
             model_parallel_config = ModelParallelConfig()
         model_parallel_config.perform_initialization = True
         self.config = model_parallel_config
+
+        expert_tp_size = int(model_parallel_config.expert_tensor_parallel_size or 1)
+        if expert_tp_size > 1:
+            raise NotImplementedError(
+                f"experts_shared_outer_loras requires expert_tensor_parallel_size=1 "
+                f"(got {expert_tp_size}) for {base_linear_name}: the per-expert packed "
+                "side is not expert-TP sharded, so its grouped GEMM cannot compose with "
+                "an ETP-sharded base, and the shared side's suppressed collectives have "
+                "no completion. Use share_expert_adapters=True (the default) or set "
+                "expert_tensor_parallel_size=1."
+            )
 
         # ``input_is_parallel`` selects fc1 (column-parallel base) vs fc2
         # (row-parallel base). Mirrors :class:`ParallelLinearAdapter` and

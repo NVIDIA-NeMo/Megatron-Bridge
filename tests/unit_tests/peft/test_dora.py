@@ -33,7 +33,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from megatron.bridge.peft.utils import AdapterAttributes
-from tests.unit_tests.peft.test_utils import MockModelParallelConfig
+from tests.unit_tests.peft.test_utils import MockModelParallelConfig, MockRowParallelLinear
 
 
 class SimpleModel(nn.Module):
@@ -396,6 +396,88 @@ class TestDoRA:
 
         # This functionality should be available through ModuleMatcher
         assert hasattr(dora, "exclude_modules")
+
+    @staticmethod
+    def _fake_dora_linear_cls():
+        """A real class stand-in for DoRALinear.
+
+        ``DoRA.transform``'s first statement is ``isinstance(m, DoRALinear)``, and
+        ``isinstance`` against a Mock raises TypeError — so the patch must be a genuine
+        class. A real ``DoRALinear`` would compute weight norms from the (mocked)
+        adapter at init, hence the stand-in.
+        """
+
+        class _FakeDoRALinear(nn.Module):
+            def __init__(self, to_wrap, adapter):
+                super().__init__()
+                self.to_wrap = to_wrap
+                self.adapter = adapter
+
+        return _FakeDoRALinear
+
+    def test_dora_refuses_expert_linears(self):
+        """DoRA must refuse expert linears loudly instead of mis-building an adapter."""
+        # Introduced fail-first with a strict xfail marker, removed when the guard landed.
+        module = MockRowParallelLinear(16, 16)
+        module.config = MockModelParallelConfig()
+        dora = DoRA(dim=4, alpha=8)
+
+        with (
+            patch("megatron.bridge.peft.dora.ParallelLinearDoRAAdapter"),
+            patch("megatron.bridge.peft.dora.DoRALinear", self._fake_dora_linear_cls()),
+        ):
+            with pytest.raises(NotImplementedError, match="expert"):
+                dora.transform(module, name="linear_fc2", prefix="decoder.layers.0.mlp.experts")
+
+    def test_dora_refuses_suppressed_comm_parallel_bases(self):
+        """DoRA must refuse suppressed-comm TP-sharded bases (e.g. shared-expert overlap)."""
+        # Introduced fail-first with a strict xfail marker, removed when the guard landed.
+        module = MockRowParallelLinear(16, 16)
+        module.config = MockModelParallelConfig()
+        dora = DoRA(dim=4, alpha=8)
+        attrs = AdapterAttributes(
+            input_is_parallel=True,
+            in_features=16,
+            out_features=16,
+            disable_tensor_parallel_comm=True,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=True,
+        )
+
+        with (
+            patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear", return_value=attrs),
+            patch("megatron.bridge.peft.dora.ParallelLinearDoRAAdapter"),
+            patch("megatron.bridge.peft.dora.DoRALinear", self._fake_dora_linear_cls()),
+        ):
+            with pytest.raises(NotImplementedError, match="suppressed"):
+                dora.transform(module, name="linear_fc2", prefix="decoder.layers.0.mlp.shared_experts")
+
+    def test_dora_still_transforms_replicated_suppressed_comm_bases(self):
+        """Scoping pin: a replicated base (base_linear_is_parallel=False) stays transformable.
+
+        Suppressed-comm refusal must not extend to duplicated TELinear bases — there is no
+        shard to mis-count. Passes today and must keep passing after the refusals land.
+        """
+        module = MockRowParallelLinear(16, 16)
+        module.config = MockModelParallelConfig()
+        dora = DoRA(dim=4, alpha=8)
+        attrs = AdapterAttributes(
+            input_is_parallel=True,
+            in_features=16,
+            out_features=16,
+            disable_tensor_parallel_comm=True,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=False,
+        )
+        fake_cls = self._fake_dora_linear_cls()
+
+        with (
+            patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear", return_value=attrs),
+            patch("megatron.bridge.peft.dora.ParallelLinearDoRAAdapter"),
+            patch("megatron.bridge.peft.dora.DoRALinear", fake_cls),
+        ):
+            wrapped = dora.transform(module, name="linear_fc2", prefix="decoder.layers.0.mlp.shared_experts")
+        assert isinstance(wrapped, fake_cls), "replicated suppressed-comm base must still transform"
 
     def test_dora_transform_idempotent(self):
         """Test that DoRA transform is idempotent (applying twice has same effect as applying once)."""

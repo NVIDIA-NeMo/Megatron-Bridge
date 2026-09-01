@@ -175,6 +175,18 @@ class MultiLoRALinear(AdapterWrapper):
         # column-sharded adapter output must be gathered before the residual
         # add; a column-parallel base keeps the [tokens, out/tp] shard.
         self._gather_output = attrs.input_is_parallel or not attrs.base_linear_is_parallel
+        # Shared-expert fc2 under moe_shared_expert_overlap: the base's own TP
+        # collectives are suppressed (attrs.disable_tensor_parallel_comm) and
+        # SharedExpertMLP.post_forward_comm sums the full-width partials across
+        # the dense TP group. A gathered delta would be counted once per rank;
+        # zero-embedding this rank's shard instead gives each output element
+        # exactly one non-zero contributor, so the downstream sum counts it once.
+        # Mirrors ParallelLinearAdapter._shared_expert_row_parallel.
+        self._suppressed_comm_row_parallel = bool(
+            attrs.input_is_parallel and attrs.disable_tensor_parallel_comm and attrs.base_linear_is_parallel
+        )
+        if self._suppressed_comm_row_parallel:
+            self._gather_output = False
 
         # ModuleList of ParallelLinearAdapters gives per-adapter optimizer state
         # isolation, clean checkpoint serialization, and bridge export compatibility.
@@ -215,6 +227,21 @@ class MultiLoRALinear(AdapterWrapper):
         self.register_buffer(
             "rank_values", torch.full((n_adapters,), dim, dtype=dtype, device=device), persistent=False
         )
+
+    def _embed_row_parallel_shard(self, out: torch.Tensor) -> torch.Tensor:
+        """Zero-embed this rank's output shard at its dense-TP offset.
+
+        Padding is differentiable and its adjoint is the matching slice, so the
+        downstream ``post_forward_comm`` sum reproduces the delta exactly once with
+        no ``1/tp`` factor and no gradient compensation.
+        """
+        tp_size = parallel_state.get_tensor_model_parallel_world_size()
+        if tp_size <= 1:
+            return out
+        rank = parallel_state.get_tensor_model_parallel_rank()
+        shard_width = out.shape[-1]
+        left = rank * shard_width
+        return nn.functional.pad(out, (left, (tp_size - 1) * shard_width - left))
 
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
@@ -290,8 +317,13 @@ class MultiLoRALinear(AdapterWrapper):
         # Match the wrapped base linear's output layout: row-parallel base
         # produces a fully-summed [tokens, h_out] tensor (which we then SP
         # scatter); column-parallel base keeps the [tokens, h_out/tp] shard.
+        # A suppressed-comm row-parallel base (shared experts under overlap)
+        # emits a full-width partial that post_forward_comm sums across TP, so
+        # the delta must be contributed as a zero-embedded local shard instead.
         if self._gather_output:
             out = gather_from_tensor_model_parallel_region(out)
+        elif self._suppressed_comm_row_parallel:
+            out = self._embed_row_parallel_shard(out)
 
         if not self.disable_sequence_parallel_comm and self.input_is_parallel:
             if self.use_a2a:

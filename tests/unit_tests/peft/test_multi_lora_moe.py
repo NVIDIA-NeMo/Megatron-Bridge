@@ -256,6 +256,80 @@ def test_non_alltoall_dispatcher_raises():
 
 
 # ======================================================================
+# CPU: dense wrapper partial-term output form (shared experts under overlap)
+# ======================================================================
+
+
+def _dense_wrapper_with_attrs(*, input_is_parallel, disable_tensor_parallel_comm, base_linear_is_parallel):
+    from megatron.bridge.peft.multi_lora_layers import MultiLoRALinear
+    from megatron.bridge.peft.utils import AdapterAttributes
+    from tests.unit_tests.peft.test_utils import MockModelParallelConfig
+
+    to_wrap = nn.Linear(8, 8)
+    to_wrap.config = MockModelParallelConfig()
+    attrs = AdapterAttributes(
+        input_is_parallel=input_is_parallel,
+        in_features=8,
+        out_features=8,
+        disable_tensor_parallel_comm=disable_tensor_parallel_comm,
+        disable_sequence_parallel_comm=True,
+        base_linear_is_parallel=base_linear_is_parallel,
+    )
+    with patch(
+        "megatron.bridge.peft.multi_lora_layers.get_adapter_attributes_from_linear",
+        return_value=attrs,
+    ):
+        return MultiLoRALinear(
+            to_wrap=to_wrap,
+            n_adapters=2,
+            dim=4,
+            alpha=4,
+            full_name="decoder.layers.0.mlp.shared_experts.linear_fc2",
+            column_init_method="xavier",
+            row_init_method="zero",
+        )
+
+
+def test_suppressed_comm_row_parallel_wrapper_embeds_instead_of_gathering():
+    """Shared-expert fc2 under overlap: the delta must be a zero-embedded local shard.
+
+    post_forward_comm sums full-width partials across dense TP; a gathered delta would
+    be counted once per rank. Pins the predicate, the disabled gather, and the embed
+    values (each output element has exactly one non-zero contributor).
+    """
+    wrapper = _dense_wrapper_with_attrs(
+        input_is_parallel=True, disable_tensor_parallel_comm=True, base_linear_is_parallel=True
+    )
+    assert wrapper._suppressed_comm_row_parallel is True
+    assert wrapper._gather_output is False
+
+    shard = torch.arange(1.0, 13.0).reshape(3, 4)
+    with (
+        patch(
+            "megatron.bridge.peft.multi_lora_layers.parallel_state.get_tensor_model_parallel_world_size",
+            return_value=2,
+        ),
+        patch(
+            "megatron.bridge.peft.multi_lora_layers.parallel_state.get_tensor_model_parallel_rank",
+            return_value=1,
+        ),
+    ):
+        embedded = wrapper._embed_row_parallel_shard(shard)
+    assert embedded.shape == (3, 8)
+    assert torch.equal(embedded[:, :4], torch.zeros(3, 4))
+    assert torch.equal(embedded[:, 4:], shard)
+
+
+def test_dense_row_parallel_wrapper_still_gathers():
+    """Scoping pin: an ordinary row-parallel base (comms not suppressed) keeps the gather."""
+    wrapper = _dense_wrapper_with_attrs(
+        input_is_parallel=True, disable_tensor_parallel_comm=False, base_linear_is_parallel=True
+    )
+    assert wrapper._suppressed_comm_row_parallel is False
+    assert wrapper._gather_output is True
+
+
+# ======================================================================
 # CPU: hook installation
 # ======================================================================
 
