@@ -16,6 +16,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from megatron.bridge.peft import recompute as recompute_mod
@@ -38,11 +39,15 @@ class DummyTransformerBlock(torch.nn.Module):
         return hidden_states
 
 
+class DummyHybridStack(DummyTransformerBlock):
+    pass
+
+
 class DummyModel(torch.nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, block_type=DummyTransformerBlock) -> None:
         super().__init__()
         self.config = SimpleNamespace(recompute_method="uniform")
-        self.block = DummyTransformerBlock()
+        self.block = block_type()
 
         # Frozen base parameter (not trainable)
         self.base = torch.nn.Linear(1, 1, bias=False)
@@ -59,7 +64,8 @@ class DummyModel(torch.nn.Module):
             yield module
 
 
-def _patch_transformer_block(monkeypatch):
+def _patch_recompute_blocks(monkeypatch):
+    import megatron.core.models.hybrid.hybrid_block as hybrid_block
     import megatron.core.transformer.transformer_block as transformer_block
 
     monkeypatch.setattr(
@@ -68,13 +74,15 @@ def _patch_transformer_block(monkeypatch):
         DummyTransformerBlock,
         raising=False,
     )
+    monkeypatch.setattr(hybrid_block, "HybridStack", DummyHybridStack, raising=False)
 
 
-def test_maybe_enable_recompute_inputs_grad_patches_block(monkeypatch):
-    _patch_transformer_block(monkeypatch)
+@pytest.mark.parametrize("block_type", [DummyTransformerBlock, DummyHybridStack])
+def test_maybe_enable_recompute_inputs_grad_patches_block(monkeypatch, block_type):
+    _patch_recompute_blocks(monkeypatch)
     recompute_mod.PEFT_RECOMPUTE_PATCHED.clear()
 
-    model = DummyModel()
+    model = DummyModel(block_type)
     patched_registry = maybe_enable_recompute_inputs_grad(model, set())
 
     assert id(model) in patched_registry
