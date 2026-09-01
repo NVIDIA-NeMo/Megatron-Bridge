@@ -1474,7 +1474,7 @@ def checkpoint_and_decide_exit(
             callback_manager=callback_manager,
             module_name=module_name,
         )
-        saved_checkpoint = True
+        saved_checkpoint = state.cfg.checkpoint.non_persistent_ckpt_type == "global"
 
     # Exit based on duration.
     if state.cfg.train.exit_duration_in_mins:
