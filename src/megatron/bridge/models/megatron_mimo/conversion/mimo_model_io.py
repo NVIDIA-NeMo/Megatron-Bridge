@@ -129,7 +129,9 @@ def save_megatron_mimo_model(
         _restore_derived_spec_fields(provider, _saved_derived)
 
     if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import get_checkpoint_name, save_tokenizer_assets
+        from megatron.training.checkpointing import save_tokenizer_assets
+
+        from megatron.bridge.training.checkpointing import get_checkpoint_name
         from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
         tokenizer = build_tokenizer(tokenizer_config)
