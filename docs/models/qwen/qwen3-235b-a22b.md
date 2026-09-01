@@ -79,6 +79,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="fp8_mx" data-hardware="GB200" data-status="verified" data-entry="qwen3-235b-a22b-pretrain-gb200" aria-controls="qwen3-235b-a22b-pretrain-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">FP8 MX</span>
+    </button>
     <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="qwen3-235b-a22b-sft-h100" aria-controls="qwen3-235b-a22b-sft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H100</strong>
@@ -238,6 +245,57 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>This workflow remains unverified and requires a bounded public run with the model&#x27;s pinned revision and all applicable verification gates.
+</p>
+      </section>
+    </article>
+    <article id="qwen3-235b-a22b-pretrain-gb200" class="verification-model-detail" data-entry-detail="qwen3-235b-a22b-pretrain-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>FP8 MX</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-28</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>11.17684</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>6.856652</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>72,553.930 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>262.340 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,806.546 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4 --recipe qwen3_235b_a22b_256gpu_gb200_fp8mx_pretrain_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/rp2/head_01&quot;],null]&#x27; dataset.path_to_cache=work/cache/qwen3-235b-a22b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --save_dir work/model-verification/qwen3-235b-a22b/pretrain-mxfp8-gb200-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/qwen3-235b-a22b/pretrain-mxfp8-gb200-reference-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On exactly 256 GB200s, this support-verification workload completes exactly 100 bounded RP2 optimizer steps with TP1/PP16/CP1/EP16/ETP1, DP1, SP off, GBS/MBS 8192/1, and sequence length 4096. MXFP8 compute, natural routing, DeepEP, and Transformer Engine CUDA graphs for moe_router and moe_preprocess remain active. Loss is finite from 11.176840 to 6.856652 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and complete iter_0000050 and iter_0000100 checkpoints are saved. GBS8192 makes this support verification rather than cross-model convergence evidence for the GBS1024 cohort.
 </p>
       </section>
     </article>
