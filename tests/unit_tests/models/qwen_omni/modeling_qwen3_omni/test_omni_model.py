@@ -601,6 +601,7 @@ class TestQwen3OmniModel:
     def test_audio_feature_trim_handles_multiple_audio_samples(self):
         class _FakeAudioModel:
             dtype = torch.float32
+            config = SimpleNamespace(n_window=50)
 
             def __call__(self, input_features, feature_lens):
                 assert input_features.shape == (8, 3648)
