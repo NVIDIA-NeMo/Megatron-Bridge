@@ -854,12 +854,19 @@ class MegatronPeftBridge:
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        stack_3d_moe: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream only adapter weights without merging them into base tensors.
 
         Each adapter is classified into one export topology (default / packed-expert
         / shared-outer) by :meth:`_select_adapter_emitter` and emitted by the
         matching ``_emit_*_adapter`` method. The loop holds no per-topology logic.
+
+        ``stack_3d_moe`` emits shared-outer routed-expert LoRA as the two stacked
+        3D tensors vLLM's ``FusedMoE3DWithLoRA`` consumer looks up (``...experts.base_layer``
+        for gate_up_proj, bare ``...experts`` for down_proj), instead of the per-expert
+        2D ``pack_moe`` layout. It is the vLLM-3D-MoE analogue of ``expand_shared_outer``
+        and takes precedence over it for shared-outer adapters.
         """
         from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
@@ -897,6 +904,7 @@ class MegatronPeftBridge:
                     num_moe_experts,
                     cpu,
                     expand_shared_outer=expand_shared_outer,
+                    stack_3d_moe=stack_3d_moe,
                 )
                 continue
 
@@ -1037,6 +1045,7 @@ class MegatronPeftBridge:
         num_moe_experts: int,
         cpu: bool,
         expand_shared_outer: bool,
+        stack_3d_moe: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream a shared-outer grouped-expert LoRA adapter (SGLang PR #21466).
 
@@ -1045,11 +1054,33 @@ class MegatronPeftBridge:
         ``[1, ...]`` tensor under the expert-agnostic HF name. With
         ``expand_shared_outer``, it is replicated under per-expert 2D names
         (vLLM 2D ``pack_moe`` contract); the training-side parameter stays shared.
+
+        With ``stack_3d_moe``, the whole adapter is emitted as the two stacked 3D
+        tensors vLLM's 3D-MoE consumer (``FusedMoE3DWithLoRA``) looks up:
+        ``...experts.base_layer`` (gate_up_proj) and bare ``...experts`` (down_proj),
+        with axis order ``lora_A=(E, r, in)`` and ``lora_B=(out, r, E)``. This is the
+        vLLM-3D-MoE analogue of the 2D ``expand_shared_outer`` path and is required
+        for 3D-MoE models (``is_3d_moe_weight=True``) that are not using vLLM's 2D
+        mixed MoE LoRA format.
         """
 
         from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
         is_expert = is_expert_linear(adapter_task.global_base_prefix)
+
+        if stack_3d_moe:
+            yield from self._stream_shared_outer_adapter_weights_3d_moe(
+                megatron_model,
+                mapping_registry,
+                adapter_task,
+                linear_in_tensor,
+                linear_out_tensor,
+                num_moe_experts,
+                cpu,
+                is_expert,
+            )
+            return
+
         for side_tensor, side_suffix in (
             (linear_in_tensor, ".linear_in.weight"),
             (linear_out_tensor, ".linear_out.weight"),
@@ -1113,6 +1144,96 @@ class MegatronPeftBridge:
                     chunk = per_base.get(base_name)
                     assert chunk is not None, f"unknown projection name: {base_name!r}"
                     yield HFWeightTuple(side_hf_names[index], chunk)
+
+    def _stream_shared_outer_adapter_weights_3d_moe(
+        self,
+        megatron_model: List[MegatronModel],
+        mapping_registry: "MegatronMappingRegistry",
+        adapter_task: AdapterWeightConversionTask,
+        linear_in_tensor: torch.Tensor,
+        linear_out_tensor: torch.Tensor,
+        num_moe_experts: int,
+        cpu: bool,
+        is_expert: bool,
+    ) -> Iterable["HFWeightTuple"]:
+        """Emit a shared-outer routed-expert LoRA adapter in vLLM 3D-MoE layout.
+
+        vLLM's 3D-MoE LoRA consumer (``FusedMoE3DWithLoRA`` → ``_stack_moe_lora_weights``)
+        looks up exactly two stacked 3D tensors per registered ``...experts`` module:
+
+          * ``...experts.base_layer.lora_{A,B}.weight`` — gate_up_proj (gate+up fused)
+          * ``...experts.lora_{A,B}.weight``            — down_proj (bare)
+
+        with axis order ``lora_A=(E, r, in)`` and ``lora_B=(out, r, E)``. The
+        per-expert 2D names emitted by the ``expand_shared_outer`` path never match,
+        so vLLM silently drops the routed-expert LoRA. This stacks the full global
+        expert set (``num_moe_experts``) into those two 3D tensors; vLLM EP-slices
+        ``[expert_start:expert_end]`` at load time, so the global stack is a no-op for
+        non-EP and correct for EP.
+
+        Each adapter task is either FC1 (gate_up → ``base_layer``) or FC2 (down →
+        bare), distinguished by the HF base weight names it resolves to. A fused FC1
+        ``linear_out`` carries gate+up on its output dim already, matching vLLM's
+        ``2*moe_intermediate`` w13 fused stack, so no gate/up re-split is needed.
+        """
+        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
+
+        # Resolve the HF base names for expert 0 to discover this adapter's projection
+        # (gate_up vs down) and the expert-agnostic stem (...experts).
+        base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
+            mapping_registry,
+            adapter_task.global_base_prefix,
+            adapter_task.adapter_key,
+            ".weight0",
+        )
+        if not base_hf_weight_names:
+            return
+
+        is_gate_up = any(
+            self._is_fused_fc1_gate_proj(n) or self._is_fused_fc1_up_proj(n)
+            for n in base_hf_weight_names
+        )
+        # stem e.g. "model.layers.0.mlp.experts.gate_proj.weight" -> "...mlp.experts".
+        stem = self._strip_hf_expert_index(base_hf_weight_names[0]).split(".experts")[0] + ".experts"
+
+        # --- lora_A: shared linear_in (r, in) -> broadcast to (E, r, in) ---
+        # Shared-outer keeps lora_A as a 2D tensor reused across experts; expand it
+        # along a leading expert axis. (A per-expert lora_A would be unexpected here,
+        # but the selection path handles it uniformly if it ever occurs.)
+        if linear_in_tensor.ndim == 2:
+            lora_a_3d = linear_in_tensor.unsqueeze(0).expand(num_moe_experts, -1, -1).contiguous()
+        else:
+            gathered_in = self._gather_expert_adapter_weight(linear_in_tensor)
+            lora_a_3d = torch.stack(
+                [
+                    self._select_expert_adapter_weight(linear_in_tensor, gathered_in, i, num_moe_experts)
+                    for i in range(num_moe_experts)
+                ],
+                dim=0,
+            )
+        if cpu:
+            lora_a_3d = lora_a_3d.cpu()
+
+        # --- lora_B: per-expert linear_out (E, out, r) -> permute to (out, r, E) ---
+        # ``_select_expert_adapter_weight`` returns the per-expert slice across EP
+        # ranks uniformly (EP>1 gathers, EP=1 indexes the local expert dim); stacking
+        # all global experts yields the (E, out, r) tensor vLLM expects, already
+        # carrying gate+up fused on the output dim for FC1.
+        gathered_out = self._gather_expert_adapter_weight(linear_out_tensor)
+        linear_out_all = torch.stack(
+            [
+                self._select_expert_adapter_weight(linear_out_tensor, gathered_out, i, num_moe_experts)
+                for i in range(num_moe_experts)
+            ],
+            dim=0,
+        )
+        lora_b_3d = linear_out_all.permute(1, 2, 0).contiguous()
+        if cpu:
+            lora_b_3d = lora_b_3d.cpu()
+
+        suffix = "base_layer." if is_gate_up else ""
+        yield HFWeightTuple(f"{stem}.{suffix}lora_A.weight", lora_a_3d)
+        yield HFWeightTuple(f"{stem}.{suffix}lora_B.weight", lora_b_3d)
 
     def _get_fused_adapter_linear_out_slices(
         self,
