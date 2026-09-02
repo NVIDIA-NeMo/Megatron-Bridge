@@ -117,12 +117,29 @@ def test_finalize_hf_import_broadcasts_tied_weights_and_refreshes_caches(
     broadcast = Mock()
     refresh = Mock()
     monkeypatch.setattr(bridge, "_broadcast_shared_embeddings", broadcast)
-    monkeypatch.setattr("megatron.core.resharding.refresh_module_caches", refresh)
+    import megatron.core.resharding as resharding
+
+    monkeypatch.setattr(resharding, "refresh_module_caches", refresh, raising=False)
 
     bridge.finalize_hf_import(model)
 
     broadcast.assert_called_once_with(model)
     refresh.assert_called_once_with(model)
+
+
+def test_finalize_hf_import_allows_mcore_without_cache_refresh(monkeypatch):
+    """Older MCore refs do not expose the optional resharding cache refresher."""
+    import megatron.core.resharding as resharding
+
+    bridge = DummyBridge()
+    model = torch.nn.Module()
+    broadcast = Mock()
+    monkeypatch.setattr(bridge, "_broadcast_shared_embeddings", broadcast)
+    monkeypatch.delattr(resharding, "refresh_module_caches", raising=False)
+
+    bridge.finalize_hf_import(model)
+
+    broadcast.assert_called_once_with(model)
 
 
 def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
