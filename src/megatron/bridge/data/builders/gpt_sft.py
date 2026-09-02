@@ -125,6 +125,8 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     memmap_workers: int = 1
     max_train_samples: int | None = None
     preprocessing: SFTPreprocessingConfig | None = None
+    enable_in_batch_packing: bool = False
+    in_batch_packing_pad_to_multiple_of: int = 1
     enable_offline_packing: bool = False
     offline_packing_specs: PackedSequenceSpecs | None = None
     dataset_kwargs: dict[str, Any] | None = None
@@ -210,6 +212,14 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         if self.seq_length <= 0:
             raise ValueError("seq_length must be greater than 0.")
         validate_sft_preprocessing_config(resolve_gpt_sft_preprocessing(self))
+        if self.enable_offline_packing and self.enable_in_batch_packing:
+            raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
+        if self.in_batch_packing_pad_to_multiple_of <= 0:
+            raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+        if self.enable_in_batch_packing and self.dataloader_type == "batch":
+            raise ValueError(
+                "GPT-SFT in-batch packing does not support dataloader_type='batch'; use 'single' or 'cyclic'."
+            )
         if self.enable_offline_packing and self.offline_packing_specs is None:
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
         if self.offline_packing_specs is not None and not self.enable_offline_packing:
@@ -230,6 +240,15 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
         if self.dataset_kwargs is not None and "max_num_samples" in self.dataset_kwargs:
             raise ValueError("Set max_train_samples directly; dataset_kwargs must not contain max_num_samples.")
+        typed_packing_kwargs = {
+            "enable_in_batch_packing",
+            "in_batch_packing_pad_to_multiple_of",
+        }.intersection(self.dataset_kwargs or {})
+        if typed_packing_kwargs:
+            keys = ", ".join(sorted(typed_packing_kwargs))
+            raise ValueError(f"Set {keys} directly on GPTSFTDatasetConfig, not in dataset_kwargs.")
+        if self.enable_in_batch_packing and (self.dataset_kwargs or {}).get("get_attention_mask_from_fusion") is False:
+            raise ValueError("In-batch packing requires get_attention_mask_from_fusion=True.")
         semantic_kwargs = _SEMANTIC_DATASET_KWARGS.intersection(self.dataset_kwargs or {})
         if semantic_kwargs:
             keys = ", ".join(sorted(semantic_kwargs))
@@ -461,6 +480,8 @@ def build_gpt_sft_split(
     pack_metadata_path: str | Path | None = None,
     pad_cu_seqlens: bool = False,
     pad_seq_to_mult: int | None = None,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
     is_test: bool = False,
     dataset_kwargs: dict[str, Any] | None = None,
 ) -> Any | None:
@@ -484,6 +505,8 @@ def build_gpt_sft_split(
         return None
 
     is_not_packing = packed_sequence_size <= 0
+    if enable_in_batch_packing and not is_not_packing:
+        raise ValueError("Offline packed data cannot also use in-batch packing.")
     effective_metadata_path = None
     if not is_not_packing:
         if pad_cu_seqlens:
@@ -493,7 +516,7 @@ def build_gpt_sft_split(
 
     options = dict(dataset_kwargs or {})
     chat = options.pop("chat", False)
-    use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", False)
+    use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", True)
     chat_loss_mode = options.pop("chat_loss_mode", "assistant")
     tool_schemas = options.pop("tool_schemas", None)
     dataset_init_kwargs = {
@@ -547,9 +570,16 @@ def build_gpt_sft_split(
             use_hf_tokenizer_chat_template=use_hf_tokenizer_chat_template,
             loss_mode=chat_loss_mode,
             tool_schemas=tool_schemas,
+            enable_in_batch_packing=enable_in_batch_packing,
+            in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
             **options,
         )
-    return GPTSFTDataset(**dataset_init_kwargs, **options)
+    return GPTSFTDataset(
+        **dataset_init_kwargs,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        **options,
+    )
 
 
 def _build_packed_parquet_blend(
@@ -561,8 +591,6 @@ def _build_packed_parquet_blend(
     seed: int,
     packed_sequence_size: int,
     max_num_samples: int | None,
-    pack_metadata_path: str | Path | None = None,
-    pad_cu_seqlens: bool = False,
     pad_seq_to_mult: int | None = None,
     dataset_kwargs: dict[str, Any] | None = None,
 ) -> Any:
@@ -581,8 +609,6 @@ def _build_packed_parquet_blend(
             memmap_workers=memmap_workers,
             seed=seed,
             packed_sequence_size=packed_sequence_size,
-            pack_metadata_path=pack_metadata_path,
-            pad_cu_seqlens=pad_cu_seqlens,
             pad_seq_to_mult=pad_seq_to_mult,
             dataset_kwargs=source_options,
         )
@@ -632,6 +658,8 @@ class GPTSFTDatasetBuilder:
         self.seed = config.seed
         self.memmap_workers = config.memmap_workers
         self.max_train_samples = config.max_train_samples
+        self.enable_in_batch_packing = config.enable_in_batch_packing
+        self.in_batch_packing_pad_to_multiple_of = config.in_batch_packing_pad_to_multiple_of
         self.enable_offline_packing = config.enable_offline_packing
         self.offline_packing_specs = config.offline_packing_specs
         self.packed_sequence_size = (
@@ -835,8 +863,6 @@ class GPTSFTDatasetBuilder:
                 seed=self.seed,
                 packed_sequence_size=self.packed_sequence_size,
                 max_num_samples=self.max_train_samples,
-                pack_metadata_path=self.pack_metadata,
-                pad_cu_seqlens=self._pad_cu_seqlens,
                 pad_seq_to_mult=self._pad_seq_to_mult,
                 dataset_kwargs=self.dataset_kwargs,
             )
@@ -851,6 +877,8 @@ class GPTSFTDatasetBuilder:
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
                 pad_cu_seqlens=self._pad_cu_seqlens,
                 pad_seq_to_mult=self._pad_seq_to_mult,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
             )
 
@@ -865,6 +893,8 @@ class GPTSFTDatasetBuilder:
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
                 pad_cu_seqlens=self._pad_cu_seqlens,
                 pad_seq_to_mult=self._pad_seq_to_mult,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )
@@ -879,6 +909,8 @@ class GPTSFTDatasetBuilder:
                 memmap_workers=self.memmap_workers,
                 seed=self.seed,
                 packed_sequence_size=-1,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )

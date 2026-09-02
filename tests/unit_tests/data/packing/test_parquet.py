@@ -329,7 +329,19 @@ class TestPackedParquetBlendDataset:
 
         batch = dataset.collate_fn([dataset[0]])
 
-        assert set(("tokens", "labels", "loss_mask", "position_ids", "cu_seqlens")) <= batch.keys()
+        assert (
+            set(
+                (
+                    "tokens",
+                    "labels",
+                    "loss_mask",
+                    "position_ids",
+                    "cu_seqlens_q",
+                    "cu_seqlens_kv",
+                )
+            )
+            <= batch.keys()
+        )
 
 
 def test_gpt_sft_builder_builds_weighted_parquet_blend(tmp_path):

@@ -461,7 +461,7 @@ def _add_audio_inputs(
     num_mel_bins: int,
 ) -> None:
     """Extract audio features and align each row's sound placeholder count."""
-    from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import compute_mel_features
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import compute_mel_features_with_length
 
     waveforms = [_audio_waveform(example) for example in examples]
     if not any(waveform is not None for waveform in waveforms):
@@ -470,14 +470,20 @@ def _add_audio_inputs(
         raise ValueError("Nemotron Omni collation does not support mixing audio and no-audio samples.")
 
     mel_features: list[torch.Tensor] = []
+    valid_lengths: list[int] = []
     token_counts: list[int] = []
     for example, waveform in zip(examples, waveforms, strict=True):
         assert waveform is not None
         duration = float(example.get("max_audio_duration", max_audio_duration))
         waveform = waveform[: int(duration * 16000)]
-        mel = compute_mel_features(waveform, sampling_rate=16000, num_mel_bins=num_mel_bins)
+        mel, valid_length = compute_mel_features_with_length(
+            waveform,
+            sampling_rate=16000,
+            num_mel_bins=num_mel_bins,
+        )
         mel_features.append(mel)
-        token_length = int(mel.shape[0])
+        valid_lengths.append(valid_length)
+        token_length = valid_length
         for _ in range(3):
             token_length = (token_length + 1) // 2
         token_counts.append(max(1, token_length))
@@ -533,7 +539,7 @@ def _add_audio_inputs(
     for row_index, mel in enumerate(mel_features):
         sound_clips[row_index, : mel.shape[0]] = mel
     batch["sound_clips"] = sound_clips
-    batch["sound_length"] = torch.tensor([mel.shape[0] for mel in mel_features], dtype=torch.long)
+    batch["sound_length"] = torch.tensor(valid_lengths, dtype=torch.long)
 
 
 def _adjust_image_placeholders(

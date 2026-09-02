@@ -49,6 +49,11 @@ class PackedSequenceSpecs:
             self._validate_packed_path("packed_train_data_path", self.packed_train_data_path)
         if self.packed_train_data_blend is not None:
             self._validate_packed_train_data_blend()
+            if self.pad_cu_seqlens:
+                raise ValueError(
+                    "packed_train_data_blend does not support pad_cu_seqlens because each source "
+                    "requires its own packing metadata."
+                )
         if self.packed_val_data_path is not None:
             self._validate_packed_path("packed_val_data_path", self.packed_val_data_path)
         if self.pad_seq_to_mult is not None and self.pad_seq_to_mult <= 0:

@@ -225,21 +225,24 @@ model_config = GPTModelProvider(
 apply_flex_dispatcher_backend(model_config, moe_flex_dispatcher_backend="hybridep")
 ```
 
-Megatron Bridge automatically enables `moe_hybridep_pad_uneven_dispatch_inputs`
-when an eager model config uses the HybridEP flex backend. HybridEP requires
-equal per-rank dispatch shapes, but dynamically packed THD batches can produce
-different local token counts. The safety path takes the group-wide maximum token
-count, aligns it for the kernel, pads each rank before dispatch, and removes the
-padding after combine.
+When a combined training recipe selects offline, in-batch, or Energon native
+packing together with eager HybridEP, Megatron Bridge automatically enables
+`moe_hybridep_pad_uneven_dispatch_inputs`. These recipe paths produce THD
+packed-sequence metadata whose local token counts can differ across ranks, while
+HybridEP requires equal dispatch shapes. The safety path takes the group-wide
+maximum token count, aligns it for the kernel, pads each rank before dispatch,
+and removes the padding after combine.
 
-This adds a MAX all-reduce and temporary padding overhead, including when every
-rank already supplies the same number of tokens. The safety path does not enable
-HybridEP or sequence packing; configure those separately.
+Unpacked BSHD recipes preserve their configured setting and avoid the extra MAX
+all-reduce, host synchronization, and temporary padding allocations by default.
+Direct model-provider callers do not have a combined recipe from which Bridge
+can infer the layout; callers that pass uneven THD inputs must enable the setting
+explicitly. An explicit enabled setting remains enabled for any layout.
 
 CUDA-graph configs preserve their explicit padding setting because the uneven-input
 path performs a host scalar synchronization that is not capture-safe. They must
-provide equal per-rank dispatch shapes. Disable CUDA graphs when runtime token
-counts can differ so Bridge can enable safe padding.
+provide equal per-rank dispatch shapes. Disable CUDA graphs when packed THD token
+counts can differ so the recipe can enable safe padding.
 
 **GPU Architecture Requirements:**
 

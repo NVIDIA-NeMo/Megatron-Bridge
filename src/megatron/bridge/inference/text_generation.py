@@ -31,6 +31,7 @@ from pathlib import Path
 import torch
 from megatron.core.inference.apis import SamplingParams
 from megatron.core.inference.config import InferenceConfig, MambaInferenceStateConfig
+from megatron.core.inference.contexts.dynamic_context import DynamicInferenceContext
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.utils import get_attr_wrapped_model
 from transformers import AutoConfig, AutoTokenizer
@@ -319,8 +320,8 @@ def build_inference_config(
     one source of truth. Pure: never mutates caller state.
 
     ``max_requests`` resolves to ``max_batch_size`` if set, else ``num_prompts``. When both are
-    ``None`` (e.g. a server that should auto-size to the KV-cache memory buffer), ``max_requests``
-    is left as ``None`` for the engine to size.
+    ``None``, an explicit token budget caps server capacity; otherwise ``max_requests`` is left as
+    ``None`` for the engine to size from the KV-cache memory buffer.
     """
     effective_block_size = block_size_tokens
     if getattr(getattr(model, "config", None), "cache_mla_latents", False) and block_size_tokens != 64:
@@ -342,6 +343,22 @@ def build_inference_config(
             f"so it is divisible by tensor parallel size {tp}."
         )
         max_requests = rounded
+
+    max_tokens_limit = max_tokens or DynamicInferenceContext.DEFAULT_MAX_TOKENS
+    if max_requests is None and max_tokens is not None:
+        max_requests = max_tokens_limit // tp * tp
+        if max_requests == 0:
+            raise ValueError(f"--max_tokens ({max_tokens_limit}) must be at least --tp ({tp}).")
+    if max_requests is not None and max_requests > max_tokens_limit:
+        if max_batch_size is not None:
+            raise ValueError(f"--max_batch_size ({max_batch_size}) cannot exceed --max_tokens ({max_tokens_limit}).")
+        max_requests = max_tokens_limit // tp * tp
+        if max_requests == 0:
+            raise ValueError(f"--max_tokens ({max_tokens_limit}) must be at least --tp ({tp}).")
+        print_rank_0(
+            f"Capping max batch size at {max_requests} because active requests cannot exceed "
+            f"max tokens ({max_tokens_limit})."
+        )
 
     return InferenceConfig(
         block_size_tokens=effective_block_size,
@@ -369,7 +386,10 @@ def build_sampling_params(
     stop_words: list[str] | None,
 ) -> SamplingParams:
     """Build MCore ``SamplingParams`` from CLI-derived values."""
-    if top_k is None:
+    if temperature == 0.0:
+        top_k = 1
+        top_p = 0.0
+    elif top_k is None:
         top_k = 0 if top_p > 0.0 else 1
     if top_k > 0 and top_p > 0.0:
         raise ValueError("--top_k and --top_p cannot both be positive.")

@@ -29,7 +29,13 @@ import torch
 from megatron.energon.savable_loader import SavableDataLoaderState
 from megatron.energon.state import FlexState
 
-from megatron.bridge.utils.safe_pickle import energon_torch_load, safe_load_npy, safe_pickle_load, safe_pickle_loads
+from megatron.bridge.utils.safe_pickle import (
+    energon_torch_load,
+    safe_load_npy,
+    safe_pickle_load,
+    safe_pickle_loads,
+    safe_torch_tensor_pickle_loads,
+)
 
 
 class _BucketKey(Enum):
@@ -264,6 +270,34 @@ class TestSafePickleRejectsUnsafe:
         assert not hook_called
 
 
+class TestSafeTorchTensorPickle:
+    """Raw WebDataset tensor pickles allow data but reject executable globals."""
+
+    def test_plain_tensor_container_round_trip(self):
+        value = {
+            "embedding": torch.arange(6, dtype=torch.float32).reshape(2, 3),
+            "mask": torch.tensor([True, False]),
+        }
+
+        restored = safe_torch_tensor_pickle_loads(pickle.dumps(value))
+
+        assert restored.keys() == value.keys()
+        assert torch.equal(restored["embedding"], value["embedding"])
+        assert torch.equal(restored["mask"], value["mask"])
+
+    def test_rejects_reduce_payload_without_executing_it(self, tmp_path):
+        marker = tmp_path / "pickle-executed"
+
+        class Payload:
+            def __reduce__(self):
+                return os.system, (f"touch {marker}",)
+
+        with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
+            safe_torch_tensor_pickle_loads(pickle.dumps(Payload()))
+
+        assert not marker.exists()
+
+
 class TestAllowlistImmutability:
     """Verify the allowlist cannot be mutated at runtime."""
 
@@ -294,6 +328,23 @@ def test_energon_group_bucket_enum_key_round_trip(tmp_path):
 
     bucket_key = next(iter(restored.worker_states[0]["buckets"]))
     assert bucket_key is _BucketKey.IMAGE
+
+
+def test_energon_group_bucket_frozenset_key_round_trip(tmp_path):
+    """Energon can reuse a restored partial bucket keyed by any supported Hashable."""
+    bucket_key = frozenset({"image"})
+    state = SavableDataLoaderState(
+        worker_states=[FlexState(buckets={bucket_key: {"batch_size": 2}})],
+        next_worker_id=0,
+        micro_batch_size=2,
+    )
+    path = tmp_path / "dataloader-state.pt"
+    torch.save({"dataloader_state_dict": state}, path)
+
+    restored = energon_torch_load(str(path))["dataloader_state_dict"]
+
+    restored_buckets = restored.worker_states[0]["buckets"]
+    assert restored_buckets[bucket_key] == {"batch_size": 2}
 
 
 def test_energon_group_bucket_enum_does_not_use_application_value_map(tmp_path):

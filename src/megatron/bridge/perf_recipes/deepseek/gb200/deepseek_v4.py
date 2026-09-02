@@ -33,7 +33,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     # The Sheet lists VPP=4, but the measured PP=1 W&B run resolves VPP to None.
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.pipeline_model_parallel_layout = None
@@ -44,7 +44,6 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
-    cfg.model.moe_hybridep_num_sms = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_router_fusion = True
     cfg.model.moe_router_force_load_balancing = True
@@ -60,6 +59,8 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.fine_grained_offloading_max_inflight_offloads = None
 
     _benchmark_common(cfg, cross_entropy_impl="native")
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_hybridep_num_sms = None
 
     set_full_iteration_cuda_graph(cfg.model)
     cfg.model.cuda_graph_warmup_steps = 3
@@ -115,7 +116,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,

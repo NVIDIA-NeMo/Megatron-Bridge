@@ -204,6 +204,7 @@ items:
         final_loss: 2.261159
         last_10_steps_step_time_ms_avg: 330730.470
         last_10_steps_model_tflops_per_gpu_avg: 18.090
+        last_10_steps_tokens_per_second_per_gpu_avg: 792.621
       expected_result: >
         At the recorded bridge commit, this bounded projection-pretraining
         support run used the official DataComp download pipeline at repository
@@ -258,6 +259,7 @@ items:
         final_loss: 1.006886
         last_10_steps_step_time_ms_avg: 3268.140
         last_10_steps_model_tflops_per_gpu_avg: 57.690
+        last_10_steps_tokens_per_second_per_gpu_avg: 2506.625
       expected_result: >
         The exact 16-H100 command completed all 100 MedPix SFT steps at
         TP1/PP2/CP1/EP8/ETP1, MBS1/GBS32, natural expert routing, HybridEP,
@@ -295,6 +297,7 @@ items:
         final_loss: 0.9978729
         last_10_steps_step_time_ms_avg: 9899.640
         last_10_steps_model_tflops_per_gpu_avg: 38.180
+        last_10_steps_tokens_per_second_per_gpu_avg: 1655.010
       expected_result: >
         On 8x GB200, the shared Qwen3.5/Qwen3.6-VL functional recipe completed
         exactly 100 MedPix SFT steps at TP1/PP1/CP1/EP8/ETP1, MBS1/GBS32,
@@ -375,6 +378,7 @@ items:
         final_loss: 0.997894
         last_10_steps_step_time_ms_avg: 36847.110
         last_10_steps_model_tflops_per_gpu_avg: 84.830
+        last_10_steps_tokens_per_second_per_gpu_avg: 3557.185
       expected_result: >
         The pinned 32-H100 run completed exactly 20 full-SFT steps at
         TP1/PP4/CP2/EP8/ETP1, dense DP4 and expert DP1, MBS2/GBS512, and 64-way
@@ -422,6 +426,7 @@ items:
         final_loss: 1.270382
         last_10_steps_step_time_ms_avg: 1714.300
         last_10_steps_model_tflops_per_gpu_avg: 109.940
+        last_10_steps_tokens_per_second_per_gpu_avg: 4778.627
       expected_result: >
         The exact 16-H100 command completed all 100 MedPix LoRA steps at
         TP1/PP2/CP1/EP8/ETP1, MBS1/GBS32, natural expert routing, HybridEP,
@@ -459,6 +464,7 @@ items:
         final_loss: 1.254138
         last_10_steps_step_time_ms_avg: 5511.530
         last_10_steps_model_tflops_per_gpu_avg: 68.410
+        last_10_steps_tokens_per_second_per_gpu_avg: 2972.677
       expected_result: >
         On the same 8x GB200 topology and MedPix schedule as the controlled SFT
         item, LoRA completed exactly 100 finite steps with zero skipped or NaN
@@ -506,6 +512,7 @@ items:
         final_loss: 2.262711
         last_10_steps_step_time_ms_avg: 339600.710
         last_10_steps_model_tflops_per_gpu_avg: 17.650
+        last_10_steps_tokens_per_second_per_gpu_avg: 771.918
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
@@ -554,6 +561,7 @@ items:
         final_loss: 3.458849
         last_10_steps_step_time_ms_avg: 22271.220
         last_10_steps_model_tflops_per_gpu_avg: 135.610
+        last_10_steps_tokens_per_second_per_gpu_avg: 5885.264
       expected_result: >
         The exact 16-H100 command completed all 50 DataComp Energon steps at
         TP1/PP2/CP1/EP8/ETP1, a 16/24 language-layer pipeline split, and
@@ -583,6 +591,7 @@ items:
         final_loss: 3.166235
         last_10_steps_step_time_ms_avg: 26880.420
         last_10_steps_model_tflops_per_gpu_avg: 210.360
+        last_10_steps_tokens_per_second_per_gpu_avg: 9142.714
       expected_result: >
         On 8x GB200, the exact architecture-shared Qwen3.5/Qwen3.6-VL
         fixed-shape mock-data recipe completed 50 steps at

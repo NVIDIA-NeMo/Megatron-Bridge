@@ -41,6 +41,14 @@ def _add_no_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_sequence_length(*, longest_prompt_tokens: int, num_new_tokens: int, max_seq_length: int) -> None:
+    required = longest_prompt_tokens + num_new_tokens
+    if required > max_seq_length:
+        raise ValueError(
+            f"Longest prompt plus generation needs {required} tokens, but --max_seq_length is {max_seq_length}."
+        )
+
+
 class _AsyncLLM:
     is_primary_rank = True
 
@@ -60,6 +68,7 @@ class _AsyncLLM:
             generated_log_probs=[-0.3],
             prompt_top_n_logprobs=[{"prompt-token": -0.1}],
             generated_top_n_logprobs=[{"generated-token": -0.3}],
+            failed=lambda: False,
         )
 
 
@@ -79,6 +88,7 @@ def async_text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
         "load_bridge_model": lambda **kwargs: kwargs,
         "load_prompts": lambda *args: list(args),
         "resolve_hf_model_path": lambda *args: args[0],
+        "validate_sequence_length": _validate_sequence_length,
     }
     stubs = {
         "megatron.core.inference.apis": _module(
@@ -112,6 +122,37 @@ def async_text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
         yield module
     finally:
         sys.modules.pop(spec.name, None)
+
+
+@pytest.mark.unit
+def test_generate_rejects_request_exceeding_max_sequence_length(
+    async_text_generation_entrypoint: types.ModuleType,
+) -> None:
+    args = types.SimpleNamespace(
+        max_seq_length=4,
+        max_new_tokens=3,
+        max_batch_size=None,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=1.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        coordinator_host=None,
+        coordinator_port=None,
+    )
+    tokenizer = types.SimpleNamespace(tokenize=lambda prompt: [1, 2, 3])
+
+    with pytest.raises(ValueError, match=r"needs 6 tokens.*--max_seq_length is 4"):
+        asyncio.run(
+            async_text_generation_entrypoint._generate(
+                args,
+                model=object(),
+                tokenizer=tokenizer,
+                prompts=["prompt"],
+                sampling_params=object(),
+            )
+        )
 
 
 @pytest.mark.unit
@@ -151,3 +192,44 @@ def test_generate_prints_requested_log_probabilities(
     assert "Generated log probs: [-0.3]" in rendered
     assert "Prompt top-n logprobs: [{'prompt-token': -0.1}]" in rendered
     assert "Generated top-n logprobs: [{'generated-token': -0.3}]" in rendered
+
+
+@pytest.mark.unit
+def test_generate_rejects_failed_inference_requests(
+    async_text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _failed_generate(_self, _prompt, _sampling_params):
+        return types.SimpleNamespace(
+            request_id=7,
+            status=types.SimpleNamespace(name="FAILED"),
+            generated_text="",
+            failed=lambda: True,
+        )
+
+    monkeypatch.setattr(_AsyncLLM, "generate", _failed_generate)
+    args = types.SimpleNamespace(
+        max_seq_length=32,
+        max_new_tokens=2,
+        max_batch_size=None,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=1.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        coordinator_host=None,
+        coordinator_port=None,
+    )
+    tokenizer = types.SimpleNamespace(tokenize=lambda prompt: [1, 2])
+
+    with pytest.raises(RuntimeError, match="request 7.*FAILED"):
+        asyncio.run(
+            async_text_generation_entrypoint._generate(
+                args,
+                model=object(),
+                tokenizer=tokenizer,
+                prompts=["prompt"],
+                sampling_params=object(),
+            )
+        )

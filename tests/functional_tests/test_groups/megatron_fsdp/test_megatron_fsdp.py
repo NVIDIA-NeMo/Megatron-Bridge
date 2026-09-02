@@ -19,6 +19,7 @@ from typing import Callable, Optional
 import pytest
 import torch
 import torch.nn.functional as F
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
@@ -37,6 +38,7 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     runtime_config_update,
 )
+from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.state import GlobalState
@@ -108,6 +110,18 @@ class DenseHybridSmokeModelProvider(HybridModelProvider):
     hybrid_layer_pattern: str | None = "**"
     vocab_size: int | None = None
     gradient_accumulation_fusion: bool = False
+
+
+@dataclass
+class MoEHybridSmokeModelProvider(HybridModelProvider):
+    """Small HybridModel configuration for the MFSDP V2 EP smoke test."""
+
+    attention_backend: AttnBackend = AttnBackend.auto
+    seq_length: int = 128
+    hidden_size: int = 128
+    hybrid_layer_pattern: str = "*E"
+    num_moe_experts: int = 4
+    expert_model_parallel_size: int = 2
 
 
 def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3FSDPTestModelProvider:
@@ -408,6 +422,7 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MFSDP v2 is unavailable in this MCore revision")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
         """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
         initialize_distributed()
@@ -423,6 +438,23 @@ class TestMegatronFSDP:
 
         pretrain(cfg, forward_step)
 
+        torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_moe_ep2_pretrain_smoke(self):
+        """Train a small MoE HybridModel with MFSDP V2 and EP=2."""
+        initialize_distributed()
+        torch.distributed.barrier()
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            optimizer={"clip_grad": 0.0},
+        )
+        cfg.model = MoEHybridSmokeModelProvider()
+        cfg.ddp.megatron_fsdp_version = 2
+
+        pretrain(cfg, forward_step)
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")

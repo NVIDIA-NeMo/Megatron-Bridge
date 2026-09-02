@@ -203,7 +203,8 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         # contains physical offsets including per-sequence alignment padding.
         cu_seqlens: list[list[int]] = []
         cu_seqlens_padded: list[list[int]] | None = [] if self._pad_seq_to_mult > 1 else None
-        for item in batch:
+        padding_masks: list[list[bool]] = []
+        for row_idx, item in enumerate(batch):
             position_ids.append([])
             cu_seqlens.append([0])
             if cu_seqlens_padded is not None:
@@ -225,21 +226,46 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 for i in range(len(item["seq_boundaries"]) - 1):
                     current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
-                    # Stop logical lengths at the last non-EOS token so alignment padding is excluded.
+                    # Alignment padding uses zero-loss EOS tokens. A supervised terminal EOS is part of
+                    # the logical sequence and must not be mistaken for a physical alignment gap.
                     current_seq_arr = np.array(current_seq)
-                    non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
-                    logical_seqlen = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
+                    current_loss_mask = np.array(
+                        item["loss_mask"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
+                    )
+                    logical_seqlen = len(current_seq_arr)
+                    while (
+                        logical_seqlen > 0
+                        and current_seq_arr[logical_seqlen - 1] == self.tokenizer.eos_id
+                        and not current_loss_mask[logical_seqlen - 1]
+                    ):
+                        logical_seqlen -= 1
                     cu_seqlens[-1].append(cu_seqlens[-1][-1] + logical_seqlen)
 
                 # if extra paddings are added in the packed sequence, they can't be counted as
                 # actual tokens for training
                 if len(cu_seqlens_padded[-1]) > len(cu_seqlens[-1]):
                     cu_seqlens[-1].append(cu_seqlens[-1][-1])
+
+                # The packed token tensor follows the physical offsets. Mark the
+                # tail between each logical sequence and its physical boundary so
+                # MCore's MoE router can exclude those alignment-only tokens.
+                padding_mask = [False] * max_length
+                for logical_start, logical_end, padded_start, padded_end in zip(
+                    cu_seqlens[-1][:-1],
+                    cu_seqlens[-1][1:],
+                    cu_seqlens_padded[-1][:-1],
+                    cu_seqlens_padded[-1][1:],
+                ):
+                    padding_start = padded_start + logical_end - logical_start
+                    assert padding_start <= padded_end
+                    padding_mask[padding_start:padded_end] = [True] * (padded_end - padding_start)
             else:
                 assert cu_seqlens[-1][-1] <= max_length
                 # Prepadded data may leave padding at the end of the packed sequence.
                 if cu_seqlens[-1][-1] != max_length:
                     cu_seqlens[-1].append(max_length)
+                padding_mask = [False] * len(input_ids[row_idx]) + [True] * (max_length - len(input_ids[row_idx]))
+            padding_masks.append(padding_mask)
 
             if self.pad_cu_seqlens:
                 # Pad both boundary representations to the same static shape with zero-length
@@ -272,7 +298,13 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             "loss_mask": loss_mask,
             "position_ids": torch.LongTensor(position_ids),
             "token_count": token_count,
+            "pad_between_seqs": cu_seqlens_padded is not None
+            and any(logical != padded for logical, padded in zip(cu_seqlens, cu_seqlens_padded)),
         }
+        # Keep the key present for every offline-packed batch so mask handling
+        # never depends on local padding contents. For fixed-width packing, this
+        # also keeps the input structure stable for full-iteration CUDA graphs.
+        processed_batch["padding_mask"] = torch.BoolTensor(padding_masks)
 
         if self.return_cu_seqlen:
             # The DataLoader collates every row assigned to this data-parallel rank before
