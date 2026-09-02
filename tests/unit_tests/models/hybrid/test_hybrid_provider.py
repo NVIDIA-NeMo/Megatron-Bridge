@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import inspect
 from unittest.mock import Mock, patch
 
@@ -19,12 +20,21 @@ import pytest
 import torch
 from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer import ModuleSpec
-from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
 from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.hybrid import hybrid_provider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+
+def _copy_attention_config(config):
+    try:
+        from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.core.transformer.attention_layer_config":
+            raise
+        return copy.deepcopy(config)
+    return AttentionLayerConfig.from_config(config)
 
 
 class TestHybridModelProvider:
@@ -153,7 +163,7 @@ class TestHybridModelProvider:
         def create_model(**kwargs):
             assert kwargs["config"] is provider
             assert kwargs["config"]._pg_collection is None
-            copied_config = AttentionLayerConfig.from_config(kwargs["config"])
+            copied_config = _copy_attention_config(kwargs["config"])
             assert copied_config._pg_collection is None
             return Mock(config=kwargs["config"])
 

@@ -38,6 +38,7 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
 )
 
 import torch
@@ -52,6 +53,7 @@ from torch.distributed._tensor import DTensor
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
+from megatron.bridge.models.common import ModelConfigOverrideMixin
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     LocalHFParamSpec,
@@ -472,11 +474,17 @@ class MegatronModelBridge(
     # provider, such as one implementing MLA.
     PROVIDER_CLASS = None
 
-    # Builder-backed construction is rolling out incrementally by model family. Override these
-    # when the standard GPT or Transformer config cannot represent the model, and set
-    # MODEL_CONFIG_CLASS to None for families that have not yet migrated.
+    # Builder-backed construction is rolling out incrementally by model family. Override this
+    # when the standard GPT model config cannot represent the model, and set it to None for
+    # families that have not yet migrated. The selected model config owns its nested
+    # transformer config class.
     MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
-    TRANSFORMER_CONFIG_CLASS: ClassVar[type[BridgeTransformerConfig]] = BridgeTransformerConfig
+
+    # Conversion still uses the provider-backed construction path unless a model family has
+    # explicitly migrated its conversion lifecycle to ModelBuilder. Keeping this separate
+    # from MODEL_CONFIG_CLASS preserves get_model_config() for legacy families without
+    # silently changing how their checkpoints are constructed.
+    USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
     # for example ``["*reasoning_parser.py"]``.
@@ -769,12 +777,23 @@ class MegatronModelBridge(
             )
 
         config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        if not issubclass(model_config_class, ModelConfigOverrideMixin):
+            raise TypeError(f"{model_config_class.__name__} must inherit {ModelConfigOverrideMixin.__name__}.")
+        model_config_with_overrides = cast(type[ModelConfigOverrideMixin], model_config_class)
+        transformer_config_class = model_config_with_overrides.transformer_config_class
+        if not isinstance(transformer_config_class, type) or not issubclass(
+            transformer_config_class, BridgeTransformerConfig
+        ):
+            raise TypeError(
+                f"{model_config_class.__name__}.transformer_config_class must be a "
+                f"{BridgeTransformerConfig.__name__} subclass."
+            )
         model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(
             config_kwargs,
             model_config_class,
-            self.TRANSFORMER_CONFIG_CLASS,
+            transformer_config_class,
         )
-        transformer_config = self.TRANSFORMER_CONFIG_CLASS(**transformer_kwargs)
+        transformer_config = transformer_config_class(**transformer_kwargs)
         return model_config_class(transformer=transformer_config, **model_kwargs)
 
     # Set by @register_bridge decorator
@@ -1934,11 +1953,13 @@ class MegatronModelBridge(
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
     def finalize_hf_import(self, megatron_model: Union[MegatronModel, List[MegatronModel]]) -> None:
-        """Finalize tied parameters and parameter-derived caches after import."""
-        from megatron.core.resharding import refresh_module_caches
+        """Finalize tied parameters and any available parameter-derived caches after import."""
+        from megatron.core import resharding
 
         self._broadcast_shared_embeddings(megatron_model)
-        refresh_module_caches(megatron_model)
+        refresh_module_caches = getattr(resharding, "refresh_module_caches", None)
+        if refresh_module_caches is not None:
+            refresh_module_caches(megatron_model)
 
     def _should_skip_mtp_duplicate_embedding_export(
         self,
