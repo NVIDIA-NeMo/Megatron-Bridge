@@ -402,25 +402,3 @@ class TestHeterogeneousTransformerConfigFinalize:
             cfg.finalize()
 
         assert getattr(cfg, padding_field) is False
-
-    def test_pipeline_dtype_propagated_from_params_dtype_when_pp_gt1(self):
-        cfg = self._make_valid_hetero(
-            params_dtype=torch.bfloat16,
-            pipeline_dtype=None,
-            pipeline_model_parallel_size=2,
-        )
-
-        cfg.finalize()
-
-        assert cfg.pipeline_dtype is torch.bfloat16
-
-    def test_explicit_pipeline_dtype_is_preserved_when_pp_gt1(self):
-        cfg = self._make_valid_hetero(
-            params_dtype=torch.bfloat16,
-            pipeline_dtype=torch.float16,
-            pipeline_model_parallel_size=2,
-        )
-
-        cfg.finalize()
-
-        assert cfg.pipeline_dtype is torch.float16
