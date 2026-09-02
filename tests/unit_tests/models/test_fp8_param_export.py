@@ -354,7 +354,7 @@ class TestFp8ParamExport:
         )
         monkeypatch.setattr(DummyBridge, "build_conversion_tasks", lambda self, *_a, **_k: [task])
         monkeypatch.setattr(DummyBridge, "_with_progress_tracking", lambda self, tasks, *_a, **_k: tasks)
-        monkeypatch.setattr(DummyBridge, "_broadcast_shared_embeddings", lambda self, *_a, **_k: None)
+        monkeypatch.setattr(DummyBridge, "finalize_hf_import", lambda self, *_a, **_k: None)
         hf_pretrained = SimpleNamespace(state={"hf.w0": converted}, model_name_or_path="dummy")
         models = [SimpleNamespace()]
         assert bridge.load_weights_hf_to_megatron(hf_pretrained, models) is models
