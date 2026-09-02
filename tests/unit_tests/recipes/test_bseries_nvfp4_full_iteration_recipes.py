@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration checks for experimental B-series NVFP4 full-iteration recipes."""
+"""Configuration checks for experimental Blackwell NVFP4 full-iteration recipes."""
 
 import pytest
 
@@ -21,8 +21,16 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_super_pretrain_64gpu_b300_nvfp4_full_iteration_config,
 )
 from megatron.bridge.perf_recipes.qwen import (
+    qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_full_iteration_config,
+    qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_full_iteration_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_full_iteration_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_full_iteration_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_full_iteration_config,
     qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_full_iteration_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_full_iteration_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_full_iteration_config,
 )
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -36,27 +44,85 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("recipe", "expected_parallelism"),
+    ("recipe", "expected_parallelism", "expected_avoid_record_streams", "expected_nvlink_domain_size"),
     [
         (
             qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_full_iteration_config,
             (1, 8, 3, 8),
+            1,
+            8,
         ),
         (
             qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_full_iteration_config,
             (1, 8, 3, 8),
+            1,
+            8,
+        ),
+        (
+            qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_full_iteration_config,
+            (1, 1, None, 8),
+            1,
+            8,
+        ),
+        (
+            qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_full_iteration_config,
+            (1, 1, None, 8),
+            1,
+            8,
+        ),
+        (
+            qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config,
+            (1, 8, 3, 32),
+            0,
+            72,
+        ),
+        (
+            qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_full_iteration_config,
+            (1, 8, 3, 32),
+            0,
+            72,
+        ),
+        (
+            qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config,
+            (1, 4, 12, 32),
+            0,
+            72,
+        ),
+        (
+            qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_full_iteration_config,
+            (1, 4, 12, 32),
+            0,
+            72,
+        ),
+        (
+            qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_full_iteration_config,
+            (1, 1, None, 8),
+            0,
+            72,
+        ),
+        (
+            qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_full_iteration_config,
+            (1, 1, None, 8),
+            0,
+            72,
         ),
         (
             nemotron_3_super_pretrain_64gpu_b200_nvfp4_full_iteration_config,
             (2, 1, None, 64),
+            1,
+            8,
         ),
         (
             nemotron_3_super_pretrain_64gpu_b300_nvfp4_full_iteration_config,
             (1, 1, None, 8),
+            1,
+            8,
         ),
     ],
 )
-def test_bseries_nvfp4_full_iteration_stack(recipe, expected_parallelism) -> None:
+def test_blackwell_nvfp4_full_iteration_stack(
+    recipe, expected_parallelism, expected_avoid_record_streams, expected_nvlink_domain_size
+) -> None:
     cfg = recipe()
 
     assert cfg.mixed_precision.fp4 == "e2m1"
@@ -84,7 +150,8 @@ def test_bseries_nvfp4_full_iteration_stack(recipe, expected_parallelism) -> Non
 
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
-    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == expected_avoid_record_streams
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == expected_nvlink_domain_size
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
 
     actual_parallelism = (
