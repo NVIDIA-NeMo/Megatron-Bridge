@@ -130,7 +130,7 @@ def _llama2_benchmark_common(cfg: ConfigContainer) -> None:
     cfg.model.cp_comm_type = "a2a"
     cfg.model.cpu_offloading = False
     cfg.model.cuda_graph_modules = []
-    cfg.model.cuda_graph_warmup_steps = 5
+    cfg.model.cuda_graph_warmup_steps = 1
     cfg.model.deallocate_pipeline_outputs = True
     cfg.model.disable_parameter_transpose_cache = True
     cfg.model.attention_dropout = 0.0
