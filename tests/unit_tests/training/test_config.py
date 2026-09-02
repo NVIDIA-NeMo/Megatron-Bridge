@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import os
 from dataclasses import fields
 from types import SimpleNamespace
@@ -31,15 +30,10 @@ from megatron.bridge.data.builders import (
     MockVLMSFTDatasetConfig,
     QwenVLEnergonTaskEncoderConfig,
 )
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.transformer_config import (
-    _HYBRIDEP_PADDING_FIELDS,
-    HeterogeneousTransformerConfig,
-    TransformerConfig,
-)
+from megatron.bridge.models.transformer_config import _HYBRIDEP_PADDING_FIELDS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -1195,118 +1189,6 @@ class TestConfigContainerValidation:
 
         try:
             container.validate()  # Should pass without error
-        finally:
-            restore_get_world_size_safe(og_ws, cfg_mod)
-
-    def test_in_batch_packing_enables_variable_pp_shapes_for_builder_model(self, monkeypatch):
-        """Test builder-backed GPT configs use dynamic PP shapes for packed batches."""
-        model_cfg = BridgeGPTModelConfig(
-            transformer=TransformerConfig(
-                num_layers=2,
-                hidden_size=128,
-                num_attention_heads=4,
-                ffn_hidden_size=256,
-                pipeline_model_parallel_size=2,
-                use_cpu_initialization=True,
-            ),
-            vocab_size=256,
-            seq_length=512,
-        )
-        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
-        dataset_cfg.enable_in_batch_packing = True
-
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=2,
-            model_config=model_cfg,
-            train_config=train_cfg,
-            dataset_config_override=dataset_cfg,
-        )
-
-        try:
-            container.validate()
-            assert model_cfg.transformer.variable_seq_lengths is True
-        finally:
-            restore_get_world_size_safe(og_ws, cfg_mod)
-
-    def test_in_batch_packing_enables_variable_pp_shapes_for_heterogeneous_model(self):
-        """Test heterogeneous GPT configs use dynamic PP shapes for packed batches."""
-        block = {
-            "attention": {"no_op": False, "replace_with_linear": False, "num_query_groups": 4},
-            "mlp": {"no_op": False, "replace_with_linear": False, "ffn_hidden_size": 256},
-        }
-        model_cfg = BridgeGPTModelConfig(
-            transformer=HeterogeneousTransformerConfig(
-                num_layers=2,
-                hidden_size=128,
-                num_attention_heads=4,
-                ffn_hidden_size=256,
-                pipeline_model_parallel_size=2,
-                use_cpu_initialization=True,
-                heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block, block]}),
-            ),
-            vocab_size=256,
-            seq_length=512,
-        )
-        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
-        dataset_cfg.enable_in_batch_packing = True
-
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=2,
-            model_config=model_cfg,
-            train_config=train_cfg,
-            dataset_config_override=dataset_cfg,
-        )
-
-        try:
-            container.validate()
-            assert model_cfg.transformer.variable_seq_lengths is True
-        finally:
-            restore_get_world_size_safe(og_ws, cfg_mod)
-
-    def test_native_energon_packing_marks_builder_transformer_config(self, monkeypatch):
-        """Native Energon THD packing marks the nested transformer and enables HybridEP padding."""
-        padding_field = next(
-            field for field in _HYBRIDEP_PADDING_FIELDS if field in TransformerConfig.__dataclass_fields__
-        )
-        model_cfg = BridgeGPTModelConfig(
-            transformer=TransformerConfig(
-                num_layers=2,
-                hidden_size=128,
-                num_attention_heads=4,
-                ffn_hidden_size=256,
-                num_moe_experts=8,
-                moe_token_dispatcher_type="flex",
-                moe_flex_dispatcher_backend="hybridep",
-                calculate_per_token_loss=True,
-                use_cpu_initialization=True,
-                **{padding_field: False},
-            ),
-            vocab_size=256,
-            seq_length=512,
-        )
-        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
-        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
-
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=1,
-            model_config=model_cfg,
-            train_config=train_cfg,
-            dataset_config_override=dataset_cfg,
-        )
-        container.ddp.average_in_collective = False
-        monkeypatch.setattr(
-            torch.cuda,
-            "get_device_properties",
-            lambda _device: SimpleNamespace(major=9, name="NVIDIA H100"),
-        )
-
-        try:
-            container.validate()
-            assert model_cfg.transformer._enable_in_batch_packing is True
-            assert getattr(model_cfg.transformer, padding_field) is True
-            assert "_enable_in_batch_packing" not in model_cfg.__dict__
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

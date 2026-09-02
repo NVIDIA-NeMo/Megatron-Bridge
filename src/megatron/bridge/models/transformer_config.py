@@ -28,6 +28,12 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig as
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 
 
+_HYBRIDEP_PADDING_FIELDS = (
+    "moe_hybridep_pad_uneven_dispatch_inputs",
+    "moe_hybridep_pad_variable_tokens",
+)
+
+
 def _safe_asdict(obj, skip_keys: set[str]) -> dict:
     """Shallow asdict variant that preserves handles like process groups.
 
@@ -120,14 +126,7 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig, *, uses_thd: 
     ):
         return
 
-    padding_fields = tuple(
-        field_name
-        for field_name in (
-            "moe_hybridep_pad_uneven_dispatch_inputs",
-            "moe_hybridep_pad_variable_tokens",
-        )
-        if hasattr(config, field_name)
-    )
+    padding_fields = tuple(field_name for field_name in _HYBRIDEP_PADDING_FIELDS if hasattr(config, field_name))
     if not padding_fields:
         raise AttributeError("Megatron Core TransformerConfig does not expose a HybridEP uneven-input padding field")
     for padding_field in padding_fields:
