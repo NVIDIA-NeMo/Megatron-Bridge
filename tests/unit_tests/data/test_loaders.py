@@ -20,7 +20,8 @@ import pytest
 import torch
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
-from megatron.bridge.data.loaders import build_train_valid_test_data_loaders
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.loaders import build_train_valid_test_data_loaders, cyclic_iter
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.state import TrainState
 
@@ -101,4 +102,81 @@ def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _moc
         batch = next(iter(train_dataloader))
         assert batch["loss_mask"].sum().item() == dataset_size, (
             "The padded batch must not supervise a duplicated real sample"
+        )
+
+
+@pytest.mark.unit
+@mock.patch("torch.distributed.broadcast")
+@mock.patch("torch.distributed.get_world_size", return_value=1)
+@mock.patch("torch.distributed.get_rank", return_value=0)
+@mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+def test_cyclic_loader_allows_dataset_smaller_than_global_batch(
+    mock_build_datasets, _mock_rank, _mock_world_size, _mock_broadcast
+):
+    class IndexDataset:
+        def __len__(self):
+            return 6
+
+        def __getitem__(self, index):
+            return index
+
+    cfg = SimpleNamespace(
+        model=object(),
+        dataset=GPTSFTDatasetConfig(
+            dataset_root="/unused",
+            seq_length=16,
+            dataloader_type="cyclic",
+            data_sharding=False,
+            drop_last=True,
+            num_workers=0,
+            persistent_workers=False,
+            do_validation=False,
+            do_test=False,
+        ),
+        train=SimpleNamespace(
+            train_iters=1,
+            global_batch_size=8,
+            micro_batch_size=2,
+            num_epochs=None,
+            exit_signal=None,
+            exit_signal_handler_for_dataloader=False,
+        ),
+        validation=SimpleNamespace(
+            eval_interval=0,
+            eval_iters=0,
+            eval_global_batch_size=None,
+            eval_micro_batch_size=None,
+            skip_train=False,
+        ),
+    )
+    mock_build_datasets.return_value = (IndexDataset(), None, None)
+    real_torch_tensor = torch.tensor
+
+    def tensor_on_cpu(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_torch_tensor(*args, **kwargs)
+
+    with mock.patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu):
+        train_dataloader, _, _ = build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=object(),
+        )
+
+    train_iterator = cyclic_iter(train_dataloader)
+    batches = [next(train_iterator) for _ in range(4)]
+
+    assert [batch.shape for batch in batches] == [(2,), (2,), (2,), (2,)]
+
+    cfg.dataset.dataloader_type = "batch"
+    with (
+        mock.patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu),
+        pytest.raises(RuntimeError, match="train dataset size \\(6\\) < global batch size \\(8\\)"),
+    ):
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=object(),
         )
