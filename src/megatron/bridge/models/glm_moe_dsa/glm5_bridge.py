@@ -69,6 +69,34 @@ class GLM5Bridge(MegatronModelBridge):
             return False
         return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
 
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param,
+        hf_state_dict,
+    ):
+        """Dequantize FP8 (float8_e4m3fn) weights using their ``*_scale_inv`` block-scale tensor.
+
+        The zai-org GLM-5/5.1/5.2 FP8 checkpoints ship linear weights (attention,
+        shared experts, and routed experts) as ``float8_e4m3fn`` with per 128x128
+        block scales stored in ``<key>_scale_inv`` (same layout as DeepSeek-V3).
+        The true bf16 weight is::
+
+            w_bf16 = fp8_weight.float() * scale_inv_block
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+        if isinstance(hf_weights, dict):
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(weight, param_name, hf_state_dict):
+        """Dequantize ``weight`` if it is stored as FP8 with a matching ``*_scale_inv``."""
+        scale_key = param_name + "_scale_inv"
+        return quantization_utils.maybe_dequantize_fp8_blockwise(weight, hf_state_dict.get(scale_key))
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
