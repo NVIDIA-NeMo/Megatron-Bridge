@@ -1701,13 +1701,21 @@ class TestStreamSharedOuterAdapterWeights:
     # ------------------------------------------------------------------
 
     def _mapping_gate_up(self):
-        """Mapping whose HF names are gate_proj/up_proj (FC1 → base_layer)."""
+        """Mapping whose HF names are gate_proj/up_proj (FC1 → base_layer).
+
+        Mirrors a ``GatedMLPMapping``: any ``.weightN`` suffix resolves to a dict
+        with both ``gate`` and ``up`` so ``_get_base_hf_param_names_for_adapter``
+        yields both projections.
+        """
         mapping = MagicMock()
 
         def lookup(name):
             idx = name.rsplit(".weight", 1)[1]
             return SimpleNamespace(
-                hf_param=f"model.layers.0.mlp.experts.{idx}.gate_proj.weight"
+                hf_param={
+                    "gate": f"model.layers.0.mlp.experts.{idx}.gate_proj.weight",
+                    "up": f"model.layers.0.mlp.experts.{idx}.up_proj.weight",
+                }
             )
 
         mapping.megatron_to_hf_lookup.side_effect = lookup
@@ -1719,9 +1727,7 @@ class TestStreamSharedOuterAdapterWeights:
 
         def lookup(name):
             idx = name.rsplit(".weight", 1)[1]
-            return SimpleNamespace(
-                hf_param=f"model.layers.0.mlp.experts.{idx}.down_proj.weight"
-            )
+            return SimpleNamespace(hf_param=f"model.layers.0.mlp.experts.{idx}.down_proj.weight")
 
         mapping.megatron_to_hf_lookup.side_effect = lookup
         return mapping
@@ -1749,8 +1755,8 @@ class TestStreamSharedOuterAdapterWeights:
         """FC1 (gate_up): base_layer.lora_A=(E,r,in), lora_B=(2*mi,r,E)."""
         bridge = self._make_bridge()
         E, r, hid, mi = 4, 2, 6, 3
-        linear_in = torch.randn(r, hid)            # shared (r, hid)
-        linear_out = torch.randn(E, 2 * mi, r)    # per-expert fused gate_up (E, 2*mi, r)
+        linear_in = torch.randn(r, hid)  # shared (r, hid)
+        linear_out = torch.randn(E, 2 * mi, r)  # per-expert fused gate_up (E, 2*mi, r)
 
         with (
             patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
@@ -1783,8 +1789,8 @@ class TestStreamSharedOuterAdapterWeights:
         """FC2 (down): bare lora_A=(E,r,mi), lora_B=(hid,r,E)."""
         bridge = self._make_bridge()
         E, r, hid, mi = 4, 2, 6, 3
-        linear_in = torch.randn(r, mi)            # shared (r, mi)
-        linear_out = torch.randn(E, hid, r)       # per-expert (E, hid, r)
+        linear_in = torch.randn(r, mi)  # shared (r, mi)
+        linear_out = torch.randn(E, hid, r)  # per-expert (E, hid, r)
 
         with (
             patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
@@ -1833,10 +1839,10 @@ class TestStreamSharedOuterAdapterWeights:
 
         # Reference closed-form layout (matches vLLM _stack_moe_lora_weights contract).
         stem = "model.layers.0.mlp.experts"
-        exp_base_a = gate_up_a_shared.unsqueeze(0).expand(E, -1, -1).contiguous()       # (E,r,hid)
-        exp_base_b = torch.cat([gate_b, up_b], dim=1).permute(1, 2, 0).contiguous()      # (2*mi,r,E)
-        exp_down_a = down_a_shared.unsqueeze(0).expand(E, -1, -1).contiguous()          # (E,r,mi)
-        exp_down_b = down_b.permute(1, 2, 0).contiguous()                                # (hid,r,E)
+        exp_base_a = gate_up_a_shared.unsqueeze(0).expand(E, -1, -1).contiguous()  # (E,r,hid)
+        exp_base_b = torch.cat([gate_b, up_b], dim=1).permute(1, 2, 0).contiguous()  # (2*mi,r,E)
+        exp_down_a = down_a_shared.unsqueeze(0).expand(E, -1, -1).contiguous()  # (E,r,mi)
+        exp_down_b = down_b.permute(1, 2, 0).contiguous()  # (hid,r,E)
 
         # --- bridge 3D path (from raw shared-outer tensors) ---
         # FC1 fused linear_out = cat(gate_b, up_b) per expert on output dim -> (E, 2*mi, r)
@@ -1848,15 +1854,7 @@ class TestStreamSharedOuterAdapterWeights:
             gu = self._run_3d(bridge, gate_up_a_shared, fc1_linear_out, E, self._mapping_gate_up())
             dn = self._run_3d(bridge, down_a_shared, down_b, E, self._mapping_down())
 
-        torch.testing.assert_close(
-            gu[f"{stem}.base_layer.lora_A.weight"], exp_base_a
-        )
-        torch.testing.assert_close(
-            gu[f"{stem}.base_layer.lora_B.weight"], exp_base_b
-        )
-        torch.testing.assert_close(
-            dn[f"{stem}.lora_A.weight"], exp_down_a
-        )
-        torch.testing.assert_close(
-            dn[f"{stem}.lora_B.weight"], exp_down_b
-        )
+        torch.testing.assert_close(gu[f"{stem}.base_layer.lora_A.weight"], exp_base_a)
+        torch.testing.assert_close(gu[f"{stem}.base_layer.lora_B.weight"], exp_base_b)
+        torch.testing.assert_close(dn[f"{stem}.lora_A.weight"], exp_down_a)
+        torch.testing.assert_close(dn[f"{stem}.lora_B.weight"], exp_down_b)

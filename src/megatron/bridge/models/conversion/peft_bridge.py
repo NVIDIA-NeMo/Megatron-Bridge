@@ -1190,8 +1190,7 @@ class MegatronPeftBridge:
             return
 
         is_gate_up = any(
-            self._is_fused_fc1_gate_proj(n) or self._is_fused_fc1_up_proj(n)
-            for n in base_hf_weight_names
+            self._is_fused_fc1_gate_proj(n) or self._is_fused_fc1_up_proj(n) for n in base_hf_weight_names
         )
         # stem e.g. "model.layers.0.mlp.experts.gate_proj.weight" -> "...mlp.experts".
         stem = self._strip_hf_expert_index(base_hf_weight_names[0]).split(".experts")[0] + ".experts"
@@ -1220,13 +1219,17 @@ class MegatronPeftBridge:
         # all global experts yields the (E, out, r) tensor vLLM expects, already
         # carrying gate+up fused on the output dim for FC1.
         gathered_out = self._gather_expert_adapter_weight(linear_out_tensor)
-        linear_out_all = torch.stack(
-            [
-                self._select_expert_adapter_weight(linear_out_tensor, gathered_out, i, num_moe_experts)
-                for i in range(num_moe_experts)
-            ],
-            dim=0,
-        )
+        if gathered_out is None and linear_out_tensor.ndim > 2:
+            # EP=1: tensor is already (E, out, r), skip the per-expert stack loop.
+            linear_out_all = linear_out_tensor
+        else:
+            linear_out_all = torch.stack(
+                [
+                    self._select_expert_adapter_weight(linear_out_tensor, gathered_out, i, num_moe_experts)
+                    for i in range(num_moe_experts)
+                ],
+                dim=0,
+            )
         lora_b_3d = linear_out_all.permute(1, 2, 0).contiguous()
         if cpu:
             lora_b_3d = lora_b_3d.cpu()
