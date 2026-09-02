@@ -1060,7 +1060,6 @@ def llama31_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"
 
