@@ -326,11 +326,14 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
-    # Real routing (no forced balancing) needs headroom over the uniform per-rank
-    # budget; an over-budget dispatch makes PagedStashRunner re-run the whole step
-    # eagerly and reset the full-iteration CUDA graph.
-    cfg.model.moe_expert_rank_capacity_factor = 4
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+    # Real routing (no forced balancing): an over-budget dispatch on any rank makes
+    # PagedStashRunner re-run the whole step eagerly and reset the full-iteration CUDA
+    # graph, so the budget must never be exceeded. A rank can receive at most EP x the
+    # uniform share, so capacity_factor = EP (8) is the smallest value that can never
+    # drop tokens. The paged-stash buffer is sized from the uniform average (not the
+    # capacity factor); host spill absorbs stash pressure without a re-run.
+    cfg.model.moe_expert_rank_capacity_factor = 8
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
