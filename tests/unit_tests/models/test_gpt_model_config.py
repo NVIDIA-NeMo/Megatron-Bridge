@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+from dataclasses import dataclass
 from unittest.mock import Mock, patch
 
 import pytest
@@ -103,10 +104,47 @@ def test_model_config_mapping_rejects_unknown_fields() -> None:
         )
 
 
+def test_model_config_class_selects_nested_transformer_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class SpecializedTransformerConfig(TransformerConfig):
+        specialized_field: bool = False
+
+    class SpecializedModelConfig(BridgeGPTModelConfig):
+        transformer_config_class = SpecializedTransformerConfig
+
+    class SpecializedBridge(LlamaBridge):
+        MODEL_CONFIG_CLASS = SpecializedModelConfig
+
+    bridge = SpecializedBridge()
+    monkeypatch.setattr(
+        bridge,
+        "hf_config_to_model_config_kwargs",
+        lambda _hf_config: {
+            "num_layers": 2,
+            "hidden_size": 128,
+            "num_attention_heads": 4,
+            "ffn_hidden_size": 256,
+            "activation_func": F.silu,
+            "specialized_field": True,
+            "vocab_size": 256,
+        },
+    )
+
+    model_config = bridge.hf_config_to_model_config(object())
+
+    assert isinstance(model_config, SpecializedModelConfig)
+    assert isinstance(model_config.transformer, SpecializedTransformerConfig)
+    assert model_config.specialized_field is True
+
+
 def test_gpt_model_config_is_the_bridge_default() -> None:
     assert MegatronModelBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
     assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
     assert "MODEL_CONFIG_CLASS" not in LlamaBridge.__dict__
+    assert MegatronModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
+    assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
+    assert BridgeGPTModelConfig.transformer_config_class is TransformerConfig
+    assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 
 
 def test_bridge_can_explicitly_disable_model_config() -> None:

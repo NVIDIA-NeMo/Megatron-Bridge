@@ -1495,8 +1495,18 @@ class AutoBridge(Generic[MegatronModelT]):
 
         model_context = nullcontext() if dist.is_initialized() else temporary_distributed_context(backend="gloo")
         with model_context:
-            # Convert to Megatron model
-            megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+            # Prefer the native ModelConfig/ModelBuilder path for migrated model
+            # families while preserving the provider path for legacy bridges.
+            if bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION:
+                model_config = bridge.get_model_config()
+                model_config.transformer.use_cpu_initialization = True
+                megatron_model = bridge.get_model(
+                    model_config,
+                    wrap_with_ddp=False,
+                    mixed_precision_wrapper=None,
+                )
+            else:
+                megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
             # Save as Megatron checkpoint
             hf_tokenizer_kwargs = {}
@@ -1878,6 +1888,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
             models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            for model in models:
+                model.model_config = model_config
             succeeded = True
         finally:
             transformer_config.perform_initialization = original_perform_initialization
