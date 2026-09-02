@@ -381,6 +381,53 @@ def test_gpt_sft_builder_builds_weighted_parquet_blend(tmp_path):
     assert test_dataset is None
 
 
+def test_gpt_sft_builder_combines_weighted_blend_with_local_validation(monkeypatch, tmp_path):
+    from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder, GPTSFTDatasetConfig
+    from megatron.bridge.data.packing import PackedSequenceSpecs
+
+    source_paths = []
+    for source_id in range(2):
+        rows = [_make_packed_row(n_tokens=16, n_seqs=1) for _ in range(2)]
+        source_path = tmp_path / f"builder_source_{source_id}.idx.parquet"
+        _write_parquet(source_path, rows)
+        source_paths.append(str(source_path))
+
+    validation_path = tmp_path / "validation.jsonl"
+    validation_path.write_text('{"input": "question", "output": "answer"}\n')
+    pack_calls = []
+
+    def _prepare_validation(**kwargs):
+        pack_calls.append(kwargs)
+        _write_parquet(kwargs["output_path"], [_make_packed_row(n_tokens=16, n_seqs=1)])
+
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.offline.prepare_gpt_sft_packed_data",
+        _prepare_validation,
+    )
+    config = GPTSFTDatasetConfig(
+        seq_length=16,
+        dataset_root=tmp_path,
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
+            packed_sequence_size=16,
+            packed_train_data_blend=(source_paths, [0.75, 0.25]),
+        ),
+        do_validation=True,
+        do_test=False,
+    )
+
+    train_dataset, valid_dataset, test_dataset = GPTSFTDatasetBuilder(
+        config=config,
+        tokenizer=_make_tokenizer_mock(),
+    ).build()
+
+    assert len(pack_calls) == 1
+    assert pack_calls[0]["input_path"] == validation_path
+    assert isinstance(train_dataset, GPTSFTPackedParquetBlendDataset)
+    assert isinstance(valid_dataset, GPTSFTPackedParquetDataset)
+    assert test_dataset is None
+
+
 class TestPackedParquetDatasetRowGroupCache:
     """Tests for row-group caching behavior."""
 

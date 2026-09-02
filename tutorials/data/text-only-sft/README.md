@@ -183,7 +183,8 @@ Do not repeat config-owned `seed`, `memmap_workers`, `max_num_samples`, or prepr
 
 ## Troubleshooting
 
-- “Exactly one text-only SFT source” means both `dataset_root` and `hf_dataset` were set. If neither is set, configure a standalone `packed_train_data_blend` and disable validation and test.
+- “Exactly one text-only SFT source” means both `dataset_root` and `hf_dataset` were set; choose one for the raw-data splits.
+- “A text-only SFT source must be set” means none of `dataset_root`, `hf_dataset`, or `packed_train_data_blend` was configured. A standalone blend must also disable validation and test.
 - A missing split file is expected when its `do_*` flag is false; otherwise verify the exact filenames above.
 - Chat-template errors usually mean `ChatSFTPreprocessingConfig` was selected but the tokenizer lacks a template.
 - Prompt-completion preprocessing never calls `apply_chat_template` and deliberately rejects structured multi-turn rows.
