@@ -106,6 +106,8 @@ def _llama31_8b_common(cfg: ConfigContainer) -> None:
     cfg.model.wgrad_deferral_limit = 50
     cfg.model.batch_p2p_comm = False
     cfg.model.fused_single_qkv_rope = True
+    cfg.model.cuda_graph_warmup_steps = 1
+    cfg.model.vocab_size = 128256
     cfg.train.check_optimizer_step_success = False
     cfg.train.decrease_batch_size_if_needed = False
     cfg.train.empty_unused_memory_level = 0
