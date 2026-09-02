@@ -133,6 +133,9 @@ html_theme_options = {
     },
 }
 html_extra_path = ["project.json", "versions1.json"]
+html_static_path = ["_static"]
+html_css_files = ["model-verification-catalog.css"]
+html_js_files = ["model-verification-catalog.js"]
 
 # Github links are now getting rate limited from the Github Actions
 linkcheck_ignore = [

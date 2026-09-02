@@ -21,20 +21,25 @@ from typing import Callable, Literal, Optional
 
 from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu, squared_relu
-from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
+from megatron.core.models.gpt.gpt_layer_specs import get_mlp_module_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.transformer.spec_utils import get_submodules
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import get_language_mlp_submodules
 
 
 NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT = "expanded_sequence_v1"
 NEMOTRON_OMNI_LLAVA_CONTRACT = "llava_collapse_expand_v1"
+
+
+def _get_transformer_engine_projection_submodules():
+    """Build the standard dense TE MLP submodules used by media projectors."""
+    return copy.deepcopy(get_submodules(get_mlp_module_spec(use_te=True)))
 
 
 @dataclass
@@ -290,7 +295,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         )
         return BridgeSoundEncoder(config)
 
-    def _build_sound_modules(self, language_cfg, language_spec, *, add_encoder: bool):
+    def _build_sound_modules(self, language_cfg, *, add_encoder: bool):
         """Build optional sound modules on the encoder pipeline stage."""
         if not (self.has_sound and add_encoder):
             return None, None
@@ -298,7 +303,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         sound_model = self._build_sound_encoder()
         sound_projection = MultimodalProjector(
             config=self._build_sound_projection_config(language_cfg),
-            submodules=copy.deepcopy(get_language_mlp_submodules(language_spec)),
+            submodules=_get_transformer_engine_projection_submodules(),
             projector_type="mlp",
             input_size=self.sound_hidden_size,
         )
@@ -312,7 +317,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         maintain zero changes to nemotron_vl/.
         """
         self._validate_omni_config()
-        language_cfg = copy.deepcopy(self)
+        language_cfg = self._copy_config_without_runtime_process_groups(deep=True)
 
         vision_cfg = self._build_vision_config(language_cfg)
         # Nano Omni checkpoints were trained with RADIO's ten class tokens.
@@ -321,9 +326,12 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         vision_cfg.class_token_len = self.vision_class_token_len or 10
         vision_proj_cfg = self._build_vision_projection_config(language_cfg)
 
-        language_spec = hybrid_stack_spec
+        # LLM decoder spec, which can be TE or Megatron inference-optimized.
+        language_spec = self._resolve_hybrid_stack_spec()
+        # ViT spec for the vision component of this model.
         vision_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
+        # Vision projection spec that maps vision embeddings to language embeddings.
+        vision_proj_spec = _get_transformer_engine_projection_submodules()
 
         add_encoder_flag = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
         add_decoder_flag = True
@@ -331,7 +339,6 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         sound_token_index = self.sound_context_token_id
         sound_model, sound_projection = self._build_sound_modules(
             language_cfg,
-            language_spec,
             add_encoder=add_encoder_flag,
         )
 
@@ -377,12 +384,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             temporal_ckpt_compat=self.temporal_ckpt_compat,
         )
 
-        if self.temporal_patch_dim == 1:
-            # Dynamic image batches already express the exact replacement-token
-            # count in num_image_tiles. Vision-less PP stages cannot infer
-            # LLaVAModel's internal is_packed_dynamic_res flag, so make its
-            # label-only expansion use those counts directly as well.
-            llava_model.img_seq_len = 1
+        self._configure_llava_preprocess_contract(llava_model)
 
         model = NemotronOmniLlavaModel(llava_model=llava_model)
 
@@ -403,6 +405,16 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
             )
 
         return model
+
+    def _configure_llava_preprocess_contract(self, llava_model: LLaVAModel) -> None:
+        """Align MCore preprocessing with the legacy collator's replacement counts."""
+        if self.temporal_patch_dim == 1:
+            # The legacy collator stores exact replacement-token counts in
+            # num_image_tiles rather than physical tile counts. Keep MCore on
+            # that contract even when imgs_sizes is present: dynamic-resolution
+            # regrouping interprets num_image_tiles as physical tiles.
+            llava_model._dynamic_resolution = False
+            llava_model.img_seq_len = 1
 
 
 @dataclass
@@ -425,19 +437,21 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
 
         self.validate_model_contract()
 
-        language_cfg = copy.deepcopy(self)
+        language_cfg = self._copy_config_without_runtime_process_groups(deep=True)
         vision_cfg = self._build_vision_config(language_cfg)
         vision_proj_cfg = self._build_vision_projection_config(language_cfg)
 
-        language_spec = hybrid_stack_spec
+        # LLM decoder spec, which can be TE or Megatron inference-optimized.
+        language_spec = self._resolve_hybrid_stack_spec()
+        # ViT spec for the vision component of this model.
         vision_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
+        # Vision projection spec that maps vision embeddings to language embeddings.
+        vision_proj_spec = _get_transformer_engine_projection_submodules()
 
         add_encoder = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
 
         sound_model, sound_projection = self._build_sound_modules(
             language_cfg,
-            language_spec,
             add_encoder=add_encoder,
         )
 

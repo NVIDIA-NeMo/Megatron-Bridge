@@ -17,12 +17,15 @@ import os
 import pickle
 import tempfile
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
 import numpy as np
 import pytest
 import torch
+from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
+from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
@@ -35,9 +38,11 @@ from megatron.bridge.training.checkpointing import (
     DefaultCheckpointManager,
     _build_auto_bridge_for_save,
     _clear_auto_bridge_cache,
+    _CpuTorchDistSaveShardedStrategy,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
+    _get_run_config_tp_pp,
     _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
@@ -94,6 +99,17 @@ class _MaliciousDataloaderState:
 
 class TestCheckpointUtilities:
     """Test utility functions for checkpoint management."""
+
+    @pytest.mark.parametrize(
+        "model_config",
+        [
+            {"tensor_model_parallel_size": 4, "pipeline_model_parallel_size": 2},
+            {"transformer": {"tensor_model_parallel_size": 4, "pipeline_model_parallel_size": 2}},
+        ],
+    )
+    def test_get_run_config_tp_pp_supports_flat_and_hybrid_configs(self, model_config):
+        """Checkpoint parallelism checks support provider and HybridModel layouts."""
+        assert _get_run_config_tp_pp(model_config) == (4, 2)
 
     @pytest.mark.parametrize(
         "checkpoints_path,iteration,release,expected",
@@ -776,6 +792,7 @@ class TestSaveCheckpoint:
             mock_get_rng.assert_called_once()
         else:
             mock_get_rng.assert_not_called()
+        assert mock_gen_state.call_args.args[4] is (mock_get_rng.return_value if save_rng else None)
 
         # Verify that the tracker file was written with the correct iteration
         tracker_calls = [
@@ -792,6 +809,54 @@ class TestSaveCheckpoint:
         # Check that the iteration (1000) was written
         written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
         assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
+
+    def test_cpu_torch_dist_strategy_uses_blocking_preload(self, tmp_path):
+        """CPU checkpoint staging must not synchronize an unavailable CUDA device."""
+        preload_modes = []
+        written_buckets = []
+        finalize_devices = []
+
+        def preload(write_buckets, non_blocking=True):
+            preload_modes.append(non_blocking)
+            return write_buckets
+
+        def write(_rank, write_buckets, _results_queue):
+            written_buckets.extend(write_buckets)
+
+        request = AsyncRequest(
+            async_fn=write,
+            async_fn_args=(0, None, None),
+            finalize_fns=[lambda: finalize_devices.append(torch.cuda.current_device())],
+            preload_fn=partial(preload, ["cpu-tensor"], True),
+        )
+        strategy = _CpuTorchDistSaveShardedStrategy()
+        original_current_device = torch.cuda.current_device
+
+        with (
+            patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request),
+            patch("torch.distributed.barrier"),
+        ):
+            strategy.save({}, tmp_path)
+
+        assert preload_modes == [False]
+        assert written_buckets == ["cpu-tensor"]
+        assert finalize_devices == [torch.device("cpu")]
+        assert torch.cuda.current_device is original_current_device
+
+    def test_cpu_torch_dist_strategy_preserves_cuda_finalize_for_nccl(self):
+        """NCCL cannot broadcast MCore's final status tensor from the CPU."""
+        finalize_devices = []
+
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_backend", return_value="nccl"),
+            patch("torch.cuda.current_device", return_value=3),
+        ):
+            _CpuTorchDistSaveShardedStrategy._run_finalize(
+                lambda: finalize_devices.append(torch.cuda.current_device())
+            )
+
+        assert finalize_devices == [3]
 
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""
@@ -4378,6 +4443,8 @@ class TestFSDPDTensorFunctionality:
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
                 patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
+                patch("megatron.bridge.training.checkpointing.handle_mla_down_proj_in_state_dict", None),
+                patch("megatron.bridge.training.checkpointing.handle_mtp_in_state_dict", None),
             ):
                 raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
                 result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)
