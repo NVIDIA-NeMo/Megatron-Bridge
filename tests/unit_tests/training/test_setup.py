@@ -465,3 +465,7 @@ def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():
         _update_model_config_funcs([rebuilt_model], transformer_config, ddp_config, optimizer=None)
 
     assert transformer_config.no_sync_func.__self__ is rebuilt_model
+
+
+def test_megatron_fsdp_runtime_check_uses_wrapper_type():
+    assert isinstance(training_setup.megatron_FSDP, type)
