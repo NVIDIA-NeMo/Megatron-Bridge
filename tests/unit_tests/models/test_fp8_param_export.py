@@ -114,6 +114,14 @@ def test_native_mxfp8_storage_crops_rank_generic_scale_padding():
             id="noncontiguous-value-storage",
         ),
         pytest.param(
+            lambda param: setattr(
+                param,
+                "scale_bytes",
+                torch.zeros((4, 128), dtype=torch.uint8).transpose(0, 1),
+            ),
+            id="noncontiguous-scale-storage",
+        ),
+        pytest.param(
             lambda param: (
                 setattr(param, "shape", torch.Size((5, 63))),
                 setattr(param, "ndim", 2),
@@ -121,8 +129,33 @@ def test_native_mxfp8_storage_crops_rank_generic_scale_padding():
             id="K-not-divisible-by-32",
         ),
         pytest.param(
+            lambda param: setattr(param, "data_bytes", torch.zeros((5, 64, 1), dtype=torch.uint8)),
+            id="value-rank-mismatch",
+        ),
+        pytest.param(
+            lambda param: setattr(param, "scale_bytes", torch.zeros((128, 4, 1), dtype=torch.uint8)),
+            id="scale-rank-mismatch",
+        ),
+        pytest.param(
+            lambda param: setattr(param, "data_bytes", torch.zeros((4, 64), dtype=torch.uint8)),
+            id="value-storage-too-small",
+        ),
+        pytest.param(
             lambda param: setattr(param, "scale_bytes", torch.zeros((4, 2), dtype=torch.uint8)),
             id="scale-storage-too-small",
+        ),
+        pytest.param(
+            lambda param: setattr(
+                param,
+                "get_metadata",
+                lambda: {
+                    "rowwise_data": param.data_bytes,
+                    "rowwise_scale_inv": param.scale_bytes,
+                    "is_2D_scaled": False,
+                    "quantizer": SimpleNamespace(block_len=16),
+                },
+            ),
+            id="invalid-block-length",
         ),
         pytest.param(
             lambda param: setattr(
