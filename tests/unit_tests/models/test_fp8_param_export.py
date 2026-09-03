@@ -96,9 +96,10 @@ class DummyBridge(MegatronModelBridge):
 
 
 class _IdentityMapping:
-    def __init__(self, hf_param, megatron_param="dummy.megatron.weight"):
+    def __init__(self, hf_param, megatron_param="dummy.megatron.weight", ep_rank=0):
         self.hf_param = hf_param
         self.megatron_param = megatron_param
+        self.ep_rank = ep_rank
 
     def hf_to_megatron(self, hf_weights, _megatron_module):
         return hf_weights
@@ -297,6 +298,71 @@ class TestFp8ParamExport:
         assert [task.global_param_name for task in tasks] == [f"{grouped}0", f"{grouped}1"]
         torch.testing.assert_close(tasks[0].param_weight, members[0])
         torch.testing.assert_close(tasks[1].param_weight, members[1])
+
+    def test_build_export_mxfp8_tasks_uses_global_expert_ids_for_bf16_members(self, monkeypatch):
+        bridge = DummyBridge()
+        grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
+        members = torch.arange(2 * 8 * 16, dtype=torch.bfloat16).view(2, 8, 16)
+        parameter = torch.nn.Parameter(members.clone())
+        mappings = {
+            f"{grouped}0": _IdentityMapping("hf.grouped.0", f"{grouped}0", ep_rank=1),
+            f"{grouped}2": _IdentityMapping("hf.grouped.2", f"{grouped}2", ep_rank=1),
+            f"{grouped}3": _IdentityMapping("hf.grouped.3", f"{grouped}3", ep_rank=1),
+        }
+
+        class Registry:
+            def set_process_groups_from_pg_collection(self, _pg_collection):
+                pass
+
+            def megatron_to_hf_lookup(self, name):
+                return mappings.get(name)
+
+        config = SimpleNamespace(
+            expert_model_parallel_size=2,
+            moe_single_grouped_weight=True,
+            num_moe_experts=4,
+            share_embeddings_and_output_weights=False,
+        )
+        model = SimpleNamespace(config=config, named_parameters=lambda: [(grouped, parameter)])
+        monkeypatch.setattr(bridge, "mapping_registry", Registry)
+        monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+        monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _models: [grouped])
+        monkeypatch.setattr(
+            bridge,
+            "_validate_conversion_mappings",
+            lambda _registry, names, _hf_keys: {name: mappings[name] for name in names},
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pp_rank", lambda _models: 0)
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pg_collection_from_model", lambda _models: None)
+        monkeypatch.setattr(f"{_MODEL_MB}.unwrap_model", lambda models: models)
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda _model: [])
+        monkeypatch.setattr(f"{_MODEL_MB}._megatron_local_name_to_global", lambda *_args: grouped)
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_module_and_param_from_name",
+            lambda *_args: (SimpleNamespace(config=config), parameter),
+        )
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+
+        tasks = bridge.build_export_mxfp8_tasks(SimpleNamespace(config=SimpleNamespace()), [model])
+
+        assert [task.global_param_name for task in tasks] == [f"{grouped}2", f"{grouped}3"]
+        assert [task.param_name for task in tasks] == [f"{grouped}0", f"{grouped}1"]
+        torch.testing.assert_close(tasks[0].param_weight, members[0])
+        torch.testing.assert_close(tasks[1].param_weight, members[1])
+
+    def test_get_export_mxfp8_tasks_uses_public_auto_bridge_api(self):
+        mock_hf = Mock(spec=PreTrainedCausalLM)
+        mock_model_bridge = Mock()
+        model = Mock()
+        expected_tasks = [Mock(spec=WeightConversionTask)]
+        mock_model_bridge.build_export_mxfp8_tasks.return_value = expected_tasks
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf)
+            tasks = bridge.get_export_mxfp8_tasks(model)
+
+        assert tasks == expected_tasks
+        mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(mock_hf, [model])
 
     def test_build_export_mxfp8_tasks_keeps_remote_placeholders_concrete(self, monkeypatch):
         bridge = DummyBridge()

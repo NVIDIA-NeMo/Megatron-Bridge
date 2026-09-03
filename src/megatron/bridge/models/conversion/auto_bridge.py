@@ -708,6 +708,12 @@ class AutoBridge(Generic[MegatronModelT]):
             model = [model]
         return self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
+    def get_export_mxfp8_tasks(self, model: MegatronModelT | list[MegatronModelT]) -> list[WeightConversionTask]:
+        """Build native MXFP8 export tasks, including singular grouped-expert weights."""
+        if not isinstance(model, list):
+            model = [model]
+        return self._model_bridge.build_export_mxfp8_tasks(self.hf_pretrained, model)
+
     def export_hf_weights(
         self,
         model: list[MegatronModelT],

@@ -100,13 +100,14 @@ class MegatronQuantizationBridge:
                         get_grouped_quantized_members(local_weight, create_if_missing=True)
 
         native_grouped_names: set[str] = set()
-        native_grouped_mappings: dict[str, Any] = {}
+        grouped_mappings: dict[str, Any] = {}
         for global_name in global_names:
             if not global_name.endswith(grouped_suffixes) or self._is_mtp_param(global_name):
                 continue
             mapping = mapping_registry.megatron_to_hf_lookup(f"{global_name}0")
             if mapping is None:
                 raise ValueError(f"Missing conversion mapping for grouped MXFP8 parameter {global_name!r}")
+            grouped_mappings[global_name] = mapping
             local_uses_native = local_grouped_storage.get(global_name)
             broadcaster = getattr(mapping, "broadcast_obj_from_pp_rank", None)
             uses_native = (
@@ -121,7 +122,6 @@ class MegatronQuantizationBridge:
             )
             if uses_native:
                 native_grouped_names.add(global_name)
-                native_grouped_mappings[global_name] = mapping
 
         num_experts = int(getattr(model_config, "num_moe_experts", 0) or 0)
         ep_size = int(getattr(model_config, "expert_model_parallel_size", 1) or 1)
@@ -138,7 +138,10 @@ class MegatronQuantizationBridge:
                     raise ValueError("Native MXFP8 export does not support co-trained MTP grouped experts")
                 if local_expert_count <= 0:
                     raise ValueError(f"Cannot expand grouped expert parameter {global_name!r} without num_moe_experts")
-                expanded_names = [f"{global_name}{expert_id}" for expert_id in range(local_expert_count)]
+                expert_offset = int(grouped_mappings[global_name].ep_rank) * local_expert_count
+                expanded_names = [
+                    f"{global_name}{expert_offset + local_expert_id}" for local_expert_id in range(local_expert_count)
+                ]
                 grouped_expansions[global_name] = expanded_names
                 ordered_names.extend(expanded_names)
             else:
@@ -158,7 +161,7 @@ class MegatronQuantizationBridge:
                 global_param_name=global_name,
                 megatron_module=local[2] if local is not None else None,
                 param_weight=local[3] if local is not None else None,
-                mapping=native_grouped_mappings[global_name],
+                mapping=grouped_mappings[global_name],
             )
 
         for global_name, local in local_by_global_name.items():
